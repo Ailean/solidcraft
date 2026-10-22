@@ -47,9 +47,9 @@ pub struct Wire {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fit: Vec<Vec3>,
     /// A linked curve's exact geometry where its source has one (an included edge or sketch
-    /// curve): record curves end to end along `pts`, in `space` coordinates. Empty for a curve
-    /// known only as its points (projected onto a face, intersection and iso curves). Set when
-    /// the link is resolved, with `pts`.
+    /// curve, an intersection curve): record curves end to end along `pts`, in `space`
+    /// coordinates. Empty for a curve known only as its points (projected onto a face, iso
+    /// curves). Set when the link is resolved, with `pts`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exact: Vec<WireCurve>,
 }

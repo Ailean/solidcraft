@@ -4679,6 +4679,9 @@ fn path_at(segs: &[kernel::PathSeg], d: f64) -> (Vec3, Vec3) {
     (Vec3::ZERO, Vec3::X)
 }
 
+/// Most patterns and mirrors of features nested in one another (a mirror of a mirror).
+const MAX_REPLAY_DEPTH: usize = 8;
+
 /// Apply transformed copies of the tools of `features` (patterns, mirrors).
 fn replay(
     doc: &Document,
@@ -4688,6 +4691,21 @@ fn replay(
     features: &[String],
     mats: &[Mat],
     warning: &mut Option<String>,
+) -> Result<()> {
+    replay_at(doc, vals, f, st, features, mats, warning, 0)
+}
+
+/// [`replay`], `depth` patterns or mirrors of features deep.
+#[allow(clippy::too_many_arguments)]
+fn replay_at(
+    doc: &Document,
+    vals: &BTreeMap<String, Value>,
+    f: &Feature,
+    st: &mut ModelState,
+    features: &[String],
+    mats: &[Mat],
+    warning: &mut Option<String>,
+    depth: usize,
 ) -> Result<()> {
     if features.is_empty() {
         return Err(DocError::Invalid("no features selected".into()));
@@ -4710,6 +4728,29 @@ fn replay(
             .find(|x| &x.name == name && !matches!(x.kind, FeatureKind::Sketch { .. } | FeatureKind::ConstructionPlane { .. }))
             .or_else(|| doc.find_feature(name))
             .ok_or_else(|| DocError::Unknown(format!("feature `{name}`")))?;
+        // A copy of a pattern or mirror of features copies what that one copied: its features,
+        // moved by its moves and then by these.
+        let nested = match &src.kind {
+            FeatureKind::Pattern { features, pattern, bodies } if bodies.is_empty() => {
+                Some((features, pattern_transforms(doc, vals, st, src.component, pattern)?))
+            }
+            FeatureKind::Mirror { features, plane, bodies, .. } if bodies.is_empty() => {
+                Some((features, vec![mirror_matrix(&doc.resolve_plane_in(vals, plane, 0, Some(st))?)]))
+            }
+            _ => None,
+        };
+        if let Some((inner, inner_mats)) = nested {
+            if depth >= MAX_REPLAY_DEPTH || src.id == f.id {
+                return Err(DocError::Invalid(format!("{} copies patterns or mirrors nested too deeply", f.name)));
+            }
+            // As many copies in all as one pattern may make.
+            if mats.len().saturating_mul(inner_mats.len()) > MAX_INSTANCES {
+                return Err(DocError::Invalid(format!("{} would make more than {MAX_INSTANCES} copies", f.name)));
+            }
+            let composed: Vec<Mat> = mats.iter().flat_map(|m| inner_mats.iter().map(move |i| crate::mat_mul(m, i))).collect();
+            replay_at(doc, vals, f, st, &crate::plain(inner), &composed, warning, depth + 1)?;
+            continue;
+        }
         // A fillet or chamfer repeats at the copied edges.
         if let FeatureKind::Fillet { edges, radius, .. } | FeatureKind::Chamfer { edges, distance: radius, .. } = &src.kind {
             let r = val(vals, radius, Kind::Length)?;

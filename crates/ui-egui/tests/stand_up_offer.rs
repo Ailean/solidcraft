@@ -18,7 +18,7 @@ fn opened() -> Harness {
 }
 
 fn height(h: &Harness) -> f64 {
-    let b = solidcraft_engine::view::bounds(&h.app.session);
+    let b = solidcraft_engine::view::bounds(&h.app.session).unwrap();
     b.max.z - b.min.z
 }
 

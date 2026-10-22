@@ -20,7 +20,7 @@ fn replaced_body_name_uses_evaluated_owner_in_browser_and_component_actions() {
     assert!(context_menu::component_bodies(&h.app, owner).is_empty());
     assert_eq!(super::entries(&h.app, 0, "bodies").iter().map(|entry| entry.key.as_str()).collect::<Vec<_>>(), ["Block"]);
     assert!(super::entries(&h.app, owner, "bodies").is_empty());
-    let bounds = h.app.session.world_state().body("Block").unwrap().mesh().bounds();
+    let bounds = h.app.session.world_state().unwrap().body("Block").unwrap().mesh().bounds();
     assert!((bounds.min.x - 30.0).abs() < 1e-9);
     assert!((bounds.max.x - 35.0).abs() < 1e-9);
 }
@@ -134,7 +134,7 @@ fn occurrence_delete_targets_second_copy_even_if_first_was_selected() {
     crate::delete::confirm(&mut h.app, true);
     assert!(h.app.session.doc.occurrences.iter().any(|o| o.id == first));
     assert!(!h.app.session.doc.occurrences.iter().any(|o| o.id == second));
-    assert_eq!(h.app.session.world_state().bodies.len(), 1);
+    assert_eq!(h.app.session.world_state().unwrap().bodies.len(), 1);
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn occurrence_new_component_keeps_inactive_second_parent_authoring_context() {
     h.app.run("solid.box", json!({"corner":[51,1,1],"length":2,"width":2,"height":2})).unwrap();
     let feature = h.app.session.model.state().bodies.last().unwrap().feature;
     let mut centers: Vec<f64> =
-        h.app.session.world_state().bodies.iter().filter(|b| b.feature == feature).map(|b| b.mesh().bounds().center().x).collect();
+        h.app.session.world_state().unwrap().bodies.iter().filter(|b| b.feature == feature).map(|b| b.mesh().bounds().center().x).collect();
     centers.sort_by(f64::total_cmp);
     assert_eq!(centers.len(), 2);
     assert!((centers[0] - 2.0).abs() < 1e-8 && (centers[1] - 52.0).abs() < 1e-8, "{centers:?}");

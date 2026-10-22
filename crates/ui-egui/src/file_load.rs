@@ -324,7 +324,7 @@ fn start(app: &mut SolveApp) {
         return;
     }
     let insert = request.insert();
-    let before = if insert { app.session.world_state().bodies.iter().map(|b| b.name.clone()).collect() } else { Vec::new() };
+    let before = if insert { crate::open_meshing::session_world(&app.session).bodies.iter().map(|b| b.name.clone()).collect() } else { Vec::new() };
     let mut scratch = if insert || request.kind == Kind::ExportDxf { app.session.scratch() } else { Session::default() };
     if insert {
         scratch.selection = app.session.selection.clone();
@@ -442,7 +442,7 @@ fn start_staged(app: &mut SolveApp) {
     }
     let Some(request) = app.file_load.queued.pop_front() else { return };
     let insert = request.insert();
-    let before = if insert { app.session.world_state().bodies.iter().map(|b| b.name.clone()).collect() } else { Vec::new() };
+    let before = if insert { crate::open_meshing::session_world(&app.session).bodies.iter().map(|b| b.name.clone()).collect() } else { Vec::new() };
     let mut session = if insert { app.session.scratch() } else { Session::default() };
     if insert {
         session.selection = app.session.selection.clone();
@@ -498,7 +498,7 @@ fn step_staged(running: &mut Running) {
     let in_budget = || began.elapsed().as_secs_f64() * 1000.0 < STAGED_FRAME_MS;
     if staged.ran.is_some() {
         let Some(session) = staged.session.as_ref() else { return };
-        let world = session.world_state();
+        let world = crate::open_meshing::session_world(session);
         while staged.warmed < world.bodies.len() && in_budget() {
             if let Some(body) = world.bodies.get(staged.warmed) {
                 staged.triangles += body.mesh().triangles.len();
@@ -736,7 +736,7 @@ fn compute(
     let geometry_ms = began.elapsed().as_secs_f64() * 1000.0;
     let view_began = std::time::Instant::now();
     phase.store(1, Ordering::Relaxed);
-    let world = session.world_state();
+    let world = crate::open_meshing::session_world(&session);
     let placement_ms = view_began.elapsed().as_secs_f64() * 1000.0;
     // The display meshes are made once the design is in the window, which shows its bodies as
     // they come ([`crate::open_meshing`]): framing, picking and drawing never mesh on the UI.
@@ -1213,7 +1213,7 @@ mod tests {
         part.execute("file.export", &serde_json::json!({"path": path})).unwrap();
         let ctx = crate::fonts::test_context();
         let mut app = SolveApp::new(Session::default(), Default::default());
-        let bodies = |app: &SolveApp| app.session.world_state().bodies.len();
+        let bodies = |app: &SolveApp| app.session.world_state().unwrap().bodies.len();
         assert!(staged_kind(&Request::new(&path, Kind::Insert)) && staged_kind(&Request::new(&path, Kind::Open)));
         assert!(!staged_kind(&Request::new("part.igs", Kind::Insert)) && !staged_kind(&Request::new("part.solidcraft", Kind::Open)));
         app.file_load.queued.push_back(Request::new(&path, Kind::Insert));

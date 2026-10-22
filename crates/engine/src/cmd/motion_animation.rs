@@ -93,7 +93,7 @@ pub(super) fn export_with(s: &Session, p: &Value, renderer: Option<&Renderer>) -
         if stop.0.is_null() && (r["stopped_by_loop"].is_object() || r["stopped_by_contact"].is_object()) {
             stop = (json!(k), r["stopped_by_loop"].clone(), r["stopped_by_contact"].clone());
         }
-        let scene = crate::view::scene_with_guides(&t, &cam, s.section, guides);
+        let scene = crate::view::scene_with_guides(&t, &cam, s.section, guides)?;
         let picture = capture::rgba_with(Some(renderer), &scene, &cam, width, height).map_err(|e| bad(cmd, e))?;
         drawn_by = picture.renderer;
         if gif {
@@ -128,7 +128,10 @@ pub(super) fn export_with(s: &Session, p: &Value, renderer: Option<&Renderer>) -
 /// The camera the frames are drawn from: the session's (`view.apply`), or the home view framing
 /// the model, with the fields `given` sets (`ui.camera`'s reply sets them all).
 fn camera(s: &Session, given: Option<&Value>, cmd: &str) -> Result<Camera> {
-    let base = s.camera.unwrap_or_else(|| crate::view::home_camera(s));
+    let base = match s.camera {
+        Some(c) => c,
+        None => crate::view::home_camera(s)?,
+    };
     let Some(given) = given else { return Ok(base) };
     let fields = given.as_object().ok_or_else(|| bad(cmd, "`camera` must be an object, such as ui.camera's reply"))?;
     let mut v = serde_json::to_value(base).map_err(|e| bad(cmd, e.to_string()))?;

@@ -1398,6 +1398,7 @@ impl Model {
             // Cylindrical emboss resolves its named face in the selected body's frame
             // and certifies an analytic anchor; mesh projection here would undo that.
             let explicit_emboss = matches!(&f.kind, FeatureKind::Emboss { face: Some(_), .. });
+            let mut frame_error: Option<String> = None;
             let f = if !explicit_emboss && f.face_names.iter().any(|n| !n.is_empty()) {
                 let mut g = f.clone();
                 let mut notes = Vec::new();
@@ -1408,8 +1409,15 @@ impl Model {
                     FeatureKind::Hole { direction, points: None | Some(crate::SketchPoints { single: true, .. }), .. } => direction.normalized(),
                     _ => None,
                 };
-                let fst = face_point_state(doc, &state, &f.kind, f.component);
-                for (k, (p, n)) in g.kind.face_points_mut().into_iter().zip(&f.face_names).enumerate() {
+                // The frame the faces are looked up in; a frame that cannot be made fails the feature.
+                let fst = match face_point_state(doc, &state, &f.kind, f.component) {
+                    Ok(fst) => fst,
+                    Err(e) => {
+                        frame_error = Some(e.to_string());
+                        std::borrow::Cow::Borrowed(&*state)
+                    }
+                };
+                for (k, (p, n)) in g.kind.face_points_mut().into_iter().zip(&f.face_names).enumerate().filter(|_| frame_error.is_none()) {
                     if n.is_empty() {
                         continue;
                     }
@@ -1444,7 +1452,7 @@ impl Model {
             };
             // A parameter with an error fails the features using it, with that error.
             let bad_param = param_names(f).into_iter().find_map(|n| self.param_errors.get(&n).map(|e| format!("parameter `{n}`: {e}")));
-            let r = match bad_param {
+            let r = match frame_error.or(bad_param) {
                 Some(e) => Err(kernel::KernelError::Failed(e)),
                 None => kernel::guard(&f.name, || {
                     eval_feature(doc, &vals, f, &mut next, &mut warning).map_err(|e| kernel::KernelError::Failed(e.to_string()))
@@ -2989,7 +2997,7 @@ fn feature_tools_with_constructor(
             // model is seen from there: a target in another, moved component where it is shown.
             let n = ss.plane.normal();
             let tst =
-                if extent.to.is_some() || extent.from.is_some() { state_in_frame(doc, st, f.component) } else { std::borrow::Cow::Borrowed(st) };
+                if extent.to.is_some() || extent.from.is_some() { state_in_frame(doc, st, f.component)? } else { std::borrow::Cow::Borrowed(st) };
             // The face names follow `face_points`: To, then From.
             let name = |k: usize| f.face_names.get(k).map(String::as_str);
             let (to_name, from_name) = if extent.to.is_some() { (name(0), name(1)) } else { (None, name(0)) };
@@ -3191,7 +3199,7 @@ fn feature_tools_with_constructor(
             let regions = solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
             let (o, d) = revolve_axis(&ss, axis)?;
             // To Object is in this feature's component frame: the model as seen from there.
-            let tst = if to.is_some() { state_in_frame(doc, st, f.component) } else { std::borrow::Cow::Borrowed(st) };
+            let tst = if to.is_some() { state_in_frame(doc, st, f.component)? } else { std::borrow::Cow::Borrowed(st) };
             let angles = if to.is_some() {
                 (0.0, None)
             } else {
@@ -4514,7 +4522,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 // component's bodies moved into its frame: placing every body of a large
                 // assembly again is what made each sketch edit as slow as the design is big.
                 None if !plane_reads_geometry(plane) && sketch.links.is_empty() => std::borrow::Cow::Borrowed(st),
-                None => state_in_frame(doc, st, f.component),
+                None => state_in_frame(doc, st, f.component)?,
             };
             let (plane, face_warning) = match (anchor, plane) {
                 (Some(_), plane) => doc.resolve_attached_plane_noted(vals, plane, f.component, st, &fst)?,
@@ -4687,14 +4695,14 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 // A plane of numbers alone reads no body: placing them all is the design's size.
                 None if plane_is_fixed(plane) => doc.resolve_plane_in(vals, plane, 0, Some(st))?,
                 // Picks on bodies of other (moved) components are where those bodies are shown.
-                None => doc.resolve_plane_in(vals, plane, 0, Some(&construction_state(doc, st, f.component)))?,
+                None => doc.resolve_plane_in(vals, plane, 0, Some(&*construction_state(doc, st, f.component)?))?,
             };
             st.construct.push(crate::construct::Construct { feature: f.id, name: f.name.clone(), geom: crate::construct::ConstructGeom::Plane(pl) });
             Ok(())
         }
         FeatureKind::ConstructionAxis { def } => {
             let (origin, dir) =
-                crate::construct::resolve_axis(&crate::construct::Ctx { doc, vals, st: &construction_state(doc, st, f.component), depth: 0 }, def)?;
+                crate::construct::resolve_axis(&crate::construct::Ctx { doc, vals, st: &*construction_state(doc, st, f.component)?, depth: 0 }, def)?;
             st.construct.push(crate::construct::Construct {
                 feature: f.id,
                 name: f.name.clone(),
@@ -4703,8 +4711,10 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             Ok(())
         }
         FeatureKind::ConstructionPoint { def } => {
-            let p =
-                crate::construct::resolve_point(&crate::construct::Ctx { doc, vals, st: &construction_state(doc, st, f.component), depth: 0 }, def)?;
+            let p = crate::construct::resolve_point(
+                &crate::construct::Ctx { doc, vals, st: &*construction_state(doc, st, f.component)?, depth: 0 },
+                def,
+            )?;
             st.construct.push(crate::construct::Construct { feature: f.id, name: f.name.clone(), geom: crate::construct::ConstructGeom::Point(p) });
             Ok(())
         }
@@ -5301,9 +5311,9 @@ fn unique_body_name(st: &ModelState, base: &str) -> String {
 /// What construction geometry of component `comp` is built on: the model as that component sees
 /// it, other components' bodies where they are placed. In the root, every placement of a
 /// component (its pasted instances too) is there, as the viewport shows it.
-fn construction_state<'a>(doc: &Document, st: &'a ModelState, comp: u64) -> std::borrow::Cow<'a, ModelState> {
+fn construction_state<'a>(doc: &Document, st: &'a ModelState, comp: u64) -> Result<std::borrow::Cow<'a, ModelState>> {
     if comp == 0 && !doc.occurrences.is_empty() {
-        return std::borrow::Cow::Owned(world_state(doc, st));
+        return Ok(std::borrow::Cow::Owned(world_state(doc, st)?));
     }
     state_in_frame(doc, st, comp)
 }
@@ -5333,7 +5343,7 @@ fn plane_reads_geometry(plane: &PlaneRef) -> bool {
     }
 }
 
-pub fn state_in_frame<'a>(doc: &Document, st: &'a ModelState, comp: u64) -> std::borrow::Cow<'a, ModelState> {
+pub fn state_in_frame<'a>(doc: &Document, st: &'a ModelState, comp: u64) -> Result<std::borrow::Cow<'a, ModelState>> {
     state_in_frame_at(doc, st, comp, doc.component_transform(comp))
 }
 
@@ -5342,10 +5352,10 @@ pub fn state_in_frame<'a>(doc: &Document, st: &'a ModelState, comp: u64) -> std:
 /// (`comp`): the model as that component sees it, a target in another, moved component where it
 /// is shown (#928). Other face points are picks, kept in the frame of the body they lie on: the
 /// model itself.
-pub fn face_point_state<'a>(doc: &Document, st: &'a ModelState, kind: &FeatureKind, comp: u64) -> std::borrow::Cow<'a, ModelState> {
+pub fn face_point_state<'a>(doc: &Document, st: &'a ModelState, kind: &FeatureKind, comp: u64) -> Result<std::borrow::Cow<'a, ModelState>> {
     match kind {
         FeatureKind::Extrude { .. } | FeatureKind::Revolve { .. } => state_in_frame(doc, st, comp),
-        _ => std::borrow::Cow::Borrowed(st),
+        _ => Ok(std::borrow::Cow::Borrowed(st)),
     }
 }
 
@@ -5353,13 +5363,14 @@ pub fn face_point_state<'a>(doc: &Document, st: &'a ModelState, kind: &FeatureKi
 /// [`face_point_state`]. A To / From point is named after the nearest face over every body, the
 /// one `object_height` resolves it to, not the first body with a face within tolerance: a part
 /// resting a hair from the picked face would otherwise take its name.
-pub fn face_point_names(doc: &Document, st: &ModelState, kind: &FeatureKind, comp: u64) -> Vec<String> {
+pub fn face_point_names(doc: &Document, st: &ModelState, kind: &FeatureKind, comp: u64) -> Result<Vec<String>> {
     let pts = kind.face_points();
     if !matches!(kind, FeatureKind::Extrude { .. } | FeatureKind::Revolve { .. }) {
-        return crate::naming::face_names_at(st, &pts);
+        return Ok(crate::naming::face_names_at(st, &pts));
     }
-    let fst = face_point_state(doc, st, kind, comp);
-    pts.iter()
+    let fst = face_point_state(doc, st, kind, comp)?;
+    Ok(pts
+        .iter()
         .map(|p| {
             fst.bodies
                 .iter()
@@ -5372,16 +5383,16 @@ pub fn face_point_names(doc: &Document, st: &ModelState, kind: &FeatureKind, com
                 .and_then(|(_, b, fi)| crate::naming::face_names(b).get(fi).cloned())
                 .unwrap_or_default()
         })
-        .collect()
+        .collect())
 }
 
 /// As `state_in_frame`, using the exact active placement for its shared source geometry.
-pub fn state_in_frame_at<'a>(doc: &Document, st: &'a ModelState, comp: u64, frame: Mat) -> std::borrow::Cow<'a, ModelState> {
+pub fn state_in_frame_at<'a>(doc: &Document, st: &'a ModelState, comp: u64, frame: Mat) -> Result<std::borrow::Cow<'a, ModelState>> {
     use std::borrow::Cow;
     if doc.occurrences.is_empty() && doc.body_offsets.is_empty() {
-        return Cow::Borrowed(st);
+        return Ok(Cow::Borrowed(st));
     }
-    let Some(inv) = crate::mat_inverse(&frame) else { return Cow::Borrowed(st) };
+    let inv = crate::mat_inverse(&frame).ok_or_else(|| DocError::Invalid(format!("component {comp}'s frame cannot be inverted")))?;
     let comp_of_feature = |id: u64| doc.feature(id).map(|f| f.component).unwrap_or(0);
     let rel = |c: u64, body: Option<&str>| {
         let m = crate::mat_mul(&inv, &if c == comp { frame } else { doc.component_transform(c) });
@@ -5402,13 +5413,13 @@ pub fn state_in_frame_at<'a>(doc: &Document, st: &'a ModelState, comp: u64, fram
     let world_wires_need_mapping = !crate::is_identity(&inv)
         && st.sketches.iter().any(|sketch| sketch.sketch.wires.iter().any(|wire| wire.space == solidcraft_sketch::WireSpace::World));
     if body_m.iter().chain(&sketch_m).all(crate::is_identity) && !world_wires_need_mapping {
-        return Cow::Borrowed(st);
+        return Ok(Cow::Borrowed(st));
     }
     let mut out = st.clone();
     for (b, m) in out.bodies.iter_mut().zip(&body_m) {
-        if !crate::is_identity(m)
-            && let Ok(t) = kernel::transform_matrix(&b.body, *m)
-        {
+        if !crate::is_identity(m) {
+            let t = kernel::transform_matrix(&b.body, *m)
+                .map_err(|e| DocError::Invalid(format!("body `{}` cannot be moved into the frame: {e}", b.name)))?;
             #[cfg(test)]
             cost_tests::count(|c| c.moved += 1);
             // Moving a body keeps its faces (and their order): it keeps their names.
@@ -5430,23 +5441,21 @@ pub fn state_in_frame_at<'a>(doc: &Document, st: &'a ModelState, comp: u64, fram
             continue;
         }
         let s = Arc::make_mut(s);
-        if !crate::is_identity(m)
-            && let Some(np) = Plane::new(crate::apply_point(m, s.plane.origin), crate::apply_vector(m, s.plane.x), crate::apply_vector(m, s.plane.y))
-        {
-            s.plane = np;
+        if !crate::is_identity(m) {
+            s.plane = placed_plane(m, &s.plane)?;
         }
         for wire in &mut s.sketch.wires {
             let matrix = if wire.space == solidcraft_sketch::WireSpace::Component { m } else { &inv };
             map_wire(wire, matrix);
         }
     }
-    Cow::Owned(out)
+    Ok(Cow::Owned(out))
 }
 
 /// The model placed in the world: each component's bodies, sketches and threads through every
 /// occurrence of it (bodies of the first placement keep their names; further instances get the
 /// occurrence path in brackets). Without components this is the model itself.
-pub fn world_state(doc: &Document, st: &ModelState) -> ModelState {
+pub fn world_state(doc: &Document, st: &ModelState) -> Result<ModelState> {
     world_state_reusing(doc, st, &mut PlacedBodies::default())
 }
 
@@ -5462,7 +5471,7 @@ pub struct PlacedBodies {
 
 impl PlacedBodies {
     /// The body `b` placed by `m`, from an earlier call when `b` is the same body as then.
-    fn placed(&self, b: &ModelBody, m: &crate::Mat, name: String) -> ModelBody {
+    fn placed(&self, b: &ModelBody, m: &crate::Mat, name: String) -> Result<ModelBody> {
         let reused = self.by_source.get(&placed_key(b, m)).filter(|(source, _)| {
             Arc::ptr_eq(&source.mesh, &b.mesh)
                 && source.body.same(&b.body)
@@ -5481,16 +5490,14 @@ impl PlacedBodies {
                 fresh.mesh_placement = placed.mesh_placement.clone();
                 fresh.plan = placed.plan.clone();
                 fresh.plan_mesh = placed.plan_mesh.clone();
-                fresh
+                Ok(fresh)
             }
-            None => match kernel::place_matrix(&b.body, *m) {
-                Ok(body) => {
-                    let mut fresh = ModelBody::new(name, body, b.feature);
-                    fresh.mesh_placement = placed_mesh::PlacedMesh::new(b, m).map(Arc::new);
-                    fresh
-                }
-                Err(_) => ModelBody::new(name, b.body.clone(), b.feature),
-            },
+            None => {
+                let body = kernel::place_matrix(&b.body, *m).map_err(|e| DocError::Invalid(format!("body `{}` cannot be placed: {e}", b.name)))?;
+                let mut fresh = ModelBody::new(name, body, b.feature);
+                fresh.mesh_placement = placed_mesh::PlacedMesh::new(b, m).map(Arc::new);
+                Ok(fresh)
+            }
         }
     }
 }
@@ -5505,9 +5512,9 @@ fn placed_key(b: &ModelBody, m: &crate::Mat) -> (usize, [u64; 16]) {
 
 /// [`world_state`], reusing the bodies `placed` holds from an earlier call and leaving it holding
 /// this call's.
-pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut PlacedBodies) -> ModelState {
+pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut PlacedBodies) -> Result<ModelState> {
     if doc.occurrences.is_empty() {
-        return st.clone();
+        return Ok(st.clone());
     }
     let mut placed_now = PlacedBodies::default();
     let comp_of_feature = |id: u64| doc.feature(id).map(|f| f.component).unwrap_or(0);
@@ -5539,7 +5546,7 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
             }
         }
     }
-    let mut moved = kernel::map_on_threads(&jobs, 16, |(b, bm, name)| placed_before.placed(b, bm, name.clone())).into_iter().zip(&jobs);
+    let mut moved = kernel::map_on_threads(&jobs, 16, |(b, bm, name)| placed_before.placed(b, bm, name.clone())).into_iter();
     for (comp, path, m) in placements {
         let primary = path == first_path(comp);
         let ident = crate::is_identity(&m);
@@ -5552,11 +5559,11 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
                 placed.name = doc.world_body_name(st, &b.name, comp, &path);
                 placed
             } else {
-                // The same order as the jobs: this body's, made above (again here if it failed).
+                // The same order as the jobs: this body's, made above.
                 let placed = match moved.next() {
-                    Some((Some(placed), _)) => placed,
-                    Some((None, (_, _, name))) => placed_before.placed(b, &bm, name.clone()),
-                    None => placed_before.placed(b, &bm, doc.world_body_name(st, &b.name, comp, &path)),
+                    Some(Some(placed)) => placed?,
+                    Some(None) => return Err(DocError::Invalid(format!("body `{}` could not be placed (its worker failed)", b.name))),
+                    None => return Err(DocError::Invalid(format!("body `{}` has no placement", b.name))),
                 };
                 placed_now.by_source.insert(placed_key(b, &bm), (b.clone(), placed.clone()));
                 placed
@@ -5583,12 +5590,7 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
                     continue;
                 }
                 let mut s2 = SolvedSketch::clone(s);
-                if !ident {
-                    let p = &s.plane;
-                    if let Some(np) = Plane::new(crate::apply_point(&m, p.origin), crate::apply_vector(&m, p.x), crate::apply_vector(&m, p.y)) {
-                        s2.plane = np;
-                    }
-                }
+                s2.plane = placed_plane(&m, &s.plane)?;
                 for wire in &mut s2.sketch.wires {
                     if wire.space == solidcraft_sketch::WireSpace::Component {
                         map_wire(wire, &m);
@@ -5604,13 +5606,20 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
                 let mut t2 = t.clone();
                 let frame = st.body(&t.body).and_then(|body| doc.model_body_offset(body)).map(|offset| crate::mat_mul(&m, offset)).unwrap_or(m);
                 t2.axis_point = crate::apply_point(&frame, t.axis_point);
-                t2.axis = crate::apply_vector(&frame, *t.axis).unit().unwrap_or(t.axis);
+                t2.axis = crate::apply_vector(&frame, *t.axis).unit().ok_or_else(|| DocError::Invalid("a thread's axis cannot be placed".into()))?;
                 out.threads.push(t2);
             }
         }
     }
     *placed_before = placed_now;
-    out
+    Ok(out)
+}
+
+/// `plane` moved by the placement `m`; an error when `m` does not keep it a plane (a placement
+/// that is not a rigid motion, which [`Document`] does not take).
+fn placed_plane(m: &crate::Mat, plane: &Plane) -> Result<Plane> {
+    Plane::new(crate::apply_point(m, plane.origin), crate::apply_vector(m, plane.x), crate::apply_vector(m, plane.y))
+        .ok_or_else(|| DocError::Invalid("a sketch plane cannot be placed: the placement is not a rigid motion".into()))
 }
 
 #[cfg(test)]
@@ -5642,7 +5651,7 @@ mod world_placement_cache_tests {
         let source = &state.bodies[0];
         assert!(source.names.origin.is_some());
         assert!(source.mesh.get().is_none());
-        let world = world_state(&doc, &state);
+        let world = world_state(&doc, &state).unwrap();
         let names = crate::naming::face_names(&world.bodies[0]);
         assert!(Arc::ptr_eq(&names, &crate::naming::face_names(source)));
         assert!(names.iter().all(|name| name.starts_with(&format!("F{feature}:"))));
@@ -5665,7 +5674,7 @@ mod world_placement_cache_tests {
         state.bodies.push(ModelBody::new("Block".into(), kernel::box_solid(Vec3::ZERO, Vec3::new(2., 3., 4.)).unwrap(), 1));
         state.bodies[0].key = 1234;
         let source = &state.bodies[0];
-        let world = world_state(&doc, &state);
+        let world = world_state(&doc, &state).unwrap();
         assert_eq!(world.bodies.len(), 2);
         let first = world.body("Block").unwrap();
         let second_name = doc.world_body_name(&state, "Block", component, &[second]);
@@ -5688,7 +5697,7 @@ mod world_placement_cache_tests {
         assert!(Arc::ptr_eq(&names, &crate::naming::face_names(placed)));
         let original_mesh = source.mesh();
         assert!(Arc::ptr_eq(&original_mesh, &first.mesh()));
-        let again = world_state(&doc, &state);
+        let again = world_state(&doc, &state).unwrap();
         assert!(Arc::ptr_eq(&original_mesh, &again.body("Block").unwrap().mesh()));
         assert!(Arc::ptr_eq(&names, &crate::naming::face_names(again.body(&second_name).unwrap())));
     }

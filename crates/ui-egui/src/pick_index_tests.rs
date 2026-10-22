@@ -94,7 +94,7 @@ fn pick_timing_on_curved_models() {
         app.ui.show_origin = false;
         app.cam.target = solidcraft_engine::geom::Vec3::new(160.0, 160.0, 15.0);
         app.cam.distance = 900.0;
-        let st = app.session.world_state();
+        let st = app.session.world_state().unwrap();
         let (tris, segs) = st
             .bodies
             .iter()

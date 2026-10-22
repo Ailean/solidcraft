@@ -130,13 +130,12 @@ fn pt(p: Vec3) -> Value {
 }
 
 /// The frame of the body a world point lies on (the nearest), or of the named body.
-fn frame_at(s: &Session, f: &Frames, p: Vec3, body: Option<&str>) -> Option<Mat> {
+fn frame_at(world: &solidcraft_doc::ModelState, f: &Frames, p: Vec3, body: Option<&str>) -> Option<Mat> {
     if let Some(b) = body
         && let Some((_, _, m)) = f.bodies.iter().find(|(w, _, _)| w == b)
     {
         return Some(*m);
     }
-    let world = s.world_state();
     let mut best: Option<(f64, Mat)> = None;
     for wb in &world.bodies {
         let Some((_, _, m)) = f.bodies.iter().find(|(w, _, _)| *w == wb.name) else { continue };
@@ -170,7 +169,8 @@ fn tri_dist(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
 }
 
 struct Mapper<'a> {
-    s: &'a Session,
+    /// The placed model the picks are on.
+    world: &'a solidcraft_doc::ModelState,
     f: Frames,
     /// The frame of the command's first pick (its directions turn with it).
     first: Option<Mat>,
@@ -182,7 +182,7 @@ struct Mapper<'a> {
 impl Mapper<'_> {
     fn pick(&mut self, v: &Value, body: Option<&str>) -> Option<Value> {
         let p = vec3(v)?;
-        let m = if self.here { self.f.sketch } else { frame_at(self.s, &self.f, p, body).unwrap_or(self.f.active) };
+        let m = if self.here { self.f.sketch } else { frame_at(self.world, &self.f, p, body).unwrap_or(self.f.active) };
         self.first.get_or_insert(m);
         self.local_point(&m, p)
     }
@@ -349,8 +349,18 @@ impl Drop for Nested {
     }
 }
 
-/// `params` with world picks mapped into component frames (`None`: nothing to change).
-pub fn to_local(s: &Session, id: &str, params: &Value) -> Option<Value> {
+/// `params` with world picks mapped into component frames (`None`: nothing to change). A model
+/// that cannot be placed is the error.
+pub fn to_local(s: &Session, id: &str, params: &Value) -> crate::Result<Option<Value>> {
+    if !placed(s) {
+        return Ok(None);
+    }
+    let world = s.world_state()?;
+    Ok(map_local(s, &world, id, params))
+}
+
+/// [`to_local`] on the placed model `world`.
+fn map_local(s: &Session, world: &solidcraft_doc::ModelState, id: &str, params: &Value) -> Option<Value> {
     if id == "timeline.redefine" {
         let cmd = params.get("command")?.as_str()?;
         let key = params.get("feature").and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_u64().map(|id| id.to_string())))?;
@@ -362,7 +372,7 @@ pub fn to_local(s: &Session, id: &str, params: &Value) -> Option<Value> {
         if let solidcraft_doc::FeatureKind::Emboss { face: Some(face), .. } = &feature.kind {
             context.active_occurrence_path = (!face.author_path.is_empty()).then(|| face.author_path.clone());
         }
-        let mut inner = to_local(&context, cmd, params.get("params")?)?;
+        let mut inner = map_local(&context, world, cmd, params.get("params")?)?;
         // An untouched explicit axis is displayed in world coordinates by Edit
         // Feature. Keep its exact saved values instead of an affine round trip.
         if cmd == "solid.revolve"
@@ -396,7 +406,7 @@ pub fn to_local(s: &Session, id: &str, params: &Value) -> Option<Value> {
         return None;
     }
     let keys = table(id);
-    if keys.is_empty() || !placed(s) {
+    if keys.is_empty() {
         return None;
     }
     let obj = params.as_object()?;
@@ -409,7 +419,7 @@ pub fn to_local(s: &Session, id: &str, params: &Value) -> Option<Value> {
         command_frames.active = frame;
         command_frames.sketch = frame;
     }
-    let mut m = Mapper { s, f: command_frames, first: None, changed: false, here: false };
+    let mut m = Mapper { world, f: command_frames, first: None, changed: false, here: false };
     let body = obj.get("body").or_else(|| obj.get("face_body")).and_then(Value::as_str).map(str::to_string);
     let mut out: Map<String, Value> = obj.clone();
     // Picks first: their frame turns the directions.

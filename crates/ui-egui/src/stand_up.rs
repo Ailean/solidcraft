@@ -17,7 +17,8 @@ pub fn offer(app: &mut SolveApp, path: &str, before: &[String], result: Option<&
     if !(io(path) || solidcraft_engine::io::is_iges_path(path)) || !app.preferences.offer_stand_up || app.preferences.up_axis != "z" {
         return;
     }
-    let bodies: Vec<String> = app.session.world_state().bodies.iter().map(|b| b.name.clone()).filter(|n| !before.contains(n)).collect();
+    let bodies: Vec<String> =
+        crate::open_meshing::session_world(&app.session).bodies.iter().map(|b| b.name.clone()).filter(|n| !before.contains(n)).collect();
     if !bodies.is_empty() {
         app.stand_up = Some(bodies);
         app.stand_up_occurrence = result.and_then(|r| r.get("occurrence")).and_then(serde_json::Value::as_u64);

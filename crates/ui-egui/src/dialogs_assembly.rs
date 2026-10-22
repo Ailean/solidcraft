@@ -351,7 +351,7 @@ pub fn find_joint(app: &mut SolveApp, id: u64) {
 /// are placed; occurrence 0 is the root, holding the bodies outside every occurrence.
 pub fn occurrence_bounds(s: &Session, occs: &[u64]) -> Aabb3 {
     let model = s.model.state();
-    let world = s.world_state();
+    let world = crate::open_meshing::session_world(s);
     let mut bb = Aabb3::default();
     for (name, _, path, _) in s.doc.body_frames(&model) {
         let on = occs.iter().any(|o| if *o == 0 { path.is_empty() } else { path.contains(o) });
@@ -388,7 +388,7 @@ pub struct SnapPt {
 
 /// The occurrence placing a body (0: the root design), when the body is its primary instance.
 pub(crate) fn occurrence_of_body(s: &Session, body: &str) -> Option<u64> {
-    let st = s.world_state();
+    let st = crate::open_meshing::session_world(s);
     let b = st.body(body)?;
     let comp = s.doc.model_body_component(b);
     if comp == 0 { Some(0) } else { s.doc.occurrence_of(comp).map(|o| o.id) }
@@ -430,7 +430,7 @@ fn face_normal_near(m: &Mesh, f: u32, p: Vec3) -> Option<Vec3> {
 
 /// The snap a picked item stands for (world coordinates, as the viewport shows them).
 pub fn snap_of(s: &Session, sel: &Sel) -> Option<SnapPt> {
-    let st = s.world_state();
+    let st = crate::open_meshing::session_world(s);
     let (body, mut snap) = match sel {
         Sel::Face { body, index, point } => {
             let b = st.body(body)?;
@@ -740,7 +740,7 @@ fn interference(app: &mut SolveApp, picked: &[Sel], clearance: &str) -> (Value, 
         Ok(v) => v,
         Err(e) => return (json!({ "error": e }), Vec::new()),
     };
-    let st = app.session.world_state();
+    let st = crate::open_meshing::session_world(&app.session);
     let mut meshes = Vec::new();
     for hit in r["overlaps"].as_array().into_iter().flatten() {
         let (Some(a), Some(b)) = (hit["a"].as_str().and_then(|n| st.body(n)), hit["b"].as_str().and_then(|n| st.body(n))) else { continue };

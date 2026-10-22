@@ -187,7 +187,7 @@ pub(crate) fn paint(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Pai
     if !usable(app) {
         return;
     }
-    let st = app.session.world_state();
+    let st = crate::open_meshing::session_world(&app.session);
     let model = model_key(app, &st);
     let key = view_key(app, proj, model);
     let state = &mut app.viewport.pick_buffer;

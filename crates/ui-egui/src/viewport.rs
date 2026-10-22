@@ -303,9 +303,10 @@ pub(crate) fn visible_sketches(app: &SolveApp) -> Vec<u64> {
 pub fn view_bounds(app: &SolveApp) -> solidcraft_engine::geom::Aabb3 {
     // Bodies still being meshed after an open frame the view by their outlines.
     if crate::open_meshing::framing(app) {
-        return solidcraft_engine::view::unmeshed_bounds(&app.session, app.ui.show_sketches);
+        return solidcraft_engine::view::unmeshed_bounds(&app.session, app.ui.show_sketches).unwrap_or(solidcraft_engine::geom::Aabb3::EMPTY);
     }
-    solidcraft_engine::view::visible_bounds(&app.session, app.ui.show_sketches)
+    // A model that cannot be placed shows no placed bodies (see `open_meshing::session_world`).
+    solidcraft_engine::view::visible_bounds(&app.session, app.ui.show_sketches).unwrap_or(solidcraft_engine::geom::Aabb3::EMPTY)
 }
 
 fn scene_key(app: &SolveApp) -> u64 {
@@ -773,7 +774,8 @@ fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
     let s = &app.session;
     let st = crate::open_meshing::shown_world(app);
     let mut fill_budget = 131_072;
-    let sketch_plane = solidcraft_engine::view::open_sketch_plane(s);
+    // The open sketch's plane in the model this frame shows.
+    let sketch_plane = s.active_sketch.and_then(|id| st.sketch(id)).map(|ss| ss.plane);
     if sketch_plane.is_some() || (app.ui.show_grid && !active_view(app).hide_grid) {
         let (minor, major) = grid_step(app.cam.half_height());
         let mut ext = (app.cam.half_height() * 3.0 / major).ceil() * major;
@@ -1648,6 +1650,15 @@ fn analysis_uniform(app: &SolveApp) -> [f32; 8] {
 /// While Draft, Accessibility or Curvature Map analysis is on, what each of its colours means and
 /// the values it stands for, at the bottom left of the viewport (#973). The colours alone don't
 /// say, and with colour vision loss they can be hard to tell apart.
+/// Why the model cannot be placed, across the bottom of the viewport, while it cannot: the
+/// viewport then shows no placed bodies (see `open_meshing::session_world`).
+fn placement_note(app: &SolveApp, painter: &egui::Painter, rect: Rect) {
+    let Some(why) = crate::open_meshing::placement_error(&app.session) else { return };
+    let t = Tokens::get();
+    let text = format!("The model cannot be placed: {why}");
+    painter.text(pos2(rect.center().x, rect.bottom() - 24.0), Align2::CENTER_BOTTOM, text, FontId::proportional(t.font_button), t.error);
+}
+
 fn analysis_legend(app: &SolveApp, painter: &egui::Painter, rect: Rect) {
     use solidcraft_engine::SurfaceAnalysis as A;
     let t = Tokens::get();
@@ -2529,6 +2540,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         crate::pick_buffer::paint(app, ui.ctx(), &painter, &proj);
     }
     analysis_legend(app, &painter, rect);
+    placement_note(app, &painter, rect);
     crate::frame_rate::paint(app, ui.ctx(), &painter, rect);
 
     // ---- interaction ----
@@ -3122,7 +3134,7 @@ fn dragged_with(app: &SolveApp, id: &str) -> Vec<String> {
     let rest: Vec<String> = selected().filter(|s| *s != id).map(str::to_owned).collect();
     // A curve's own points, selected with it by a window, are not a group: a circle grabbed on
     // its edge still takes its radius from the drag.
-    let st = app.session.world_state();
+    let st = crate::open_meshing::session_world(&app.session);
     let own: Vec<&str> = app
         .session
         .active_sketch
@@ -3154,7 +3166,7 @@ pub(crate) fn picked_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Vec
 /// Expand a visible rim or surface into the kernel pieces a command needs. The original
 /// face pick keeps its point (used by tools such as Hole and construction geometry).
 pub(crate) fn grouped_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Vec<Sel> {
-    let st = s.world_state();
+    let st = crate::open_meshing::session_world(s);
     match sel {
         Sel::Edge { body, index, .. } => {
             if let Some(b) = st.body(body) {
@@ -3450,7 +3462,7 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
 /// drawn too (#3267). Not the sketch's origin, projected points, or a sketch's points while it
 /// hides them.
 pub(crate) fn standalone_points(app: &SolveApp) -> Vec<Vec3> {
-    let st = app.session.world_state();
+    let st = crate::open_meshing::session_world(&app.session);
     let mut out = Vec::new();
     for sid in visible_sketches(app) {
         if app.session.active_sketch == Some(sid) {
@@ -4224,7 +4236,7 @@ mod tests {
         app.fit_view();
         const SIZE: u32 = 256;
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
-        let body = app.session.world_state().bodies[0].clone();
+        let body = app.session.world_state().unwrap().bodies[0].clone();
         let faces = body.body.face_count();
         let mut render = |tess: bool, hover: Option<usize>| {
             app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess });
@@ -4445,7 +4457,7 @@ mod tests {
         }
         let mut h = crate::scenario::Harness::new();
         h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20})).unwrap();
-        h.app.cam = solidcraft_engine::view::home_camera(&h.app.session);
+        h.app.cam = solidcraft_engine::view::home_camera(&h.app.session).unwrap();
         for dark in [false, true, false] {
             h.app.ui.dark = dark;
             let img = crate::control::view_rgba(&h.app, 160, 120).unwrap();
@@ -4476,7 +4488,7 @@ mod tests {
         }
         let mut h = crate::scenario::Harness::new();
         h.app.run("solid.box", json!({"length":40,"width":30,"height":20})).unwrap();
-        let cam = solidcraft_engine::view::home_camera(&h.app.session);
+        let cam = solidcraft_engine::view::home_camera(&h.app.session).unwrap();
         let whole = pixels(&mut h, cam);
         let before = h.app.session.doc.clone();
         let undo = h.app.session.undo.len();
@@ -4516,7 +4528,7 @@ mod tests {
             let geometry = feature_geometry(&h.app, id);
             assert_eq!(geometry.len(), 1, "{command}: {geometry:?}");
             let Sel::Face { body, index, .. } = &geometry[0] else { panic!("a modifier must highlight its face") };
-            let st = h.app.session.world_state();
+            let st = h.app.session.world_state().unwrap();
             let m = st.body(body).unwrap().mesh();
             let triangles = m.tri_face.iter().filter(|f| **f as usize == *index).count();
             assert!(triangles > 0 && triangles < m.triangles.len());
@@ -4608,7 +4620,7 @@ mod tests {
             app.cam.distance = 500.0;
             hover_frame(&mut app, &ctx, vec![]);
             let proj = projection(&app, app.viewport.rect.unwrap());
-            let st = app.session.world_state();
+            let st = app.session.world_state().unwrap();
             let m = st.body("Body1").unwrap().mesh();
             let mut checked = 0;
             for (ei, e) in m.edges.iter().enumerate() {
@@ -5279,7 +5291,7 @@ mod tests {
         for tess in [true, false] {
             let mut app = cylinder_app();
             app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess });
-            let body = app.session.world_state().bodies[0].clone();
+            let body = app.session.world_state().unwrap().bodies[0].clone();
             let before = build_scene(&app).merged();
             let key = scene_key(&app);
             assert!(app.viewport.lod.lock().unwrap().force(&body, current(), 2));
@@ -5370,7 +5382,7 @@ mod tests {
     #[test]
     fn whole_body_highlight_preserves_each_triangle_and_selected_face_once() {
         let mut app = cylinder_app();
-        let body = app.session.world_state().bodies[0].clone();
+        let body = app.session.world_state().unwrap().bodies[0].clone();
         let expected = shown_mesh(&app, &body, &None).triangles.len() * 3 * crate::gpu::TRI_SIZE;
         app.viewport.hover_bodies = vec![body.name.clone()];
         for selected in
@@ -5397,7 +5409,7 @@ mod tests {
         .unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
         app.ui.ground_shadow = false;
-        let st = app.session.world_state();
+        let st = app.session.world_state().unwrap();
         let b = st.bodies.first().unwrap();
         let mesh = b.mesh();
         assert_eq!(mesh.edges.len(), 1536);
@@ -5420,14 +5432,14 @@ mod tests {
         let mut without_display_mask = (*mesh).clone();
         without_display_mask.smooth_edges.clear();
         assert_eq!(mesh.surface_patch(mesh.edge_faces[smooth][0] as usize), without_display_mask.surface_patch(mesh.edge_faces[smooth][0] as usize));
-        let cam = solidcraft_engine::view::home_camera(&app.session);
-        let cpu = solidcraft_engine::view::scene(&app.session, &cam);
+        let cam = solidcraft_engine::view::home_camera(&app.session).unwrap();
+        let cpu = solidcraft_engine::view::scene(&app.session, &cam).unwrap();
         let actual_edges = cpu.lines.iter().filter(|line| line.color == solidcraft_engine::view::colors::EDGE).count();
         assert_eq!(actual_edges, mesh.edges.iter().enumerate().filter(|(i, _)| mesh.shaded_edge_visible(*i)).count());
         if let Ok(directory) = solidcraft_engine::geom::env::var("SMOOTH_SCREENSHOTS").ok_or(()) {
             std::fs::create_dir_all(&directory).unwrap();
             for (name, old_edges, wireframe) in [("after", false, false), ("before", true, false), ("wireframe", true, true)] {
-                let mut scene = solidcraft_engine::view::scene(&app.session, &cam);
+                let mut scene = solidcraft_engine::view::scene(&app.session, &cam).unwrap();
                 scene.lines.retain(|line| line.color == solidcraft_engine::view::colors::EDGE);
                 if old_edges {
                     scene.lines.clear();
@@ -5474,7 +5486,7 @@ mod tests {
         }
         s.execute("solid.extrude", &json!({"sketch":sketch,"distance":3})).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
-        let st = app.session.world_state();
+        let st = app.session.world_state().unwrap();
         let body = st.bodies.first().unwrap();
         let mesh = body.mesh();
         let crease = mesh
@@ -5505,7 +5517,7 @@ mod tests {
     #[test]
     fn circular_items_measure_as_whole_rims_and_surfaces() {
         let mut app = cylinder_app();
-        let st = app.session.world_state();
+        let st = app.session.world_state().unwrap();
         let b = &st.bodies[0];
         let m = b.mesh();
         let edges: Vec<Sel> = m
@@ -5579,7 +5591,7 @@ mod tests {
     #[test]
     fn circular_rim_hover_click_and_dialog_pick_include_both_halves() {
         let mut app = cylinder_app();
-        let st = app.session.world_state();
+        let st = app.session.world_state().unwrap();
         let b = &st.bodies[0];
         let m = b.mesh();
         let top = m.edges.iter().position(|e| e.len() > 3 && e.iter().all(|p| (p.z - 20.0).abs() < 1e-6)).unwrap();
@@ -5626,7 +5638,7 @@ mod tests {
     #[test]
     fn curved_face_hover_selection_and_dialogs_cross_the_seam() {
         let mut app = cylinder_app();
-        let st = app.session.world_state();
+        let st = app.session.world_state().unwrap();
         let b = &st.bodies[0];
         let m = b.mesh();
         let faces = m.edge_faces.iter().zip(&m.seams).find(|(_, seam)| **seam).unwrap().0;
@@ -5659,7 +5671,7 @@ mod tests {
         let cap = (0..b.body.face_count()).find(|&i| m.surface_patch(i).len() == 1).unwrap();
         assert_eq!(m.surface_patch(cap), vec![cap]);
         app.session.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10})).unwrap();
-        let st = app.session.world_state();
+        let st = app.session.world_state().unwrap();
         let box_body = st.bodies.last().unwrap();
         for i in 0..box_body.body.face_count() {
             assert_eq!(box_body.mesh().surface_patch(i), vec![i]);
@@ -6568,7 +6580,7 @@ mod tests {
         h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
         let made = h.app.run("sketch.line", json!({"points": [[-30, -20], [30, 20]]})).unwrap();
         h.app.run("sketch.constraint.fix", json!({"entity": made["created"]["curves"][0]})).unwrap();
-        let mut cam = solidcraft_engine::view::home_camera(&h.app.session);
+        let mut cam = solidcraft_engine::view::home_camera(&h.app.session).unwrap();
         cam.set_view(solidcraft_engine::render::StandardView::Top);
         h.app.cam = cam;
         let count = |h: &crate::scenario::Harness, c: Color32| {

@@ -1030,6 +1030,9 @@ fn explode_show(s: &mut Session, p: &Value) -> Result<Value> {
             r[1] += t.y;
             r[2] += t.z;
         }
+        if !solidcraft_doc::is_placement(&m) {
+            return Err(bad(cmd, format!("exploded view `{}` moves an occurrence out of range", v.name)));
+        }
         s.pending_moves.insert(*o, m);
     }
     s.revision += 1;

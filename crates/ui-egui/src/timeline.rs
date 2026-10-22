@@ -344,7 +344,7 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                 .map(|f| (f.id, f.name.clone(), icon_of(&f.kind), f.suppressed, f.kind.type_name(), TimelineKind::of(&f.kind)))
                 .collect();
             // The feature whose body is under the cursor in the viewport.
-            let st = app.session.world_state();
+            let st = crate::open_meshing::session_world(&app.session);
             let from_view = match &app.viewport.hover {
                 Some(
                     crate::viewport::Hit::Face { body, .. } | crate::viewport::Hit::Edge { body, .. } | crate::viewport::Hit::Vertex { body, .. },
@@ -556,7 +556,7 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
 
 /// Select what a feature made, so the browser shows it.
 fn find_in_browser(app: &mut SolveApp, id: u64) {
-    let st = app.session.world_state();
+    let st = crate::open_meshing::session_world(&app.session);
     let bodies: Vec<serde_json::Value> = st.bodies.iter().filter(|b| b.feature == id).map(|b| json!({"type": "body", "name": b.name})).collect();
     let items = if bodies.is_empty() { vec![json!({"type": "feature", "id": id})] } else { bodies };
     let _ = app.run("select.set", json!({ "items": items }));

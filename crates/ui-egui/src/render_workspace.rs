@@ -502,7 +502,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         let mut visibility = std::collections::hash_map::DefaultHasher::new();
         app.session.visibility.hidden_bodies.hash(&mut visibility);
         app.session.visibility.hidden_occurrences.hash(&mut visibility);
-        let signature = (app.session.revision, Arc::as_ptr(&app.session.world_state()) as usize, visibility.finish());
+        let signature = (app.session.revision, Arc::as_ptr(&crate::open_meshing::session_world(&app.session)) as usize, visibility.finish());
         if app.render_workspace.scene_signature != Some(signature) {
             let scene = solidcraft_engine::product_scene::extract(&app.session).map_err(|e| e.to_string())?;
             let (key, gpu) = gpu_scene(&scene)?;

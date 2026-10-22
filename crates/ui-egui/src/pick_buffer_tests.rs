@@ -24,7 +24,7 @@ const RECT: Rect = Rect { min: pos2(0.0, 0.0), max: pos2(640.0, 480.0) };
 
 /// Installs the pass's scene, as `paint` makes it, and returns the view's key.
 fn install_scene(app: &SolveApp, proj: &Proj) -> u64 {
-    let st = app.session.world_state();
+    let st = app.session.world_state().unwrap();
     let model = model_key(app, &st);
     let s = scene(app, &st, model).unwrap();
     *app.viewport.pick_buffer.scene.lock().unwrap() = Some(s);
@@ -44,7 +44,7 @@ fn a_tile_names_the_edges_the_picker_tests() {
     let Some(Hit::Edge { index, body, .. }) = cpu.iter().find(|h| matches!(h, Hit::Edge { .. })).cloned() else { panic!("{cpu:?}") };
     assert!(app.viewport.pick_buffer.want.lock().unwrap().is_some(), "no tile yet: one is asked for");
     let key = install_scene(&app, &proj);
-    let st = app.session.world_state();
+    let st = app.session.world_state().unwrap();
     let bi = st.bodies.iter().position(|b| b.name == body).unwrap();
     let s = app.viewport.pick_buffer.scene.lock().unwrap().clone().unwrap();
     let id = s.edges.iter().position(|&(b, e)| b as usize == bi && e as usize == index).unwrap() as u32 + 1;
@@ -69,7 +69,7 @@ fn a_tile_names_the_edges_the_picker_tests() {
     let mut wire = app;
     wire.ui.visual_style = 2;
     wire.viewport.pick_buffer.out.lock().unwrap().tiles = vec![tile(vec![0; n])];
-    assert!(edges_near(&wire, &proj, at, &wire.session.world_state()).is_none());
+    assert!(edges_near(&wire, &proj, at, &wire.session.world_state().unwrap()).is_none());
 }
 
 /// On a real device: the pass drawn for the view, and picks over a grid of the view helped by its

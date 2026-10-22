@@ -67,7 +67,7 @@ pub(super) fn face_ref(s: &Session, v: &Value, body: Option<&str>, cmd: &str) ->
         if name.is_empty() || name.len() > 512 {
             return Err(bad(cmd, "a face name is 1…512 characters"));
         }
-        let st = if crate::frames::mapped() { s.model.state() } else { s.world_state() };
+        let st = if crate::frames::mapped() { s.model.state() } else { s.world_state()? };
         return solidcraft_doc::naming::named_face_point(&st, body, name).map_err(|why| bad(cmd, why));
     }
     vec3(v).or_else(|| v.get("point").and_then(vec3)).ok_or_else(|| bad(cmd, "a face is a point [x, y, z] on it, or its name from model.faces"))

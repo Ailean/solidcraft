@@ -2,8 +2,8 @@
 
 use std::f64::consts::FRAC_PI_2;
 
+use solidcraft_geom::brep::eval::SurfaceEval;
 use solidcraft_geom::{Loop2, Plane, Seg2, Vec2, Vec3};
-use truck_modeling::{self as mt, SearchNearestParameter};
 
 use crate::*;
 
@@ -43,16 +43,14 @@ fn tube() -> Body {
 
 /// Each face's mesh area, and how far its triangles' centroids lie off its surface at most.
 fn per_face(body: &Body, mesh: &solidcraft_geom::Mesh) -> Vec<(f64, f64)> {
-    use mt::ParametricSurface;
-    let faces: Vec<&mt::Face> = body.solid.face_iter().collect();
+    let faces: Vec<SurfaceEval> = body.record().faces.iter().map(|f| SurfaceEval::new(&f.surface).unwrap()).collect();
     let mut out = vec![(0.0, 0.0f64); faces.len()];
     for (t, &f) in mesh.triangles.iter().zip(&mesh.tri_face) {
-        let ([a, b, c], Some(face), Some(slot)) = (mesh.tri(t).unwrap(), faces.get(f as usize), out.get_mut(f as usize)) else { continue };
+        let ([a, b, c], Some(surface), Some(slot)) = (mesh.tri(t).unwrap(), faces.get(f as usize), out.get_mut(f as usize)) else { continue };
         slot.0 += (b - a).cross(c - a).len() / 2.0;
         let g = (a + b + c) / 3.0;
-        let surface = face.oriented_surface();
-        let (u, v) = surface.search_nearest_parameter(mt::Point3::new(g.x, g.y, g.z), None, 50).unwrap();
-        slot.1 = slot.1.max(crate::body::from_p3(surface.subs(u, v)).dist(g));
+        let uv = surface.project(g, None, f64::INFINITY).unwrap();
+        slot.1 = slot.1.max(surface.point(uv).unwrap().dist(g));
     }
     out
 }

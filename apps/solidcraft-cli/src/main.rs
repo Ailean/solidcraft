@@ -12,7 +12,7 @@
 //! solidcraft-cli commands                                     the command registry as JSON
 //! solidcraft-cli recipe <recipe.json>                         translate an oracle recipe to a script
 //! solidcraft-cli oracle <case-dir>...                         replay recipes and compare with expected.json
-//! solidcraft-cli kernel-cases [--json] <case-dir>...           the kernel regression rig (tests/kernel-cases)
+//! solidcraft-cli kernel-cases [--json] [--dumps=DIR] <case-dir>... the kernel regression rig (tests/kernel-cases)
 //! solidcraft-cli mcp [--in design|script] [--connect HOST:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
 //!                    [--param-check off|warn|strict]
 //!                                                             MCP server on stdio (docs/mcp.md)
@@ -74,8 +74,9 @@ const USAGE: &str = "usage:
   solidcraft-cli commands
   solidcraft-cli recipe <recipe.json>
   solidcraft-cli oracle <case-dir>... [--json]
-  solidcraft-cli kernel-cases <case-dir>... [--json]
-      (the kernel regression rig, tests/kernel-cases; SOLIDCRAFT_KERNEL picks the kernel)
+  solidcraft-cli kernel-cases <case-dir>... [--json] [--dumps=DIR]
+      (the kernel regression rig, tests/kernel-cases; SOLIDCRAFT_KERNEL picks the kernel; --dumps: each case's
+       failing SMLib calls leave their inputs for replay in DIR/<area>-<case>)
   solidcraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]
   solidcraft-cli mcp [--in design.solidcraft|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
                      [--param-check off|warn|strict]

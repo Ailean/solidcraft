@@ -1015,6 +1015,61 @@ struct Edge {
     mid: V3,
 }
 
+/// A trimmed surface as read, before sewing: surface, boundary loops of curve pieces head to
+/// tail, colour.
+struct FaceS {
+    surface: u64,
+    loops: Vec<Vec<Seg>>,
+    color: Option<[f32; 3]>,
+}
+
+/// Trimmed surfaces sewn by their shared edges. A boundary loop is one closed curve: each piece
+/// ends where the next one starts (IGES 5.3, 4.24 composite curve, and 4.34/4.35 a trimmed
+/// surface's boundaries are closed curves), so each meeting point of two pieces is one vertex
+/// even where the file's pieces miss it by more than the sewing tolerance. A vertex then lies
+/// off a curve by that much, which the STEP reader takes as its tolerance.
+fn sew(sw: &mut Sewer, faces: Vec<FaceS>) -> Vec<FaceB> {
+    // Every piece's end vertices, then the vertices each meeting point joins made one.
+    let ends: Vec<Vec<Vec<[usize; 2]>>> =
+        faces.iter().map(|f| f.loops.iter().map(|l| l.iter().map(|s| [sw.vertex(s.a), sw.vertex(s.b)]).collect()).collect()).collect();
+    let mut same: Vec<usize> = (0..sw.verts.len()).collect();
+    fn root(same: &mut [usize], mut i: usize) -> usize {
+        while let Some(&p) = same.get(i) {
+            if p == i {
+                break;
+            }
+            let up = same.get(p).copied().unwrap_or(p);
+            if let Some(slot) = same.get_mut(i) {
+                *slot = up;
+            }
+            i = p;
+        }
+        i
+    }
+    for l in ends.iter().flatten() {
+        for (k, e) in l.iter().enumerate() {
+            let Some(next) = l.get((k + 1) % l.len()) else { continue };
+            let (a, b) = (root(&mut same, e[1]), root(&mut same, next[0]));
+            if let Some(slot) = same.get_mut(a.max(b)) {
+                *slot = a.min(b);
+            }
+        }
+    }
+    faces
+        .into_iter()
+        .zip(ends)
+        .map(|(f, ends)| {
+            let loops = f
+                .loops
+                .iter()
+                .zip(ends)
+                .map(|(l, e)| l.iter().zip(e).map(|(s, [a, b])| sw.edge_between(s, root(&mut same, a), root(&mut same, b))).collect())
+                .collect();
+            FaceB { surface: f.surface, sense: true, loops, color: f.color }
+        })
+        .collect()
+}
+
 /// A face being assembled: surface, sense, loops of (edge, forward), colour.
 struct FaceB {
     surface: u64,
@@ -1058,6 +1113,10 @@ impl Sewer {
     /// the segment runs along it.
     fn edge(&mut self, s: &Seg) -> (usize, bool) {
         let (a, b) = (self.vertex(s.a), self.vertex(s.b));
+        self.edge_between(s, a, b)
+    }
+    /// [`Sewer::edge`] for a segment from vertex `a` to vertex `b`.
+    fn edge_between(&mut self, s: &Seg, a: usize, b: usize) -> (usize, bool) {
         let key = (a.min(b), a.max(b));
         let close = |x: V3, y: V3| norm(sub(x, y)) <= self.tol * 10.0 + 1e-9;
         if let Some(list) = self.by_ends.get(&key) {
@@ -1152,14 +1211,16 @@ fn color_of(t: &Tr, seq: i64) -> Option<[f32; 3]> {
 
 /// Write faces sewn by `sw` as a shell; the shell's id and whether it closes.
 fn write_shell(o: &mut Out, sw: &Sewer, faces: &[FaceB], styles: &mut Vec<(u64, [f32; 3])>) -> (u64, bool) {
-    let vids: Vec<u64> = sw
-        .verts
-        .iter()
-        .map(|p| {
+    // The vertices this shell's edges use, in the sewer's order.
+    let used: std::collections::BTreeSet<usize> =
+        faces.iter().flat_map(|f| f.loops.iter().flatten()).filter_map(|&(e, _)| sw.edges.get(e)).flat_map(|ed| ed.v).collect();
+    let mut vids: HashMap<usize, u64> = HashMap::new();
+    for v in used {
+        if let Some(p) = sw.verts.get(v) {
             let c = o.point(*p);
-            o.add(format!("VERTEX_POINT('',#{c})"))
-        })
-        .collect();
+            vids.insert(v, o.add(format!("VERTEX_POINT('',#{c})")));
+        }
+    }
     let mut eids: HashMap<usize, u64> = HashMap::new();
     let mut count: HashMap<usize, (usize, usize)> = HashMap::new();
     for &(e, d) in faces.iter().flat_map(|f| f.loops.iter().flatten()) {
@@ -1180,7 +1241,7 @@ fn write_shell(o: &mut Out, sw: &Sewer, faces: &[FaceB], styles: &mut Vec<(u64, 
                 let id = match eids.get(&e) {
                     Some(id) => *id,
                     None => {
-                        let (Some(a), Some(b)) = (vids.get(ed.v[0]), vids.get(ed.v[1])) else { continue };
+                        let (Some(a), Some(b)) = (vids.get(&ed.v[0]), vids.get(&ed.v[1])) else { continue };
                         let id = o.add(format!("EDGE_CURVE('',#{a},#{b},#{},{})", ed.curve, if ed.rev { ".F." } else { ".T." }));
                         eids.insert(e, id);
                         id
@@ -1280,7 +1341,7 @@ fn translate(text: &str) -> std::result::Result<(String, Vec<String>), String> {
         }
     }
     // Trimmed and bounded surfaces not used by anything else: sewn into shells.
-    let mut faces = Vec::new();
+    let mut read = Vec::new();
     let mut sw = Sewer { tol, verts: Vec::new(), grid: HashMap::new(), edges: Vec::new(), by_ends: HashMap::new() };
     if solids.is_empty() {
         for &s in &seqs {
@@ -1288,21 +1349,24 @@ fn translate(text: &str) -> std::result::Result<(String, Vec<String>), String> {
             if de.typ != 144 && de.typ != 143 && !(de.typ == 128 && is_root(&f, s)) {
                 continue;
             }
-            match trimmed(&mut t, &mut sw, s as i64) {
-                Ok(fb) => faces.push(fb),
+            match trimmed(&mut t, s as i64) {
+                Ok(fs) => read.push(fs),
                 Err(e) => t.warn(format!("surface {s}: not read: {e}")),
             }
         }
-        if !faces.is_empty() {
-            orient(&mut faces);
-            let (shell, closed) = write_shell(&mut t.o, &sw, &faces, &mut styles);
+        let mut faces = sew(&mut sw, read);
+        orient(&mut faces);
+        // Each set of surfaces sewn together is a body of its own.
+        for (k, part) in connected(faces).iter().enumerate() {
+            let name = format!("Body{}", k + 1);
+            let (shell, closed) = write_shell(&mut t.o, &sw, part, &mut styles);
             let item = if closed {
-                t.o.add(format!("MANIFOLD_SOLID_BREP('Body1',#{shell})"))
+                t.o.add(format!("MANIFOLD_SOLID_BREP('{name}',#{shell})"))
             } else {
-                t.warn("the surfaces do not close into a solid: imported as an open body");
-                t.o.add(format!("SHELL_BASED_SURFACE_MODEL('Body1',(#{shell}))"))
+                t.warn(format!("{name}: the surfaces do not close into a solid: imported as an open body"));
+                t.o.add(format!("SHELL_BASED_SURFACE_MODEL('{name}',(#{shell}))"))
             };
-            solids.push((item, "Body1".into()));
+            solids.push((item, name));
         }
     }
     if solids.is_empty() {
@@ -1331,6 +1395,46 @@ fn translate(text: &str) -> std::result::Result<(String, Vec<String>), String> {
     Ok((s, t.warnings))
 }
 
+/// The faces in sets joined by the edges they share, each set in the faces' order, the sets in
+/// the order of their first faces.
+fn connected(faces: Vec<FaceB>) -> Vec<Vec<FaceB>> {
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while let Some(&p) = parent.get(i) {
+            if p == i {
+                break;
+            }
+            let up = parent.get(p).copied().unwrap_or(p);
+            if let Some(slot) = parent.get_mut(i) {
+                *slot = up;
+            }
+            i = p;
+        }
+        i
+    }
+    let mut parent: Vec<usize> = (0..faces.len()).collect();
+    let mut by_edge: HashMap<usize, usize> = HashMap::new();
+    for (fi, f) in faces.iter().enumerate() {
+        for &(e, _) in f.loops.iter().flatten() {
+            let other = *by_edge.entry(e).or_insert(fi);
+            let (a, b) = (root(&mut parent, fi), root(&mut parent, other));
+            if let Some(slot) = parent.get_mut(a.max(b)) {
+                *slot = a.min(b);
+            }
+        }
+    }
+    let mut sets: Vec<Vec<FaceB>> = Vec::new();
+    let mut set_of: HashMap<usize, usize> = HashMap::new();
+    for (fi, f) in faces.into_iter().enumerate() {
+        let r = root(&mut parent, fi);
+        let k = *set_of.entry(r).or_insert(sets.len());
+        match sets.get_mut(k) {
+            Some(set) => set.push(f),
+            None => sets.push(vec![f]),
+        }
+    }
+    sets
+}
+
 /// A surface entity nobody refers to (a bare B-spline patch is a face of its own).
 fn is_root(f: &Iges, seq: usize) -> bool {
     let target = seq.to_string();
@@ -1340,14 +1444,13 @@ fn is_root(f: &Iges, seq: usize) -> bool {
 }
 
 /// A trimmed (144) or bounded (143) surface, or a bare B-spline surface, as a face.
-fn trimmed(t: &mut Tr, sw: &mut Sewer, seq: i64) -> R<FaceB> {
+fn trimmed(t: &mut Tr, seq: i64) -> R<FaceS> {
     let de = t.de(seq)?;
     let xf = t.own_xf(seq, 0)?;
     let color = color_of(t, seq);
-    let loop_of = |_t: &mut Tr, sw: &mut Sewer, segs: Vec<Seg>| -> Vec<(usize, bool)> {
-        let tol = sw.tol;
-        segs.iter().filter(|s| norm(sub(s.a, s.b)) > tol || norm(sub(s.a, s.mid)) > tol).map(|s| sw.edge(s)).collect()
-    };
+    let tol = t.tol;
+    let loop_of =
+        |_t: &mut Tr, segs: Vec<Seg>| -> Vec<Seg> { segs.into_iter().filter(|s| norm(sub(s.a, s.b)) > tol || norm(sub(s.a, s.mid)) > tol).collect() };
     match de.typ {
         144 => {
             let surf_seq = t.i(seq, 1)?;
@@ -1356,16 +1459,16 @@ fn trimmed(t: &mut Tr, sw: &mut Sewer, seq: i64) -> R<FaceB> {
             let n2 = t.i(seq, 3)?.clamp(0, MAX_LIST as i64) as usize;
             let mut loops = Vec::new();
             let outer = if n1 == 0 { t.natural_boundary(surf_seq, &xf)? } else { cos_curve(t, t.i(seq, 4)?, &xf, surf_seq)? };
-            loops.push(loop_of(t, sw, outer));
+            loops.push(loop_of(t, outer));
             for k in 0..n2 {
                 let segs = cos_curve(t, t.i(seq, 5 + k)?, &xf, surf_seq)?;
-                loops.push(loop_of(t, sw, segs));
+                loops.push(loop_of(t, segs));
             }
             loops.retain(|l| !l.is_empty());
             if loops.is_empty() {
                 return Err("no boundary".into());
             }
-            Ok(FaceB { surface, sense: true, loops, color })
+            Ok(FaceS { surface, loops, color })
         }
         143 => {
             let surf_seq = t.i(seq, 2)?;
@@ -1375,19 +1478,19 @@ fn trimmed(t: &mut Tr, sw: &mut Sewer, seq: i64) -> R<FaceB> {
             for k in 0..n {
                 let b = t.i(seq, 4 + k)?;
                 let segs = boundary_141(t, b, &xf)?;
-                loops.push(loop_of(t, sw, segs));
+                loops.push(loop_of(t, segs));
             }
             loops.retain(|l| !l.is_empty());
             if loops.is_empty() {
                 return Err("no boundary".into());
             }
-            Ok(FaceB { surface, sense: true, loops, color })
+            Ok(FaceS { surface, loops, color })
         }
         _ => {
             let surface = t.surface(seq, &Xf::ID)?;
             let outer = t.natural_boundary(seq, &Xf::ID)?;
-            let l = loop_of(t, sw, outer);
-            Ok(FaceB { surface, sense: true, loops: vec![l], color })
+            let l = loop_of(t, outer);
+            Ok(FaceS { surface, loops: vec![l], color })
         }
     }
 }
@@ -1418,10 +1521,16 @@ fn cos_curve(t: &mut Tr, seq: i64, xf: &Xf, surface: i64) -> R<Vec<Seg>> {
 }
 
 /// Pieces of a composite curve turned so that each starts where the one before ends, the first
-/// at the end nearer `start` (when known). A closed piece (its ends within `tol`, the sewing
-/// tolerance that decides they are one vertex) keeps its direction.
+/// at the end nearer `start` (when known), else at its end away from the second piece. A closed
+/// piece (its ends within `tol`, the sewing tolerance that decides they are one vertex) keeps
+/// its direction.
 fn head_to_tail(segs: Vec<Seg>, start: Option<V3>, tol: f64) -> Vec<Seg> {
-    let mut prev = start;
+    let from_second = || {
+        let (f, n) = (segs.first()?, segs.get(1)?);
+        let to_second = |p: V3| norm(sub(p, n.a)).min(norm(sub(p, n.b)));
+        Some(if to_second(f.a) < to_second(f.b) { f.b } else { f.a })
+    };
+    let mut prev = start.or_else(from_second);
     segs.into_iter()
         .map(|s| {
             let s = match prev {

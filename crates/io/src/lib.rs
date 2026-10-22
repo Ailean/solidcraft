@@ -926,6 +926,7 @@ mod tests {
                 style: Default::default(),
                 fit: Default::default(),
                 corner: Default::default(),
+                tangent_chain: true,
             },
             None,
         )
@@ -1011,6 +1012,7 @@ mod tests {
                 style: Default::default(),
                 fit: Default::default(),
                 corner: Default::default(),
+                tangent_chain: true,
             },
             None,
         )

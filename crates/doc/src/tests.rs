@@ -115,6 +115,7 @@ fn box_fillet_cut_timeline() {
             style: Default::default(),
             fit: Default::default(),
             corner: Default::default(),
+            tangent_chain: true,
         },
         None,
     )
@@ -187,6 +188,7 @@ fn errors_are_reported_not_fatal() {
             style: Default::default(),
             fit: Default::default(),
             corner: Default::default(),
+            tangent_chain: true,
         },
         None,
     )

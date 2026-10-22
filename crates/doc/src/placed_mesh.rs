@@ -103,7 +103,10 @@ pub(super) fn definition_plan(
 }
 
 pub(super) fn reference_mesh(body: &Body, mesh: &OnceLock<Arc<Mesh>>, tolerance: f64) -> Arc<Mesh> {
-    mesh.get_or_init(|| Arc::new(body.mesh(&solidcraft_kernel::MeshTolerance { chord: tolerance, angle: Some(kernel::DISPLAY_ANGLE) }).unwrap_or_default())).clone()
+    mesh.get_or_init(|| {
+        Arc::new(body.mesh(&solidcraft_kernel::MeshTolerance { chord: tolerance, angle: Some(kernel::DISPLAY_ANGLE) }).unwrap_or_default())
+    })
+    .clone()
 }
 
 /// Only proper rotations and translations preserve triangle winding, normal lengths and the

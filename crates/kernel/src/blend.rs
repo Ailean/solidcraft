@@ -747,3 +747,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "curvecorner_tests.rs"]
+mod corner_tests;

@@ -434,6 +434,7 @@ mod tests {
                             start_offset: None,
                             through_all: false,
                             taper: None,
+                            corner: Default::default(),
                             to: None,
                             to_offset: None,
                             from: None,

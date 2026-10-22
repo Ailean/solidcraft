@@ -2282,6 +2282,11 @@ pub enum PathSeg {
         plane: Plane,
         seg: Seg2,
     },
+    /// A cubic Bézier in space with control points `p`: a span of a drawn 3D sketch spline
+    /// ([`crate::PathPiece::Spline`]).
+    Cubic {
+        p: [Vec3; 4],
+    },
 }
 
 impl PathSeg {
@@ -2290,6 +2295,17 @@ impl PathSeg {
         match *self {
             PathSeg::Line { a, .. } | PathSeg::Arc { a, .. } => a,
             PathSeg::Curve { plane, seg } => plane.to_world(seg.start()),
+            PathSeg::Cubic { p } => p[0],
+        }
+    }
+
+    /// Where the segment ends.
+    pub fn end(&self) -> Vec3 {
+        match *self {
+            PathSeg::Line { b, .. } => b,
+            PathSeg::Arc { a, center, axis, angle } => axis.normalized().map_or(a, |k| rotate_about(a, center, k, angle)),
+            PathSeg::Curve { plane, seg } => plane.to_world(seg.end()),
+            PathSeg::Cubic { p } => p[3],
         }
     }
 
@@ -2308,6 +2324,9 @@ impl PathSeg {
             PathSeg::Curve { plane, seg } => {
                 Some((plane.dir_to_world(seg.start_tangent()).normalized()?, plane.dir_to_world(seg.end_tangent()).normalized()?))
             }
+            PathSeg::Cubic { p } => {
+                Some((crate::point_path::cubic_derivative(&p, 0.0).normalized()?, crate::point_path::cubic_derivative(&p, 1.0).normalized()?))
+            }
         }
     }
 
@@ -2319,6 +2338,12 @@ impl PathSeg {
                 PathSeg::Curve { plane, seg } => {
                     seg.polyline(1e-2).windows(2).map(|q| PathSeg::Line { a: plane.to_world(q[0]), b: plane.to_world(q[1]) }).collect()
                 }
+                PathSeg::Cubic { p } => std::iter::once(p[0])
+                    .chain(crate::point_path::cubic_polyline(&p, 1e-2))
+                    .collect::<Vec<_>>()
+                    .windows(2)
+                    .map(|q| PathSeg::Line { a: q[0], b: q[1] })
+                    .collect(),
                 _ => vec![*s],
             })
             .collect()
@@ -2329,6 +2354,7 @@ impl PathSeg {
         match *self {
             PathSeg::Line { b, .. } => vec![b],
             PathSeg::Curve { plane, seg } => seg.polyline(tol).into_iter().skip(1).map(|q| plane.to_world(q)).collect(),
+            PathSeg::Cubic { p } => crate::point_path::cubic_polyline(&p, tol),
             PathSeg::Arc { a, center, axis, angle } => {
                 let Some(k) = axis.normalized() else { return vec![a] };
                 let r = (a - center).len();
@@ -2466,7 +2492,7 @@ pub fn sweep(plane: &Plane, region: &Region2, path: &[PathSeg]) -> Result<Body> 
                         builder::rsweep(&cur, p3(center), v3(ax), mt::Rad(angle))
                     }
                     // The path was flattened: no curves are left.
-                    PathSeg::Curve { .. } => return Err(KernelError::Invalid("a free-form path curve".into())),
+                    PathSeg::Curve { .. } | PathSeg::Cubic { .. } => return Err(KernelError::Invalid("a free-form path curve".into())),
                 };
                 let next = part
                     .extract_boundaries()

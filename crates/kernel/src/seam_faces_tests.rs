@@ -37,12 +37,9 @@ fn pressed_volume() -> f64 {
     10.0 * segment
 }
 
-/// The boolean, which must be exact: no retry that moves the tool or ignores part of where the
-/// bodies meet.
+/// The boolean, which must succeed (SMLib's, exact: there is no other).
 fn exact(a: &Body, b: &Body, op: BoolOp) -> Option<Body> {
-    let (r, report) = capture_boolean_diagnostics(|| boolean(a, b, op));
-    assert!(report.warning().is_none(), "{op:?}: {:?}", report.warning());
-    r.unwrap()
+    boolean(a, b, op).unwrap()
 }
 
 #[test]

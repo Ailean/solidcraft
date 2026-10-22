@@ -6114,23 +6114,3 @@ dependencies = [
  "syn 3.0.6",
  "winnow",
 ]
-
-[[patch.unused]]
-name = "matext4cgmath"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "truck-geometry"
-version = "0.5.0"
-
-[[patch.unused]]
-name = "truck-meshalgo"
-version = "0.4.0"
-
-[[patch.unused]]
-name = "truck-shapeops"
-version = "0.4.0"
-
-[[patch.unused]]
-name = "truck-stepio"
-version = "0.3.0"

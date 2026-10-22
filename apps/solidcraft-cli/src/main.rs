@@ -75,7 +75,7 @@ const USAGE: &str = "usage:
   solidcraft-cli recipe <recipe.json>
   solidcraft-cli oracle <case-dir>... [--json]
   solidcraft-cli kernel-cases <case-dir>... [--json] [--dumps=DIR]
-      (the kernel regression rig, tests/kernel-cases; SOLIDCRAFT_KERNEL picks the kernel; --dumps: each case's
+      (the kernel regression rig, tests/kernel-cases, on SMLib; --dumps: each case's
        failing SMLib calls leave their inputs for replay in DIR/<area>-<case>)
   solidcraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]
   solidcraft-cli mcp [--in design.solidcraft|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]

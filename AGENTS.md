@@ -15,7 +15,7 @@ new uses of it anywhere else. Public docs/web/Flatpak deployments use project Pa
 `/solidcraft/`; do not add permanent old-name Pages aliases.
 
 ## The `kernel-smlib` branch
-This branch replaces `truck` with NVIDIA's SMLib (usd-brep, Apache-2.0), reached through
+This branch replaced `truck` with NVIDIA's SMLib (usd-brep, Apache-2.0), reached through
 solidcore's API (ADR 0002). Until it merges back, these rules differ from `main`'s:
 - **SMLib C++ is allowed** in the forked library tangency-labs/smlib, linked statically into the
   app behind C shims. The shims catch every C++ exception and return status codes; no C++ type
@@ -31,13 +31,11 @@ solidcore's API (ADR 0002). Until it merges back, these rules differ from `main`
   engine and doc. A thread is a helical sweep in the kernel; its ISO size table, the check that
   refuses a thread off its hole's or shaft's size, and multi-start threads (an array of helical
   sweeps) are sugar.
-- **One switch picks the kernel**: in a build with the feature, `SOLIDCRAFT_KERNEL=smlib` (read
-  once per process; `truck` or unset is the default) runs every operation that has an SMLib path
-  through SMLib; operations ask `solidcraft_kernel::backend()` (`crates/kernel/src/backend.rs`).
-  Booleans go through SMLib with SMLib's own history (`crates/kernel/src/smlib_boolean.rs`), shell, offset faces and thicken
-  likewise (`crates/kernel/src/offset_backend.rs`). The
-  engine and `solidcraft-cli` pass the feature on as their own `smlib`. Set to `smlib` in a build
-  without the feature, or to anything else, those operations fail rather than running truck.
+- **SMLib is the kernel.** A body is its schema 4 record (`solidcraft_geom::brep`) and its SMLib
+  body, built from the record on first use (`Body::record`, `Body::smlib`); every operation runs on
+  SMLib or on the record, exactly. Without the `smlib` feature the kernel builds and every
+  geometric operation answers that SMLib was not built. The engine and `solidcraft-cli` pass the
+  feature on as their own `smlib`. There is no other kernel and no fallback to one.
 - **wasm is not checked** on this branch until the owner decides it.
 - **OpenCASCADE is never read, built or linked**, including usd-brep's former OCCT translators.
 - **No CI runs** for pull requests into this branch for now (owner).
@@ -68,8 +66,9 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   returns an error ("not supported yet: …"); it never panics.
 - **Input-derived numbers are hostile** (command parameters, design files, control-channel
   input): `get()` not `[i]`, finite checks, caps on sizes and loop counts.
-- **Third-party kernel calls are guarded:** everything that calls `truck` goes through
-  `solidcraft_kernel::guard`, which turns a panic into `KernelError::Internal`.
+- **Third-party kernel calls are guarded:** SMLib's C API catches every C++ exception and returns a
+  status; the kernel's own geometry runs under `solidcraft_kernel::guard`, which turns a panic into
+  `KernelError::Internal`.
 - **Last-resort guard:** `Session::execute` runs every command under `catch_unwind`; an escaped
   panic restores the design and reports `EngineError::Internal`.
 - **Crash reports:** the desktop app writes every panic and every unclean exit to a local crash folder,
@@ -113,7 +112,7 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   clicks (`ui.start`) start interactive tools and dialogs, which then run commands.
 - **Layering** is enforced by `cargo xtask layers`: L0 `geom` → L1 `sketch`, `smlib`, `step`, `kernel`, `render`
   → L2 `doc` → L3 `io` → L4 `engine` → L5 `ui-egui` → apps. Nothing below L5 depends on
-  egui/eframe/winit/wgpu/rfd. **The UI crate is swappable.** Only `crates/kernel` may use `truck` or call solidcore/SMLib.
+  egui/eframe/winit/wgpu/rfd. **The UI crate is swappable.** Only `crates/kernel` may call solidcore/SMLib.
 - **The UI is thin**: panels read engine state and act through `app.run(id, params)` /
   `app.start(id)`. Colours come from `theme::Tokens`.
 - **One set of camera controls**: every page or canvas with a camera (viewport, Render

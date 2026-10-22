@@ -382,19 +382,8 @@ fn thread_on(st: &ModelState, feature: u64, p: Vec3, designation: Option<&str>, 
     })
 }
 
-/// The helical space between the teeth of a modelled ISO metric thread (ISO 68-1 basic
-/// profile, 60° flanks): cut from the shaft (external) or the hole wall (internal), running from
-/// `start` to `end` along the axis. `radius` is the face's own radius; `open` says which ends
-/// of the threaded length are free ends of the face.
-/// The groove of [`thread_groove_shape`] as the faceted solid the truck kernel cuts.
-fn thread_groove(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Result<solidcraft_geom::Mesh> {
-    let g = thread_groove_shape(t, radius, open)?;
-    Ok(kernel::sweep_helix_mesh(&g.plane, &g.section, g.base, g.axis, g.pitch, g.turns, g.stations)?)
-}
-
 /// A thread's groove as a screw sweep: its trapezoid `section` in `plane` (an axial plane
-/// through `base`), carried `turns` turns about `axis` through `base`, rising `pitch` per turn;
-/// `stations` per turn where it is faceted.
+/// through `base`), carried `turns` turns about `axis` through `base`, rising `pitch` per turn.
 struct GrooveShape {
     plane: Plane,
     section: [Vec2; 4],
@@ -402,10 +391,12 @@ struct GrooveShape {
     axis: Vec3,
     pitch: f64,
     turns: f64,
-    stations: usize,
 }
 
-/// The shape of [`thread_groove`].
+/// The helical space between the teeth of a modelled ISO metric thread (ISO 68-1 basic
+/// profile, 60° flanks): cut from the shaft (external) or the hole wall (internal), running from
+/// `start` to `end` along the axis. `radius` is the face's own radius; `open` says which ends
+/// of the threaded length are free ends of the face.
 fn thread_groove_shape(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Result<GrooveShape> {
     let (p, d) = (t.pitch, t.major_diameter);
     let h = p * 3f64.sqrt() / 2.0;
@@ -473,19 +464,10 @@ fn thread_groove_shape(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Resul
     let base = t.axis_point + k * s0;
     let plane = Plane { origin: base, x: u, y: *k };
     let section = [Vec2::new(r0, -w0), Vec2::new(r1, -w1), Vec2::new(r1, w1), Vec2::new(r0, w0)];
-    // Keep radial chord error below 1% of the pitch, rather than a fixed fraction of the
-    // diameter. At 48 stations a large fine thread cuts too deeply; its outer tool facets
-    // can even dip under the shaft surface. The existing coarse sizes still use 48.
-    let outer = r0.abs().max(r1.abs());
-    if !outer.is_finite() {
+    if !(r0.is_finite() && r1.is_finite()) {
         return Err(DocError::Invalid("thread dimensions are too large".into()));
     }
-    let angle = (1.0 - (p * 0.01 / outer).min(1.0)).acos();
-    let stations = (std::f64::consts::PI / angle).ceil().max(48.0);
-    if !stations.is_finite() || stations > 720.0 {
-        return Err(DocError::Invalid("the modelled thread is too fine for this diameter; use a cosmetic thread".into()));
-    }
-    Ok(GrooveShape { plane, section, base, axis: *k, pitch: p, turns: (s1 - s0) / p, stations: stations as usize })
+    Ok(GrooveShape { plane, section, base, axis: *k, pitch: p, turns: (s1 - s0) / p })
 }
 
 /// A constant fillet of `edges`; with [`FilletFit::Reduce`](crate::FilletFit::Reduce), a radius too

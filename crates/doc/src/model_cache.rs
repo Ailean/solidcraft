@@ -210,9 +210,6 @@ impl Model {
                 if let Some(w) = &r.warning {
                     f["warning"] = json!(w);
                 }
-                if r.boolean_diagnostics != kernel::BooleanDiagnostics::default() {
-                    f["diagnostics"] = serde_json::to_value(&r.boolean_diagnostics).map_err(|e| kernel::KernelError::Invalid(e.to_string()))?;
-                }
                 features.push(f);
             }
             let records = json!({
@@ -390,10 +387,6 @@ impl Model {
                 name: f.name.clone(),
                 error: None,
                 warning: r.get("warning").map(|w| text(Some(w))).transpose()?,
-                boolean_diagnostics: match r.get("diagnostics") {
-                    Some(d) => serde_json::from_value(d.clone()).map_err(|_| bad("saved model: diagnostics"))?,
-                    None => Default::default(),
-                },
                 ms,
                 skipped: r.get("skipped").and_then(Json::as_bool).ok_or_else(|| bad("saved model: skipped"))?,
                 stale: false,
@@ -409,7 +402,6 @@ impl Model {
                     CachedEval {
                         error: None,
                         warning: result.warning.clone(),
-                        boolean_diagnostics: result.boolean_diagnostics.clone(),
                         ms,
                         bytes: result.state.retained_bytes(),
                         state: result.state.clone(),

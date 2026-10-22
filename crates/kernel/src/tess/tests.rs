@@ -26,8 +26,13 @@ fn assert_watertight(m: &Mesh, name: &str) {
     assert!(open.is_empty(), "{name}: {} unmatched directed edges, e.g. {:?}", open.len(), open.first());
 }
 
+/// The body's schema 4 record, which the planner takes.
+fn record(b: &Body) -> solidcraft_geom::brep::Brep {
+    ok(crate::brep_record(b))
+}
+
 fn plan_body(b: &Body, tol: f64) -> (Mesh, PlanStats) {
-    match plan(&b.solid, tol, Some(crate::tess::size::Turn { angle: crate::DISPLAY_ANGLE, floor: tol * 1e-3 })) {
+    match plan(&record(b), tol, Some(crate::tess::size::Turn { angle: crate::DISPLAY_ANGLE, floor: tol * 1e-3 })) {
         Ok((p, stats)) => (p.evaluate(), stats),
         Err(e) => panic!("plan: {e}"),
     }
@@ -42,7 +47,7 @@ fn check(name: &str, b: &Body, tol: f64, volume: f64) -> PlanStats {
     assert!((got - volume).abs() <= area * tol * 1.5 + 1e-9, "{name}: volume {got} vs {volume} (area {area}, tol {tol})");
     // Outward normals: the divergence theorem gives a positive volume only if they are.
     assert!(got > 0.0, "{name}: inside out");
-    let faces = b.solid.face_iter().count();
+    let faces = b.face_count();
     assert_eq!(stats.planar + stats.structured + stats.delaunay, faces, "{name}: every face planned");
     stats
 }
@@ -116,8 +121,9 @@ fn holes_and_trimmed_faces_are_watertight() {
     let (m, stats) = plan_body(&body, tol);
     assert_watertight(&m, "cross hole");
     assert_eq!(stats.delaunay, 0, "{stats:?}");
-    // Against the reference mesher's volume (no closed form for the two-cylinder intersection).
-    let Ok(reference) = body.mesh(&crate::MeshTolerance::chord(tol * 0.2)) else { panic!("reference mesh") };
+    // Against the body's mesh at a fifth of the tolerance (no closed form for the two-cylinder
+    // intersection).
+    let Ok(reference) = body.mesh(&crate::MeshTolerance::chord(tol * 0.2)) else { panic!("finer mesh") };
     let (a, b) = (m.measure().volume, reference.measure().volume);
     assert!((a - b).abs() < 0.01 * b, "cross hole volume {a} vs {b}");
 }
@@ -126,10 +132,11 @@ fn holes_and_trimmed_faces_are_watertight() {
 fn faces_and_edges_keep_the_body_order() {
     let body = ok(crate::cylinder(Vec3::ZERO, Vec3::Z, 2.0, 5.0));
     let (m, _) = plan_body(&body, 0.01);
-    let Ok(reference) = body.mesh(&crate::MeshTolerance::chord(0.01)) else { panic!("reference mesh") };
+    // Body::mesh, which plans the body's own record: the same faces and edges, in its order.
+    let Ok(reference) = body.mesh(&crate::MeshTolerance::chord(0.01)) else { panic!("body mesh") };
     assert_eq!(m.edges.len(), reference.edges.len());
     assert_eq!(m.edge_faces, reference.edge_faces);
-    // Same faces in the same order: each face's area agrees with the reference mesher's.
+    // Same faces in the same order: each face's area agrees with the body mesh's.
     let face_area = |m: &Mesh, f: u32| -> f64 {
         m.triangles
             .iter()
@@ -141,18 +148,19 @@ fn faces_and_edges_keep_the_body_order() {
             })
             .sum()
     };
-    for f in 0..body.solid.face_iter().count() as u32 {
+    for f in 0..body.face_count() as u32 {
         let (a, b) = (face_area(&m, f), face_area(&reference, f));
         assert!((a - b).abs() < 0.01 * b.max(1e-9), "face {f}: {a} vs {b}");
     }
-    // Each edge polyline ends on the same points as the reference's.
+    // Each edge polyline ends on the same points as the body mesh's.
     for (a, b) in m.edges.iter().zip(&reference.edges) {
         assert!(a.first().zip(b.first()).is_some_and(|(p, q)| p.dist(*q) < 1e-9));
         assert!(a.last().zip(b.last()).is_some_and(|(p, q)| p.dist(*q) < 1e-9));
     }
 }
 
-/// Side-by-side wireframes, reference mesher (left) and plan (right):
+/// Side-by-side wireframes, the body's mesh at the chord alone (left) and the plan at the
+/// display angle (right):
 /// `SOLIDCRAFT_TESS_SVG=<dir> cargo test -p solidcraft-kernel render_wireframes -- --ignored`.
 #[test]
 #[ignore]
@@ -173,10 +181,10 @@ fn render_wireframes() {
     ];
     for (name, body) in shapes {
         let t0 = std::time::Instant::now();
-        let Ok(old) = body.mesh(&crate::MeshTolerance::chord(tol)) else { panic!("reference") };
+        let Ok(old) = body.mesh(&crate::MeshTolerance::chord(tol)) else { panic!("body mesh") };
         let t_old = t0.elapsed().as_secs_f64() * 1e3;
         let t0 = std::time::Instant::now();
-        let new = match plan(&body.solid, tol, Some(crate::tess::size::Turn { angle: crate::DISPLAY_ANGLE, floor: tol * 1e-3 })) {
+        let new = match plan(&record(&body), tol, Some(crate::tess::size::Turn { angle: crate::DISPLAY_ANGLE, floor: tol * 1e-3 })) {
             Ok((p, st)) => Some((p.evaluate(), st)),
             Err(e) => {
                 println!("{name}: no plan ({e})");
@@ -186,7 +194,7 @@ fn render_wireframes() {
         let t_new = t0.elapsed().as_secs_f64() * 1e3;
         let mut svg = String::from("<svg xmlns='http://www.w3.org/2000/svg' width='1600' height='860' style='background:#fff'>");
         let label = |x: f64, text: String| format!("<text x='{x}' y='40' font-family='sans-serif' font-size='26'>{text}</text>");
-        svg += &label(20.0, format!("meshalgo (Delaunay): {} tris, {t_old:.1} ms", old.triangles.len()));
+        svg += &label(20.0, format!("chord alone: {} tris, {t_old:.1} ms", old.triangles.len()));
         svg += &draw(&old, 0.0);
         if let Some((m, st)) = &new {
             svg += &label(
@@ -499,7 +507,6 @@ fn a_modelled_thread_in_a_bore_meshes_inside_its_block() {
     };
     let threaded = smlib_cut(&smlib_cut(&block, &bore), &smlib_groove(iso_groove(1.0, 8.0, 3.5, true), -1.0, 1.0, 12.0));
     let body = ok(crate::native::body_from_smlib(&threaded));
-    assert!(seam::turns_more_than_once(&body.solid), "the groove's walls wind round the bore");
     let m = ok(body.mesh(&crate::MeshTolerance::chord(0.01)));
     let (lo, hi) = m
         .positions

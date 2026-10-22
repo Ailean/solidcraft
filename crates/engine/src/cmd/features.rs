@@ -510,6 +510,17 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
     } else {
         participants
     };
+    // An extrude's Join, Cut or Intersect with no bodies picked changes the bodies of the active
+    // component that are shown, never a hidden one (#2464). The shown ones are kept as its
+    // participants, so showing or hiding bodies later doesn't change the model.
+    let participants = match &kind {
+        FeatureKind::Extrude { operation: Operation::Join | Operation::Cut | Operation::Intersect, targets, .. }
+            if participants.is_empty() && targets.is_empty() =>
+        {
+            shown_scope(s).unwrap_or_default()
+        }
+        _ => participants,
+    };
     if matches!(kind, FeatureKind::ConstructionPlane { .. })
         && let Some(n) = name
     {
@@ -2198,6 +2209,15 @@ fn offset_face(s: &mut Session, p: &Value) -> Result<Value> {
         p,
         FeatureKind::OffsetFace { faces: faces.into_iter().map(FacePick).collect(), distance, body: str_(p, "body").map(BodyName::from) },
     )
+}
+
+/// The shown bodies of the active component, where some of its bodies are hidden and some shown;
+/// `None` where all of them are shown (or none), and the feature's usual scope applies.
+fn shown_scope(s: &Session) -> Option<Vec<String>> {
+    let st = s.model.state();
+    let (shown, hidden): (Vec<&solidcraft_doc::ModelBody>, Vec<_>) =
+        st.bodies.iter().filter(|b| s.doc.model_body_component(b) == s.active_component).partition(|b| s.body_visible(&b.name));
+    (!shown.is_empty() && !hidden.is_empty()).then(|| shown.iter().map(|b| b.name.clone()).collect())
 }
 
 #[cfg(test)]

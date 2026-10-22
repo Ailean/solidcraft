@@ -123,10 +123,7 @@ fn capture_impl(s: &Session, value: &Value, cmd: &str, internal: bool) -> Result
             }
             let faces = body.body.faces(tolerance)?;
             let mesh = body.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance))?;
-            work = work.saturating_add(mesh.triangles.len().saturating_mul(if requested_index.is_some() { 1 } else { faces.len() }));
-            if work > 2_000_000 {
-                return Err(bad(cmd, "face capture work limit exceeded; use an exact body and face index"));
-            }
+            work = work.saturating_add(faces.len());
             for face in faces {
                 if requested_index.is_some_and(|index| index != face.index) {
                     continue;
@@ -139,9 +136,15 @@ fn capture_impl(s: &Session, value: &Value, cmd: &str, internal: bool) -> Result
                     continue;
                 };
                 let normal = exact_plane.normal();
-                if (local_point - face.centroid).dot(normal).abs() > tolerance * 10.0
-                    || !super::face_contains(&mesh, face.index, local_point, tolerance * 10.0)
-                {
+                if (local_point - face.centroid).dot(normal).abs() > tolerance * 10.0 {
+                    continue;
+                }
+                // Only a planar face through the point is looked for in the mesh, one pass each.
+                work = work.saturating_add(mesh.triangles.len());
+                if work > 2_000_000 {
+                    return Err(bad(cmd, "face capture work limit exceeded; use an exact body and face index"));
+                }
+                if !super::face_contains(&mesh, face.index, local_point, tolerance * 10.0) {
                     continue;
                 }
                 if chosen.is_some() {

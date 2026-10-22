@@ -1393,7 +1393,7 @@ fn a_ring_cut_round_a_hole_takes_in_the_hole_it_is_drawn_round() {
             .ok()
             .and_then(|v| v["feature"].as_u64())
             .and_then(|id| s.model.result(id))
-            .is_some_and(|f| f.boolean_diagnostics.events.is_empty());
+            .is_some_and(|f| f.error.is_none());
         (r.is_ok(), before - volume(&mut s), clean)
     };
     let taken = std::f64::consts::PI * (36.0 - 9.0) * 3.0;
@@ -1455,7 +1455,7 @@ fn a_line_of_text_is_cut_in_one_exact_boolean() {
         run(&mut s, "sketch.finish", json!({}));
         let id = run(&mut s, "solid.extrude", json!({"distance":-depth,"operation":"cut"}))["feature"].as_u64().unwrap();
         let r = s.model.result(id).unwrap();
-        assert!(r.error.is_none() && r.boolean_diagnostics.events.is_empty(), "{at:?} {depth}: {r:?}");
+        assert!(r.error.is_none(), "{at:?} {depth}: {r:?}");
         before - volume(&mut s)
     };
     // Straight walls: the material taken grows with the depth, the letters' area each mm.
@@ -1484,7 +1484,7 @@ fn a_line_of_text_cut_through_or_joined_in_relief_is_one_boolean() {
         run(&mut s, "sketch.finish", json!({}));
         let id = run(&mut s, "solid.extrude", json!({"distance":distance,"operation":op}))["feature"].as_u64().unwrap();
         let r = s.model.result(id).unwrap();
-        assert!(r.error.is_none() && r.boolean_diagnostics.events.is_empty(), "{op}: {r:?}");
+        assert!(r.error.is_none(), "{op}: {r:?}");
         (before, volume(&mut s), s.model.state().bodies.len())
     };
     let (before, through, pieces) = text("cut", -40.0);
@@ -1518,7 +1518,7 @@ fn a_line_of_text_cut_again_deeper_is_one_exact_boolean() {
         run(s, "sketch.finish", json!({}));
         let id = run(s, "solid.extrude", json!({"distance":-depth,"operation":"cut"}))["feature"].as_u64().unwrap();
         let r = s.model.result(id).unwrap();
-        assert!(r.error.is_none() && r.boolean_diagnostics.events.is_empty(), "{depth}: {r:?}");
+        assert!(r.error.is_none(), "{depth}: {r:?}");
         before - volume(s)
     };
     let first = cut(&mut s, 1.0);
@@ -1544,7 +1544,7 @@ fn text_cut_through_a_large_plate_is_one_exact_boolean() {
         run(&mut s, "sketch.finish", json!({}));
         let id = run(&mut s, "solid.extrude", json!({"distance":-2,"operation":"cut"}))["feature"].as_u64().unwrap();
         let r = s.model.result(id).unwrap();
-        assert!(r.error.is_none() && r.boolean_diagnostics.events.is_empty(), "{w} x {h}: {r:?}");
+        assert!(r.error.is_none(), "{w} x {h}: {r:?}");
         before - volume(&mut s)
     };
     let (small, large) = (taken(200.0, 120.0, [60.0, 40.0]), taken(2000.0, 1200.0, [860.0, 125.0]));

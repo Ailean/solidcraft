@@ -2757,7 +2757,8 @@ fn hole_tools_and_prisms(
             let r_end = r * 0.9;
             let len = (r_top - r_end) / half.tan();
             let top_plane = plane.offset(top);
-            tools.push((crate::lineage::part_tool(kernel::extrude_tapered(&top_plane, &disc(r_top), len, -1.0, -half)?, "csink"), None));
+            let csink = kernel::extrude_tapered(&top_plane, &disc(r_top), len, -1.0, -half, kernel::DraftCorner::default())?;
+            tools.push((crate::lineage::part_tool(csink, "csink"), None));
             tools.push(cyl(r, bottom, top, "bore")?);
         }
     }
@@ -3026,7 +3027,7 @@ fn feature_tools_with_constructor(
                     .iter()
                     .map(|r| {
                         let roles = crate::lineage::ProfileRoles { sketch: Some(&ss), region: Some(r), caps: caps.clone() };
-                        let body = kernel::extrude_tapered_between(&start_plane, r, 0.0, len, 0.0, sign, taper)?;
+                        let body = kernel::extrude_tapered_between(&start_plane, r, 0.0, len, 0.0, sign, taper, kernel::DraftCorner::default())?;
                         Ok(roles.tool(body, None))
                     })
                     .collect::<Result<_>>()?;

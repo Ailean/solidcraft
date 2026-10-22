@@ -466,7 +466,7 @@ fn pack(plans: &[&TessPlan]) -> Result<Packed> {
                 push3(&mut data, *du);
                 push3(&mut data, *dv);
             }
-            EvalSurface::Nurbs { degree, knots, count, ctrl } => {
+            EvalSurface::Nurbs { degree, knots, count, ctrl, .. } => {
                 head[0] = 1;
                 head[1] = word(degree[0])?;
                 head[2] = word(degree[1])?;

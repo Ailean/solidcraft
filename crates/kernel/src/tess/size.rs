@@ -198,11 +198,13 @@ mod tests {
 
     #[test]
     fn a_flat_spline_is_planar_and_a_bent_one_is_not() {
-        let patch = |z: f64| EvalSurface::Nurbs {
-            degree: [1, 1],
-            knots: [vec![0.0, 0.0, 1.0, 1.0], vec![0.0, 0.0, 1.0, 1.0]],
-            count: [2, 2],
-            ctrl: vec![[0.0, 0.0, 0.0, 1.0], [4.0, 0.0, 0.0, 1.0], [0.0, 3.0, 0.0, 1.0], [4.0, 3.0, z, 1.0]],
+        let patch = |z: f64| {
+            EvalSurface::nurbs(
+                [1, 1],
+                [vec![0.0, 0.0, 1.0, 1.0], vec![0.0, 0.0, 1.0, 1.0]],
+                [2, 2],
+                vec![[0.0, 0.0, 0.0, 1.0], [4.0, 0.0, 0.0, 1.0], [0.0, 3.0, 0.0, 1.0], [4.0, 3.0, z, 1.0]],
+            )
         };
         assert!(planar(&patch(0.0)));
         assert!(!planar(&patch(0.5)));

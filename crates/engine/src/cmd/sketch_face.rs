@@ -122,7 +122,7 @@ fn capture_impl(s: &Session, value: &Value, cmd: &str, internal: bool) -> Result
                 continue;
             }
             let faces = body.body.faces(tolerance)?;
-            let mesh = body.body.tessellate(tolerance)?;
+            let mesh = body.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance))?;
             work = work.saturating_add(mesh.triangles.len().saturating_mul(if requested_index.is_some() { 1 } else { faces.len() }));
             if work > 2_000_000 {
                 return Err(bad(cmd, "face capture work limit exceeded; use an exact body and face index"));

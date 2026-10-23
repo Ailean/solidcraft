@@ -498,6 +498,18 @@ fn backend_preference() -> Option<String> {
     graphics().and_then(|v| v.get("backend").and_then(serde_json::Value::as_str).map(str::to_string))
 }
 
+/// The viewport scene's sample count: the app's anti-aliasing (the window's pass is 1x), clamped
+/// by the backend's policy (OpenGL renders 1x, see `effective_msaa_samples`). A count the device
+/// cannot render with falls back to the supported default.
+fn scene_samples(backend: eframe::wgpu::Backend, samples: u32, supported: &[u32]) -> u32 {
+    let requested = eframe::egui_wgpu::effective_msaa_samples(backend, samples.max(1));
+    if requested <= 1 || supported.is_empty() || supported.contains(&requested) {
+        requested
+    } else {
+        supported.iter().copied().filter(|&n| n <= solidcraft_ui_egui::prefs::Prefs::default().msaa).max().unwrap_or(1)
+    }
+}
+
 /// Anti-aliasing samples from Preferences (4 when unset).
 fn msaa() -> u16 {
     graphics()
@@ -697,16 +709,7 @@ fn main() -> eframe::Result {
                 lost_at: None,
             });
             if let Some(rs) = &cc.wgpu_render_state {
-                // The viewport's scene keeps the app's anti-aliasing; the window's pass is 1x.
-                // A count the device cannot render with falls back to the supported default.
-                let scene_samples = {
-                    let requested = u32::from(samples).max(1);
-                    if requested <= 1 || rs.msaa_supported.is_empty() || rs.msaa_supported.contains(&requested) {
-                        requested
-                    } else {
-                        rs.msaa_supported.iter().copied().filter(|&n| n <= solidcraft_ui_egui::prefs::Prefs::default().msaa).max().unwrap_or(1)
-                    }
-                };
+                let scene_samples = scene_samples(rs.adapter.get_info().backend, u32::from(samples), &rs.msaa_supported);
                 eprintln!("SolidCraft graphics: {:?}, MSAA {scene_samples}x (requested {}x)", rs.adapter.get_info().backend, samples);
                 solidcraft_engine::crash::phase("viewport pipelines (shader compile)");
                 app.set_wgpu_split(rs, depth_bits, STENCIL_BITS, scene_samples);
@@ -946,5 +949,14 @@ mod msaa_tests {
                 assert_eq!(eframe::egui_wgpu::effective_msaa_samples(backend, requested), requested);
             }
         }
+    }
+
+    #[test]
+    fn the_scene_follows_the_backend_policy_too() {
+        use eframe::wgpu::Backend;
+        assert_eq!(super::scene_samples(Backend::Gl, 4, &[1, 4]), 1);
+        assert_eq!(super::scene_samples(Backend::Gl, 4, &[]), 1);
+        assert_eq!(super::scene_samples(Backend::Vulkan, 4, &[1, 4]), 4);
+        assert_eq!(super::scene_samples(Backend::Dx12, 8, &[1, 2, 4]), 4);
     }
 }

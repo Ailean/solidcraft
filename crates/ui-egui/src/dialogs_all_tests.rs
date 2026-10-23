@@ -336,3 +336,99 @@ fn remaining_dialogs_keep_kit_chrome_and_cancel_restores_preview() {
         assert_eq!(h.app.session.pending_moves, moves, "{command}: cancel restores display-only moves");
     }
 }
+
+/// A component "Part", active and stood up (a quarter turn about X, as a stood-up import), with
+/// a 5 mm cube at world x 10..15, y -5..0, z 10..15 (its sides along the component's axes).
+fn stood_up_part() -> (Harness, String) {
+    let mut h = Harness::new();
+    h.app.run("component.create", json!({"name": "Part"})).unwrap();
+    h.app.run("occurrence.move", json!({"occurrence": "Part:1", "axis": [1, 0, 0], "angle": "90 deg"})).unwrap();
+    assert!(!solidcraft_engine::doc::is_identity(&h.app.session.active_component_frame()));
+    h.app.run("solid.box", json!({"corner": [10, 0, 10], "length": 5, "width": 5, "height": 5})).unwrap();
+    let body = h.app.session.world_state().bodies.last().unwrap().name.clone();
+    (h, body)
+}
+
+/// Fill `command`'s dialog inputs with `picks` and apply it.
+fn apply_picked(h: &mut Harness, command: &str, picks: Vec<Vec<Sel>>) {
+    let mut d = Dialog::for_command(&h.app, command).unwrap();
+    for (input, items) in d.inputs.iter_mut().zip(picks) {
+        input.items = items;
+    }
+    if let Kind::Mirror = &d.kind {
+        d.extra.insert("combine".into(), json!(false));
+    }
+    if let Kind::PatternCirc { count, .. } = &mut d.kind {
+        *count = "4".into();
+    }
+    for (cmd, p) in apply_commands(&h.app, &d).unwrap_or_else(|e| panic!("{command}: {e}")) {
+        h.app.run(&cmd, p.clone()).unwrap_or_else(|e| panic!("{cmd} {p}: {e}"));
+    }
+}
+
+fn world_bounds(h: &Harness) -> Aabb3 {
+    let mut b = Aabb3::default();
+    for body in &h.app.session.world_state().bodies {
+        let m = body.mesh().bounds();
+        b.add(m.min);
+        b.add(m.max);
+    }
+    b
+}
+
+fn close(a: Vec3, b: [f64; 3]) -> bool {
+    a.dist(Vec3::new(b[0], b[1], b[2])) < 1e-6
+}
+
+/// Origin planes and axes picked in the viewport are the ones it shows, the design's, also while
+/// a moved component is active: its own XY is upright once it is stood up.
+#[test]
+fn picked_origin_planes_and_axes_are_the_ones_shown_in_a_stood_up_component() {
+    let plane = |n: &str| vec![Sel::Plane { name: n.into() }];
+    let axis = |n: &str| vec![Sel::Axis { name: n.into() }];
+    // Mirror about XY: the copy goes below the floor, not behind the part.
+    let (mut h, body) = stood_up_part();
+    apply_picked(&mut h, "solid.mirror", vec![vec![Sel::Body { name: body.clone() }], plane("XY")]);
+    let b = world_bounds(&h);
+    assert!(close(b.min, [10.0, -5.0, -15.0]) && close(b.max, [15.0, 0.0, 15.0]), "mirror: {b:?}");
+    // Four round Z: the copies stay at the cube's height.
+    let (mut h, body) = stood_up_part();
+    apply_picked(&mut h, "solid.pattern.circular", vec![vec![Sel::Body { name: body }], axis("Z")]);
+    let b = world_bounds(&h);
+    assert!(close(b.min, [-15.0, -15.0, 10.0]) && close(b.max, [15.0, 15.0, 15.0]), "pattern: {b:?}");
+    // A plane offset from XY lies flat.
+    let (mut h, _) = stood_up_part();
+    apply_picked(&mut h, "construct.plane.offset", vec![plane("XY")]);
+    let (_, _, pl) = solidcraft_engine::view::construction_planes(&h.app.session).pop().unwrap();
+    assert!(close(pl.origin, [0.0; 3]) && pl.normal().z.abs() > 1.0 - 1e-9, "offset plane: {pl:?}");
+    // A profile on XZ turned round Z: a ring at the floor.
+    let (mut h, _) = stood_up_part();
+    crate::dialogs::start_sketch(&mut h.app, &Sel::Plane { name: "XZ".into() }).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0": [20, 0], "p1": [30, -5]})).unwrap();
+    let sketch = h.app.session.active_sketch.unwrap();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    let before = h.app.session.world_state().bodies.len();
+    apply_picked(&mut h, "solid.revolve", vec![vec![Sel::Profile { sketch, index: 0 }], axis("Z")]);
+    let world = h.app.session.world_state();
+    assert_eq!(world.bodies.len(), before + 1);
+    let b = world.bodies.last().unwrap().mesh().bounds();
+    // (The sketch may face the viewer from either side; the ring is 5 mm thick at the floor.)
+    let floor = b.min.z.abs() < 1e-6 || b.max.z.abs() < 1e-6;
+    assert!(floor && (b.max.z - b.min.z - 5.0).abs() < 1e-6 && (b.max.x - 30.0).abs() < 1e-3, "revolve: {b:?}");
+    // A canvas put on the XY plane picked with the canvas tool lies flat too.
+    let p = crate::dialogs::picked_plane(&h.app.session, "XY");
+    h.app
+        .run(
+            "canvas.insert",
+            json!({"data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "plane": p}),
+        )
+        .unwrap();
+    let (vals, _) = h.app.session.doc.param_values();
+    let canvas = h.app.session.doc.canvases.last().unwrap();
+    let cp = h.app.session.doc.canvas_plane(&vals, canvas).unwrap();
+    assert!(close(cp.origin, [0.0; 3]) && cp.normal().z.abs() > 1.0 - 1e-9, "canvas: {cp:?}");
+    // By name a command still takes the component's own plane; at the origin the pick is the name.
+    h.app.run("component.activate", json!({"component": "root"})).unwrap();
+    assert_eq!(crate::dialogs::picked_plane(&h.app.session, "XY"), json!("XY"));
+    assert_eq!(crate::dialogs::picked_axis(&h.app.session, "Z"), json!("Z"));
+}

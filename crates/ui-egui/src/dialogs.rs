@@ -1620,7 +1620,7 @@ thread_local! {
 /// A plane input as a command parameter: an origin/construction plane name or a face plane.
 fn plane_value(s: &Session, sel: Option<&Sel>) -> Option<Value> {
     match sel? {
-        Sel::Plane { name } => Some(json!(name)),
+        Sel::Plane { name } => Some(picked_plane(s, name)),
         Sel::Face { body, index, point } => {
             let (_, n) = planar_face(s, body, *index)?;
             Some(json!({"origin": pt(*point), "normal": pt(n)}))
@@ -2821,7 +2821,7 @@ fn hole_defaults() -> Kind {
 /// Start a sketch on a picked plane or planar face and turn the view to face it.
 pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
     let mut params = match sel {
-        Sel::Plane { name } => json!({ "plane": shown_origin_plane(app, name).unwrap_or_else(|| json!(name)) }),
+        Sel::Plane { name } => json!({ "plane": picked_plane(&app.session, name) }),
         Sel::Face { .. } => json!({ "plane": crate::sketch_attachment_ui::face_plane(app, sel).ok_or("Selected face placement no longer exists")? }),
         _ => return Err("Select an origin plane, construction plane or planar body face".into()),
     };
@@ -2858,18 +2858,36 @@ fn flip_toward_viewer(app: &SolveApp, name: &str) -> Option<&'static str> {
     Some(if plane.y.dot(up) > 1e-9 { "y" } else { "x" })
 }
 
-/// The origin plane `name` as the viewport and the browser show it and the user picks it: the
-/// design's, in the world, written out for `sketch.create`, which puts it into the active
-/// component's frame once. By name it would be the active component's own plane, and once that
-/// component has moved (a stood-up import is turned a quarter about X) its XY is the world's XZ:
-/// the sketch, the view turning to it and the extrude all went the wrong way. `None` while the
-/// active component sits at the origin (the name says the same) or for a construction plane.
-fn shown_origin_plane(app: &SolveApp, name: &str) -> Option<Value> {
-    let p = solidcraft_engine::geom::Plane::named(name)?;
-    if app.session.doc.find_feature(name).is_some() || solidcraft_engine::doc::is_identity(&app.session.active_component_frame()) {
-        return None;
+/// A picked plane `name` as a command parameter. An origin plane is the one the viewport and the
+/// browser show and the user picks: the design's, in the world. By name a command takes the
+/// active component's own plane, and once that component has moved (a stood-up import is turned
+/// a quarter about X) its XY is the world's XZ: a sketch, the view turning to it and the extrude
+/// all went the wrong way. So while a moved component is active an origin plane goes written out,
+/// in the world, and the command puts it into the component's frame once. Otherwise (and for a
+/// construction plane) the name.
+pub(crate) fn picked_plane(s: &Session, name: &str) -> Value {
+    match solidcraft_engine::geom::Plane::named(name) {
+        Some(p) if moved_and_not_construction(s, name) => json!({"origin": [0.0, 0.0, 0.0], "x_dir": pt(p.x), "y_dir": pt(p.y)}),
+        _ => json!(name),
     }
-    Some(json!({"origin": [0.0, 0.0, 0.0], "x_dir": pt(p.x), "y_dir": pt(p.y)}))
+}
+
+/// A picked axis `name` as a command parameter: an origin axis, while a moved component is
+/// active, written out as the world axis shown (as [`picked_plane`]); otherwise the name.
+pub(crate) fn picked_axis(s: &Session, name: &str) -> Value {
+    let dir = match name.trim().to_ascii_uppercase().as_str() {
+        "X" => Vec3::X,
+        "Y" => Vec3::Y,
+        "Z" => Vec3::Z,
+        _ => return json!(name),
+    };
+    if moved_and_not_construction(s, name) { json!({"origin": [0.0, 0.0, 0.0], "dir": pt(dir)}) } else { json!(name) }
+}
+
+/// The active component is placed away from the world's origin, and `name` is no construction
+/// plane or axis's (a command calls such a clash ambiguous).
+fn moved_and_not_construction(s: &Session, name: &str) -> bool {
+    s.doc.find_feature(name).is_none() && !solidcraft_engine::doc::is_identity(&s.active_component_frame())
 }
 
 /// The world plane of an origin plane or a construction plane by name, where it is shown.
@@ -3221,7 +3239,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::Revolve { angle, operation, axis: stored_axis } => {
             need(0, "profiles")?;
             let axis = match sels(d, 1).first() {
-                Some(Sel::Axis { name }) => json!(name),
+                Some(Sel::Axis { name }) => picked_axis(s, name),
                 Some(Sel::SketchCurve { id }) => json!(id),
                 _ => stored_axis.clone().ok_or("select an axis")?,
             };
@@ -3344,7 +3362,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             need(0, "objects")?;
             let axis = match sels(d, 1).first() {
                 None if d.extra.contains_key("axis") => d.extra.get("axis").cloned().unwrap_or(Value::Null),
-                Some(Sel::Axis { name }) => json!(name),
+                Some(Sel::Axis { name }) => picked_axis(s, name),
                 Some(x) => {
                     let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis or a sketch line")?;
                     json!({"origin": pt(o), "dir": pt(dir)})
@@ -3444,7 +3462,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             need(0, "a plane")?;
             let base = plane_arg(app, sels(d, 0).first())?;
             let axis = match sels(d, 1).first() {
-                Some(Sel::Axis { name }) => json!(name),
+                Some(Sel::Axis { name }) => picked_axis(s, name),
                 Some(x) => {
                     let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis or a sketch line")?;
                     json!({"origin": pt(o), "dir": pt(dir)})
@@ -4089,7 +4107,7 @@ fn construct_ref(app: &SolveApp, sel: &Sel) -> Result<Value, String> {
         Sel::Face { point, .. } => json!({"face": pt(*point)}),
         Sel::Edge { point, .. } => json!({"edge": pt(*point)}),
         Sel::Vertex { point, .. } => json!({"vertex": pt(*point)}),
-        Sel::Plane { name } => json!({"plane": name}),
+        Sel::Plane { name } => json!({"plane": picked_plane(&app.session, name)}),
         Sel::Axis { name } => json!({"axis": name}),
         // Picked across sketches as "<sketch id>:<point id>".
         Sel::SketchPoint { id } => match id.split_once(':').and_then(|(sk, p)| Some((sk.parse::<u64>().ok()?, p))) {
@@ -4116,7 +4134,7 @@ fn construct_ref(app: &SolveApp, sel: &Sel) -> Result<Value, String> {
 /// A picked plane or planar face as `construct.plane.*` takes it.
 fn plane_arg(app: &SolveApp, sel: Option<&Sel>) -> Result<Value, String> {
     match sel {
-        Some(Sel::Plane { name }) => Ok(json!(name)),
+        Some(Sel::Plane { name }) => Ok(picked_plane(&app.session, name)),
         Some(face @ Sel::Face { .. }) => crate::sketch_attachment_ui::face_plane(app, face).ok_or("the picked face is no longer in the model".into()),
         _ => Err("pick an origin or construction plane, or a planar face".into()),
     }

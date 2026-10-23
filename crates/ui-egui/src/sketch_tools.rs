@@ -841,7 +841,7 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
             let decal = cmd == "canvas.decal";
             let target = hits.iter().find_map(|h| match h {
                 Hit::Face { point, .. } => Some((json!({"face": [point.x, point.y, point.z]}), *point)),
-                Hit::Plane { name, point } if !decal => Some((json!(name), *point)),
+                Hit::Plane { name, point } if !decal => Some((crate::dialogs::picked_plane(&app.session, name), *point)),
                 _ => None,
             });
             // Empty space while sketching: the sketch plane.

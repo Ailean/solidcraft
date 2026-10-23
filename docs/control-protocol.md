@@ -1,7 +1,31 @@
 # Control protocol
 
-`solidcraft --control PORT` (or `SOLIDCRAFT_CONTROL_PORT=PORT`) listens on `127.0.0.1:PORT` for
-JSON lines. Each request is one line `{"id": …, "method": "…", "params": {…}}`; each reply is one
+The control channel is **on by default**. SolidCraft listens on `127.0.0.1` only, for JSON lines,
+so agents can drive the app without a launch flag. Every connection still needs this launch's
+token (below); nothing else on the machine, and nothing off it, can send a command.
+
+| Launch | What listens |
+|---|---|
+| `solidcraft --control PORT`, or `SOLIDCRAFT_CONTROL_PORT=PORT` | exactly `127.0.0.1:PORT` (the flag wins over the variable), whatever the setting |
+| neither, and Preferences > Assistant > "Let AI agents connect (control channel / MCP)" on (the default) | the default port **27878**, or the next free one up to 27893 when it is taken (a second window, another program) |
+| neither, and the setting off | nothing |
+
+The setting is read at start-up. Old preference files, which don't have it, load with it on. A
+launch with `--control` or the variable behaves as it always did (the start page stays hidden,
+the window doesn't ask for the foreground), because a scripted launch expects that; the default
+channel changes neither for a normal launch.
+
+### Finding the port
+
+Each app that opens its channel writes the port to a discovery file beside the token files,
+`control/current.port` (same folders and permissions as below), and removes it at exit if no later
+app has replaced it. It holds only the port, never the token. `solidcraft-cli mcp` with no
+arguments reads it, checks that something listens there and bridges to that app; with no app
+running, or with `--headless`, it runs a session of its own. `--connect HOST:PORT` and the
+other arguments still decide first. With several windows open, the most recently started one is
+the one found; use `--connect` for another.
+
+Requests are one line `{"id": …, "method": "…", "params": {…}}`; replies are described below. Each request is one line `{"id": …, "method": "…", "params": {…}}`; each reply is one
 line `{"id": …, "ok": true, "result": …}` or `{"id": …, "ok": false, "error": "…"}`. Requests are
 handled on the UI thread between frames; pointer and keyboard input is injected as real egui
 events, one pointer event per frame.

@@ -24,10 +24,26 @@ solidcraft-cli mcp
 # Headless, starting from a design file or a command script.
 solidcraft-cli mcp --in part.solidcraft
 
-# Bridged to the running app, so you can watch the agent model:
+# Bridged to the running app, so you can watch the agent model. The app's control channel is
+# on by default (see below), so no flag is needed on either side:
+solidcraft &
+solidcraft-cli mcp          # finds the running app; headless when none runs (--headless forces that)
+
+# A fixed port, or a second app: name it.
 solidcraft --control 7878 &
 solidcraft-cli mcp --connect 127.0.0.1:7878
 ```
+
+### The app listens by default
+
+The desktop app opens its control channel at start-up on `127.0.0.1:27878` (or the next free port
+when that one is taken), unless Preferences > Assistant > "Let AI agents connect (control
+channel / MCP)" is off; the setting takes effect at the next start. It is reachable from this
+computer only, and every connection must show the token made fresh for that launch, readable only
+by your user account ([control-protocol.md](control-protocol.md#token)). The app writes the port to
+`control/current.port` in the same folder as its token file; `solidcraft-cli mcp` with no
+arguments reads it. `--control PORT` and `SOLIDCRAFT_CONTROL_PORT` still choose the port and apply
+even when the setting is off. With the setting off and no flag, the app listens on nothing.
 
 Bridged, the server finds the app's control token in the token file the app wrote for that port
 ([control-protocol.md](control-protocol.md#token)); `--token T` or `SOLIDCRAFT_CONTROL_TOKEN` give

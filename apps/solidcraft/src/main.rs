@@ -10,6 +10,7 @@
 //!
 //! `--control <port>` (or `SOLIDCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control
 //! server: `{"id":1,"method":"engine.execute","params":{"command":"solid.box","params":{…}}}`.
+//! Without them the channel still opens, on the default port, unless Preferences turns it off.
 //! See `solidcraft_ui_egui::control` and docs/control-protocol.md.
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -724,8 +725,10 @@ fn main() -> eframe::Result {
                 ));
             }
             mark("viewport pipelines");
-            if let Some(port) = control_port {
-                let rx = control_server::start(port, cc.egui_ctx.clone());
+            // `--control`/the environment name a port; otherwise the preference (on by default)
+            // opens the default one (docs/control-protocol.md).
+            if let Some(listen_on) = solidcraft_engine::control_auth::plan(control_port, app.preferences.agent_control) {
+                let rx = control_server::start(listen_on, cc.egui_ctx.clone());
                 app = app.with_control(rx);
             }
             // The agent chat's MCP bridge reaches the app through an endpoint of its own, started

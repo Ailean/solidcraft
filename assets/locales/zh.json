@@ -541,6 +541,8 @@
   "Z angle": "Z 角度",
   "Z distance": "Z 距离",
   "Zebra": "斑马纹",
+  "ai.prefs.allow_control": "允许 AI 代理连接（控制通道 / MCP）",
+  "ai.prefs.allow_control_note": "仅在本机开放控制通道（127.0.0.1，端口 27878 或下一个空闲端口）。连接的程序还必须出示一个每次启动时新生成、只有你的用户账户能读取的秘密令牌。下次启动 SolidCraft 时生效。关闭：除非用 --control 启动，否则不监听任何端口。",
   "ai.prefs.availability": "助手控制",
   "ai.prefs.background_commands": "在后台执行代理命令",
   "ai.prefs.follow_camera": "将相机转向草图",

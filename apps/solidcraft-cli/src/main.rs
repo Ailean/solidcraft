@@ -12,7 +12,7 @@
 //! solidcraft-cli commands                                     the command registry as JSON
 //! solidcraft-cli recipe <recipe.json>                         translate an oracle recipe to a script
 //! solidcraft-cli oracle <case-dir>...                         replay recipes and compare with expected.json
-//! solidcraft-cli mcp [--in design|script] [--connect HOST:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
+//! solidcraft-cli mcp [--headless] [--in design|script] [--connect HOST:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
 //!                    [--param-check off|warn|strict]
 //!                                                             MCP server on stdio (docs/mcp.md)
 //! solidcraft-cli licences                                     SolidCraft's licence and the third-party licences
@@ -76,7 +76,7 @@ const USAGE: &str = "usage:
   solidcraft-cli recipe <recipe.json>
   solidcraft-cli oracle <case-dir>... [--json]
   solidcraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]
-  solidcraft-cli mcp [--in design.solidcraft|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
+  solidcraft-cli mcp [--headless] [--in design.solidcraft|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
                      [--param-check off|warn|strict]
   solidcraft-cli crashes [list [--json] | show <id> | replay <id> | dir | clear [<id>]]
   solidcraft-cli licences
@@ -593,15 +593,35 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
             Box::new(remote)
         }
         (None, Some(path)) => Box::new(solidcraft_mcp::Headless::new(load_checked(path, param_check)?)),
+        // No arguments: the running desktop app, found through the discovery file it wrote
+        // (docs/control-protocol.md); none running (or `--headless`): a session of its own.
         (None, None) => {
+            if !args.iter().any(|a| a == "--headless")
+                && let Some(port) = discover_app()
+            {
+                eprintln!("solidcraft mcp: bridged to the running app at 127.0.0.1:{port} (--headless starts a session of its own)");
+                return serve_mcp(Box::new(solidcraft_mcp::Remote::new(&format!("127.0.0.1:{port}"), flag(args, "--token"))), scope);
+            }
             let mut headless = solidcraft_mcp::Headless::default();
             headless.session.param_check = param_check;
             Box::new(headless)
         }
     };
+    serve_mcp(backend, scope)
+}
+
+fn serve_mcp(backend: Box<dyn solidcraft_mcp::Backend>, scope: Option<solidcraft_engine::io::vfs::PathScope>) -> Result<(), String> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     solidcraft_mcp::Server::new(backend).with_path_scope(scope).serve(stdin.lock(), stdout.lock()).map_err(|e| e.to_string())
+}
+
+/// The port of the running desktop app: the one its discovery file names, if something listens
+/// there (a file left by an app that crashed names a closed port).
+fn discover_app() -> Option<u16> {
+    let port = solidcraft_engine::control_auth::read_current_port()?;
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).ok().map(|_| port)
 }
 
 /// `save-stress <path> <rounds>`: save a design of a few hundred kilobytes `rounds` times, its

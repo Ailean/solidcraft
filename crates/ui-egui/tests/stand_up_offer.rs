@@ -127,3 +127,56 @@ fn old_preferences_files_load_with_automatic_stand_up_on() {
     let empty: solidcraft_ui_egui::prefs::Prefs = serde_json::from_str("{}").unwrap();
     assert!(empty.auto_stand_up && empty.offer_stand_up);
 }
+
+type V3 = solidcraft_engine::geom::Vec3;
+
+/// A stood-up SolidWorks file (its component still the active one), a sketch started by
+/// `start`, a rectangle far from the part at x 200..220, y 0..10 on it, extruded 15 mm: the
+/// sketch's world normal, the direction the view turned to look from, and the new body's bounds.
+fn sketched_and_extruded(start: impl FnOnce(&mut Harness)) -> (V3, V3, solidcraft_engine::geom::Aabb3) {
+    let mut h = opened_from("'SolidWorks 2021','SolidWorks 2021'", |h| h.app.preferences.look_at_anim = false);
+    assert!((height(&h) - 40.0).abs() < 1e-6, "stood up: {}", height(&h));
+    assert_ne!(h.app.session.active_component, 0, "the import's component is the one worked in");
+    let before: Vec<String> = h.app.session.world_state().bodies.iter().map(|b| b.name.clone()).collect();
+    start(&mut h);
+    h.frames(2);
+    let sketch = h.app.session.active_sketch.expect("a sketch is open");
+    let normal = h.app.session.world_state().sketch(sketch).unwrap().plane.normal();
+    let back = h.app.cam.back();
+    h.app.run("sketch.rectangle.two_point", json!({"p0": [200, 0], "p1": [220, 10]})).unwrap();
+    h.app.run("solid.extrude", json!({"distance": 15})).unwrap();
+    let world = h.app.session.world_state();
+    let made: Vec<_> = world.bodies.iter().filter(|b| !before.contains(&b.name)).collect();
+    assert_eq!(made.len(), 1);
+    (normal, back, made[0].mesh().bounds())
+}
+
+fn near(a: V3, b: [f64; 3]) -> bool {
+    a.dist(V3::new(b[0], b[1], b[2])) < 1e-6
+}
+
+#[test]
+fn a_sketch_on_the_xy_plane_shown_after_standing_up_extrudes_up() {
+    // The origin planes the viewport and browser show are the design's: the XY picked there
+    // stays flat, the view looks down on it and the extrude goes up, though the stood-up
+    // component's own XY is now upright.
+    let (normal, back, b) = sketched_and_extruded(|h| {
+        solidcraft_ui_egui::dialogs::start_sketch(&mut h.app, &solidcraft_engine::Sel::Plane { name: "XY".into() }).unwrap();
+    });
+    assert!(near(normal, [0.0, 0.0, 1.0]), "faces up: {normal:?}");
+    assert!((back.z - 1.0).abs() < 1e-3, "looks down on it: {back:?}");
+    assert!(near(b.min, [200.0, 0.0, 0.0]) && near(b.max, [220.0, 10.0, 15.0]), "{b:?}");
+}
+
+#[test]
+fn a_sketch_on_the_stood_up_components_own_xy_is_turned_once() {
+    // By name, a command's XY is the active component's own: upright now, facing -Y. The
+    // sketch, the view and the extrude all follow it, the stand-up applied once.
+    let (normal, back, b) = sketched_and_extruded(|h| {
+        h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        solidcraft_ui_egui::dialogs::look_at_sketch(&mut h.app);
+    });
+    assert!(near(normal, [0.0, -1.0, 0.0]), "faces -Y: {normal:?}");
+    assert!((back.y + 1.0).abs() < 1e-3, "looks at it from -Y: {back:?}");
+    assert!(near(b.min, [200.0, -15.0, 0.0]) && near(b.max, [220.0, 0.0, 10.0]), "{b:?}");
+}

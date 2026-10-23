@@ -2821,7 +2821,7 @@ fn hole_defaults() -> Kind {
 /// Start a sketch on a picked plane or planar face and turn the view to face it.
 pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
     let mut params = match sel {
-        Sel::Plane { name } => json!({ "plane": name }),
+        Sel::Plane { name } => json!({ "plane": shown_origin_plane(app, name).unwrap_or_else(|| json!(name)) }),
         Sel::Face { .. } => json!({ "plane": crate::sketch_attachment_ui::face_plane(app, sel).ok_or("Selected face placement no longer exists")? }),
         _ => return Err("Select an origin plane, construction plane or planar body face".into()),
     };
@@ -2858,17 +2858,24 @@ fn flip_toward_viewer(app: &SolveApp, name: &str) -> Option<&'static str> {
     Some(if plane.y.dot(up) > 1e-9 { "y" } else { "x" })
 }
 
-/// The world plane of an origin plane or a construction plane by name.
+/// The origin plane `name` as the viewport and the browser show it and the user picks it: the
+/// design's, in the world, written out for `sketch.create`, which puts it into the active
+/// component's frame once. By name it would be the active component's own plane, and once that
+/// component has moved (a stood-up import is turned a quarter about X) its XY is the world's XZ:
+/// the sketch, the view turning to it and the extrude all went the wrong way. `None` while the
+/// active component sits at the origin (the name says the same) or for a construction plane.
+fn shown_origin_plane(app: &SolveApp, name: &str) -> Option<Value> {
+    let p = solidcraft_engine::geom::Plane::named(name)?;
+    if app.session.doc.find_feature(name).is_some() || solidcraft_engine::doc::is_identity(&app.session.active_component_frame()) {
+        return None;
+    }
+    Some(json!({"origin": [0.0, 0.0, 0.0], "x_dir": pt(p.x), "y_dir": pt(p.y)}))
+}
+
+/// The world plane of an origin plane or a construction plane by name, where it is shown.
 fn plane_by_name(app: &SolveApp, name: &str) -> Option<solidcraft_engine::geom::Plane> {
     if let Some(p) = solidcraft_engine::geom::Plane::named(name) {
-        // In an active component its origin planes are the component's.
-        let m = app.session.active_component_frame();
-        let (o, x, y) = (
-            solidcraft_engine::doc::apply_point(&m, p.origin),
-            solidcraft_engine::doc::apply_vector(&m, p.x),
-            solidcraft_engine::doc::apply_vector(&m, p.y),
-        );
-        return solidcraft_engine::geom::Plane::new(o, x, y);
+        return Some(p);
     }
     let st = app.session.world_state();
     st.construct.iter().find(|c| c.name == name).and_then(|c| match &c.geom {

@@ -1073,13 +1073,13 @@ fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &std::sync::Arc<solidcra
         let (c0, c1) = ([0, 0, 0, a0 as u8], [0, 0, 0, a1 as u8]);
         for k in 0..n {
             let (p00, p01, p10, p11) = (at(r0, k), at(r0, k + 1), at(r1, k), at(r1, k + 1));
-            sc.trans_tri(p00, [0.0; 3], c0);
-            sc.trans_tri(p10, [0.0; 3], c1);
-            sc.trans_tri(p11, [0.0; 3], c1);
+            sc.shadow_tri(p00, c0);
+            sc.shadow_tri(p10, c1);
+            sc.shadow_tri(p11, c1);
             if r0 > 0.0 {
-                sc.trans_tri(p00, [0.0; 3], c0);
-                sc.trans_tri(p11, [0.0; 3], c1);
-                sc.trans_tri(p01, [0.0; 3], c0);
+                sc.shadow_tri(p00, c0);
+                sc.shadow_tri(p11, c1);
+                sc.shadow_tri(p01, c0);
             }
         }
     }
@@ -1865,7 +1865,7 @@ fn analysis_legend(app: &SolveApp, painter: &egui::Painter, rect: Rect) {
     let h = pad * 2.0 + 18.0 + along.as_ref().map_or(0.0, |_| row) + row * rows.len() as f32;
     let r = Rect::from_min_size(pos2(rect.left() + 12.0, rect.bottom() - 12.0 - h), vec2(230.0, h));
     painter.rect(r, t.radius_md, t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-    crate::scenario::publish_handle("analysis:legend", r.center());
+    crate::scenario::publish_target("analysis:legend", r);
     let mut y = r.top() + pad;
     painter.text(pos2(r.left() + pad, y), Align2::LEFT_TOP, title, FontId::proportional(t.font_button), t.text);
     y += 18.0;
@@ -2726,8 +2726,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         });
         painter.add(egui_wgpu::Callback::new_paint_callback(rect, cb));
     }
-    analysis_legend(app, &painter, rect);
-    crate::frame_rate::paint(app, ui.ctx(), &painter, rect);
+    let overlay_rect = crate::shell::bottom_overlay_rect(app, rect);
+    analysis_legend(app, &painter, overlay_rect);
+    crate::frame_rate::paint(app, ui.ctx(), &painter, overlay_rect);
 
     // ---- interaction ----
     // A tool's click that moved on the way (#2448) clicks where the button is let go.
@@ -3184,7 +3185,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::select_other::show(app, ui.ctx());
     axis_view(app, ui, rect);
     nav_bar(app, ui, rect);
-    agent_chip(app, ui, rect);
+    agent_chip(app, ui, overlay_rect);
     transient_messages(app, ui, rect);
 }
 
@@ -3240,6 +3241,9 @@ fn agent_chip(app: &mut SolveApp, ui: &egui::Ui, rect: Rect) {
     }
 }
 
+/// How long a status message stays in the view (milliseconds).
+const STATUS_TOAST_MS: f64 = 6000.0;
+
 /// A single visual pattern for ongoing work and the existing six-second status.
 fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) {
     if app.status.is_none() && app.computing_since().is_none() {
@@ -3252,17 +3256,27 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) {
     }
     let mut free = crate::viewport_layout::free_rect(crate::shell::content_rect(app, viewport), &obstacles).shrink(t.space_8);
     if let Some((msg, at, error)) = app.status.clone() {
-        if crate::now_ms() - at < 6000.0 {
+        let shown_ms = crate::now_ms() - at;
+        if shown_ms < STATUS_TOAST_MS {
             if let Some(r) = paint_toast(ui, free, msg, error, false) {
                 crate::scenario::publish_rect("toast", r);
                 free.max.y = r.top() - t.space_8;
                 // Open the run's messages from the tokenised status toast.
                 crate::scenario::publish_handle("status:chip", r.center());
-                if ui.interact(r, egui::Id::new("sc_status_chip"), Sense::click()).on_hover_text(crate::i18n::tr("messages.chip_hint")).clicked() {
-                    app.messages.open = true;
+                let hint = if app.status_undo { crate::i18n::tr_label("Undo") } else { crate::i18n::tr("messages.chip_hint") };
+                if ui.interact(r, egui::Id::new("sc_status_chip"), Sense::click()).on_hover_text(hint).clicked() {
+                    if app.status_undo {
+                        app.status = None;
+                        let _ = app.run("edit.undo", json!({}));
+                    } else {
+                        app.messages.open = true;
+                    }
                 }
             }
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+            // One frame when it is due to go, not a frame every half second while it shows.
+            let left_ms = STATUS_TOAST_MS - shown_ms;
+            let left_ms = if (0.0..=STATUS_TOAST_MS).contains(&left_ms) { left_ms } else { STATUS_TOAST_MS };
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(left_ms / 1000.0 + 0.01));
         } else {
             app.status = None;
         }
@@ -4051,12 +4065,10 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     let menu_id = ui.id().with("nav_view_menu");
     let mut menu_open = ui.data(|d| d.get_temp::<bool>(menu_id)).unwrap_or(false);
     let w = items.len() as f32 * 30.0 + 10.0;
-    let bar = app
-        .viewport
-        .layout
-        .as_ref()
-        .map(|l| l.navigation)
-        .unwrap_or_else(|| Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 22.0), vec2(w, 30.0)));
+    let bar = app.viewport.layout.as_ref().map(|l| l.navigation).unwrap_or_else(|| {
+        let available = crate::shell::bottom_overlay_rect(app, rect);
+        Rect::from_center_size(pos2(available.center().x, available.bottom() - 22.0), vec2(w, 30.0))
+    });
     crate::scenario::publish_rect("nav:outer", bar);
     let active = ui.rect_contains_pointer(bar)
         || ui.rect_contains_pointer(axis_rect(app, rect))
@@ -4172,6 +4184,19 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
 mod tests {
     use super::*;
     use crate::navigation::*;
+
+    #[test]
+    fn ground_shadow_does_not_enter_see_through_geometry() -> Result<(), Box<dyn std::error::Error>> {
+        let mut session = solidcraft_engine::Session::default();
+        session.execute("solid.box", &json!({"length": 30, "width": 30, "height": 10}))?;
+        let app = SolveApp::new(session, crate::Services::default());
+        let mut scene = GpuScene::default();
+        ground_shadow(&mut scene, &app, &app.session.world_state());
+        assert!(scene.trans.is_empty(), "the ground shadow must not trigger order-independent transparency");
+        assert_eq!(scene.shadow.len(), 48 * 5 * 3 * crate::gpu::TRI_SIZE, "all shadow rings are retained");
+        assert!(scene.shadow.as_chunks::<{ crate::gpu::TRI_SIZE }>().0.iter().any(|v| v.get(27).is_some_and(|a| *a > 0)));
+        Ok(())
+    }
 
     /// Every tangent seam Continuity Analysis reports keeps its colour while the pointer rests on
     /// a face (#1247): a 60 x 40 x 20 box with its four top edges rounded (6 mm) has eight, four

@@ -17,6 +17,8 @@ use crate::expr::{self, Kind, Value};
 use crate::lineage::Traced;
 use crate::{AxisRef, DocError, Document, Feature, FeatureKind, HoleKind, Operation, PlaneRef, ProfileSel, Result};
 
+type JointFaces = (Body, kernel::Result<Arc<[kernel::FaceInfo]>>);
+
 /// A body in the evaluated model.
 #[derive(Clone, Debug)]
 pub struct ModelBody {
@@ -31,6 +33,9 @@ pub struct ModelBody {
     // Timeline snapshots are cloned before meshes are requested. Share the cell itself so
     // meshing any snapshot also warms every unchanged copy of this body.
     mesh: Arc<OnceLock<Arc<Mesh>>>,
+    /// Joint face measurements use their own tolerance, independent of display quality.
+    /// Shared by snapshots of this geometry; the body identity guards direct replacement.
+    joint_faces: Arc<OnceLock<JointFaces>>,
     /// Lazy canonical reference triangles for a proper rigid occurrence placement.
     mesh_placement: Option<Arc<placed_mesh::PlacedMesh>>,
     /// The display plan (none when the body has no plan: a mesh body, or one the planner
@@ -71,6 +76,7 @@ impl ModelBody {
             body,
             feature,
             mesh: Arc::new(OnceLock::new()),
+            joint_faces: Arc::new(OnceLock::new()),
             mesh_placement: None,
             plan: Arc::new(Default::default()),
             plan_mesh: Arc::new(Default::default()),
@@ -84,6 +90,19 @@ impl ModelBody {
             source_key: 0,
             outline: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Face measurements for joint origins, at their original chord tolerance. Pose changes
+    /// and scratch copies share them; a geometry edit makes a new body and cache.
+    pub(crate) fn joint_faces(&self) -> Result<Arc<[kernel::FaceInfo]>> {
+        let measure = || {
+            #[cfg(test)]
+            cost_tests::count(|c| c.joint_faces += 1);
+            let tol = (self.body.size() * 2e-3).max(1e-3);
+            self.body.faces(tol).map(Arc::from)
+        };
+        let (body, faces) = self.joint_faces.get_or_init(|| (self.body.clone(), measure()));
+        if body.same(&self.body) { faces.clone().map_err(Into::into) } else { measure().map_err(Into::into) }
     }
 
     /// A box around the body without meshing it ([`Body::outline_bounds`]), worked out once.
@@ -120,6 +139,9 @@ impl ModelBody {
         // finding their surface, picks naming their face, sketch planes), and a different
         // triangulation moved those and changed what designs build. A GPU viewport draws the
         // plan ([`ModelBody::display_plan`]).
+        if let Some(mesh) = self.mesh.get() {
+            return mesh.clone();
+        }
         match self.mesh_placement.as_deref() {
             Some(placed) => self.mesh.get_or_init(|| placed.mesh()).clone(),
             None => placed_mesh::reference_mesh(&self.body, &self.mesh, self.display_tol()),
@@ -694,6 +716,10 @@ pub struct ModelState {
     /// Shared between states: a feature that does not change a sketch keeps it as it was.
     pub sketches: Vec<Arc<SolvedSketch>>,
     pub body_counter: usize,
+    /// Body names the design used and must not use again (a name a `body.rename` freed, #4957).
+    /// The counter starts over at every evaluation, so without these a design that is evaluated
+    /// again after a rename hands the freed name to the next body.
+    pub reserved_body_names: std::collections::BTreeSet<String>,
     /// Sheet metal bodies (by body name) and their flat patterns.
     pub sheets: Vec<crate::sheet::SheetBody>,
     /// Construction planes, axes and points as evaluated (by feature).
@@ -729,6 +755,9 @@ impl ModelState {
             self.sketch_keys.get(&s.feature).hash(&mut h);
         }
         self.body_counter.hash(&mut h);
+        for n in &self.reserved_body_names {
+            n.hash(&mut h);
+        }
         for (feature, points) in &self.blend_edges {
             feature.hash(&mut h);
             for p in points {
@@ -1739,7 +1768,8 @@ impl Model {
         let (vals, perr) = evaluation_values(doc);
         self.param_errors = perr;
         let mut prev_fp = 0u64;
-        let mut state = self.empty.clone();
+        // The names the design must not use again travel with the state (#4957).
+        let mut state = std::sync::Arc::new(ModelState { reserved_body_names: doc.reserved_body_names.clone(), ..(*self.empty).clone() });
         let mut out: Vec<FeatureResult> = Vec::with_capacity(doc.features.len());
         let mut reuse = !self.no_cache;
         let mut recomputed = 0;
@@ -1829,6 +1859,9 @@ impl Model {
             recomputed += 1;
             let t0 = now();
             let mut next = (*state).clone();
+            // The names the design must not use again travel with the state (#4957): a state
+            // taken from an earlier evaluation may have been made before a rename freed one.
+            next.reserved_body_names = doc.reserved_body_names.clone();
             for b in &mut next.bodies {
                 b.made = crate::lineage::Made::Before;
             }
@@ -2006,6 +2039,8 @@ impl Model {
                         b.name = new.to_string();
                         b.names = b.names.renamed();
                     }
+                    // The names the design must not use again travel with the state (#4957).
+                    st.reserved_body_names = doc.reserved_body_names.clone();
                     Arc::new(st)
                 })
                 .clone();
@@ -2188,7 +2223,8 @@ fn new_name(state: &mut ModelState, f: &Feature, k: usize) -> String {
     loop {
         state.body_counter += 1;
         let n = format!("Body{}", state.body_counter);
-        if state.body(&n).is_none() {
+        // A name a rename freed is not handed out again (#4957).
+        if state.body(&n).is_none() && !state.reserved_body_names.contains(&n) {
             return n;
         }
     }

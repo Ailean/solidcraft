@@ -25,7 +25,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .key("E")
         .contract(&EXTRUDE_CONTRACT)
         .output(output_schema_for::<FeatureResult>)
-        .params("distance: expr (or through_all: true); taper?: angle expr; sketch?: id|name (default: active or last sketch); profiles?: all | [index] | [{curves: [ids]}] (the profile whose outer loop is made of exactly these curves, or pieces of them; found again on every recompute, so it follows parameter changes; islands inside are its holes; an error when no profile or several match) | [{point:[x,y]}] (index and point picks are stored by their curves when that finds the same profile); face?: [x,y,z] (extrude a planar body face instead of a sketch profile); faces?: [[x,y,z],…] (coplanar faces of one body); face_body?: name (whose face, where faces of several bodies meet at the point); direction?: positive|negative|symmetric (distance is total thickness, split evenly around the start plane); convention?: total_distance|legacy_per_side (default total_distance; legacy preserves older symmetric extents); distance2?: expr (Two Sides: a second distance the other way from the first side, which may be through_all or to; with direction: negative the first side goes against the normal and distance2 along it); start_offset?: expr (along the sketch normal, also with direction: negative); to?: [x,y,z] (To Object: a face, vertex or point; to_offset?: expr past it); from?: [x,y,z] (From Object: start at that face or point); operation?: new|join|cut|intersect|auto (cut into a body, otherwise join existing solids; new in an empty component); targets?: [body] (Join from a face, or from a sketch on a body's face, defaults to that face's body; explicit targets or participants override); name?; body_name?; thin?: true (Thin: a wall along sketch curves instead of the profiles) with curves?: [curve ids] (open chains and closed loops, joined where they meet end to end; default: every drawn curve of the sketch), thickness: expr, side?: center|inside|outside|two_sides (a closed loop's inside is the area it encloses, an open chain's the side it bends toward, a straight line's the left of its first curve as drawn; default center), thickness2?: expr (two_sides: the thickness outside); corners are mitred, crossing walls are one"),
+        .params("distance: expr (or through_all: true); taper?: angle expr; sketch?: id|name (default: active or last sketch); profiles?: all | [index] | [{curves: [ids]}] (the profile whose outer loop is made of exactly these curves, or pieces of them; found again on every recompute, so it follows parameter changes; islands inside are its holes; an error when no profile or several match) | [{point:[x,y]}] (index and point picks are stored by their curves when that finds the same profile); default: every drawn profile, except that a loop inside another is its hole and a loop inside that hole is material again; face?: [x,y,z] (extrude a planar body face instead of a sketch profile); faces?: [[x,y,z],…] (coplanar faces of one body); face_body?: name (whose face, where faces of several bodies meet at the point); direction?: positive|negative|symmetric (distance is total thickness, split evenly around the start plane); convention?: total_distance|legacy_per_side (default total_distance; legacy preserves older symmetric extents); distance2?: expr (Two Sides: a second distance the other way from the first side, which may be through_all or to; with direction: negative the first side goes against the normal and distance2 along it); start_offset?: expr (along the sketch normal, also with direction: negative); to?: [x,y,z] (To Object: a face, vertex or point; to_offset?: expr past it); from?: [x,y,z] (From Object: start at that face or point); operation?: new|join|cut|intersect|auto (cut into a body, otherwise join existing solids; new in an empty component); targets?: [body] (Join from a face, or from a sketch on a body's face, defaults to that face's body; explicit targets or participants override); name?; body_name?; thin?: true (Thin: a wall along sketch curves instead of the profiles) with curves?: [curve ids] (open chains and closed loops, joined where they meet end to end; default: every drawn curve of the sketch), thickness: expr, side?: center|inside|outside|two_sides (a closed loop's inside is the area it encloses, an open chain's the side it bends toward, a straight line's the left of its first curve as drawn; default center), thickness2?: expr (two_sides: the thickness outside); corners are mitred, crossing walls are one"),
     CommandSpec::new("solid.revolve", "Revolve", revolve)
         .at("SOLID", "CREATE")
         .icon("revolve")
@@ -108,7 +108,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("construct.plane.at_angle", "Plane at Angle", plane_angle)
         .at("SOLID", "CONSTRUCT")
         .icon("plane_angle")
-        .params("base: XY|XZ|YZ|plane name; axis: X|Y|Z|construction axis name (where it is now)|{origin, dir}; angle: expr; name?"),
+        .params("base: XY|XZ|YZ|plane name, or a planar face {face: [x,y,z], body?, index?, path?}; axis: X|Y|Z|construction axis name (where it is now)|{origin, dir}; angle: expr; name?"),
     CommandSpec::new("solid.split_face", "Split Face", split_face)
         .at("SOLID", "MODIFY")
         .icon("split_face")
@@ -208,7 +208,13 @@ fn auto_operation_in(s: &Session, p: &Value, world_faces: bool) -> Option<&'stat
     } else {
         extrude_base(s, p)?
     };
-    let d = if grouped.is_some() && p.get("to").is_some() { (p.get("to").and_then(vec3)? - base).dot(n) } else { extrude_reach(s, p)? };
+    let d = if grouped.is_some() && p.get("to").is_some() {
+        (p.get("to").and_then(vec3)? - base).dot(n)
+    } else if let Some(d) = extrude_reach(s, p) {
+        d
+    } else {
+        through_all_reach(&st, p, base)?
+    };
     if st.bodies.is_empty() || !d.is_finite() {
         return Some("new");
     }
@@ -243,6 +249,20 @@ fn auto_operation_in(s: &Session, p: &Value, world_faces: bool) -> Option<&'stat
         // Default additions to Join and let the boolean merge the actual geometry.
         Some("join")
     }
+}
+
+/// How far a Through All extrude with no distance reaches from `base`, signed by its
+/// direction: past every body of the model. Without it `auto` could not tell a cut through
+/// a part from an addition and made a separate body.
+fn through_all_reach(st: &solidcraft_doc::ModelState, p: &Value, base: Vec3) -> Option<f64> {
+    let through_all = bool_(p, "through_all").unwrap_or(false) || str_(p, "extent").is_some_and(|e| e.eq_ignore_ascii_case("through_all"));
+    if !through_all {
+        return None;
+    }
+    let reach =
+        st.bodies.iter().map(|b| b.mesh().bounds()).map(|bb| bb.center().dist(base) + bb.diagonal()).filter(|r| r.is_finite()).fold(1.0, f64::max);
+    let dir = str_(p, "direction").map(str::to_ascii_lowercase);
+    Some(if matches!(dir.as_deref(), Some("negative" | "reverse" | "flip")) { -reach } else { reach })
 }
 
 pub(super) fn operation(p: &Value, cmd: &str) -> Result<Operation> {
@@ -653,6 +673,7 @@ fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
         profiles: match face_profile {
             Some(f) => f,
             None if thin.is_some() => ProfileSel::All,
+            None if p.get("profiles").is_none() => default_extrude_profiles(s, sketch),
             None => profiles(p, cmd)?,
         },
         extent,
@@ -661,6 +682,47 @@ fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
         thin,
     };
     add_feature(s, p, kind)
+}
+
+/// The profiles an extrude takes when `profiles` is omitted: even-odd nesting over what was drawn,
+/// so a loop inside an outline is its hole and a loop inside that hole is material again (#5172).
+/// Without nesting this is `All`, as before. When the pick cannot be stored so that it finds the
+/// same profiles again (the sketch is not solved, or two profiles share their curves), it stays
+/// `All` too.
+fn default_extrude_profiles(s: &Session, sketch: u64) -> ProfileSel {
+    let st = s.model.state();
+    let Some(ss) = st.sketch(sketch) else { return ProfileSel::All };
+    let drawn = solidcraft_sketch::find_drawn_profiles(&ss.sketch);
+    let ps = if drawn.is_empty() { ss.profiles.clone() } else { drawn };
+    if ps.len() > 10_000 || ps.iter().all(|p| p.region.holes.is_empty()) {
+        return ProfileSel::All;
+    }
+    // Each profile has the profiles directly inside it as holes, so the number of holes around a
+    // point of a profile's material is its nesting depth.
+    let material: Vec<_> = ps
+        .iter()
+        .filter(|p| {
+            let probe = p.region.interior_point();
+            ps.iter().filter(|other| other.region.holes.iter().any(|hole| hole.contains(probe))).count() % 2 == 0
+        })
+        .collect();
+    let all = solidcraft_sketch::without_text_counters(&ss.sketch, ps.clone());
+    if material.iter().map(|p| &p.outer_curves).eq(all.iter().map(|p| &p.outer_curves)) {
+        return ProfileSel::All;
+    }
+    // Profiles of the solved sketch itself are stored by index, which `stable_profiles` turns
+    // into curves; drawn profiles of a sketch with projected references are named by curves.
+    let same = ps.len() == ss.profiles.len() && ps.iter().zip(&ss.profiles).all(|(a, b)| a.outer_curves == b.outer_curves);
+    let sel = if same {
+        let indices = ps.iter().enumerate().filter(|(_, p)| material.iter().any(|m| std::ptr::eq(*m, *p))).map(|(i, _)| i).collect();
+        ProfileSel::Indices { indices }
+    } else {
+        ProfileSel::Curves { loops: material.iter().map(|p| p.outer_curves.clone()).collect() }
+    };
+    match solidcraft_doc::profile_selection_indices(ss, &sel) {
+        Ok(found) if found.len() == material.len() && material.iter().all(|p| !p.outer_curves.is_empty()) => sel,
+        _ => ProfileSel::All,
+    }
 }
 
 /// The body whose face `sketch` is attached to (on the face itself, not offset from it), when
@@ -1634,11 +1696,19 @@ fn plane_offset(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn plane_angle(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "construct.plane.at_angle";
-    let base = plane_param(s, p.get("base"), cmd)?;
     // The plane keeps the axis line as it is now.
     let (axis_origin, axis_dir, _) = axis_line(s, p, cmd)?;
     let angle = req_expr(cmd, p, "angle")?;
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
+    // A planar body face: attached exactly, as a sketch on that face is, so the plane follows it.
+    if let Some(face) = p.get("base").filter(|b| b.get("face").is_some()) {
+        let base = super::sketch::face::capture(s, face, cmd)?;
+        super::sketch::face::capture_positions(s, &base)?;
+        let kind = FeatureKind::ConstructionPlane { plane: solidcraft_doc::PlaneRef::AtAngle { base: Box::new(base), axis_origin, axis_dir, angle } };
+        // The capture is already in the authoring frame.
+        return add_feature_in(s, p, kind, false);
+    }
+    let base = plane_param(s, p.get("base"), cmd)?;
     add_feature(
         s,
         p,

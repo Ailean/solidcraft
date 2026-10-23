@@ -3381,6 +3381,47 @@ fn deleting_a_sketch_leaves_no_silently_failing_feature() {
     }
 }
 
+#[test]
+fn default_extrude_profiles_preserve_two_holes() {
+    let mut sketch = Session::default();
+    run(&mut sketch, "sketch.create", json!({"plane": "XY"}));
+    run(&mut sketch, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [60, 40]}));
+    for x in [15, 45] {
+        run(&mut sketch, "sketch.circle.center", json!({"center": [x, 20], "radius": 5}));
+    }
+    run(&mut sketch, "sketch.finish", json!({}));
+    for (selection, expected) in [
+        (None, (2400.0 - 50.0 * PI) * 5.0),
+        (Some(json!([0])), (2400.0 - 50.0 * PI) * 5.0),
+        (Some(json!("all")), 12000.0),
+        (Some(json!([0, 1, 2])), 12000.0),
+    ] {
+        let mut s = Session::new((*sketch.doc).clone());
+        let mut params = json!({"distance": 5});
+        if let Some(selection) = selection {
+            params["profiles"] = selection;
+        }
+        run(&mut s, "solid.extrude", params);
+        let actual = volume(&mut s);
+        assert!(rel(actual, expected) < 1e-4, "{actual} vs {expected}");
+    }
+}
+
+#[test]
+fn default_extrude_profiles_keep_even_depth_islands_and_separate_outlines() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    for (p0, p1) in [([0, 0], [30, 30]), ([5, 5], [25, 25]), ([10, 10], [20, 20]), ([40, 0], [50, 10])] {
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": p0, "p1": p1}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 5}));
+    assert_eq!(s.model.state().bodies.len(), 3);
+    let expected = (900.0 - 400.0 + 100.0 + 100.0) * 5.0;
+    let actual = volume(&mut s);
+    assert!(rel(actual, expected) < 1e-6, "{actual} vs {expected}");
+}
+
 /// Every body a multi-profile `new` extrude creates carries its `body_name`, not a generic BodyN (#266).
 #[test]
 fn multi_profile_extrude_names_every_body_after_body_name() {
@@ -3544,6 +3585,36 @@ fn a_pattern_repeats_a_fillet_on_the_edges_it_found() {
     let pocket = 143.65 * h * 12.7 - 4.0 * (1.0 - PI / 4.0) * 3.2 * 3.2 * 12.7;
     let expect = 150.0 * 422.275 * 19.05 - n * pocket;
     assert!(rel(volume(&mut s), expect) < 1e-5, "{} vs {expect}", volume(&mut s));
+}
+
+/// A body renamed after a join: the next new body does not take the name the rename freed
+/// (#4957). The join changed the body, so the rename is followed by a full evaluation of the
+/// design; the numbers the design handed out must not go back with it, or a script that names
+/// a body finds another one.
+#[test]
+fn a_renamed_body_keeps_its_number_from_the_next_body() {
+    for join in [false, true] {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 10]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 5, "operation": "new"}));
+        if join {
+            // A second box joined to the first: the join changes the body, so the rename
+            // cannot be followed without evaluating the design again.
+            run(&mut s, "sketch.create", json!({"plane": "XY"}));
+            run(&mut s, "sketch.rectangle.two_point", json!({"p0": [5, 0], "p1": [15, 10]}));
+            run(&mut s, "sketch.finish", json!({}));
+            run(&mut s, "solid.extrude", json!({"distance": 5, "operation": "join"}));
+        }
+        run(&mut s, "body.rename", json!({"body": "Body1", "name": "First"}));
+        run(&mut s, "sketch.create", json!({"plane": "XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [20, 0], "p1": [30, 10]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 5, "operation": "new"}));
+        let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+        assert_eq!(names, ["First", "Body2"], "with a join: {join}");
+    }
 }
 
 /// A copy added by raising the count after a rename takes the next number, not the freed one (#372).

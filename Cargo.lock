@@ -997,6 +997,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2272,6 +2281,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keyboard-types"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
+dependencies = [
+ "bitflags 2.13.2",
+ "serde",
+]
+
+[[package]]
 name = "keyring"
 version = "3.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2478,6 +2497,24 @@ checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "muda"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4340e89c178916e62879c5c36b7f699019369be413e496178a6983ce91b8bc03"
+dependencies = [
+ "crossbeam-channel",
+ "dpi",
+ "keyboard-types",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "png",
+ "thiserror 2.0.21",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4162,7 +4199,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "block2 0.6.2",
  "eframe",
@@ -4172,6 +4209,7 @@ dependencies = [
  "hidapi",
  "keyring",
  "log",
+ "muda",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
@@ -4193,11 +4231,11 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-3dx-client"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 
 [[package]]
 name = "solidcraft-cli"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "image",
  "log",
@@ -4209,7 +4247,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-derive"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4218,7 +4256,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-doc"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "log",
  "serde",
@@ -4235,7 +4273,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-engine"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "log",
  "schemars",
@@ -4254,7 +4292,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-geom"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -4263,7 +4301,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-gpu"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "log",
  "naga",
@@ -4280,7 +4318,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-io"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -4303,7 +4341,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-kernel"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "log",
  "proptest",
@@ -4323,7 +4361,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-mcp"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "serde_json",
  "solidcraft-engine",
@@ -4332,7 +4370,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-render"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "image",
  "moxcms",
@@ -4346,7 +4384,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-sketch"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -4357,14 +4395,14 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-space-mouse"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "solidcraft-ui-egui"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "arboard",
  "egui",
@@ -4392,7 +4430,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-web"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "eframe",
  "egui",
@@ -5922,7 +5960,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.21.0-rc.1"
+version = "0.21.0-rc.2"
 dependencies = [
  "proc-macro2",
  "serde_json",

@@ -133,6 +133,8 @@ not read-only, `destructiveHint` and `openWorldHint` are true.
 
 ### Client configuration
 
+On Windows the installer adds its folder to the system `PATH`, so `solidcraft-cli` works by name in clients opened after the install (restart the client).
+
 Claude Code (project `.mcp.json`, or `claude mcp add solidcraft -- solidcraft-cli mcp`; a setup
 added under the previous name keeps working, see the [compatibility notes](https://github.com/bherbruck/solidcraft/blob/main/docs/compatibility.md#mcp)):
 

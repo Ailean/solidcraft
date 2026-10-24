@@ -1395,7 +1395,8 @@ pub fn undo_changes(app: &mut SolveApp, index: usize) {
 /// The requests the agent's tools sent through the chat's endpoint: each one passes the gate.
 fn pump_tools(app: &mut SolveApp) {
     let Some(rx) = app.agent_chat.tools_rx.take() else { return };
-    let limit = app.preferences.agent_chat_turn_limit.clamp(1, 1000);
+    let configured = app.preferences.agent_chat_turn_limit;
+    let limit = if configured == 0 { u32::MAX } else { configured.clamp(1, 1000) };
     for mut req in rx.try_iter().take(64) {
         let refuse = |req: ControlRequest, e: String| {
             let _ = req.reply.send(json!({"ok": false, "error": e}));
@@ -1406,10 +1407,6 @@ fn pump_tools(app: &mut SolveApp) {
             continue;
         };
         turn.requests += 1;
-        if turn.requests > gate::MAX_REQUESTS_PER_TURN {
-            refuse(req, format!("too many requests in one message (at most {})", gate::MAX_REQUESTS_PER_TURN));
-            continue;
-        }
         // Requests without folders of their own stay inside the chat's working folder.
         if let Some(o) = req.params.as_object_mut()
             && !o.contains_key("allow_paths")

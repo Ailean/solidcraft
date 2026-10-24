@@ -145,6 +145,7 @@ fn file_actions_wait_for_the_user() {
 #[test]
 fn the_gate_refuses_and_limits() {
     let (mut app, tx) = app_in_a_turn();
+    assert_eq!(app.preferences.agent_chat_turn_limit, 0, "no limit by default");
     app.preferences.agent_chat_turn_limit = 2;
     let crash = ask(&tx, "engine.execute", json!({"command": "diagnostics.crash_reports", "params": {}}));
     let quit = ask(&tx, "app.quit", json!({"force": true}));

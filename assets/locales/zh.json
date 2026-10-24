@@ -1132,6 +1132,8 @@
   "help.apache": "Apache 许可证 2.0",
   "help.attributions": "署名信息 (ATTRIBUTION.md)",
   "help.build": "版本 {version} · 提交 {commit} · 构建日期 {date}",
+  "help.connect_note": "请重启各个助手以加载 SolidCraft 服务器。每个被修改的文件都已备份为 .bak。",
+  "help.connect_title": "连接 AI 助手",
   "help.font_details": "界面使用 egui 的内置字体（Ubuntu Light 和 Hack，采用 Ubuntu Font Licence 和 MIT/Bitstream Vera 许可证；Noto Emoji 和表情图标字体，采用 OFL 和 MIT 许可证）。草图文本使用 Liberation Sans（SIL OFL 1.1）。The Crafting Apps 的可选字体包 craft-fonts（BIZ UDPGothic、Shippori Mincho、BIZ UDMincho、Noto Sans CJK SC、Noto Sans Arabic；SIL OFL 1.1）未随 SolidCraft 构建版本捆绑提供。",
   "help.fonts": "字体",
   "help.licences": "许可证",

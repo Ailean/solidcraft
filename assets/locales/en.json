@@ -1132,6 +1132,8 @@
   "help.apache": "Apache licence 2.0",
   "help.attributions": "Attributions (ATTRIBUTION.md)",
   "help.build": "Version {version} · commit {commit} · built {date}",
+  "help.connect_note": "Restart each assistant to load the SolidCraft server. Each file was backed up as .bak before it changed.",
+  "help.connect_title": "Connect AI assistants",
   "help.font_details": "The interface uses egui's built-in fonts (Ubuntu Light and Hack, under the Ubuntu Font Licence and the MIT/Bitstream Vera licence; Noto Emoji and the emoji icon font, under the OFL and MIT). Sketch text uses Liberation Sans (SIL OFL 1.1). The Crafting Apps' optional font pack, craft-fonts (BIZ UDPGothic, Shippori Mincho, BIZ UDMincho, Noto Sans CJK SC, Noto Sans Arabic; SIL OFL 1.1), is not bundled in SolidCraft builds.",
   "help.fonts": "Fonts",
   "help.licences": "Licences",

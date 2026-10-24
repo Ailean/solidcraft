@@ -1132,6 +1132,8 @@
   "help.apache": "Apacheライセンス2.0",
   "help.attributions": "帰属表示 (ATTRIBUTION.md)",
   "help.build": "バージョン {version} · コミット {commit} · ビルド日 {date}",
+  "help.connect_note": "各アシスタントを再起動すると SolidCraft サーバーが読み込まれます。変更したファイルは .bak としてバックアップされています。",
+  "help.connect_title": "AI アシスタントを接続",
   "help.font_details": "インターフェースにはegui組み込みのフォントを使用しています（Ubuntu Font LicenceおよびMIT/Bitstream VeraライセンスのUbuntu LightとHack、OFLおよびMITのNoto Emojiと絵文字アイコンフォント）。スケッチのテキストにはLiberation Sans（SIL OFL 1.1）を使用しています。The Crafting Appsのオプションフォントパックcraft-fonts（BIZ UDPGothic、Shippori Mincho、BIZ UDMincho、Noto Sans CJK SC、Noto Sans Arabic、SIL OFL 1.1）はSolidCraftのビルドに同梱されていません。",
   "help.fonts": "フォント",
   "help.licences": "ライセンス",

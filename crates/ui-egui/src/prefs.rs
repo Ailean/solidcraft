@@ -633,6 +633,9 @@ preference_settings! {
     /// Let AI agents connect: the localhost control channel (MCP) opens on the default port at
     /// start-up, unless `--control`/`SOLIDCRAFT_CONTROL_PORT` name one. Read at start-up.
     agent_control: bool = true, PAGE_AI;
+    /// Add SolidCraft's MCP server to the AI apps installed on this computer at start-up
+    /// ([`crate::ai_connect`]); off takes the entries out again.
+    connect_ai_apps: bool = true, PAGE_AI;
     /// Agents the user added (the installed ones are found by themselves). API keys are never
     /// here: they live in the system keychain.
     agents: Vec<crate::agent_chat::agents::AgentConfig> = Vec::new();

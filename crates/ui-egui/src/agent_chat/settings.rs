@@ -154,6 +154,9 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
             let response = ui_kit::checkbox(ui, tr("ai.prefs.allow_control"), &mut app.preferences.agent_control)
                 .on_hover_text(tr("ai.prefs.allow_control_note"));
             crate::scenario::publish_handle("prefs:agent_control", response.rect.center());
+            let response = ui_kit::checkbox(ui, tr("ai.prefs.connect_apps"), &mut app.preferences.connect_ai_apps)
+                .on_hover_text(tr("ai.prefs.connect_apps_note"));
+            crate::scenario::publish_handle("prefs:connect_ai_apps", response.rect.center());
         }
         if cfg!(target_arch = "wasm32") {
             ui_kit::text(ui, tr("ui.agent_chat_desktop_only"), ui_kit::Text::Hint("desktop"));

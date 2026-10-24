@@ -167,6 +167,12 @@ refreshes the path of an entry it wrote; an entry you changed (extra arguments, 
 is left as you have it. `--live` also adds `solidcraft-live`, which bridges to the open app (port
 7878, see below). Restart the client afterwards.
 
+SolidCraft also does this by itself: when the app starts it adds the `solidcraft` entry to each
+installed client (and refreshes its path after an update), and says once which clients it
+connected. It never touches an entry you changed. **Settings > Assistant > Make SolidCraft
+available to AI apps on this computer** turns it off, which removes the entries it added. Runs
+with `--control` or `SOLIDCRAFT_CONTROL_PORT` (automation) leave your clients alone.
+
 To configure a client by hand instead, these are the entries. OpenCode (`opencode.json`):
 
 ```json

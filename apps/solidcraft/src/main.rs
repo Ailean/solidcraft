@@ -114,6 +114,10 @@ impl eframe::App for App {
                 // A DMG install has no installer step: put solidcraft-cli on PATH, quietly.
                 #[cfg(target_os = "macos")]
                 std::thread::spawn(solidcraft_ui_egui::cli_link::install_on_launch);
+                // Automation runs (a control port was asked for) leave the user's AI apps alone.
+                if !self.take_focus_unwanted {
+                    solidcraft_ui_egui::ai_connect::begin(&mut self.solve);
+                }
                 if let Some(dir) = self.starting.take() {
                     startup::started(&dir);
                 }

@@ -12,6 +12,7 @@ use crate::ui_kit::{Container, Surface};
 pub mod access;
 pub mod agent_chat;
 pub mod agent_cursor;
+pub mod ai_connect;
 pub mod bom_panel;
 pub mod browser;
 pub mod browser_canvas;
@@ -520,6 +521,8 @@ pub struct SolveApp {
     pub agent: agent_cursor::AgentCursor,
     /// The agent chat panel (docs/design/in-app-agent-chat.md).
     pub agent_chat: agent_chat::AgentChat,
+    /// Making SolidCraft available to the AI apps installed here ([`ai_connect`]).
+    pub ai_connect: ai_connect::State,
     pending_shots: Vec<(u64, Option<String>, std::sync::mpsc::Sender<Value>, f64)>,
     shot_chat_turns: std::collections::HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>,
     queued_shots: Vec<(u64, f64, u32)>,
@@ -643,6 +646,7 @@ impl SolveApp {
             synthetic_mods: egui::Modifiers::default(),
             control_rx: None,
             agent_chat: Default::default(),
+            ai_connect: Default::default(),
             control_held: Default::default(),
             control_job: None,
             control_answering: Vec::new(),
@@ -725,6 +729,7 @@ impl SolveApp {
             self.render_workspace.defer_path_host(key, move || solidcraft_gpu::path::host_on_adapter(&adapter).map_err(|e| e.to_string()));
         }
         render_workspace::sync_backend(self);
+        ai_connect::tick(self);
         self.msaa_supported = rs.msaa_supported.clone();
         let info = rs.adapter.get_info();
         self.help.gpu = Some(format!("{} ({:?}, {:?})", info.name.trim(), info.backend, info.device_type));

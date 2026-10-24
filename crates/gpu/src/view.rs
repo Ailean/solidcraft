@@ -1115,23 +1115,24 @@ pub struct Renderer {
     /// `tri` and `tri_cut` for planned bodies (positions and normals from the GPU evaluation,
     /// colours per vertex, indexed).
     tri_planned: wgpu::RenderPipeline,
-    tri_cut_planned: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+    tri_cut_planned: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     /// `tri` and `tri_cut` for instanced meshes (shared triangles, a move and colour per
     /// placement).
     tri_instanced: wgpu::RenderPipeline,
-    tri_cut_instanced: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+    tri_cut_instanced: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     /// `tri_instanced` and `tri_cut_instanced` for flat triangles.
     tri_instanced_flat: wgpu::RenderPipeline,
     /// `glass_far`, `glass_near` and `trans` for instanced meshes, smooth and flat.
     glass_far_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
     glass_near_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
     trans_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
-    tri_cut_instanced_flat: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+    tri_cut_instanced_flat: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     /// The tessellation compute pipeline, where the device runs compute shaders.
     tess: Option<crate::TessGpu>,
     /// While a section is shown (when the depth buffer has a stencil): `tri` marking where the
-    /// cap shows, then the cap again at the section plane's depth, so it hides the inside.
-    tri_cut: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+    /// cap shows, the back faces marking it again where they lie within the faces' push of what
+    /// is in front of them, then the cap again at the section plane's depth, so it hides the inside.
+    tri_cut: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     /// Highlight triangles over the model (depth test ≤, no depth write).
     tri_hl: wgpu::RenderPipeline,
     /// Whole highlighted bodies, redrawn from the model's planned chunks in the hover and the
@@ -1727,6 +1728,17 @@ impl Renderer {
                     stencil: wgpu::StencilState { front: face(Zero), back: face(Replace), read_mask: 0xff, write_mask: 0xff },
                     bias: depth_bias(reversed, FACE_BIAS),
                 };
+                // The back faces again, pulled as far forward as the faces are pushed back: where
+                // one meets a front face (a pocket's wall and its floor, a fillet and the face it
+                // runs into) the push decides which is nearer along their shared edge, and a front
+                // face winning there left the cap out, so edges behind the cut showed through it.
+                let mark_back = wgpu::DepthStencilState {
+                    format,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(depth_compare(reversed, wgpu::CompareFunction::LessEqual)),
+                    stencil: wgpu::StencilState { front: face(Keep), back: face(Replace), read_mask: 0xff, write_mask: 0xff },
+                    bias: depth_bias(reversed, CAP_MARK_BIAS),
+                };
                 // Then the cap's back faces again, only there, at the section plane's depth.
                 let only = wgpu::StencilFaceState { compare: wgpu::CompareFunction::Equal, ..face(Keep) };
                 let cap = wgpu::DepthStencilState {
@@ -1738,6 +1750,7 @@ impl Renderer {
                 };
                 (
                     solid("sc_tris_mark", "fs_solid", None, Some(mark), source),
+                    solid("sc_tris_mark_back", "fs_solid", Some(wgpu::Face::Front), Some(mark_back), source),
                     solid("sc_tris_cap", "fs_solid_cut", Some(wgpu::Face::Front), Some(cap), source),
                 )
             })
@@ -1949,6 +1962,10 @@ pub const FACE_STEPS: i32 = 8;
 /// 3.5 px) may lose its outer edge on one side where it lies on a steep face. The section cap,
 /// which writes its own depth, adds the same in the shader.
 pub const FACE_SLOPE: f32 = 1.0;
+/// The section's second marking of back faces (`Renderer::tri_cut`): pulled toward the eye as far
+/// as [`FACE_BIAS`] pushes the faces back, so a back face that meets a front face along an edge
+/// still marks the cap there.
+const CAP_MARK_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState { constant: -FACE_STEPS, slope_scale: -FACE_SLOPE, clamp: 0.0 };
 /// The removed material of a preview, drawn translucent: behind the faces it shares with the new
 /// shape, so twice [`FACE_BIAS`].
 const GHOST_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState { constant: 2 * FACE_STEPS, slope_scale: 2.0 * FACE_SLOPE, clamp: 0.0 };
@@ -2341,12 +2358,21 @@ impl Renderer {
             res.tri_cut_instanced.as_ref(),
             res.tri_cut_instanced_flat.as_ref(),
         ) {
-            (Some((mark, cap)), Some((mark_planned, cap_planned)), Some((mark_instanced, cap_instanced)), Some((mark_flat, cap_flat))) => {
+            (
+                Some((mark, back, cap)),
+                Some((mark_planned, back_planned, cap_planned)),
+                Some((mark_instanced, back_instanced, cap_instanced)),
+                Some((mark_flat, back_flat, cap_flat)),
+            ) => {
                 pass.set_stencil_reference(1);
                 tris(pass, mark, &m.tris);
                 tris(pass, mark, &pv.tris);
                 planned(pass, mark_planned);
                 instanced(pass, mark_instanced, mark_flat);
+                tris(pass, back, &m.tris);
+                tris(pass, back, &pv.tris);
+                planned(pass, back_planned);
+                instanced(pass, back_instanced, back_flat);
                 tris(pass, cap, &m.tris);
                 tris(pass, cap, &pv.tris);
                 planned(pass, cap_planned);

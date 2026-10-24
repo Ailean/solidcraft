@@ -17,6 +17,7 @@ pub mod browser;
 pub mod browser_canvas;
 pub mod browser_prompts;
 pub mod canvas;
+pub mod cli_link;
 #[cfg(test)]
 mod colour_tokens_tests;
 #[cfg(test)]

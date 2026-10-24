@@ -133,7 +133,7 @@ not read-only, `destructiveHint` and `openWorldHint` are true.
 
 ### Client configuration
 
-On Windows the installer adds its folder to the system `PATH`, so `solidcraft-cli` works by name in clients opened after the install (restart the client).
+`solidcraft-cli` is on `PATH` after every package install: the Windows installer adds its folder, the deb, rpm and FreeBSD packages install it in `/usr/bin`, the Homebrew cask links it, the AppImage writes a small `solidcraft-cli` launcher into `~/.local/bin` on its first run, and the macOS app links it into `/opt/homebrew/bin` or `/usr/local/bin` when it starts (Help > Install solidcraft-cli command does it with an administrator prompt when those are not writable). Two packages keep it out of `PATH` by design: Snap exposes it as `solidcraft.cli`, and Flatpak runs it as `flatpak run --command=solidcraft-cli ai.storyteller.solidcraft`; use those as the client's `command` (with `mcp` as the arguments).
 
 Claude Code (project `.mcp.json`, or `claude mcp add solidcraft -- solidcraft-cli mcp`; a setup
 added under the previous name keeps working, see the [compatibility notes](https://github.com/bherbruck/solidcraft/blob/main/docs/compatibility.md#mcp)):

@@ -111,6 +111,9 @@ impl eframe::App for App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
                 solidcraft_engine::crash::phase(solidcraft_engine::crash::RUNNING);
+                // A DMG install has no installer step: put solidcraft-cli on PATH, quietly.
+                #[cfg(target_os = "macos")]
+                std::thread::spawn(solidcraft_ui_egui::cli_link::install_on_launch);
                 if let Some(dir) = self.starting.take() {
                     startup::started(&dir);
                 }

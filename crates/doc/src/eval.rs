@@ -3406,9 +3406,10 @@ fn edge_dir(e: &kernel::EdgeInfo) -> Vec3 {
 /// for each point on its own, the body with an edge nearest it. A blend over the edges of
 /// several bodies remembers every edge on the body it was picked on, never on the first edge's.
 fn picked_bodies(st: &ModelState, body: &Option<crate::BodyName>, pts: &[Vec3]) -> Option<Vec<usize>> {
-    match body {
-        Some(_) => blend_target(st, body, pts).ok().map(|ti| vec![ti; pts.len()]),
-        None => pts.iter().map(|p| blend_target(st, &None, std::slice::from_ref(p)).ok()).collect(),
+    if body.is_some() || st.bodies.iter().filter(|b| !b.body.is_mesh()).count() < 2 {
+        blend_target(st, body, pts).ok().map(|ti| vec![ti; pts.len()])
+    } else {
+        pts.iter().map(|p| blend_target(st, &None, std::slice::from_ref(p)).ok()).collect()
     }
 }
 
@@ -3437,12 +3438,24 @@ pub fn edge_refs(st: &ModelState, body: &Option<crate::BodyName>, pts: &[Vec3]) 
 /// [`picked_bodies`]).
 pub fn edge_names_for(st: &ModelState, body: &Option<crate::BodyName>, pts: &[Vec3]) -> Vec<String> {
     let Some(on) = picked_bodies(st, body, pts) else { return Vec::new() };
-    pts.iter()
-        .zip(on)
-        .map(|(p, ti)| {
-            st.bodies.get(ti).map(|b| crate::naming::edge_names_at(b, std::slice::from_ref(p)).pop().unwrap_or_default()).unwrap_or_default()
-        })
-        .collect()
+    let mut out = vec![String::new(); pts.len()];
+    let mut done: Vec<usize> = Vec::new();
+    for &ti in &on {
+        if done.contains(&ti) {
+            continue;
+        }
+        done.push(ti);
+        let Some(b) = st.bodies.get(ti) else { continue };
+        // The body's names are worked out once for all its picks.
+        let idx: Vec<usize> = on.iter().enumerate().filter(|(_, t)| **t == ti).map(|(i, _)| i).collect();
+        let at: Vec<Vec3> = idx.iter().filter_map(|i| pts.get(*i).copied()).collect();
+        for (i, n) in idx.into_iter().zip(crate::naming::edge_names_at(b, &at)) {
+            if let Some(slot) = out.get_mut(i) {
+                *slot = n;
+            }
+        }
+    }
+    out
 }
 
 /// The stored pick sits on the axis of a round, not on an edge. The nearest edge within a
@@ -3611,7 +3624,8 @@ fn body_on_edge(st: &ModelState, p: Vec3) -> Option<usize> {
 /// both, the body nearest the first pick (as before blends were split by body). A named edge is
 /// never moved onto another body because that body's edge is nearer.
 fn blend_bodies(st: &ModelState, f: &Feature, body: &Option<crate::BodyName>, pts: &[Vec3]) -> Result<Vec<usize>> {
-    if body.is_some() {
+    // Named, or only one body to blend: no lookup.
+    if body.is_some() || st.bodies.iter().filter(|b| !b.body.is_mesh()).count() < 2 {
         let ti = blend_target(st, body, pts)?;
         return Ok(vec![ti; pts.len()]);
     }

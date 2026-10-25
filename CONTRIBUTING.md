@@ -11,7 +11,7 @@ build it, how the code is laid out, the few rules that aren't negotiable, and wh
 needed most.
 
 Before choosing a task, check the [command inventory](docs/features.md) and
-[roadmap](ROADMAP.md) for implemented capabilities and current priorities.
+[roadmap](docs/roadmap-detail.md) for implemented capabilities and current priorities.
 
 Questions, ideas or want to say what you're working on? Join the [Discord](https://discord.gg/FtU4NQNVDH).
 
@@ -389,7 +389,7 @@ In order of how much they'd help users:
 2. **Boolean robustness.** A random-design fuzzer currently gets about half of its designs
    through without a kernel error. Each failing seed is a reproducible bug.
 3. **Drawings, CAM and mesh tools.** These are out of scope for now (see
-   [ROADMAP.md](ROADMAP.md)), but anyone who wants to own one is welcome.
+   [ROADMAP.md](docs/roadmap-detail.md)), but anyone who wants to own one is welcome.
 
 ## Updating the generated feature list
 

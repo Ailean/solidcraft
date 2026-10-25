@@ -209,7 +209,7 @@ before the draft is verified.
 - Build with `CARGO_TARGET_DIR=<repo>/target`. Windows: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solidcraft`.
 
 ## Roadmap
-`ROADMAP.md` (committed) tracks status, milestones and estimates. Update it whenever a
+`docs/roadmap-detail.md` (committed) tracks status, milestones and estimates; `ROADMAP.md` is the short user-facing roadmap. Update it whenever a
 milestone task lands. `docs/features.md` (SolidCraft's commands by area, from the registry) and
 `THIRD-PARTY-LICENSES.txt` are regenerated on `main` after each merge by the Generated files
 workflow; never regenerate them in a PR.

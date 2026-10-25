@@ -155,6 +155,9 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - If someone already has it, comment on their PR or issue instead of opening a second one. Two
   PRs for one change can't both land, and one of them is wasted work and CI.
 
+- Keep the `Changes a default:` line in the PR description filled in, and don't open a second PR for
+  an issue a lower-numbered open PR already closes; `pr-checks.yml` fails both (CONTRIBUTING.md, "Sending a change").
+
 ## Claim = a draft PR
 - Before working on issue #N, check nobody has it: `gh pr list -R tangency-labs/solidcraft --state open --search "#N"`.
 - If none, branch from the latest `origin/main`, `git commit --allow-empty -m "claim: #N"`, push,

@@ -346,6 +346,10 @@ owning one area, with a human setting direction and reporting bugs. Their workin
 [AGENTS.md](AGENTS.md). Human contributors are just as welcome. Use whatever tools you like, as
 long as the change meets the rules above.
 
+Two quick checks run on every pull request (`.github/workflows/pr-checks.yml`, not required): it
+fails when a lower-numbered open PR by someone else already closes the same issue (the label
+`not-a-duplicate` skips it), or when the description lacks the `Changes a default: no` / `Changes a default: yes — <what>, old behaviour kept behind preference <name>` line (docs-only and bot PRs are exempt).
+
 ## Labels and triage
 
 The triage bot labels every new issue and PR (`.github/workflows/triage.yml`). It only adds labels;

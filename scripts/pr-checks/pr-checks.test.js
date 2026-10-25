@@ -90,7 +90,7 @@ function fakes(pull, { pulls = [], files = [] } = {}) {
     },
   };
   const failures = [];
-  const core = { setFailed: (m) => failures.push(m), info() {} };
+  const core = { setFailed: (m) => failures.push(m), info() {}, notice() {} };
   const context = { repo: { owner: 'tangency-labs', repo: 'solidcraft' }, payload: { pull_request: pull } };
   return { github, core, context, calls, failures };
 }
@@ -112,7 +112,7 @@ test('checkDuplicate fails with links, skips on label and bots', async () => {
 });
 
 test('checkDefaults fails when missing, passes docs-only and bots', async () => {
-  const me = mk(20, 'alice', 'Fixes #5');
+  const me = mk(20, 'alice', 'Fixes #5', { created_at: '2026-10-25T00:00:00Z' });
   let f = fakes(me, { files: [{ filename: 'crates/a.rs' }] });
   await pc.checkDefaults(f);
   assert.equal(f.failures.length, 1);
@@ -134,4 +134,15 @@ test('syncDefaultLabel adds and removes', async () => {
   f = fakes(mk(1, 'a', 'Changes a default: no', { labels: [{ name: 'changes-default' }] }));
   await pc.syncDefaultLabel(f);
   assert.deepEqual(f.calls, [['remove', 'changes-default']]);
+});
+
+test('checkDefaults only enforces from 2026-10-25', async () => {
+  const files = [{ filename: 'crates/a.rs' }];
+  const old = mk(20, 'alice', 'Fixes #5', { created_at: '2026-10-24T23:59:59Z' });
+  let f = fakes(old, { files });
+  assert.deepEqual(await pc.checkDefaults(f), { skipped: 'opened before enforcement' });
+  assert.equal(f.failures.length, 0);
+  f = fakes({ ...old, created_at: '2026-10-25T00:00:00Z' }, { files });
+  await pc.checkDefaults(f);
+  assert.equal(f.failures.length, 1);
 });

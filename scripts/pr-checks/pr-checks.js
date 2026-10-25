@@ -8,6 +8,8 @@
 
 const SKIP_LABEL = 'not-a-duplicate';
 const DEFAULT_LABEL = 'changes-default';
+// PRs opened before this predate the template line; they pass the defaults check with a notice.
+const DEFAULTS_ENFORCED_FROM = Date.parse('2026-10-25T00:00:00Z');
 const BOT_LOGINS = new Set(['dependabot[bot]', 'github-actions[bot]', 'dependabot-preview[bot]']);
 
 // Template comments and code blocks hold examples, not claims.
@@ -107,6 +109,10 @@ async function checkDuplicate({ github, context, core }) {
 async function checkDefaults({ github, context, core }) {
   const pull = context.payload.pull_request;
   if (isBot(pull.user)) return { skipped: 'bot' };
+  if (!(Date.parse(pull.created_at) >= DEFAULTS_ENFORCED_FROM)) {
+    core.notice('The "Changes a default:" line is only enforced on pull requests opened on or after 2026-10-25; this one predates it. Please add the line when you next push.');
+    return { skipped: 'opened before enforcement' };
+  }
   const files = (await github.paginate(github.rest.pulls.listFiles, {
     ...context.repo, pull_number: pull.number, per_page: 100,
   })).map((f) => f.filename);
@@ -135,6 +141,6 @@ async function syncDefaultLabel({ github, context, core }) {
 }
 
 module.exports = {
-  SKIP_LABEL, DEFAULT_LABEL, stripNoise, parseClosing, parseDefaults, isBot, isDocsOnly,
+  DEFAULTS_ENFORCED_FROM,  SKIP_LABEL, DEFAULT_LABEL, stripNoise, parseClosing, parseDefaults, isBot, isDocsOnly,
   findDuplicates, checkDuplicate, checkDefaults, syncDefaultLabel,
 };

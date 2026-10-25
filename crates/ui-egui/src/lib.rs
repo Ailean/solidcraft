@@ -359,6 +359,8 @@ pub struct Services {
     pub graphics_path: Option<String>,
     /// Linux: the window system this run uses, `wayland` or `x11` (Preferences shows it, #3083).
     pub window_system: Option<&'static str>,
+    /// Adapter names and descriptive labels from the desktop renderer's chosen backends.
+    pub graphics_adapters: Vec<(String, String)>,
     /// HTTPS GET for the update check (`update`); None: never check (browser, tests).
     pub http_get: Option<update::HttpGet>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
@@ -383,6 +385,8 @@ pub struct Services {
 }
 
 pub struct SolveApp {
+    /// Compact browser embed: retain model panels and joint controls without application chrome.
+    pub embedded: bool,
     pub session: Session,
     pub ui: UiState,
     pub(crate) shell: shell::State,
@@ -659,6 +663,7 @@ impl SolveApp {
             fitted: false,
             pending_fit: None,
             flat_view: Default::default(),
+            embedded: false,
             home: home::HomeState::default(),
             space_mouse: Default::default(),
             file_load: file_load::FileLoad::default(),
@@ -1084,6 +1089,12 @@ impl SolveApp {
             self.pick_open_command(id, json!({}), &[ext]);
             return;
         }
+        if id == "component.update_links" && !self.session.doc.links.is_empty() {
+            // Reading the linked designs again takes a while in a large assembly: off the window
+            // thread, the overlay naming the one being read (#5329).
+            let _ = file_load::begin_request(self, file_load::Request::new("", file_load::Kind::UpdateLinks));
+            return;
+        }
         if id == "component.insert_design" {
             // Another design becomes a linked component; a STEP or mesh file picked here is
             // inserted the way Insert STEP or Insert Mesh would (#1240).
@@ -1205,7 +1216,7 @@ impl SolveApp {
                     | "sketch.constraint.tangent"
                     | "sketch.constraint.concentric"
                     | "sketch.constraint.collinear"
-            ) && let [solidcraft_engine::Sel::SketchCurve { id: a }, solidcraft_engine::Sel::SketchCurve { id: b }] =
+            ) && let [solidcraft_engine::Sel::SketchCurve { id: a, .. }, solidcraft_engine::Sel::SketchCurve { id: b, .. }] =
                 self.session.selection.as_slice()
                 && a != b
             {
@@ -1222,7 +1233,7 @@ impl SolveApp {
                     .selection
                     .iter()
                     .filter_map(|s| match s {
-                        solidcraft_engine::Sel::SketchCurve { id } | solidcraft_engine::Sel::SketchPoint { id } => Some(id.clone()),
+                        solidcraft_engine::Sel::SketchCurve { id, .. } | solidcraft_engine::Sel::SketchPoint { id } => Some(id.clone()),
                         _ => None,
                     })
                     .take(2)
@@ -1396,7 +1407,7 @@ impl SolveApp {
     }
 
     pub fn set_status(&mut self, s: impl Into<String>, error: bool) {
-        let (text, at) = (s.into(), now_ms());
+        let (text, at) = (i18n::tr_diagnostic(&s.into()), now_ms());
         self.messages.push(&text, error, at);
         self.status = Some((text, at, error));
         self.status_undo = false;
@@ -1698,7 +1709,9 @@ impl SolveApp {
             if !keymap::capturing(self) {
                 expression_complete::begin_frame(ctx);
             }
-            toolbar::shortcuts(self, ctx);
+            if !self.embedded {
+                toolbar::shortcuts(self, ctx);
+            }
         }
         recovery_ui::tick(self);
         open_elsewhere::tick(self, ctx);
@@ -1800,11 +1813,19 @@ impl SolveApp {
     }
 
     fn cad_ui(&mut self, ui: &mut egui::Ui, report_input: &mut Option<issue_report::CadInput>) {
+        if self.embedded {
+            self.ui.layout = shell::LayoutMode::Docked;
+            self.home.open = false;
+            self.ui.show_browser = true;
+            self.ui.show_timeline = true;
+        }
         self.ui.layout.publish(ui.ctx());
         scenario::clear_handles();
         self.poll_deferred(ui.ctx());
         self.poll_delete_check(ui.ctx());
-        toolbar::app_bar(self, ui);
+        if !self.embedded {
+            toolbar::app_bar(self, ui);
+        }
         issue_report::CadInput::block(self, ui, report_input);
         file_load::show(self, ui.ctx());
         open_meshing::show(self, ui.ctx());
@@ -1831,7 +1852,7 @@ impl SolveApp {
         let show_timeline = self.ui.show_timeline && !render_workspace::active(self);
         let left_timeline = show_timeline && self.preferences.timeline_left;
         timeline_left::animate_folds(self, ui.ctx());
-        if !floating {
+        if !floating && !self.embedded {
             toolbar::toolbar(self, ui);
         }
         theme::TabAccent::publish(self, ui.ctx());

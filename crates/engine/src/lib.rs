@@ -13,6 +13,7 @@ pub mod capture;
 pub mod cmd;
 pub mod control_auth;
 pub mod control_pending;
+pub mod cosmetic_threads;
 pub mod crash;
 pub mod frames;
 pub mod fuzz;
@@ -113,9 +114,12 @@ pub enum Sel {
     Feature {
         id: u64,
     },
-    /// A sketch curve or point (by id) of the active sketch.
+    /// A sketch curve or point (by id) of the active sketch. A curve picked into a dialog also
+    /// names its `sketch`: curve ids repeat from one sketch to the next (#3726).
     SketchCurve {
         id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sketch: Option<u64>,
     },
     SketchPoint {
         id: String,
@@ -1428,6 +1432,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         units,
         metadata,
         params,
+        text_params,
         features: _,
         marker,
         next_id,
@@ -1461,6 +1466,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         && *units == b.units
         && *metadata == b.metadata
         && *params == b.params
+        && *text_params == b.text_params
         && *marker == b.marker
         && *next_id == b.next_id
         && *reserved_body_names == b.reserved_body_names

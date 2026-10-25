@@ -13,6 +13,7 @@ mod layers;
 mod licences;
 mod lists;
 mod render_assets;
+mod skills;
 mod test;
 mod test_nextest;
 mod ui_containers;
@@ -57,6 +58,9 @@ commands:
                   leave it to the Generated files workflow on main
   lists [--fix]   check that files many changes add to are sorted one item per line (the
                   message catalogs in assets/locales); --fix sorts them
+  skills          check that AGENTS.md and skills/*/SKILL.md cite files, `cargo xtask` commands and skills
+                  that exist, that the router table lists exactly the skills there are, and that
+                  AGENTS.md and new skills stay short
   test [CARGO ARGS] [-- TEST ARGS]
                   build the tests with the ci profile, then run every test binary at once
                   (and the doc tests alongside); SOLIDCRAFT_TEST_JOBS=N bounds concurrent test
@@ -69,7 +73,7 @@ commands:
   web-offline-test [--site DIR]
                   check in headless Chrome that the web app works offline and updates to a new
                   build (a stand-in app, or the web build in DIR such as dist/web)
-  ci              fmt --check, assets, icons, licences --check, lists, layers, ui-containers, clippy -D warnings, then the tests
+  ci              fmt --check, assets, icons, licences --check, lists, skills, layers, ui-containers, clippy -D warnings, then the tests
                   with the wasm check alongside, then web-offline-test when Chrome is installed
                   (stops at the first failing step)
 ";
@@ -92,6 +96,7 @@ fn main() -> ExitCode {
         }
         Some("book") => book::run(&root(), !rest.contains(&"--no-build")),
         Some("licences") => licences::run(&root(), rest.contains(&"--check")),
+        Some("skills") => skills::run(&root()),
         Some("lists") => lists::run(&root(), rest.contains(&"--fix")),
         Some("test") => {
             let (cargo_args, test_args) = rest.iter().position(|a| *a == "--").map_or((&rest[..], &[][..]), |i| (&rest[..i], &rest[i + 1..]));
@@ -379,6 +384,7 @@ fn cmd_ci() -> Result<(), String> {
     icons::run(&root())?;
     licences::run(&root(), true)?;
     lists::run(&root(), false)?;
+    skills::run(&root())?;
     cmd_layers()?;
     ui_containers::run(&root())?;
     let mut c = cargo();

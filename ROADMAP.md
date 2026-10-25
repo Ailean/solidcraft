@@ -30,24 +30,25 @@ version are on the [releases page](https://github.com/tangency-labs/solidcraft/r
 ## In progress now
 
 Each feature below is a [milestone](https://github.com/tangency-labs/solidcraft/milestones) holding
-the issues and pull requests for it, so the count shows how far along it is. Counts are as of
-2026-10-25 and are open issues and pull requests against closed ones; they are rough, not a promise.
+the issues for it, so the count shows how far along it is. Counts are as of 2026-10-25, one per
+feature or request. Work merged on a feature branch (`drawings`, `render`) counts as built but
+reaches the app only when that branch merges. They are rough, not a promise.
 
-- **[Rendering & materials](https://github.com/tangency-labs/solidcraft/milestone/17)**: in progress, 8 of 59 pieces done (51 open). The Render workspace shipped in 0.22.0; the interface rework and the material and light libraries are next.
-- **[Drawings](https://github.com/tangency-labs/solidcraft/milestone/8)**: in progress, 2 of 40 pieces done (38 open). Not available yet. Sheets, borders and the paper scene are merged on the `drawings` branch; views, dimensions and exports are still being built. Today you can export the current view as a DXF.
-- **[Sheet metal](https://github.com/tangency-labs/solidcraft/milestone/15)**: in progress, 1 of 34 pieces done (33 open). Flanges, reliefs and jogs are being extended.
-- **[Sketching](https://github.com/tangency-labs/solidcraft/milestone/14)**: in progress, 12 of 56 pieces done (44 open). Dimension types, selection and snapping options.
-- **[Solid modeling](https://github.com/tangency-labs/solidcraft/milestone/2)**: in progress, 9 of 58 pieces done (49 open). Blends, holes, threads and patterns.
-- **[Assemblies & joints](https://github.com/tangency-labs/solidcraft/milestone/3)**: in progress, 5 of 23 pieces done (18 open). Joints and motion work today; placement rules, fasteners and weldments are being added.
-- **[Import & export](https://github.com/tangency-labs/solidcraft/milestone/5)**: in progress, 18 of 60 pieces done (42 open). FreeCAD, SolidWorks and point-cloud import, and mesh export options.
-- **[AI agents & MCP](https://github.com/tangency-labs/solidcraft/milestone/18)**: in progress, 2 of 19 pieces done (17 open). Agent chat and the MCP server.
-- **[Interface, web app & plugins](https://github.com/tangency-labs/solidcraft/milestone/4)**: in progress, 35 of 121 pieces done (86 open). Ribbon redesign, navigation, themes, the web app and plugins.
-- **[SMLib kernel migration](https://github.com/tangency-labs/solidcraft/milestone/1)**: in progress, 3 of 5 pieces done (2 open). The kernel is moving from truck to NVIDIA's SMLib (usd-brep, Apache-2.0) on the `kernel-smlib` branch; it is not in releases yet. Tracked in [#4012](https://github.com/tangency-labs/solidcraft/issues/4012).
+- **[Rendering & materials](https://github.com/tangency-labs/solidcraft/milestone/17)**: in progress, 9 of 34 pieces done, 3 of them built only on the `render` branch and in the app when it merges. The basic Render workspace is already in releases (0.22.0); the interface rework (#6281) and the material and light libraries are what is left.
+- **[Drawings](https://github.com/tangency-labs/solidcraft/milestone/8)**: in progress, 3 of 21 pieces built (2 in releases, 1 on the `drawings` branch), and 3 more partly built there (sheets and borders, bill-of-materials types, the paper scene). Not in the app yet: it lands when the `drawings` branch merges. Today you can export the current view as a DXF.
+- **[Sheet metal](https://github.com/tangency-labs/solidcraft/milestone/15)**: in progress, 1 of 30 requests done. Flanges, hems, unfold and flat patterns already work; the 30 are extensions, mostly the per-edge flange options (segments, miters, partial flanges, reliefs) and bend allowance.
+- **[Sketching](https://github.com/tangency-labs/solidcraft/milestone/14)**: in progress, 12 of 50 pieces done. Dimension types, selection and snapping options.
+- **[Solid modeling](https://github.com/tangency-labs/solidcraft/milestone/2)**: in progress, 9 of 50 pieces done. Blends, holes, threads and patterns.
+- **[Assemblies & joints](https://github.com/tangency-labs/solidcraft/milestone/3)**: in progress, 4 of 19 pieces done. Joints, motion studies and exploded views already work; placement rules, linked sub-assemblies, fastener stacks and weldment corners are the pieces left.
+- **[Import & export](https://github.com/tangency-labs/solidcraft/milestone/5)**: in progress, 7 of 39 pieces done. FreeCAD, SolidWorks and point-cloud import, and mesh export options.
+- **[AI agents & MCP](https://github.com/tangency-labs/solidcraft/milestone/18)**: in progress, 2 of 8 pieces done. Agent chat and the MCP server.
+- **[Interface, web app & plugins](https://github.com/tangency-labs/solidcraft/milestone/4)**: in progress, 31 of 96 pieces done. Ribbon redesign, navigation, themes, the web app and plugins.
+- **[SMLib kernel migration](https://github.com/tangency-labs/solidcraft/milestone/1)**: in progress, 1 tracking issue open. The kernel is moving from truck to NVIDIA's SMLib (usd-brep, Apache-2.0) on the `kernel-smlib` branch; it is not in releases yet. Tracked in [#4012](https://github.com/tangency-labs/solidcraft/issues/4012).
 
 ## Next
 
-- **[Surfacing](https://github.com/tangency-labs/solidcraft/milestone/16)**: next, 6 of 15 pieces done (9 open). Patch, trim, blend and match exist; the rest of the surface toolset is planned.
-- **[Manufacturing / CAM](https://github.com/tangency-labs/solidcraft/milestone/9)**: next, 0 of 3 pieces done (3 open). There is no CAM in SolidCraft yet. Send to Slicer and a first toolpath slice are in review; proposals are [#1153](https://github.com/tangency-labs/solidcraft/issues/1153) and [#1621](https://github.com/tangency-labs/solidcraft/issues/1621).
+- **[Surfacing](https://github.com/tangency-labs/solidcraft/milestone/16)**: next, 6 of 14 pieces done. Patch, trim, blend and match exist; the rest of the surface toolset is planned.
+- **[Manufacturing / CAM](https://github.com/tangency-labs/solidcraft/milestone/9)**: next, 1 pieces tracked, none done. There is no CAM in SolidCraft yet. Send to Slicer and a first toolpath slice are in review; proposals are [#1153](https://github.com/tangency-labs/solidcraft/issues/1153) and [#1621](https://github.com/tangency-labs/solidcraft/issues/1621).
 
 Features are not tied to a release or a date. Work lands in the daily releases as it is finished.
 Anything without a milestone, such as bug fixes, is not a feature and is not listed here.

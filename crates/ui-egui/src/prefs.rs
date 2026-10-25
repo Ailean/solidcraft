@@ -457,6 +457,8 @@ preference_settings! {
     navigator_style: NavigatorStyle = NavigatorStyle::default(), PAGE_NAVIGATION;
     /// Show the radial ring and enable hold/flick gestures for viewport context menus.
     radial_context_menu: bool = false, PAGE_NAVIGATION => check("Radial context menu");
+    /// Work on the model directly in the viewport (pull a face to extrude or cut); off by default.
+    direct_interaction: bool = false, PAGE_NAVIGATION => check("Direct interaction", "Work on the model directly in the viewport. Press a flat face or a profile and pull: up extrudes, down into a body cuts, and sideways movement sets the step size");
     /// Mouse gestures: a ring of tools on the right button.
     mouse_gestures: crate::mouse_gesture::Config = Default::default(), PAGE_NAVIGATION;
     /// The wheel zooms out when turned forward.
@@ -529,11 +531,16 @@ preference_settings! {
     supersampling_adaptive: bool = true, PAGE_GRAPHICS => check_tr("ui.supersampling_adaptive");
     /// Show the frame rate in the view's corner (the view then redraws every frame).
     show_frame_rate: bool = false, PAGE_GRAPHICS => check_id("ui.frame_rate");
+    /// With the frame rate: a frame-time graph, a histogram and what the GPU drew (#2548).
+    frame_rate_details: bool = false, PAGE_GRAPHICS;
     /// Show world X/Y/Z component dimensions beside the total distance in Measure.
     measure_axis_distances: bool = true, PAGE_GRAPHICS => check_id("settings.measure_axis_distances");
     /// Decimals shown for lengths and angles.
     length_decimals: u8 = 2, PAGE_DESIGN;
     angle_decimals: u8 = 1, PAGE_DESIGN;
+    /// Up/Down and the wheel over a focused value field step its plain number (`value_step`,
+    /// #2320). Off by default: the keys move the text cursor and the wheel scrolls, as before.
+    step_values: bool = false, PAGE_DESIGN => check_id("ui.step_values");
     /// `dark`, `light` or `system` (follow the operating system), or a theme file's id: a
     /// built-in one (`gruvbox-dark`, …) or one of `custom_themes` (#2255).
     theme: String = "dark".into(), PAGE_INTERFACE;
@@ -626,6 +633,9 @@ preference_settings! {
     /// Let AI agents connect: the localhost control channel (MCP) opens on the default port at
     /// start-up, unless `--control`/`SOLIDCRAFT_CONTROL_PORT` name one. Read at start-up.
     agent_control: bool = true, PAGE_AI;
+    /// Add SolidCraft's MCP server to the AI apps installed on this computer at start-up
+    /// ([`crate::ai_connect`]); off takes the entries out again.
+    connect_ai_apps: bool = true, PAGE_AI;
     /// Agents the user added (the installed ones are found by themselves). API keys are never
     /// here: they live in the system keychain.
     agents: Vec<crate::agent_chat::agents::AgentConfig> = Vec::new();
@@ -647,7 +657,7 @@ preference_settings! {
     /// negative or past the main screen when the window sits on another one).
     agent_chat_popped: bool = false, PAGE_AI;
     agent_chat_window: Option<[f32; 4]> = None, PAGE_AI;
-    /// Changes the agent may make for one message.
+    /// Changes the agent may make for one message; 0 is no limit.
     agent_chat_turn_limit: u32 = crate::agent_chat::gate::DEFAULT_TURN_LIMIT, PAGE_AI;
 
     // ---- Sketch / selection modifier bindings (classic defaults; alternate mapping is opt-in) ----
@@ -662,6 +672,8 @@ preference_settings! {
     /// When true: Shift+click adds without removing; Primary toggles.
     /// When false (default): Shift and Primary both toggle.
     selection_shift_add_only: bool = false, PAGE_SKETCH;
+    /// Drive Joints shows the moved parts' old place as a ghost (its Show ghost box, #5905).
+    drive_joints_ghost: bool = true, PAGE_DESIGN;
     /// Plugin ids turned off (Preferences › Plugins). An installed plugin whose id is absent is on.
     disabled_plugins: std::collections::BTreeSet<String> = std::collections::BTreeSet::new(), PAGE_PLUGINS;
 }
@@ -1441,7 +1453,7 @@ fn space_mouse_rows(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui_kit::slider(
                     ui,
                     &mut app.preferences.space_mouse_speed,
-                    0.25..=3.0,
+                    0.25..=5.0,
                     ui_kit::Slider { step: Some(0.05), format: |value| format!("{value:.2}×"), ..Default::default() },
                 );
             });
@@ -2069,6 +2081,10 @@ fn theme_file(app: &SolveApp, id: &str, system_dark: bool) -> serde_json::Value 
 /// calibration that can't be used as it is (a hand edit) is dropped, so the device is read as it
 /// reports rather than spinning the view.
 pub fn migrate(mut p: Prefs) -> Prefs {
+    // Every saved file carries the old default limit; it reads as no limit.
+    if p.agent_chat_turn_limit == crate::agent_chat::gate::OLD_DEFAULT_TURN_LIMIT {
+        p.agent_chat_turn_limit = 0;
+    }
     if p.orbit_cursor {
         p.orbit_around = OrbitAround::Cursor;
         p.orbit_cursor = false;
@@ -3308,6 +3324,24 @@ mod tests {
     /// next frame draws with their colours (dark following the base), an export gives the theme
     /// back complete, imported themes are saved with the preferences, Remove falls back to the
     /// base and Cancel takes an import back.
+    /// #6161: the theme strip shows a chevron at each end with more themes past it; a click
+    /// scrolls that way.
+    #[test]
+    fn the_theme_strip_shows_where_more_themes_are() {
+        use serde_json::json;
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"open": "Interface"}));
+        h.frames(4);
+        let shown = |name: &str| crate::scenario::handle_at(name).is_some();
+        assert!(shown("theme_rail:next"), "more themes than fit: a chevron on the right");
+        assert!(!shown("theme_rail:previous"), "nothing before the first");
+        let first = crate::scenario::handle_at("prefs:theme:light").unwrap();
+        h.step(&json!({"click": {"handle": "theme_rail:next"}})).unwrap();
+        h.frames(4);
+        assert!(shown("theme_rail:previous"), "scrolled: a chevron on the left too");
+        assert!(crate::scenario::handle_at("prefs:theme:light").is_none_or(|p| p.x < first.x), "the strip moved");
+    }
+
     #[test]
     fn system_theme_tile_export_uses_os_brightness_without_selecting_it() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
@@ -4031,6 +4065,13 @@ mod tests {
         set(&mut app, &json!({"orbit_cursor": true})).unwrap();
         assert_eq!(app.preferences.orbit_around, OrbitAround::Cursor, "the old key still moves the choice");
         assert!(!app.preferences.orbit_cursor, "and is folded away");
+    }
+
+    #[test]
+    fn the_agent_chat_limit_is_off_unless_chosen() {
+        assert_eq!(Prefs::default().agent_chat_turn_limit, 0);
+        assert_eq!(migrate(lenient(&json!({"agent_chat_turn_limit": 24}))).agent_chat_turn_limit, 0, "the old default reads as no limit");
+        assert_eq!(lenient(&json!({"agent_chat_turn_limit": 10})).agent_chat_turn_limit, 10);
     }
 
     #[test]

@@ -13,7 +13,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("measure")
         .key("I")
         .noundo()
-        .params("bodies?: [names] (default all); or items: [1-2 selections] → length/area/volume; diameter, radius, circumference or arc_length/angle_deg of circles, arcs and cylinders; slot sizes; min (distance_mm, from, to), max, center_distance (centre to centre, or from an axis) and angle"),
+        .params("bodies?: [names] (default all); or items: [1-2 selections] (face/edge: type, body, point; index optional) → length/area/volume; diameter, radius, circumference or arc_length/angle_deg of circles, arcs and cylinders; slot sizes; min (distance_mm, from, to), max, center_distance (centre to centre, or from an axis) and angle"),
     CommandSpec::new("document.inspect", "Inspect Design", inspect).icon("inspect").noundo().params("measure?: bool (include body measurements)"),
     CommandSpec::new("sketch.inspect", "Inspect Sketch", sketch_inspect).icon("inspect").noundo().params("sketch?: id|name (default active)"),
     CommandSpec::new("model.edges", "List Edges", model_edges).icon("inspect").noundo().params("body: name"),
@@ -54,7 +54,7 @@ pub static COMMANDS: &[CommandSpec] = &[
 ];
 
 pub fn measure_json(b: &solidcraft_doc::ModelBody) -> Value {
-    match solidcraft_kernel::measure(&b.body) {
+    match b.measure() {
         Ok(m) => json!({
             "name": b.name,
             "volume_mm3": m.volume,
@@ -248,11 +248,16 @@ fn inspect(s: &mut Session, p: &Value) -> Result<Value> {
         })
         .collect();
     let with_measure = bool_(p, "measure").unwrap_or(false);
+    // Each body is measured on its own: on all cores, in body order (as `inspect.measure`).
+    let mut measured = if with_measure { solidcraft_kernel::map_on_threads(&st.bodies, 16, measure_json) } else { Vec::new() }.into_iter();
     let bodies: Vec<Value> = st
         .bodies
         .iter()
         .map(|b| {
-            let mut v = if with_measure { measure_json(b) } else { json!({"name": b.name, "feature": b.feature}) };
+            let mut v = match measured.next() {
+                Some(m) => m.unwrap_or_else(|| json!({"name": b.name, "error": "measuring this body failed"})),
+                None => json!({"name": b.name, "feature": b.feature}),
+            };
             if let Some(o) = v.as_object_mut() {
                 o.insert("visible".into(), json!(s.body_visible(&b.name)));
                 if s.body_removed_later(&b.name) {

@@ -2,17 +2,17 @@
 """Replay a design's timeline in a running SolidCraft, for a screen recording (record_rover.sh).
 
     solidcraft --control 7878 &
-    python3 examples/demo/rover_replay.py --port 7878 Rover-recorded.solidcraft [--seconds 110]
+    python3 examples/demo/rover_replay.py --port 7878 Rover-recorded.solidcraft 
 
 Opens the design, frames the finished model, rolls the timeline back to its start and then
 forward in even steps (the History bar's roll-to, as `timeline.roll_to` over the control
-channel) while the camera drifts slowly round the model; it ends on the finished design and a
-slow turn. Prints "start" and "end" lines with epoch times so the recorder can trim.
+channel) while the camera orbits the model at a constant rate; it ends a few seconds after the last step. Prints "start" and "end" lines with epoch times so the recorder can trim.
 """
 import argparse
 import math
 import os
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -23,8 +23,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("design")
     ap.add_argument("--port", type=int, default=7878)
-    ap.add_argument("--seconds", type=float, default=110, help="real time the timeline takes to play")
-    ap.add_argument("--turn", type=float, default=8, help="seconds of slow turn on the finished design")
+    ap.add_argument("--rate", type=float, default=0.0133, help="orbit speed in radians per second of real time")
+    ap.add_argument("--turn", type=float, default=4, help="seconds the orbit goes on after the last step")
     a = ap.parse_args()
 
     def ui(method, params=None):
@@ -61,26 +61,25 @@ def main():
     execute({"position": 0})
     time.sleep(1.0)
     print("start", time.time(), flush=True)
-    total_turn = 0.9  # radians over the build
+    # The camera orbits at a constant rate for the whole replay (a thread, so it does not wait
+    # for the timeline steps): yaw = yaw0 + rate * seconds since the start.
     t0 = time.time()
+    stop = threading.Event()
+
+    def orbit():
+        while not stop.is_set():
+            ui("ui.camera", {"yaw": yaw0 + a.rate * (time.time() - t0)})
+            time.sleep(0.03)
+
+    spin = threading.Thread(target=orbit, daemon=True)
+    spin.start()
     steps = 90
     for i in range(1, steps + 1):
-        t_target = t0 + a.seconds * i / steps
         pos = round(n * i / steps)
         execute({"position": pos} if pos < n else {})
-        # The camera drifts a little every frame of the wait.
-        while True:
-            now = time.time()
-            frac = min(1.0, (now - t0) / a.seconds)
-            ui("ui.camera", {"yaw": yaw0 + total_turn * frac})
-            if now >= t_target:
-                break
-            time.sleep(0.05)
-    t1 = time.time()
-    while time.time() - t1 < a.turn:
-        f = (time.time() - t1) / a.turn
-        ui("ui.camera", {"yaw": yaw0 + total_turn + 0.5 * f})
-        time.sleep(0.04)
+    time.sleep(a.turn)
+    stop.set()
+    spin.join()
     print("end", time.time(), flush=True)
 
 

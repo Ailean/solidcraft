@@ -4,7 +4,8 @@
 # OUTDIR/enclosure-demo-STORY.mp4 (H.264) and .gif, with captions and a drawn pointer (the app
 # gets synthetic pointer events, so the screen's own pointer never moves). Needs ffmpeg with
 # x11grab and libass.
-# PLAYBACK_RATE defaults to 1; label accelerated previews with their rate when publishing.
+# PLAYBACK_RATE defaults to 1; label accelerated previews with their rate when publishing. Idle stretches
+# (nothing on screen changes) are cut by trim_idle.py.
 # SOLIDCRAFT_DEMO_NAME overrides the filename stem; PAUSE scales UI pauses, CAPTION is the
 # minimum real-time caption duration, and HOLD keeps the live completed model on screen.
 # For a readable 4x preview use SOLIDCRAFT_DEMO_CAPTION=4 and SOLIDCRAFT_DEMO_HOLD=8.
@@ -78,9 +79,14 @@ else:
     select="" # Partial rehearsals have no health/save/reopen interval.
 pathlib.Path(destination).write_text(select+f"setpts=N/(FRAME_RATE*TB*{rate})")
 PY
-# Accelerate the public composite: cursor, ripples and captions stay aligned with the UI.
-ffmpeg -loglevel error -y -i "$OUT/real-time.mp4" -vf "$(cat "$OUT/public.filter")" -an \
-  -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -movflags +faststart "$OUT/$NAME.mp4"
+# Speed the public composite up RATE times and cut the idle stretches (cursor, ripples and captions
+# stay aligned with the UI). A take with a private proof interval drops it first.
+SRC="$OUT/real-time.mp4"
+if grep -q select "$OUT/public.filter"; then
+  ffmpeg -loglevel error -y -i "$SRC" -vf "$(sed 's/,setpts.*//' "$OUT/public.filter"),setpts=N/(FRAME_RATE*TB)" -an -c:v libx264 -preset slow -crf 16 -pix_fmt yuv420p "$OUT/public-source.mp4"
+  SRC="$OUT/public-source.mp4"
+fi
+python3 "$HERE/trim_idle.py" "$SRC" "$OUT/$NAME.mp4" --rate "$RATE"
 ffmpeg -loglevel error -y -i "$OUT/$NAME.mp4" \
   -vf "fps=$GIF_FPS,scale=$GIF_WIDTH:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=96:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
   "$OUT/$NAME.gif"

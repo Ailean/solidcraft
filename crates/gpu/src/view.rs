@@ -1780,7 +1780,8 @@ impl Renderer {
         let built = [Some(tri_layout())];
         let evaluated = [Some(planned_layout()), Some(color_layout())];
         let placed = [Some(shared_layout()), Some(instance_layout())];
-        let solid = |label: &str, fs: &str, cull: Option<wgpu::Face>, ds: Option<wgpu::DepthStencilState>, source: TriSource| {
+        // `colour`: whether the pipeline writes colour (the cap's depth pass writes none).
+        let solid_writes = |label: &str, fs: &str, cull: Option<wgpu::Face>, ds: Option<wgpu::DepthStencilState>, source: TriSource, colour: bool| {
             let fs = source.fragment(fs);
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -1801,12 +1802,19 @@ impl Renderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
                     entry_point: Some(&fs),
-                    targets: &[Some(wgpu::ColorTargetState { format: t.format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: t.format,
+                        blend: None,
+                        write_mask: if colour { wgpu::ColorWrites::ALL } else { wgpu::ColorWrites::empty() },
+                    })],
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
                 cache: None,
             })
+        };
+        let solid = |label: &str, fs: &str, cull: Option<wgpu::Face>, ds: Option<wgpu::DepthStencilState>, source: TriSource| {
+            solid_writes(label, fs, cull, ds, source, true)
         };
         // While a section is shown: the stencil marking and the cap (see `Renderer::tri_cut`).
         let cut = |source: TriSource| {
@@ -1844,7 +1852,11 @@ impl Renderer {
                 (
                     solid("sc_tris_mark", "fs_solid", None, Some(mark), source),
                     solid("sc_tris_mark_back", "fs_solid", Some(wgpu::Face::Front), Some(mark_back), source),
-                    solid("sc_tris_cap", "fs_solid_cut", Some(wgpu::Face::Front), Some(cap), source),
+                    // Depth only: every back face behind a marked pixel draws here, so writing
+                    // colour let the last one drawn paint the cut, other bodies behind it
+                    // included (their colours and outlines showed through it, #6328). The
+                    // marking passes already drew the nearest back face's colour.
+                    solid_writes("sc_tris_cap", "fs_solid_cut", Some(wgpu::Face::Front), Some(cap), source, false),
                 )
             })
         };

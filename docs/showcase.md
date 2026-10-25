@@ -5,5 +5,5 @@
 *SELENE, a scientific rover built entirely through SolidCraft's MCP server by
 [@0xlillith](https://github.com/0xlillith/solidcraft-rover): 3,323 editable timeline steps that
 rebuild with no errors, replayed here at 2× speed.
-[Full video](https://github.com/tangency-labs/solidcraft/raw/refs/heads/main/screenshots/rover-build.mp4)
+[Full video](https://github.com/tangency-labs/solidcraft/raw/refs/heads/main/docs/screenshots/rover-build.mp4)
 · [download the editable model](https://github.com/0xlillith/solidcraft-rover/releases/tag/v1.0.0).*

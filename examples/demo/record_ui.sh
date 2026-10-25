@@ -9,7 +9,7 @@
 # minimum real-time caption duration, and HOLD keeps the live completed model on screen.
 # For a readable 4x preview use SOLIDCRAFT_DEMO_CAPTION=4 and SOLIDCRAFT_DEMO_HOLD=8.
 # SOLIDCRAFT_DEMO_GIF_WIDTH and SOLIDCRAFT_DEMO_GIF_FPS size the README GIF (default 800 px, 10 fps).
-# The README demo (0.8): SOLIDCRAFT_DEMO_NAME=demo-0.8 SOLIDCRAFT_DEMO_PAUSE=0.4 SOLIDCRAFT_DEMO_CAPTION=9
+# The README demo: SOLIDCRAFT_DEMO_NAME=demo SOLIDCRAFT_DEMO_PAUSE=0.4 SOLIDCRAFT_DEMO_CAPTION=9
 #   SOLIDCRAFT_DEMO_HOLD=10 record_ui.sh :74 7974 OUT pi 9
 set -e
 DISP=${1:-:0}; PORT=${2:-7878}; OUT=$(cd "${3:-.}" && pwd); STORY=${4:-pi}; RATE=${5:-1}

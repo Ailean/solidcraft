@@ -1246,3 +1246,28 @@ fn a_driven_shown_dimension_is_read_only() {
     assert!(h.app.status.as_ref().is_some_and(|s| s.0.contains("driven")), "{:?}", h.app.status);
     assert_eq!(h.app.session.doc.to_json(), doc);
 }
+
+/// The value applies like any other change: the fillet it breaks reports its error on the
+/// timeline, and Undo brings back the value and the fillet.
+#[test]
+fn a_shown_dimension_that_breaks_a_later_feature_reports_it_and_undoes() {
+    let (mut h, _) = shown_dimensions();
+    h.app.run("solid.fillet", json!({"edges":[[10,10,5]],"radius":4,"name":"Round"})).unwrap();
+    h.settle();
+    let round = h.app.session.doc.features.iter().find(|f| f.name == "Round").unwrap().id;
+    let failed = |h: &Harness| h.app.session.model.result(round).is_some_and(|r| r.error.is_some());
+    assert!(!failed(&h));
+    let before = h.app.session.doc.to_json();
+    let at = model_text(&h, "d2");
+    h.step(&json!({"click":at,"double":true})).unwrap();
+    type_value(&mut h, "3");
+    h.step(&json!({"key":"Enter"})).unwrap();
+    h.settle();
+    assert_eq!(h.app.session.doc.param("d2").unwrap().expr, "3");
+    assert!(failed(&h), "the fillet no longer fits and says so");
+    assert_eq!(h.app.session.active_sketch, None);
+    h.app.run("edit.undo", json!({})).unwrap();
+    h.settle();
+    assert_eq!(h.app.session.doc.to_json(), before);
+    assert!(!failed(&h), "undo brings the fillet back");
+}

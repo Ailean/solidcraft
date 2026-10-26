@@ -10,7 +10,7 @@
 # no native job runs for them, on pull requests or on main.
 # Tests are built and run in one job on a big runner, slowest first, starting beside the repository
 # checks (no archive to upload and download). The GPU path tracer's tests run one at a time
-# (.config/nextest.toml), so they have a job of their own in three shards (GPU path tests). A few
+# (.config/nextest.toml), so they have a job of their own in four shards (GPU path tests). A few
 # heavy tests (see .config/nextest.toml) are skipped on pull requests and run on pushes to main and
 # nightly. The reference tests and the doc tests run in the merge queue, on main and nightly, not
 # on pull requests (the fast lane, in Select checks); a break there is fixed forward on main. The
@@ -32,7 +32,7 @@
 # reads `ci` from the newest run of a commit, so a run without it would block a PR that passed.
 # Cross-compilation is opt-in through Run workflow; release builds remain in release.yml.
 # Every Linux job runs on Blacksmith's Ubuntu 24.04 runners (blacksmith-<N>vcpu-ubuntu-2404), sized
-# per job: 32 vCPU for the tests, 16 for Clippy, the archive build (nightly) and the merge queue's, 8 for compiles, the GPU path tests, doc and reference tests, 4 for the light checks, 2 for Select checks and ci.
+# per job: 32 vCPU for the tests, 16 for Clippy, the GPU path tests, the archive build (nightly) and the merge queue's, 8 for compiles, doc and reference tests, 4 for the light checks, 2 for Select checks and ci.
 # The Windows shader job runs on Blacksmith's Windows Server 2025 runners (blacksmith-8vcpu-windows-2025);
 # the Windows app startup smoke stays on windows-latest, which has a desktop session that presents frames.
 # Pull requests, forks included, the merge queue, pushes to main and the nightly run all use them:
@@ -545,20 +545,22 @@ jobs:
           retention-days: 7
 
   gpu-path-tests:
-    name: GPU path tests (${{ matrix.shard }}/3)
+    name: GPU path tests (${{ matrix.shard }}/4)
     # The GPU path tracer's tests (about 108) compile their pipelines on lavapipe, one test at a
     # time (the gpu-path test group in .config/nextest.toml keeps them within the 600 s pipeline
     # setup budget). Serial, they took about 36 minutes, the longest chain in Native Linux tests;
-    # here three shards run beside it. Their filter is the one Native Linux tests leaves out, so
+    # here four shards run beside it. Their filter is the one Native Linux tests leaves out, so
     # every test runs exactly once.
+    # 16 vCPU, not 8: lavapipe compiles on every core, and on 8 vCPU one test went past the 600 s
+    # budget (665 s, against 204 s for the same test in another run) and a shard took 35 minutes.
     needs: changes
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.gpu == 'true' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     env:
       # As in Native Linux tests: lavapipe draws, and a test without an adapter fails.
       SOLIDCRAFT_GPU: software
@@ -604,9 +606,10 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           # None of these is in the default filter (the heavy tests), so pull requests, the merge
-          # queue, main and nightly all run every one of them, as before.
+          # queue, main and nightly all run every one of them, as before. `count` deals the tests
+          # out in turn (27 each); `hash` split them 41/40/27 across three shards.
           cargo nextest run -p solidcraft-gpu --cargo-profile ci --locked --profile ci --no-tests=pass \
-            --ignore-default-filter -E 'test(/^path::/)' --partition "hash:$SHARD/3"
+            --ignore-default-filter -E 'test(/^path::/)' --partition "count:$SHARD/4"
       - name: Compiler cache statistics
         if: always()
         run: sccache --show-stats

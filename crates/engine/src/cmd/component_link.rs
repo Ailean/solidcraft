@@ -596,6 +596,39 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Two arms jointed top face to bottom face, both occurrences of one linked arm design: when
+    /// the arm is made thicker, its holes moved or it is made longer, Update Links brings the
+    /// change in and every joint type re-solves onto the moved faces, edges and corners, as it
+    /// does inside one design (`jointed_arms_stay_together_as_the_arm_changes`).
+    #[test]
+    fn jointed_linked_arms_stay_together_through_update_links() {
+        use crate::cmd::joints::face_tests::{ARM_EDITS, ARM_FORMS, arm_pairs, arm_part, arm_size, arms_apart, joint_arms};
+        let dir = std::env::temp_dir().join(format!("solidcraft-link-arms-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("arm.solidcraft");
+        let mut apart = Vec::new();
+        for form in ARM_FORMS {
+            let mut part = Session::default();
+            arm_part(&mut part);
+            run(&mut part, "file.save", json!({"path": path}));
+            let mut s = Session::default();
+            let first = run(&mut s, "component.insert_design", json!({"path": path, "name": "Arm"}))["occurrence"].as_u64().unwrap();
+            let pairs = arm_pairs(&mut s, first);
+            joint_arms(&mut s, form, &pairs);
+            apart.extend(arms_apart(&mut s, "as made", form, &pairs, arm_size(&[])));
+            for (i, (name, value)) in ARM_EDITS.into_iter().enumerate() {
+                run(&mut part, "parameters.change", json!({"name": name, "expression": format!("{value} mm")}));
+                run(&mut part, "file.save", json!({}));
+                let update = run(&mut s, "component.update_links", json!({}));
+                assert_eq!(update["updated"], json!(["Arm"]), "{form} {name}: {update}");
+                assert_eq!(update["warnings"], json!([]), "{form} {name}: {update}");
+                apart.extend(arms_apart(&mut s, &format!("{name} = {value}"), form, &pairs, arm_size(&ARM_EDITS[..=i])));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(apart.is_empty(), "{} joints apart:\n{}", apart.len(), apart.join("\n"));
+    }
+
     /// A joint made on a link that kept no face names (an older design) names the faces by their
     /// place in the file: Update Links says it can't vouch for it, and keeps the names from then on.
     #[test]

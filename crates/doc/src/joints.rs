@@ -75,6 +75,10 @@ pub enum Snap {
         face: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         corner: Option<String>,
+        /// The frame's z when it isn't the face's normal (an edge or a corner picked as it is,
+        /// not on a face): the point still follows the edge, found by name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        axis: Option<EdgeAxis>,
     },
     /// A point, z along `z` (default +Z) and x toward `x` laid square to z (default: one chosen
     /// from z alone).
@@ -85,6 +89,25 @@ pub enum Snap {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         x: Option<Vec3>,
     },
+}
+
+/// The z of an edge origin that isn't its face's normal (component coordinates); its x follows
+/// from z alone, as a point origin's does.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeAxis {
+    /// Along a straight edge, the way this points: a hinge on the edge turns about it as it moves.
+    Along(Vec3),
+    /// This direction.
+    Fixed(Vec3),
+}
+
+impl EdgeAxis {
+    pub fn dir(self) -> Vec3 {
+        match self {
+            EdgeAxis::Along(d) | EdgeAxis::Fixed(d) => d,
+        }
+    }
 }
 
 /// What sets a joint origin's x axis (its turn about z): a direction, or a face found by its
@@ -179,7 +202,7 @@ impl Snap {
             Snap::Frame { origin, z, x } => origin.is_finite() && z.is_finite() && x.is_none_or(|x| x.is_finite()),
             Snap::FaceCenter { pick, x, .. } | Snap::CircleCenter { pick, x, .. } => pick.is_finite() && x_ok(x),
             Snap::Point { point, z, x } => point.is_finite() && z.is_none_or(|z| z.is_finite()) && x.is_none_or(|x| x.is_finite()),
-            Snap::Edge { pick, .. } => pick.is_finite(),
+            Snap::Edge { pick, axis, .. } => pick.is_finite() && axis.is_none_or(|a| a.dir().is_finite()),
         }
     }
 }
@@ -2079,7 +2102,7 @@ pub mod cam;
 
 #[path = "joints_edge.rs"]
 mod edge;
-pub use edge::edge_snap;
+pub use edge::{edge_axis, edge_snap};
 
 #[path = "joints_reach.rs"]
 mod reach;

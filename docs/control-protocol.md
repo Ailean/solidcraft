@@ -224,7 +224,7 @@ labels; `prefs:measure_axis_distances` identifies the checkbox.
 | `ui.menuPick` | `item`: id or label | runs an item of the open menu, as clicking it does |
 | `ui.selectOther` | `x?`, `y?`, `pick?`, `add?`, `hover?`, `close?` | Select Other: with a point, list everything pickable there (as holding the left button does); `pick`: select row `pick` (`add`: as Shift-click; with a dialog open, into its active input); `hover`: light a row up; without: the open list (`open`, `at`, `total`: everything under the cursor, `rows`: label, icon, sel, at most 20 per kind, nearest first) |
 | `ui.rename` | `text?`, `commit?` (default true) | finishes the rename box a Rename item opened |
-| `ui.selection` | | the selection, the open dialog's inputs, the hovered item, and the active sketch's drawn dimensions (`dimensions`: id and text centre, `dimension_selected`, `dimension_editing`) |
+| `ui.selection` | | the selection, the open dialog's inputs, the hovered item, and the active sketch's drawn dimensions (`dimensions`: id and text centre, `dimension_selected`, `dimension_editing`), and finished sketches' dimensions shown in the model view (`shown_dimensions`: sketch, id and text centre; a double-click there edits the value) |
 | `ui.worldToScreen` | `points`: `[[x, y, z]…]` world points | their screen points |
 | `ui.triad` | | screen points of the 3D sketch move triad's handles (`x`, `y`, `z`, `plane`) |
 | `ui.sketchToScreen` | `points`: `[[x, y]…]` in active-sketch coordinates | their screen points (null when behind the camera) |

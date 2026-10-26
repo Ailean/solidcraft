@@ -9,7 +9,7 @@ use solidcraft_engine::Sel;
 use solidcraft_engine::geom::{Vec2, Vec3};
 use solidcraft_engine::render::{Camera, Mat4, Rgb};
 use solidcraft_engine::sketch::CurveKind;
-use solidcraft_engine::view::{GridPlane, colors, grid_plane, grid_step, sketch_lines_with_sampler};
+use solidcraft_engine::view::{GridFade, GridPlane, colors, grid_ext, grid_plane, grid_step, sketch_lines_with_sampler};
 use std::hash::{Hash, Hasher};
 
 use crate::gpu::{Frame, GpuScene, GpuTarget, SceneSlot, ViewportCallback};
@@ -124,6 +124,10 @@ pub struct ViewportState {
     pub(crate) modifier_nav: Option<(NavMode, Pos2)>,
     /// What a click would pick now (after the active command's filter).
     pub hover: Option<Hit>,
+    /// The centre of the circle or arc of the sketch being edited whose edge was hovered last
+    /// (sketch, point id): it is drawn, and it takes the pointer from further away
+    /// ([`WOKEN_CENTRE_PX`]), until another curve or point is hovered.
+    pub woken_centre: Option<(u64, String)>,
     pub mouse: Option<Pos2>,
     /// Box selection being dragged.
     pub boxsel: Option<BoxSel>,
@@ -219,7 +223,11 @@ pub enum Hit {
         name: String,
         point: Vec3,
     },
-    /// An origin axis (X, Y, Z).
+    /// A construction point (by feature name).
+    ConstructionPoint {
+        name: String,
+    },
+    /// An origin or construction axis.
     Axis {
         name: String,
     },
@@ -327,6 +335,13 @@ pub fn projection(app: &SolveApp, rect: Rect) -> Proj {
     Proj { cam, vp: cam.view_proj_bounds(aspect, &scene_bounds(app)), rect }
 }
 
+/// The far plane the picture's projection uses: the grid's fade ends before that plane cuts the
+/// ground (#4214). The scene's radius is not the radius the picture frames, so the planes of the
+/// projection itself are the ones that count.
+fn picture_far(app: &SolveApp, cam: &Camera) -> f64 {
+    cam.clip_bounds(&scene_bounds(app)).1
+}
+
 /// Sketches drawn in the viewport: the active one, and finished ones not yet used by a feature.
 pub(crate) fn visible_sketches(app: &SolveApp) -> Vec<u64> {
     let st = crate::open_meshing::shown_world(app);
@@ -381,6 +396,7 @@ fn in_view(proj: &Proj, b: &solidcraft_engine::geom::Aabb3) -> bool {
 fn scene_key(app: &SolveApp) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     app.session.revision.hash(&mut h);
+    app.session.colored_components.hash(&mut h);
     (std::sync::Arc::as_ptr(&crate::open_meshing::shown_world(app)) as usize).hash(&mut h);
     app.ui.show_grid.hash(&mut h);
     app.ui.visual_style.hash(&mut h);
@@ -964,12 +980,15 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
                 sc.line(a.to_f32(), c.to_f32(), c4(tk.body_edge), 0.85, false);
             }
         }
-        let base = body_color(&s.doc, b).unwrap_or(tk.body);
+        let base = solidcraft_engine::view::component_color(s, b.component)
+            .map(|[r, g, b]| Color32::from_rgb(r, g, b))
+            .or_else(|| body_color(&s.doc, b))
+            .unwrap_or(tk.body);
         let col = if faded { c4(base.gamma_multiply(0.35)) } else { c4(base) };
         // Appearances: the body's opacity, and faces with looks of their own.
         let opacity = s.doc.model_body_opacity(b);
         let face_looks: std::collections::HashMap<usize, solidcraft_engine::doc::appearance::Look> =
-            if shaded { s.doc.face_colors(b).into_iter().collect() } else { Default::default() };
+            if shaded && s.colored_components.is_none() { s.doc.face_colors(b).into_iter().collect() } else { Default::default() };
         let opaque = !faded && opacity >= 0.999 && face_looks.values().all(|l| l.opacity >= 0.999);
         let planned = drawn_plan(app, b, opaque);
         let on_gpu = planned.is_some();
@@ -1036,9 +1055,9 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
     if app.ui.ground_shadow && app.ui.visual_style != 2 && app.cam.pitch > 0.0 {
         ground_shadow(&mut sc, app, &st);
     }
-    // Section: the outline of each body where the plane cuts it.
+    // Section: the outline of each body where the plane cuts it, in the view's text colour (#4146).
     if let Some((o, n)) = section_plane(app) {
-        let col = c4(tk.text.gamma_multiply(0.9));
+        let col = c4(Tokens::view().text.gamma_multiply(0.9));
         let mut kept = app.viewport.section_index.lock().map(|mut k| std::mem::take(&mut *k)).unwrap_or_default();
         let mut made = Vec::new();
         for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name)) {
@@ -1094,13 +1113,19 @@ fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
     let sketch_plane = solidcraft_engine::view::open_sketch_plane(s);
     if sketch_plane.is_some() || (app.ui.show_grid && !active_view(app).hide_grid) {
         let (minor, major) = grid_step(app.cam.half_height());
-        let mut ext = (app.cam.half_height() * 3.0 / major).ceil() * major;
         // An open sketch always has its grid on its own plane; otherwise the ground plane: XY with
         // Z up, XZ with Y up (laid out in the camera's Z-up frame), or the upright origin plane
         // facing the view when the ground is seen edge-on.
-        let (c, u, v, w3): (Vec3, Vec3, Vec3, Box<dyn Fn(Vec3) -> [f32; 3]>) = if let Some(pl) = &sketch_plane {
+        let (c, u, v, slant, ext, far_reach, w3): (Vec3, Vec3, Vec3, f64, f64, f64, Box<dyn Fn(Vec3) -> [f32; 3]>) = if let Some(pl) = &sketch_plane {
             let (c, u, v) = solidcraft_engine::view::sketch_grid_frame(pl, app.cam.target, major);
-            (c, u, v, Box::new(|p| p.to_f32()))
+            // How steeply the sketch's plane is seen: the grid reaches as far on it as the view
+            // is wide, so the fade with the distance does too (#4214). The sketch's plane is in
+            // the world, as the camera's direction is.
+            let n = u.cross(v);
+            let slant = app.cam.back().dot(n);
+            let ext = grid_ext(app.cam.half_height(), major, slant);
+            let far_reach = solidcraft_engine::view::grid_far_reach(&proj.cam, picture_far(app, &proj.cam), c, n);
+            (c, u, v, slant, ext, far_reach, Box::new(|p| p.to_f32()))
         } else {
             let tf = app.cam.to_frame(app.cam.target);
             // On the ground (XY) unless the Grid follows the view preference is on (#1470); then on
@@ -1121,19 +1146,32 @@ fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
             let back = app.cam.to_frame(app.cam.back());
             let n = u.cross(v);
             let slant = back.dot(n);
-            ext = (ext / slant.abs().max(0.25) / major).ceil() * major;
+            let ext = grid_ext(app.cam.half_height(), major, slant);
             let centre = grid_centre(tf, back, n, ext);
             let snap = |a: Vec3| a * ((centre.dot(a) / major).round() * major);
-            (snap(u) + snap(v), u, v, Box::new(|p| app.cam.from_frame(p).to_f32()))
+            let c = snap(u) + snap(v);
+            // The far plane cuts the ground, and the grid's plane is the camera's frame's.
+            let far_reach =
+                solidcraft_engine::view::grid_far_reach(&proj.cam, picture_far(app, &proj.cam), app.cam.from_frame(c), app.cam.from_frame(n));
+            (c, u, v, slant, ext, far_reach, Box::new(|p| app.cam.from_frame(p).to_f32()))
         };
-        let n = ((ext / minor) as i64).clamp(1, 300);
+        // The grid fades out with the distance from the middle of the view (#4214): it used to
+        // stop at a fixed distance, so its edge showed as a cut across the picture. Each line is
+        // now drawn in pieces, each as faint as the fade makes it there, and the grid is gone
+        // before its own edge, which is therefore never seen.
+        let fade = GridFade::new(app.cam.half_height(), slant, ext, far_reach);
+        let n = ((fade.end / minor) as i64).clamp(1, 300);
         for i in -n..=n {
             let t = i as f64 * minor;
             let maj = (t / major).round() * major == t;
             let col = if maj { c4(tk.grid_major) } else { c4(tk.grid) };
             let wd = if maj { 1.0 } else { 0.7 };
-            sc.under_line(w3(c + u * t - v * ext), w3(c + u * t + v * ext), col, wd);
-            sc.under_line(w3(c - u * ext + v * t), w3(c + u * ext + v * t), col, wd);
+            // Two lines through the point `c + u * t`: one along v, one along u.
+            for (along, across) in [(v, u), (u, v)] {
+                for (s0, s1, alpha) in fade.pieces(t) {
+                    sc.under_line(w3(c + across * t + along * s0), w3(c + across * t + along * s1), grid_colour(col, alpha), wd);
+                }
+            }
         }
     }
     for sid in visible_sketches(app) {
@@ -1224,7 +1262,7 @@ fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &std::sync::Arc<solidcra
     if !(rx > 0.0 && ry > 0.0) {
         return;
     }
-    let dark = if crate::theme::is_dark() { 150 } else { 80 };
+    let dark = if crate::theme::viewport_dark() { 150 } else { 80 };
     // Rings from the middle out, fading to nothing.
     let rings = [(0.0, dark), (0.55, dark * 3 / 4), (0.85, dark / 3), (1.0, 0)];
     let n = 48;
@@ -1527,6 +1565,7 @@ pub(crate) fn pick_cached(app: &mut SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit
     app.tool.as_ref().map(|tool| tool.cmd).hash(&mut h);
     app.dialog.is_none().hash(&mut h);
     app.preferences.prefer_free_sketch_points.hash(&mut h);
+    app.viewport.woken_centre.hash(&mut h);
     crate::sketch3d::drawing(app).hash(&mut h);
     app.dialog.as_ref().and_then(|d| d.active_input()).map(|i| i.accept).hash(&mut h);
     crate::hole_place::snapping(app).hash(&mut h);
@@ -1592,7 +1631,9 @@ pub fn same_target(a: &Hit, b: &Hit) -> bool {
         (Hit::Edge { body: a, index: i, .. }, Hit::Edge { body: b, index: j, .. })
         | (Hit::Face { body: a, index: i, .. }, Hit::Face { body: b, index: j, .. }) => a == b && i == j,
         (Hit::Profile { sketch: s, index: i }, Hit::Profile { sketch: t, index: j }) => s == t && i == j,
-        (Hit::Plane { name: a, .. }, Hit::Plane { name: b, .. }) | (Hit::Axis { name: a }, Hit::Axis { name: b }) => a == b,
+        (Hit::Plane { name: a, .. }, Hit::Plane { name: b, .. })
+        | (Hit::Axis { name: a }, Hit::Axis { name: b })
+        | (Hit::ConstructionPoint { name: a }, Hit::ConstructionPoint { name: b }) => a == b,
         _ => false,
     }
 }
@@ -1673,6 +1714,9 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     let snapping = app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| crate::dialogs::snaps_to_points(i.accept));
     let prefer_free = app.preferences.prefer_free_sketch_points && include_midpoints && app.tool.is_none() && app.dialog.is_none();
     let mut best = Near::new(all);
+    // A woken centre's extra reach (past the usual 8) yields to a curve under the pointer, so a
+    // click on a small circle's edge still takes the circle.
+    let mut woken_far: Option<(f32, Hit)> = None;
     for ss in point_sketches.iter().filter_map(|sid| st.sketch(*sid)) {
         let sid = ss.feature;
         let shown = snapping.then(|| crate::dialogs::SnapPoints::of(&ss.sketch));
@@ -1685,29 +1729,45 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
                 let dd = sp.distance(pos) - if s.active_sketch == Some(sid) { 2.0 } else { 0.0 };
                 // On a distance tie, grab a movable point before the origin or a linked point.
                 let rank = (dd, prefer_free && locked);
+                let woken = app.viewport.woken_centre.as_ref().is_some_and(|(k, id)| *k == sid && *id == p.id);
                 if dd < 8.0 && best.wants(rank) {
                     best.offer(rank, Hit::SketchPoint { sketch: sid, id: p.id.clone(), at: p.pos });
+                } else if woken && dd < WOKEN_CENTRE_PX && woken_far.as_ref().is_none_or(|(d0, _)| dd < *d0) {
+                    woken_far = Some((dd, Hit::SketchPoint { sketch: sid, id: p.id.clone(), at: p.pos }));
                 }
             }
         }
     }
+    for (name, point) in construction_points(app) {
+        if let Some(sp) = proj.to_screen(point) {
+            let dd = sp.distance(pos);
+            let rank = (dd, prefer_free);
+            if dd < 8.0 && best.wants(rank) {
+                best.offer(rank, Hit::ConstructionPoint { name });
+            }
+        }
+    }
     hits.extend(best.hits());
-    // Sketch curves (the active sketch wins ties).
+    // Sketch curves: the active sketch's own before projected and other sketches' ones, then
+    // nearest (the active sketch wins ties).
     let mut bestc = Near::new(all);
     for sid in visible_sketches(app) {
         let Some(ss) = st.sketch(sid) else { continue };
-        let bonus = if s.active_sketch == Some(sid) { 2.0 } else { 0.0 };
+        let active = s.active_sketch == Some(sid);
+        let bonus = if active { 2.0 } else { 0.0 };
+        let tier = |own: bool| u8::from(!(active && own));
         for (i, c) in ss.sketch.curves.iter().enumerate() {
             if !solidcraft_engine::view::sketch_curve_visible(&ss.sketch, i) {
                 continue;
             }
             let straight = matches!(c.kind, CurveKind::Line { .. });
+            let tier = tier(c.link.is_none() || ss.sketch.is_text_curve(i));
             for part in &crate::sketch_display::curve_sample(app, sid, i, &ss.plane, proj).parts {
                 let pts: Vec<Pos2> = part.iter().filter_map(|q| proj.to_screen(*q)).collect();
                 for w in pts.windows(2) {
                     let dd = seg_dist(pos, w[0], w[1]) - bonus;
-                    if dd < 6.0 && bestc.wants(dd) {
-                        bestc.offer(dd, Hit::SketchCurve { sketch: sid, id: c.id.clone(), straight });
+                    if dd < 6.0 && bestc.wants((tier, dd)) {
+                        bestc.offer((tier, dd), Hit::SketchCurve { sketch: sid, id: c.id.clone(), straight });
                     }
                 }
             }
@@ -1715,16 +1775,24 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
         // 3D sketch curves (paths for sweeps and pipes).
         for w in &ss.sketch.wires {
             let straight = w.fit.len() == 2;
+            let tier = tier(w.link.is_none());
             let pts: Vec<Pos2> = w.pts.iter().filter_map(|q| proj.to_screen(*q)).collect();
             for seg in pts.windows(2) {
                 let dd = seg_dist(pos, seg[0], seg[1]) - bonus;
-                if dd < 6.0 && bestc.wants(dd) {
-                    bestc.offer(dd, Hit::SketchCurve { sketch: sid, id: w.id.clone(), straight });
+                if dd < 6.0 && bestc.wants((tier, dd)) {
+                    bestc.offer((tier, dd), Hit::SketchCurve { sketch: sid, id: w.id.clone(), straight });
                 }
             }
         }
     }
+    let before_curves = hits.len();
     hits.extend(bestc.hits());
+    if let Some((_, far)) = woken_far
+        && hits.len() == before_curves
+        && !hits.iter().any(|h| matches!(h, Hit::SketchPoint { .. }))
+    {
+        hits.push(far);
+    }
     // A section hides the material its normal points at: nothing there is picked, and where the
     // plane crosses a body its cap hides what lies behind it (#6328), as `view.pick` answers.
     let section = section_plane(app);
@@ -2211,6 +2279,7 @@ pub fn hit_sel(h: &Hit) -> Option<Sel> {
         Hit::Face { body, index, point } => Sel::Face { body: body.clone(), index: *index, point: *point },
         Hit::Plane { name, .. } => Sel::Plane { name: name.clone() },
         Hit::Axis { name } => Sel::Axis { name: name.clone() },
+        Hit::ConstructionPoint { name } => Sel::ConstructionPoint { name: name.clone() },
     })
 }
 
@@ -2251,7 +2320,7 @@ fn pick_allowed(app: &SolveApp, h: &Hit) -> bool {
         Hit::Vertex { .. } => !off("vertices") && !app.ui.pick_bodies,
         Hit::Edge { .. } => !off("edges") && !app.ui.pick_bodies,
         Hit::Face { .. } => !off("faces") || app.ui.pick_bodies,
-        Hit::Plane { .. } | Hit::Axis { .. } => true,
+        Hit::Plane { .. } | Hit::Axis { .. } | Hit::ConstructionPoint { .. } => true,
     }
 }
 
@@ -2720,10 +2789,13 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
             s += dash * 1.6;
         }
     }
-    for (_, p) in construction_points(app) {
+    for (name, p) in construction_points(app) {
+        let on = sel.iter().any(|x| matches!(x, Sel::ConstructionPoint { name: n } if *n == name))
+            || matches!(hover, Some(Hit::ConstructionPoint { name: n }) if *n == name);
+        let col = c4(if on { t.sel_edge } else { t.construction_geom });
         let r = size * 0.04;
         for d in [Vec3::X, Vec3::Y, Vec3::Z] {
-            sc.line((p - d * r).to_f32(), (p + d * r).to_f32(), c4(t.construction_geom), 2.0, true);
+            sc.line((p - d * r).to_f32(), (p + d * r).to_f32(), col, 2.0, true);
         }
     }
     // Reference widgets follow zoom; the often much larger world-space feedback does not.
@@ -3188,6 +3260,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         candidate(app, &hits).map(|(h, s)| (h, Some(s)))
     };
     app.viewport.hover = cand.as_ref().map(|c| c.0.clone());
+    wake_centre(app, &hits);
     // Select Other: a press held still opens the list of everything under it; while the list is
     // open its row under the pointer is what lights up.
     let held =
@@ -3785,7 +3858,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             Align2::CENTER_BOTTOM,
             "Saved sketch plane — attachment lost",
             FontId::proportional(t.font_body),
-            t.warning,
+            Tokens::view().warning,
         );
     }
     if let Some(bx) = app.viewport.boxsel {
@@ -4421,6 +4494,11 @@ fn points_2d(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     }
 }
 
+/// A grid line's colour, as faint as the fade makes it.
+fn grid_colour(c: [u8; 4], alpha: f32) -> [u8; 4] {
+    [c[0], c[1], c[2], (f64::from(c[3]) * f64::from(alpha)).round().clamp(0.0, 255.0) as u8]
+}
+
 /// Where the ground grid is centred: where the view's axis (`back`, through the camera's target
 /// `tf`) meets the plane through the origin with normal `n`, so the middle of the view has grid
 /// (#3087). At a grazing slant that point runs far off, and the ground in front of the camera
@@ -4468,6 +4546,56 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
             }
         }
         _ => {}
+    }
+    // The centre of the circle or arc hovered last: a cross in a ring, where a click takes it.
+    if let Some((sketch, id)) = &app.viewport.woken_centre
+        && !matches!(&app.viewport.hover, Some(Hit::SketchPoint { id: h, .. }) if h == id)
+        && let Some(ss) = st.sketch(*sketch)
+        && let Some(at) = ss.sketch.resolve_point(id).and_then(|i| ss.sketch.point(i))
+        && let Some(p) = proj.to_screen(ss.plane.to_world(at))
+    {
+        let stroke = Stroke::new(1.5, col);
+        painter.circle_stroke(p, 5.0, stroke);
+        painter.line_segment([p - vec2(4.0, 0.0), p + vec2(4.0, 0.0)], stroke);
+        painter.line_segment([p - vec2(0.0, 4.0), p + vec2(0.0, 4.0)], stroke);
+        crate::scenario::publish_handle("woken_centre", p);
+    }
+}
+
+/// How near the pointer must come to the woken centre of a circle or arc (screen points),
+/// against 8 for other sketch points.
+const WOKEN_CENTRE_PX: f32 = 16.0;
+
+/// Hovering a circle's or an arc's edge in the sketch being edited wakes its centre: drawn, and
+/// picked from further away, so a line or a dimension is easily taken to it, and it stays awake
+/// while the pointer crosses the circle's inside to it. Hovering another curve or point (but
+/// that centre) puts it back to sleep, as does leaving the sketch.
+fn wake_centre(app: &mut SolveApp, hits: &[Hit]) {
+    let Some(active) = app.session.active_sketch else {
+        app.viewport.woken_centre = None;
+        return;
+    };
+    let first = hits.iter().find(|h| matches!(h, Hit::SketchPoint { sketch, .. } | Hit::SketchCurve { sketch, .. } if *sketch == active));
+    let st = crate::open_meshing::shown_world(app);
+    match first {
+        Some(Hit::SketchCurve { id, .. }) => {
+            let centre = st.sketch(active).and_then(|ss| {
+                let sk = &ss.sketch;
+                let c = match sk.curves.get(sk.curve_index(id)?)?.kind {
+                    CurveKind::Circle { c, .. } | CurveKind::Arc { c, .. } => c,
+                    _ => return None,
+                };
+                Some(sk.points.get(c)?.id.clone())
+            });
+            app.viewport.woken_centre = centre.map(|id| (active, id));
+        }
+        Some(Hit::SketchPoint { id, .. }) if app.viewport.woken_centre.as_ref().is_some_and(|(_, w)| w == id) => {}
+        Some(_) => app.viewport.woken_centre = None,
+        None => {
+            if app.viewport.woken_centre.as_ref().is_some_and(|(k, _)| *k != active) {
+                app.viewport.woken_centre = None;
+            }
+        }
     }
 }
 
@@ -4552,16 +4680,18 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
             painter.rect_filled(Rect::from_center_size(sp, vec2(5.0, 5.0)), 0.0, c);
         }
     }
+    // The markers and the status line are drawn straight onto the view: its side's colours (#4146).
+    let v = Tokens::view();
     for selected in &app.session.selection {
         if let Sel::SketchMidpoint { id } = selected
             && let Some(line) = sk.curve_index(id)
             && let Some(at) = crate::selection::line_midpoint(sk, line)
             && let Some(screen) = proj.to_screen(ss.plane.to_world(at))
         {
-            midpoint_marker(painter, screen, t.sel_edge);
+            midpoint_marker(painter, screen, v.sel_edge);
         }
     }
-    loose_end_markers(sk, &ss.ends, &ss.plane, painter, proj, &t);
+    loose_end_markers(sk, &ss.ends, &ss.plane, painter, proj, &v);
     // Sketch status.
     if let Some(r) = app.viewport.layout.as_ref().map(|l| l.content) {
         let msg = if !ss.report.ok() {
@@ -4571,7 +4701,7 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
         } else {
             format!("{} — {} degrees of freedom", ss.name, ss.report.dof)
         };
-        let c = if ss.report.ok() { t.sketch_accent } else { t.error };
+        let c = if ss.report.ok() { v.sketch_accent } else { v.error };
         painter.text(pos2(r.left() + 12.0, r.top() + 12.0), Align2::LEFT_TOP, msg, FontId::proportional(t.font_button), c);
     }
 }
@@ -5676,6 +5806,37 @@ mod tests {
             let near = px.iter().zip([want.r(), want.g(), want.b()]).all(|(a, b)| a.abs_diff(b) <= 2);
             assert!(near, "dark {dark}: top row {px:?}, the window's background {want:?}");
         }
+    }
+
+    /// Changing only the 3D view's dark or light (#4146) rebuilds the view's scene and highlights
+    /// in its colours, as a change of the window's theme does.
+    #[test]
+    fn changing_only_the_views_dark_or_light_rebuilds_its_scene() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20})).unwrap();
+        h.call("ui.prefs", json!({"theme": "dark"}));
+        h.frames(2);
+        let before = (scene_key(&h.app), highlight_geometry_key(&h.app));
+        h.call("ui.prefs", json!({"viewport_theme": "light"}));
+        h.frames(2);
+        assert!(h.app.ui.dark, "the window stays dark");
+        assert_ne!(scene_key(&h.app), before.0, "the scene is rebuilt");
+        assert_ne!(highlight_geometry_key(&h.app), before.1, "and so are the highlights");
+    }
+
+    /// A section's cut outlines are drawn onto the view, so a light view in a dark window draws
+    /// them in the light side's text colour (#4146): the window's would be pale on the light view.
+    #[test]
+    fn a_sections_outlines_take_the_views_text_colour() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20})).unwrap();
+        h.app.run("inspect.section", json!({"plane": "XZ", "at": 15})).unwrap();
+        h.call("ui.prefs", json!({"theme": "dark", "viewport_theme": "light"}));
+        h.frames(2);
+        let colours: Vec<[u8; 4]> = build_scene(&h.app).lines.as_chunks::<32>().0.iter().map(|l| [l[24], l[25], l[26], l[27]]).collect();
+        let (view, window) = (Tokens::light().text.gamma_multiply(0.9), Tokens::dark().text.gamma_multiply(0.9));
+        assert!(colours.contains(&c4(view)), "the outlines in the view's text colour");
+        assert!(!colours.contains(&c4(window)), "none in the window's");
     }
 
     /// The view's picture is cut by the section the viewport shows: an open Section Analysis
@@ -7393,6 +7554,7 @@ mod tests {
                             scene.lines.push(solidcraft_engine::render::SceneLine {
                                 points: edge.clone(),
                                 color: solidcraft_engine::view::colors::EDGE,
+                                alpha: 1.0,
                                 width: 1.2,
                                 on_top: false,
                             });
@@ -8678,6 +8840,34 @@ mod tests {
     }
 
     #[test]
+    fn construction_point_is_pickable_only_while_visible() {
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("construct.point.vertex", &json!({"point":{"point":[20,15,10]},"name":"Point1"})).unwrap();
+        s.execute("construct.axis.two_points", &json!({"a":{"point":[-20,0,10]},"b":{"point":[-20,0,30]},"name":"Axis1"})).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        let proj = projection(&app, Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 800.0)));
+        let pos = proj.to_screen(Vec3::new(20.0, 15.0, 10.0)).unwrap();
+        let is_point =
+            |hit: &Hit| hit_sel(hit).is_some_and(|sel| serde_json::to_value(sel).unwrap() == json!({"type":"construction_point","name":"Point1"}));
+        for prefer_free in [false, true] {
+            app.preferences.prefer_free_sketch_points = prefer_free;
+            assert!(pick(&app, &proj, pos).iter().any(is_point));
+            assert!(pick_all(&app, &proj, pos).iter().any(is_point));
+        }
+        let axis_pos = proj.to_screen(Vec3::new(-20.0, 0.0, 20.0)).unwrap();
+        let axis = Hit::Axis { name: "Axis1".into() };
+        assert!(pick(&app, &proj, axis_pos).contains(&axis));
+        assert_eq!(
+            crate::selection::SelInput::new("Axis", crate::selection::AXES, false).accepts(&axis, None, |_, _| false),
+            Some(Sel::Axis { name: "Axis1".into() })
+        );
+        app.session.visibility.hidden_origin.extend(["Point1".into(), "Axis1".into()]);
+        assert!(!pick(&app, &proj, axis_pos).contains(&axis));
+        assert!(!pick(&app, &proj, pos).iter().any(is_point));
+        assert!(!pick_all(&app, &proj, pos).iter().any(is_point));
+    }
+
+    #[test]
     fn construction_axes_span_the_model_and_points_show() {
         let mut s = solidcraft_engine::Session::default();
         s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
@@ -9018,6 +9208,177 @@ mod grid_plane_tests {
             .fold(([f32::MAX; 2], [f32::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
         let (x, y) = (mid.x as f32, mid.y as f32);
         assert!(x > lo[0] && x < hi[0] && y > lo[1] && y < hi[1], "the grid spans {lo:?}..{hi:?}, the middle of the view is at {mid:?}");
+    }
+
+    /// #4214: the grid used to stop at a fixed distance from the view, so its edge showed as a
+    /// cut across the picture. It now fades out with the distance from the middle of the view:
+    /// the lines near the middle are at full strength, the ones further out are dimmer, and the
+    /// grid is gone before the distance where it used to stop.
+    #[test]
+    fn the_grid_fades_out_with_the_distance_from_the_middle_of_the_view() {
+        let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.ui.show_grid = true;
+        app.ui.perspective = false;
+        // A top view: the ground is the XY plane, and the grid is centred on the target.
+        app.cam.pitch = std::f64::consts::FRAC_PI_2;
+        app.cam.yaw = 0.0;
+        app.cam.target = Vec3::ZERO;
+        app.cam.distance = 100.0;
+        let under = build_sketch_scene(&app, &projection(&app, rect)).under;
+        // Each line of the grid: two points, a colour and a width.
+        let segments: Vec<([f32; 3], [f32; 3], u8)> = under
+            .as_chunks::<32>()
+            .0
+            .iter()
+            .map(|l| {
+                let point = |at: usize| [0, 4, 8].map(|i| f32::from_le_bytes(l[at + i..at + i + 4].try_into().unwrap()));
+                (point(0), point(12), l[27])
+            })
+            .collect();
+        assert!(!segments.is_empty(), "the grid is drawn");
+        // How far each piece of the grid is from the middle of the view, and the alpha it is
+        // drawn with.
+        let mut pieces: Vec<(f64, u8)> = segments
+            .iter()
+            .map(|(a, b, alpha)| {
+                let mid = [0, 1, 2].map(|i| f64::from((a[i] + b[i]) * 0.5));
+                ((mid[0] * mid[0] + mid[1] * mid[1]).sqrt(), *alpha)
+            })
+            .collect();
+        pieces.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        // The grid in the middle of the view is at full strength.
+        assert_eq!(pieces.iter().filter(|(d, _)| *d < 1.0).map(|(_, a)| *a).max(), Some(255), "the middle of the grid is at full strength");
+        // The further from the middle, the dimmer: the outer half of the grid is fainter than the
+        // inner half.
+        let (near, far) = pieces.split_at(pieces.len() / 2);
+        let mean = |v: &[(f64, u8)]| v.iter().map(|(_, a)| f64::from(*a)).sum::<f64>() / v.len().max(1) as f64;
+        assert!(mean(near) > mean(far) + 10.0, "the grid fades: {} near the middle, {} far from it", mean(near), mean(far));
+        // The grid is gone before the distance where it used to stop, so its edge never shows.
+        let (_, major) = grid_step(app.cam.half_height());
+        let cut = (app.cam.half_height() * 3.0 / major).ceil() * major;
+        let farthest = pieces.last().map(|(d, _)| *d).unwrap_or(0.0);
+        assert!(farthest < cut, "the grid fades out at {farthest}, short of the cut at {cut}");
+    }
+
+    /// #4214: the picture and the window draw the same grid. On a sketch's plane the headless
+    /// render's grid used to reach further than the viewport's (the picture stretched the grid
+    /// with the slant, the window did not), so a picture saved from the command line and the
+    /// window the user sees showed different grids.
+    #[test]
+    fn the_picture_and_the_window_draw_the_same_grid_on_a_sketch_plane() {
+        let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        app.ui.perspective = false;
+        app.cam.fov = 0.0;
+        app.cam.yaw = 0.0;
+        app.cam.pitch = 35.0_f64.to_radians();
+        app.cam.target = Vec3::ZERO;
+        app.cam.distance = 100.0;
+        // The grid's centre, as both draw it: the sketch plane's, round the view's target.
+        let plane = solidcraft_engine::view::open_sketch_plane(&app.session).unwrap();
+        let (_, major) = grid_step(app.cam.half_height());
+        let (centre, _, _) = solidcraft_engine::view::sketch_grid_frame(&plane, app.cam.target, major);
+        // How far the picture's grid reaches from that centre.
+        let scene = solidcraft_engine::view::scene(&app.session, &app.cam);
+        let picture = scene.grid.iter().flat_map(|l| l.points.iter()).map(|p| (*p - centre).len()).fold(0.0_f64, f64::max);
+        // How far the window's grid reaches: the same points, as bytes.
+        let under = build_sketch_scene(&app, &projection(&app, rect)).under;
+        let window = under
+            .as_chunks::<32>()
+            .0
+            .iter()
+            .flat_map(|l| [&l[0..12], &l[12..24]])
+            .map(|b| {
+                let p = [0, 4, 8].map(|i| f64::from(f32::from_le_bytes(b[i..i + 4].try_into().unwrap())));
+                (Vec3::new(p[0], p[1], p[2]) - centre).len()
+            })
+            .fold(0.0_f64, f64::max);
+        assert!(picture > 0.0, "the picture draws a grid");
+        assert!(
+            (picture - window).abs() <= 1e-3 * picture.max(window),
+            "the picture's grid reaches {picture} mm from the middle of the view, the window's {window} mm"
+        );
+    }
+
+    /// #4214: the grid fades in the picture as well. The same grid drawn at full strength is
+    /// much fainter there where the fade has thinned it, and the same in the middle of the view,
+    /// where the fade leaves the grid alone. Where the picture's far plane cuts the ground, the
+    /// faded grid is already gone: it fades out instead of ending in a cut.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_grid_fades_out_in_the_picture_instead_of_ending_in_a_cut() {
+        const SIZE: u32 = 512;
+        let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(SIZE as f32, SIZE as f32));
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.ui.show_grid = true;
+        app.ui.perspective = true;
+        // A low view of the ground: the far ground is in the picture, where the grid used to end
+        // in a cut.
+        app.cam.pitch = 0.25;
+        app.cam.yaw = 0.0;
+        app.cam.target = Vec3::ZERO;
+        app.cam.distance = 100.0;
+        let proj = projection(&app, rect);
+        let t = Tokens::get();
+        let e = proj.cam.eye().to_f32();
+        let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
+        let render = |scene: GpuScene| {
+            crate::gpu::render_offscreen(
+                scene,
+                None,
+                proj.vp.to_f32(),
+                proj.cam.back().to_f32(),
+                eye,
+                SIZE,
+                None,
+                [0.0; 8],
+                crate::gpu::analysis_colors(&t.analysis),
+            )
+        };
+        let faded = build_sketch_scene(&app, &proj).merged();
+        // The same grid at full strength: every piece of it opaque.
+        let mut full = faded.clone();
+        for piece in full.under.as_chunks_mut::<32>().0 {
+            piece[27] = 255;
+        }
+        let (Some(faded), Some(full)) = (render(faded), render(full)) else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        // How far the pixels of each row are from the white the picture was cleared to: the
+        // grid's lines show. The ink of a row, from the top of the picture.
+        let row_ink = |img: &[u8]| -> Vec<u64> {
+            (0..SIZE)
+                .map(|y| {
+                    (0..SIZE)
+                        .map(|x| {
+                            let i = ((y * SIZE + x) * 4) as usize;
+                            img[i..i + 3].iter().map(|c| u64::from(255 - c)).sum::<u64>()
+                        })
+                        .sum::<u64>()
+                })
+                .collect()
+        };
+        let (faded_rows, full_rows) = (row_ink(&faded), row_ink(&full));
+        // The middle of the view: the grid is drawn there, and the fade leaves it alone.
+        let middle = SIZE as usize / 2;
+        assert!(faded_rows[middle] > 0, "the grid is drawn in the middle of the view");
+        assert_eq!(faded_rows[middle], full_rows[middle], "the fade leaves the middle of the grid alone");
+        // The first row where the grid at full strength shows: the picture's far plane cuts the
+        // ground there, and the rows above it are the far ground the grid has to fade out in.
+        let first = full_rows.iter().position(|ink| *ink > 0).expect("the grid is drawn");
+        // Where the ground is cut, the faded grid is gone: it fades out instead of ending in a
+        // cut (#4214).
+        let band = first.saturating_sub(10)..=first;
+        let faded_ink: u64 = band.clone().map(|y| faded_rows[y]).sum();
+        let full_ink: u64 = band.map(|y| full_rows[y]).sum();
+        assert!(full_ink > 0, "the grid shows up to the far plane");
+        assert!(
+            faded_ink * 4 < full_ink,
+            "the grid still shows at full strength where the far plane cuts the ground: {faded_ink} against {full_ink}"
+        );
     }
 
     /// An open sketch always has its grid, on its own plane, whatever the Grid switch and the

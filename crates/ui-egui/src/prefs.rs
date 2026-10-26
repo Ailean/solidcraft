@@ -550,6 +550,9 @@ preference_settings! {
     /// `dark`, `light` or `system` (follow the operating system), or a theme file's id: a
     /// built-in one (`gruvbox-dark`, …) or one of `custom_themes` (#2255).
     theme: String = "dark".into(), PAGE_INTERFACE;
+    /// The 3D view's colours: the theme's own, or the Light or Dark theme's whatever the window
+    /// uses (#4146).
+    viewport_theme: crate::theme::ViewportTheme = crate::theme::ViewportTheme::Theme, PAGE_INTERFACE;
     /// Imported theme files (`theme_files`), kept here so they also work in the browser.
     custom_themes: Vec<crate::theme_files::ThemeFile> = Vec::new();
     /// Interface language (a registered locale ID).
@@ -1221,11 +1224,14 @@ fn save_graphics(app: &SolveApp) {
     }
 }
 
-/// At start, with the graphics device known: the saved anti-aliasing (`requested` samples, as
-/// the host read it) is more than the device supports. The window would not have opened with it,
-/// so the renderer fell back; put the setting back to its default (or the largest supported
-/// count below it) and tell the user what changed.
+/// At start, reflect a confirmed startup fallback in Graphics, or reset an unsupported
+/// saved count to the supported default. The compatibility hint keeps higher choices
+/// available for another try; a probe result alone does not overwrite the saved choice.
 pub fn check_msaa(app: &mut SolveApp, requested: u32) {
+    if app.msaa_compatibility {
+        app.preferences.msaa = 1;
+        return;
+    }
     let supported = &app.msaa_supported;
     if requested <= 1 || supported.is_empty() || supported.contains(&requested) {
         return;
@@ -1969,6 +1975,7 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
         o.insert("dialog".into(), json!(app.prefs_window.open.then(|| PAGES.get(app.prefs_window.section).copied().unwrap_or_default())));
         o.insert("stand_up_offer".into(), json!(app.stand_up));
         o.insert("dark".into(), json!(app.ui.dark));
+        o.insert("viewport_dark".into(), json!(app.viewport_dark()));
         o.insert("theme_ids".into(), json!(theme_choices(app).into_iter().map(|(id, _)| id).collect::<Vec<_>>()));
         if let Some(id) = imported {
             o.insert("theme_imported".into(), json!(id));
@@ -2163,11 +2170,16 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
             o.insert(k.clone(), v.clone());
         }
     }
-    // Saved preferences read an unknown mode as Off; asked for here, it is an error.
+    // Saved preferences read an unknown mode as the default; asked for here, it is an error.
     if let Some(v) = p.get("color_vision")
         && v.as_str().and_then(crate::theme::ColorVision::from_id).is_none()
     {
         return Err("`color_vision` must be off, protan, deutan or tritan".into());
+    }
+    if let Some(v) = p.get("viewport_theme")
+        && v.as_str().and_then(crate::theme::ViewportTheme::from_id).is_none()
+    {
+        return Err("`viewport_theme` must be theme, light or dark".into());
     }
     let new: Prefs = migrate(serde_json::from_value(cur).map_err(|e| e.to_string())?);
     if !UNITS.contains(&new.default_units.as_str()) {
@@ -3278,6 +3290,7 @@ mod tests {
             ("timeline_under_browser", json!(true), PAGE_INTERFACE),
             ("browser_float", json!(true), PAGE_INTERFACE),
             ("color_vision", json!("protan"), PAGE_INTERFACE),
+            ("viewport_theme", json!("light"), PAGE_INTERFACE),
             ("nav", json!("blender"), PAGE_NAVIGATION),
             ("look_at_anim", json!(false), PAGE_NAVIGATION),
             ("selection_shift_add_only", json!(true), PAGE_SKETCH),
@@ -3354,6 +3367,41 @@ mod tests {
         assert_eq!(theme_file(&app, "system", false)["base"], "light");
         assert_eq!(app.preferences.theme, "light");
         assert!(!app.ui.dark);
+    }
+
+    /// The 3D view in the other theme's colours (#4146): `ui.prefs` sets it, the window keeps its
+    /// theme and the next frame draws the view from the other side, and it is saved with the
+    /// preferences. With a theme file on, the view takes the built-in Light or Dark colours.
+    #[test]
+    fn the_3d_view_takes_the_light_or_dark_themes_colours() {
+        use crate::theme::{ColorVision, Tokens};
+        use serde_json::json;
+        let mut h = crate::scenario::Harness::new();
+        for (theme, view, dark, view_dark) in
+            [("light", "theme", false, false), ("dark", "light", true, false), ("dark", "dark", true, true), ("light", "dark", false, true)]
+        {
+            let out = h.call("ui.prefs", json!({"theme": theme, "viewport_theme": view}));
+            assert_eq!((out["result"]["dark"].as_bool(), out["result"]["viewport_dark"].as_bool()), (Some(dark), Some(view_dark)), "{out}");
+            h.frames(2);
+            let t = Tokens::get();
+            assert_eq!(t.panel, Tokens::themed(dark, ColorVision::Off).panel, "{theme}, {view}: the window");
+            assert_eq!(t.viewport_top, Tokens::themed(view_dark, ColorVision::Off).viewport_top, "{theme}, {view}: the view");
+        }
+
+        let mut other = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        other.load_prefs(&h.app.prefs());
+        assert_eq!((other.preferences.theme.as_str(), other.ui.dark, other.viewport_dark()), ("light", false, true));
+
+        let out = h.call("ui.prefs", json!({"theme": "gruvbox-dark-hard", "viewport_theme": "light"}));
+        assert_eq!((out["result"]["dark"].as_bool(), out["result"]["viewport_dark"].as_bool()), (Some(true), Some(false)), "{out}");
+        h.frames(2);
+        let hard = crate::theme_files::find("gruvbox-dark-hard", &[]).map(crate::theme_files::resolve).unwrap();
+        assert_eq!((Tokens::get().panel, Tokens::get().viewport_top), (hard.panel, Tokens::light().viewport_top));
+
+        // Asked for, an unknown value is refused; read from saved preferences, it is the default.
+        assert!(h.call("ui.prefs", json!({"viewport_theme": "dim"}))["error"].is_string());
+        let read: crate::theme::ViewportTheme = serde_json::from_value(json!("dim")).unwrap();
+        assert_eq!(read, crate::theme::ViewportTheme::Theme);
     }
 
     #[test]
@@ -3617,6 +3665,27 @@ mod tests {
         assert!(set(&mut app, &json!({"graphics_adapter":"x".repeat(1025)})).is_err());
         assert!(set(&mut app, &json!({"graphics_adapter":"card\nname"})).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn startup_msaa_check_keeps_the_default_unless_fallback_is_confirmed() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.msaa_supported = vec![1, 4, 8];
+        for requested in [1, 4, 8] {
+            app.preferences.msaa = requested;
+            app.msaa_compatibility = false;
+            check_msaa(&mut app, requested);
+            assert_eq!(app.preferences.msaa, requested, "a passing check preserves the choice, including the 4x default");
+            assert!(app.settings_reset.is_empty());
+        }
+        app.preferences.msaa = 4;
+        app.msaa_compatibility = true;
+        check_msaa(&mut app, 4);
+        assert_eq!(app.preferences.msaa, 1, "Graphics must show the confirmed fallback so it can be changed back");
+        assert!(app.msaa_supported.contains(&4), "the original choice stays available");
+        assert!(app.msaa_compatibility, "Graphics explains the fallback");
+        assert!(set(&mut app, &serde_json::json!({ "msaa": 4 })).is_ok());
+        assert_eq!(app.preferences.msaa, 4);
     }
 
     #[test]

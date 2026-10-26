@@ -2464,3 +2464,97 @@ fn face_then_revolve_turns_the_face() {
     let want = std::f64::consts::PI * 40.0 * 40.0 * 20.0;
     assert!((v - want).abs() < want * 1e-3, "{v} vs {want}");
 }
+
+/// #4830: the Loft window takes a sketch point as an apex: a 20 × 20 square lofted to a point
+/// 30 above its middle is a pyramid of 20² · 30 / 3 = 4000 mm³.
+#[test]
+fn a_loft_from_a_profile_to_a_sketch_point_is_a_pyramid() {
+    let mut app = app_with(json!([
+        {"command": "sketch.create", "params": {"plane": "XY", "name": "Base"}},
+        {"command": "sketch.rectangle.two_point", "params": {"p0": [-10, -10], "p1": [10, 10]}},
+        {"command": "sketch.finish", "params": {}},
+        {"command": "sketch.create", "params": {"plane": {"origin": [0, 0, 30], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}, "name": "Tip"}},
+        {"command": "sketch.point", "params": {"point": [0, 0], "id": "apex"}},
+        {"command": "sketch.finish", "params": {}},
+    ]));
+    let base = app.session.doc.find_feature("Base").unwrap().id;
+    let tip = app.session.doc.find_feature("Tip").unwrap().id;
+    let mut d = start(&mut app, vec![], "solid.loft");
+    d.inputs[0].items = vec![Sel::Profile { sketch: base, index: 0 }];
+    // A finished sketch's point, as a click on it gives.
+    d.inputs[0].toggle(vec![Sel::SketchPoint { id: format!("{tip}:apex") }]);
+    assert_eq!(d.inputs[0].items.len(), 2, "{:?}", d.inputs[0].items);
+    let cmds = apply_commands(&app, &d).unwrap();
+    assert_eq!(cmds[0].1["sections"][1], json!({"sketch": tip, "point": "apex"}), "{:?}", cmds[0].1);
+    for (cmd, p) in cmds {
+        app.run(&cmd, p).unwrap();
+    }
+    let st = app.session.world_state();
+    let v = solidcraft_engine::doc::kernel::measure(&st.bodies[0].body).unwrap().volume;
+    assert!((v - 4000.0).abs() < 4.0, "{v}");
+}
+
+/// #2820: the Pipe window has an Operation row, so a pipe can cut; editing a cutting pipe keeps
+/// its operation.
+#[test]
+fn a_pipe_cuts_from_its_window_and_keeps_the_cut_when_edited() {
+    let mut app = app_with(json!([
+        {"command": "solid.box", "params": {"corner": [-30, -30, -5], "length": 60, "width": 60, "height": 10}},
+        {"command": "sketch.create", "params": {"plane": "XY", "name": "Path"}},
+        {"command": "sketch.circle.center", "params": {"center": [0, 0], "radius": 20, "id": "c"}},
+        {"command": "sketch.finish", "params": {}},
+    ]));
+    let mut d = start(&mut app, vec![Sel::SketchCurve { id: "c".into(), sketch: None }], "solid.pipe");
+    let Kind::Pipe { operation, .. } = &mut d.kind else { panic!("{:?}", d.kind) };
+    assert_eq!(*operation, 0, "a pipe makes a new body unless told otherwise");
+    *operation = 2;
+    let cmds = apply_commands(&app, &d).unwrap();
+    assert_eq!(cmds[0].1["operation"], "cut", "{:?}", cmds[0].1);
+    let volume = |app: &SolveApp| {
+        let st = app.session.world_state();
+        assert_eq!(st.bodies.len(), 1, "one body: {:?}", st.bodies.iter().map(|b| &b.name).collect::<Vec<_>>());
+        solidcraft_engine::doc::kernel::measure(&st.bodies[0].body).unwrap().volume
+    };
+    let before = volume(&app);
+    for (cmd, p) in cmds {
+        app.run(&cmd, p).unwrap();
+    }
+    assert!(volume(&app) < before - 1.0, "the pipe cut a groove into the box");
+    let pipe = app.session.doc.features.last().unwrap().id;
+    let d = crate::dialogs::for_feature(&app, pipe, None).unwrap();
+    assert!(matches!(d.kind, Kind::Pipe { operation: 2, .. }), "{:?}", d.kind);
+    let (edit, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!(edit, "timeline.redefine");
+    assert_eq!(p["params"]["operation"], "cut", "{p}");
+}
+
+#[test]
+fn construction_points_fill_three_point_plane_dialog() {
+    let mut h = crate::scenario::Harness::new();
+    let points = [[20, 15, 10], [40, 15, 10], [20, 35, 10]];
+    for (i, point) in points.iter().enumerate() {
+        h.app.run("construct.point.vertex", json!({"point":{"point":point},"name":format!("Point{}", i+1)})).unwrap();
+    }
+    h.app.start("construct.plane.three_points");
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+    let proj = crate::viewport::projection(&h.app, rect);
+    for point in points {
+        let pos = proj.to_screen(Vec3::new(point[0] as f64, point[1] as f64, point[2] as f64)).unwrap();
+        let hits = crate::viewport::pick(&h.app, &proj, pos);
+        let mut d = h.app.dialog.take().unwrap();
+        let sel = hits.iter().find_map(|hit| d.candidate(&h.app.session, hit)).expect("construction point accepted");
+        d.pick(&h.app.session, sel);
+        h.app.dialog = Some(d);
+    }
+    let commands = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    assert_eq!(commands[0].1["a"], json!({"construct_point":"Point1"}));
+    assert_eq!(commands[0].1["b"], json!({"construct_point":"Point2"}));
+    assert_eq!(commands[0].1["c"], json!({"construct_point":"Point3"}));
+    for (cmd, params) in commands {
+        h.app.run(&cmd, params).unwrap();
+    }
+    let planes = solidcraft_engine::view::construction_planes(&h.app.session);
+    assert_eq!(planes.len(), 1);
+    assert!((planes[0].2.origin.z - 10.0).abs() < 1e-9);
+    assert!(planes[0].2.normal().dot(Vec3::Z).abs() > 1.0 - 1e-9);
+}

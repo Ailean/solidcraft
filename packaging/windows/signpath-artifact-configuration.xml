@@ -22,13 +22,13 @@
       <include path="solidcraft-cli.exe" min-matches="0" />
       <include path="solvecraft-cli.exe" min-matches="0" />
       <for-each>
-        <authenticode-sign description="SolidCraft" description-url="https://github.com/tangency-labs/solidcraft" />
+        <authenticode-sign />
       </for-each>
     </pe-file-set>
     <msi-file-set>
       <include path="solidcraft-*-windows-*.msi" min-matches="0" />
       <for-each>
-        <authenticode-sign description="SolidCraft installer" description-url="https://github.com/tangency-labs/solidcraft" />
+        <authenticode-sign />
       </for-each>
     </msi-file-set>
   </zip-file>

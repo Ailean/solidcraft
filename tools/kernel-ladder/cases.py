@@ -863,8 +863,14 @@ case(T7, "014-curved-edge-r2", "an r2 round on the top edge of a cylinder r10 h2
      {"body_count": 1, "volume_mm3": PI * 100 * 20 - SPANDREL * 4 * 2 * PI * (10 - XBAR * 2), "faces": 4},
      "a torus round: Pappus on the removed section (1-pi/4) r^2 at radius 10 - r(10-3pi)/(12-3pi)")
 case(T7, "015-corner-g2-patch", "three r5 rounds at a corner with the g2 corner patch",
-     [F(corner, 5, corner="g2")], {"body_count": 1, "faces": 10},
-     "the g2 patch replaces the sphere octant; no closed-form volume; one valid body, the same faces as 009", base=B1, source="invariants")
+     [F(corner, 5, corner="g2")],
+     {"body_count": 1, "faces": 10, "bbox": {"min": [0, 0, 0], "max": [60, 40, 20]},
+      "continuity": {"near": [60, 40, 20], "within_mm": 15, "clear_mm": 1.2, "curvature_jump_per_mm": 0.001}},
+     "the corner set back 1.5 r = 7.5 and filled with one patch G2 to the three rounds and the three faces; no closed-form volume; "
+     "one valid body, the same faces as 009, within the box; across the patch's seams the curvature jump is at most 1e-3 per mm "
+     "(the ball's corner, 009, jumps 1/r = 0.2) clear of the six points where a round's section ends on a face, where the round's "
+     "own G1 seam with the face ends (the patch passes from one curvature to the other within 15% of each side: 1.2 mm covers it)",
+     base=B1, source="invariants")
 V7 = V5 - 2 * SPANDREL * 25 * 20 - SPANDREL * 9 * 60 + SPANDREL * 1 * 2 * PI * (8 + XBAR * 1)
 case(T7, "017-part-rounds", "the running part: r5 on the front vertical edges, r3 on the back wall's top front edge, r1 where the boss meets the top",
      [F([[0, 0, 10], [60, 0, 10]], 5), F([[30, 30, 35]], 3), F([[23, 15, 20]], 1)],

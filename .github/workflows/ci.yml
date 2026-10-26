@@ -565,6 +565,8 @@ jobs:
       # As in Native Linux tests: lavapipe draws, and a test without an adapter fails.
       SOLIDCRAFT_GPU: software
       SOLIDCRAFT_REQUIRE_GPU: "1"
+      # lavapipe's own shader cache (below).
+      MESA_SHADER_CACHE_DIR: /home/runner/.cache/mesa-gpu
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: /home/runner/.cache/sccache
@@ -588,6 +590,17 @@ jobs:
         with:
           key: ${{ github.repository }}-sccache-gpu
           path: /home/runner/.cache/sccache
+          commit: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 && 'on-change' || 'false' }}
+      # The first test in a shard to build the path pipeline compiles it cold on lavapipe (335 to
+      # 665 s, against the 600 s setup budget); every later one reads Mesa's disk cache (about
+      # 30 s). Keeping that cache from main's last run lets the first test read it too, until the
+      # shaders change. Same sticky disk rules as the compiler cache.
+      - name: Mount lavapipe's shader cache
+        uses: useblacksmith/stickydisk@3f6be1451e3cad893b778bc93495c80452a5da26 # v1.7.2
+        continue-on-error: true
+        with:
+          key: ${{ github.repository }}-mesa-gpu
+          path: /home/runner/.cache/mesa-gpu
           commit: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 && 'on-change' || 'false' }}
       # Main saves the cache; every other run restores it, read-only.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

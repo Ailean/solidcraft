@@ -1200,6 +1200,18 @@
       "seconds": 2.184099933,
       "status": "pass"
     },
+    "ladder/07-fillets/019-concave-corner-g2-patch": {
+      "measured": {
+        "area_mm2": 8702.800595617835,
+        "body_count": 1,
+        "edges": 33,
+        "faces": 13,
+        "vertices": 22,
+        "volume_mm3": 44254.3419135911
+      },
+      "seconds": 2.217877403,
+      "status": "pass"
+    },
     "ladder/07-fillets/016-corner-three-sequential-r5-r3-r7": {
       "seconds": 0.045599545,
       "status": "pass"

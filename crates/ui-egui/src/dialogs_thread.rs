@@ -164,9 +164,13 @@ const FORMS: &[(&str, ThreadForm)] = &[
     ("Acme (ASME B1.5)", ThreadForm::Acme),
     ("Buttress (DIN 513)", ThreadForm::Buttress),
     ("Buttress (ASME B1.9)", ThreadForm::ButtressAsme),
+    ("thread.form_bspp", ThreadForm::Bspp),
+    ("thread.form_rp", ThreadForm::Rp),
+    ("thread.form_bspt", ThreadForm::Bspt),
+    ("thread.form_npt", ThreadForm::Npt),
 ];
 const HANDS: &[(&str, ThreadHand)] = &[("Right", ThreadHand::Right), ("Left", ThreadHand::Left), ("Both", ThreadHand::Both)];
-/// A tapped hole's hands: one groove, so never both.
+/// A tapped hole's and a pipe thread's hands: one groove, so never both.
 const HOLE_HANDS: &[(&str, ThreadHand)] = &[("Right", ThreadHand::Right), ("Left", ThreadHand::Left)];
 const STARTS: &[(&str, u32)] = &[("1", 1), ("2", 2), ("3", 3), ("4", 4), ("5", 5), ("6", 6), ("7", 7), ("8", 8)];
 const FULL: usize = 0;
@@ -268,9 +272,15 @@ fn is_buttress(form: ThreadForm) -> bool {
     matches!(form, ThreadForm::Buttress | ThreadForm::ButtressAsme)
 }
 
-/// Sizes in inches are listed by designation, and their pitch is part of it (threads per inch).
+/// Sizes in inches are listed by designation, and their pitch is part of it (threads per inch):
+/// the inch forms and the pipe threads, whose nominal sizes are pipe sizes.
 fn inch(form: ThreadForm) -> bool {
-    matches!(form, ThreadForm::Acme | ThreadForm::ButtressAsme)
+    matches!(form, ThreadForm::Acme | ThreadForm::ButtressAsme) || is_pipe(form)
+}
+
+/// A pipe thread: one start, turning one way.
+fn is_pipe(form: ThreadForm) -> bool {
+    !form.pipe_sizes().is_empty()
 }
 
 fn same(a: f64, b: f64) -> bool {
@@ -395,8 +405,17 @@ pub(crate) fn rows(
         *suggested = None;
     }
 
-    pick(ui, "Hand", "thread_hand", &mut o.hand, HANDS);
-    pick(ui, "Starts", "thread_starts", &mut o.starts, STARTS);
+    if is_pipe(f) {
+        // A pipe thread has one start and turns one way.
+        o.starts = 1;
+        if o.hand == ThreadHand::Both {
+            o.hand = ThreadHand::Right;
+        }
+        pick(ui, "Hand", "thread_hand", &mut o.hand, HOLE_HANDS);
+    } else {
+        pick(ui, "Hand", "thread_hand", &mut o.hand, HANDS);
+        pick(ui, "Starts", "thread_starts", &mut o.starts, STARTS);
+    }
     if is_buttress(f) {
         pick(ui, "Steep Flank", "thread_flank", &mut o.steep_flank, FLANKS);
     }
@@ -444,6 +463,13 @@ pub(crate) fn rows(
 fn size_rows(ui: &mut egui::Ui, f: ThreadForm, designation: &mut String, suggested: &mut Option<String>) {
     let table = f.sizes();
     let current = parse(f, designation);
+    // ISO 7-1 writes the internal taper thread Rc: a size picked for a hole the dialog sized Rc
+    // stays Rc.
+    let internal = f == ThreadForm::Bspt && ThreadForm::pipe_internal(designation);
+    let designation_of = |f: ThreadForm, d: f64, p: f64| {
+        let name = designation_of(f, d, p);
+        if internal { name.replacen("R ", "Rc ", 1) } else { name }
+    };
     let mut diameters: Vec<f64> = table.iter().map(|(d, _)| *d).collect();
     if let Some((d, _)) = current
         && !diameters.iter().any(|n| same(*n, d))

@@ -24,6 +24,7 @@ modelled: a modelled thread is the maximum-material design profile below.
 | Buttress inch | `buttress_asme` | `2.5-8 BUTT` | 7° (load) / 45° | h = 0.6 P | (P − 0.6 P (tan 7° + 1))/2 = 0.16316 P | d − 1.2 P (basic) | d − 1.2 P, d (basic) |
 
 | Parallel pipe | `bspp` | `G 1/2` | 27.5° / 27.5° | h = 0.640327 P of H = 0.960491 P | (H − h) tan 27.5° = 0.1667 P, both | d − 2h | d − 2h, d |
+| Parallel internal (ISO 7-1) | `rp` | `Rp 1/2` | 27.5° / 27.5° | h = 0.640327 P of H = 0.960491 P | (H − h) tan 27.5° = 0.1667 P, both | (internal only) | d − 2h, d |
 | Taper pipe (ISO 7-1) | `bspt` | `R 1/2`, `Rc 1/2` | 27.5° / 27.5° | h = 0.640327 P of H = 0.960237 P | (H − h) tan 27.5°, both | d − 2h at the gauge plane | d − 2h, d at the gauge plane |
 | NPT | `npt` | `1/2-14 NPT` | 30° / 30° | h = 0.8 P of H = 0.866025 P | (H − h) tan 30° = 0.038 P, both | E − h at the plane of E | E − h, E + h |
 
@@ -44,9 +45,11 @@ just past the crest, and the material beyond the major cone (external) or inside
 vanish into the pipe's surface (ISO 7-1's incomplete thread). An external taper thread runs its
 standard length unless `length` or `up_to` says otherwise (ISO 7-1's useful thread for the basic
 gauge length, NPT's effective thread L2); an internal one the face. A pipe thread has one start and
-turns one way; a chamfered tip is not cut on a taper thread yet. ISO 228-1's G sizes are ISO 7-1's
-gauge-plane diameters (1/16 to 6); ISO 228-1's extra sizes (5/8, 7/8, …) are not tabulated yet, nor
-is ISO 7-1's parallel internal Rp.
+turns one way. A taper thread's chamfered tip (`tip`, with its `chamfer_depth`) is measured from the
+major diameter the taper has at that end. ISO 228-1's G sizes are ISO 7-1's gauge-plane diameters
+(1/16 to 6); ISO 228-1's extra sizes (5/8, 7/8, …) are not tabulated yet. ISO 7-1's parallel
+internal thread Rp (`rp`, `Rp 1/2`), the one an R screws into, has the parallel form (H = 0.960491
+P) at the gauge diameters; it is internal only.
 
 Trapezoidal clearance ac (ISO 2904): 0.15 mm for P = 1.5, 0.25 mm for P 2 to 5, 0.5 mm for P 6 to
 12, 1 mm for P 14 to 44.

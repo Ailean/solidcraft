@@ -4270,6 +4270,7 @@ dependencies = [
  "log",
  "serde_json",
  "solidcraft-geom",
+ "solidcraft-profile",
  "web-time",
 ]
 

@@ -230,6 +230,56 @@ fn the_forms_are_the_documents_and_square_is_not_offered() {
     assert_eq!(example(ThreadForm::Trapezoidal), "Tr20x4");
 }
 
+/// The pipe threads: a G 1/2 shaft and an Rc 1/2 hole size themselves by the form, list their
+/// sizes by designation without a pitch, and offer one start turning one way.
+#[test]
+fn pipe_forms_size_the_face_with_one_start_turning_one_way() {
+    let size = |h: &Harness| match &h.app.dialog.as_ref().unwrap().kind {
+        Kind::Thread { designation, .. } => designation.clone(),
+        k => panic!("{k:?}"),
+    };
+    let open = |hole: bool| {
+        let mut h = Harness::new();
+        h.call("ui.resize", json!({"width":1600,"height":1400}));
+        h.app.home.open = false;
+        if hole {
+            h.app.run("solid.box", json!({"corner":[-20,-20,0],"length":40,"width":40,"height":12,"body_name":"Body1"})).unwrap();
+            h.app.run("solid.cylinder", json!({"base":[0,0,-1],"radius":9.2,"height":14,"body_name":"Bore"})).unwrap();
+            h.app.run("solid.combine", json!({"target":"Body1","tools":["Bore"],"operation":"cut"})).unwrap();
+        } else {
+            h.app.run("solid.cylinder", json!({"radius":20.955 / 2.0,"height":15})).unwrap();
+        }
+        h.app.session.selection = vec![thread_face(&h.app, "Body1")];
+        h.step(&json!({"start":"solid.thread"})).unwrap();
+        h.frames(2);
+        h
+    };
+    let mut h = open(false);
+    choose(&mut h, "Form", "thread.form_bspp");
+    assert_eq!(size(&h), "G 1/2");
+    assert!(shown("Size") && shown("Hand") && !shown("Pitch") && !shown("Starts"));
+    choose(&mut h, "Hand", "Left");
+    let p = params(&h);
+    assert_eq!((&p["form"], &p["hand"]), (&json!("bspp"), &json!("left")));
+    choose(&mut h, "Form", "thread.form_bspt");
+    assert_eq!(size(&h), "R 1/2");
+    choose(&mut h, "Form", "thread.form_npt");
+    assert_eq!(params(&h)["form"], json!("npt"));
+    // A hand of both, from a form that has it, turns right on a pipe thread.
+    choose(&mut h, "Form", "ISO metric");
+    choose(&mut h, "Hand", "Both");
+    choose(&mut h, "Form", "thread.form_bspp");
+    assert!(params(&h).get("hand").is_none(), "right, the default");
+
+    let mut h = open(true);
+    choose(&mut h, "Form", "thread.form_bspt");
+    assert_eq!(size(&h), "Rc 1/2", "ISO 7-1 writes the internal taper thread Rc");
+    choose(&mut h, "Form", "thread.form_rp");
+    assert_eq!(size(&h), "Rp 1/2");
+    let (cmd, p) = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap().remove(0);
+    h.app.session.execute(&cmd, &p).unwrap_or_else(|e| panic!("Rp 1/2 in its hole: {e}"));
+}
+
 /// The face's size follows the form.
 #[test]
 fn the_face_size_follows_the_form() {

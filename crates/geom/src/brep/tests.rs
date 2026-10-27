@@ -530,6 +530,21 @@ fn shift(c: &mut Curve2, by: [f64; 2]) {
     }
 }
 
+/// A pcurve whose interval ends a rounding short of its edge's (as a kernel that snaps an edge's
+/// end to its knot hands it back) is read at its end: the record validates and checks.
+#[test]
+fn a_pcurve_a_rounding_short_of_its_edge_is_read_at_its_end() {
+    let mut b = sheet();
+    let Curve2::Spline { knots, .. } = pcurve_of(&mut b, 0, 0) else { panic!("a spline pcurve") };
+    let end = *knots.last().unwrap();
+    let short = end - 1e-11 * end.abs().max(1.0);
+    for k in knots.iter_mut().filter(|k| **k == end) {
+        *k = short;
+    }
+    b.validate().unwrap();
+    b.check_geometry().unwrap();
+}
+
 /// One geometric defect each, structurally valid: every one is refused, naming the record.
 #[test]
 fn geometric_defects_are_refused_by_record() {

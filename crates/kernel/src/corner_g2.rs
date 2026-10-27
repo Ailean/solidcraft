@@ -1,24 +1,26 @@
 //! G2 fillet corners (`corner: G2`): the corner where three or more rounded edges meet, filled
-//! with a patch that meets every face around it to the second order, instead of the rolling
+//! with patches that meet every face around it to the second order, instead of the rolling
 //! ball's sphere (or SMLib's Coons patch), which is only tangent to the rounds and keeps its own
 //! 1 / r across each seam.
 //!
 //! The corner is set back: SMLib runs each round whole to its cross-section a setback from the
-//! vertex and leaves the corner open ([`crate::blend_smlib::fillet_setback_open`]), so the hole's
-//! boundary is the rounds' sections and, on each face between two rounds, SMLib's curve from one
-//! round's contact line to the next. Each hole is filled with one face
-//! ([`crate::fill::matched_patch`]): a bicubic height field over the hole's plane fitted to every
-//! face beside the hole — its position, its tangent plane and its normal curvature across the
-//! boundary, read off the face's own surface — the rounds and the planes alike, so the patch is
-//! G2 to all of them. The faces are sewn into one solid by SMLib ([`crate::stitch`]).
+//! vertex (an iso-curve of the round) and leaves the corner open
+//! ([`crate::blend_smlib::fillet_setback_open`]), so the hole's boundary is the rounds' sections
+//! and, on each face between two rounds, SMLib's curve from one round's contact line to the
+//! next, each side split at its middle. The hole is filled as N-sided holes are: one four-sided
+//! patch per corner of the hole, meeting at a centre point ([`crate::fill::quad_patch`],
+//! `solidcraft_geom::fill_quad`), each holding its two half-sides exactly as its boundary rows,
+//! G2 to the faces beside them and to its two neighbouring patches across their spokes. The
+//! faces are sewn into one solid by SMLib ([`crate::stitch`]).
 //!
-//! Without a setback the boundary would be the three sections alone, meeting at points where
-//! two rounds 90° apart ask for different curvatures; with it, the only points where two faces
-//! disagree are the hole's corners, where a section ends on a plane: the round's G1 seam with the
-//! plane, whose 1 / r jump every round has along its whole length, ends there, and no surface is
-//! G2 to both the round and the plane at that point. The patch passes from one to the other
-//! within 15% of each side from the corner (`solidcraft_geom::fill_matched::FADE_SHARE`) and
-//! is G2 along the rest of every seam.
+//! At the hole's corners, where a section ends on a face, the round's own G1-only seam with the
+//! face ends: no surface is G2 to both there (the section's curvature 1 / r is the patch's along
+//! it, and so across the face's curve, where the face asks for its own; and a face curve that
+//! turns in its plane leaves the patch's curvature along the round's axis off the round's). The
+//! patches pass from one curvature to the other within [`FADE_SHARE`] of the hole's size from
+//! each corner, and are G2 beyond it. Making the corner conditions agree is a property of the
+//! set-back rounds: a section eased to the face's curvature at its setback, and a face curve
+//! leaving the contact line without turning.
 
 use solidcraft_geom::fill_quad::QuadFill;
 

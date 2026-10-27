@@ -864,23 +864,17 @@ case(T7, "014-curved-edge-r2", "an r2 round on the top edge of a cylinder r10 h2
      "a torus round: Pappus on the removed section (1-pi/4) r^2 at radius 10 - r(10-3pi)/(12-3pi)")
 case(T7, "015-corner-g2-patch", "three r5 rounds at a corner with the g2 corner patch",
      [F(corner, 5, corner="g2")],
-     {"body_count": 1, "faces": 10, "bbox": {"min": [0, 0, 0], "max": [60, 40, 20]},
+     {"body_count": 1, "faces": 15, "bbox": {"min": [0, 0, 0], "max": [60, 40, 20]},
       "continuity": {"near": [60, 40, 20], "within_mm": 15, "clear_mm": 1.2, "curvature_jump_per_mm": 0.001}},
-     "the corner set back 1.5 r = 7.5 and filled with one patch G2 to the three rounds and the three faces; no closed-form volume; "
-     "one valid body, the same faces as 009, within the box; across the patch's seams the curvature jump is at most 1e-3 per mm "
-     "(the ball's corner, 009, jumps 1/r = 0.2) clear of the six points where a round's section ends on a face, where the round's "
-     "own G1 seam with the face ends (the patch passes from one curvature to the other within 15% of each side: 1.2 mm covers it)",
+     "the corner set back 1.5 r = 7.5 and filled with six four-sided patches about a centre point, one per corner of the hole, each G2 to its round or face and to its two neighbouring patches; no closed-form volume; one valid body of 15 faces (the box's 6, the 3 rounds, the 6 patches, as SMLib's own setback corner, 013), within the box; across every seam of the corner the curvature jump is at most 1e-3 per mm (the ball's corner, 009, jumps 1/r = 0.2) clear of the vertices where seams turn: the six points where a round's section ends on a face, where the round's own G1 seam with the face ends, the sides' middles and the patches' centre (the patches pass from one curvature to the other within a tenth of the hole's size, 1.06 mm: 1.2 mm covers it)",
      base=B1, source="invariants")
 notch = [[50, 20, 10], [40, 30, 10], [40, 20, 15]]
 case(T7, "019-concave-corner-g2-patch", "three concave r5 rounds at the inner corner of a 20x20x10 notch, with the g2 corner patch",
      [box([40, 20, 10], 30, 30, 20, body_name="Notch"), C("solid.combine", target="Part", tools=["Notch"], operation="cut"),
       F(notch, 5, corner="g2")],
-     {"body_count": 1, "faces": 13, "bbox": {"min": [0, 0, 0], "max": [60, 40, 20]},
+     {"body_count": 1, "faces": 18, "bbox": {"min": [0, 0, 0], "max": [60, 40, 20]},
       "continuity": {"near": [40, 20, 10], "within_mm": 11, "clear_mm": 1.2, "curvature_jump_per_mm": 0.001}},
-     "the notch's inner corner (40,20,10), three concave edges, set back 1.5 r = 7.5 and filled with one patch G2 to the three "
-     "rounds and the three faces; one valid body with the faces of the ball corner (13); across the patch's seams the curvature "
-     "jump is at most 1e-3 per mm (the ball's corner jumps 1/r = 0.2) clear of the six points where a round's section ends on a face (within 11 mm of the corner: the hole reaches 7.5 sqrt 2; "
-     "the vertical round, 2.5 mm long past its setback, meets its faces 11.2 mm out, with the G1 jump every round has)",
+     "the notch's inner corner (40,20,10), three concave edges, set back 1.5 r = 7.5 and filled with six four-sided patches about a centre point, each G2 to its round or face and to its neighbouring patches; one valid body with the faces of the ball corner but its sphere (12) and the six patches (18); across every seam of the corner the curvature jump is at most 1e-3 per mm (the ball's corner jumps 1/r = 0.2) clear of the vertices where seams turn (the six points where a round's section ends on a face, the sides' middles, the centre; within 11 mm of the corner: the hole reaches 7.5 sqrt 2; the vertical round, 2.5 mm long past its setback, meets its faces 11.2 mm out, with the G1 jump every round has)",
      base=B1, source="invariants")
 V7 = V5 - 2 * SPANDREL * 25 * 20 - SPANDREL * 9 * 60 + SPANDREL * 1 * 2 * PI * (8 + XBAR * 1)
 case(T7, "017-part-rounds", "the running part: r5 on the front vertical edges, r3 on the back wall's top front edge, r1 where the boss meets the top",

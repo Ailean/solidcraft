@@ -225,15 +225,6 @@ pub fn quad_fill(edges: &[QuadEdge], frames: &mut dyn FnMut(usize, &[f64]) -> Re
         ts.iter().map(|t| have.iter().find(|(s, _)| s == t).map(|(_, f)| *f).ok_or_else(|| SplineError::Invalid("frame".into()))).collect()
     };
     let lengths: Vec<f64> = curves.iter().map(|c| c.length()).collect::<SplineResult<_>>()?;
-    if std::env::var("QDBG").is_ok() {
-        for k in 0..n {
-            if let (Some(a), Some(b)) = (curves.get(2 * k), curves.get(2 * k + 1)) {
-                let (da, db) = (a.derivs(1.0)?, b.derivs(0.0)?);
-                let fa = frame_at(2 * k, &[1.0])?; let fb = frame_at(2 * k + 1, &[0.0])?;
-                eprintln!("DBGM side {k}: ta {:?} tb {:?} na {:?} nb {:?} la {:?} lb {:?} wts {:?} {:?}", da[1], db[1], fa[0].normal, fb[0].normal, fa[0].leave, fb[0].leave, edges[2*k].weights, edges[2*k+1].weights);
-            }
-        }
-    }
     // A first centre: from each side's middle, along the direction its face leaves the hole
     // in, as far as the middles' mean is, averaged — a point near where the fill will pass,
     // not inside the body as the middles' mean of a convex corner is.
@@ -259,7 +250,6 @@ pub fn quad_fill(edges: &[QuadEdge], frames: &mut dyn FnMut(usize, &[f64]) -> Re
         let worst = |f: &[SeamFit], g: fn(&SeamFit) -> f64| f.iter().map(g).fold(0.0f64, f64::max);
         let angle = worst(&edges_fit, |s| s.angle.value).max(worst(&spokes_fit, |s| s.angle.value));
         let curvature = worst(&edges_fit, |s| s.curvature_clear.value).max(worst(&spokes_fit, |s| s.curvature_clear.value));
-        if std::env::var("QDBG").is_ok() { eprintln!("DBG spans {spans} angle {:.3e} curv {:.3e}\n edges {:?}\n spokes {:?}", angle.to_degrees(), curvature, edges_fit.iter().map(|s| (s.angle.value.to_degrees(), s.angle.at, s.curvature_clear.value, s.curvature_clear.at)).collect::<Vec<_>>(), spokes_fit.iter().map(|s| (s.angle.value.to_degrees(), s.angle.at, s.curvature_clear.value, s.curvature_clear.at)).collect::<Vec<_>>()); }
         if angle <= spec.angle_tol && curvature <= spec.curvature_tol {
             return Ok(QuadFill { edges: edges_fit, spoke_fits: spokes_fit, spans, ..fill });
         }

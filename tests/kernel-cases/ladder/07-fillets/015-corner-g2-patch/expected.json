@@ -2,9 +2,9 @@
  "sources": [],
  "what": "three r5 rounds at a corner with the g2 corner patch",
  "source": "invariants",
- "method": "the corner set back 1.5 r = 7.5 and filled with one patch G2 to the three rounds and the three faces; no closed-form volume; one valid body, the same faces as 009, within the box; across the patch's seams the curvature jump is at most 1e-3 per mm (the ball's corner, 009, jumps 1/r = 0.2) clear of the six points where a round's section ends on a face, where the round's own G1 seam with the face ends (the patch passes from one curvature to the other within 15% of each side: 1.2 mm covers it)",
+ "method": "the corner set back 1.5 r = 7.5 and filled with six four-sided patches about a centre point, one per corner of the hole, each G2 to its round or face and to its two neighbouring patches; no closed-form volume; one valid body of 15 faces (the box's 6, the 3 rounds, the 6 patches, as SMLib's own setback corner, 013), within the box; across every seam of the corner the curvature jump is at most 1e-3 per mm (the ball's corner, 009, jumps 1/r = 0.2) clear of the vertices where seams turn: the six points where a round's section ends on a face, where the round's own G1 seam with the face ends, the sides' middles and the patches' centre (the patches pass from one curvature to the other within a tenth of the hole's size, 1.06 mm: 1.2 mm covers it)",
  "body_count": 1,
- "faces": 10,
+ "faces": 15,
  "bbox": {
   "min": [
    0,

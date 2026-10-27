@@ -95,16 +95,17 @@ whole face.
 
 ## Runout and tip
 
-**Runout** (`ease_in`, `ease_out`: a length, `standard` = 2.5 P or `short` = 1.25 P, ISO 3508's
-normal and short thread runouts x): the groove fades out over that length, its section moving
-out of the material as it turns (an external thread's away from the axis, past the surface; a
-nut's towards it, into the hole), linearly, by SMLib's radial screw sweep. `ease_in` is at the end
-the thread starts from (`from`, or the start of its extent), `ease_out` at the other. The runout
-lies past the full-form length: beyond a square stop, and before a shoulder up to its clearance
-(the full form then ends a runout short of it); at a free end it lies inside the face, the groove
-reaching nothing at the end. No end gets a runout unless asked. Where the section moves, the
-sweep's walls are within its tolerance (1e-4 P) of the true surfaces; full-depth turns are exact
-radially.
+**Runout** (`ease_out`: a length, `standard` = 2.5 P or `short` = 1.25 P, ISO 3508's normal and
+short thread runouts x): the thread's inner end, away from where it starts, fades out over that
+length, shorter than a turn too: its section moves out of the material as it turns (an external
+thread's away from the axis, past the surface; a nut's towards it, into the hole), linearly, by
+SMLib's radial screw sweep, and no end face is left. Without it the groove stops square there,
+ending in its own profile, a flat face in the axial plane. The runout lies past the full-form
+length: beyond a square stop, and before a shoulder up to its clearance (the full form then ends a
+runout short of it); at a free end it lies inside the face, the groove reaching nothing at the
+end. The start never fades: it runs off its free end, cut by the end face, plain or chamfered
+(`tip`); `ease_in` is refused. Where the section moves, the sweep's walls are within its tolerance
+(1e-4 P) of the true surfaces; full-depth turns are exact radially.
 
 **Tip** (ISO 4753's chamfered end; `tip: start` the end the thread starts from, which must be
 free, `tip: both` each free end it reaches): at those ends of a modelled external thread, after the groove, the material outside a cone `chamfer_angle` to the axis (45°) reaching

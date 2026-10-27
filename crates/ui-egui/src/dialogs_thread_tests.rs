@@ -73,7 +73,6 @@ fn every_option_reaches_the_command() {
     choose(&mut h, "Starts", "2");
     choose(&mut h, "Extent", "Length");
     type_in(&mut h, "Length", "6 mm");
-    choose(&mut h, "Ease In", "Standard (2.5 P)");
     choose(&mut h, "Ease Out", "Length");
     type_in(&mut h, "Ease Out Length", "1.5 mm");
     choose(&mut h, "Tip", "Both");
@@ -86,14 +85,14 @@ fn every_option_reaches_the_command() {
         p,
         json!({
             "designation": "Tr20x4", "form": "trapezoidal", "hand": "left", "starts": 2, "extent": "length", "length": "6 mm",
-            "ease_in": "standard", "ease_out": "1.5 mm", "tip": "both", "chamfer_angle": "30 deg", "chamfer_depth": "0.5 mm",
+            "ease_out": "1.5 mm", "tip": "both", "chamfer_angle": "30 deg", "chamfer_depth": "0.5 mm",
             "modeled": true,
         })
     );
-    choose(&mut h, "Ease In", "Short (1.25 P)");
+    choose(&mut h, "Ease Out", "Short (1.25 P)");
     choose(&mut h, "Hand", "Both");
     let p = params(&h);
-    assert_eq!((&p["ease_in"], &p["hand"]), (&json!("short"), &json!("both")));
+    assert_eq!((&p["ease_out"], &p["hand"]), (&json!("short"), &json!("both")));
 }
 
 /// Buttress rows only for the buttress forms, the length only with a Length extent, the Up To
@@ -102,10 +101,10 @@ fn every_option_reaches_the_command() {
 #[test]
 fn only_the_fields_that_apply_are_shown() {
     let mut h = shaft();
-    for row in ["Form", "Size", "Pitch", "Designation", "Hand", "Starts", "Extent", "Ease In", "Ease Out", "Tip"] {
+    for row in ["Form", "Size", "Pitch", "Designation", "Hand", "Starts", "Extent", "Ease Out", "Tip"] {
         assert!(shown(row), "{row}");
     }
-    for row in ["Steep Flank", "Length", "Ease In Length", "Ease Out Length", "Chamfer Angle", "Chamfer Depth"] {
+    for row in ["Steep Flank", "Length", "Ease Out Length", "Chamfer Angle", "Chamfer Depth"] {
         assert!(!shown(row), "{row}");
     }
     let inputs = |h: &Harness| h.app.dialog.as_ref().unwrap().inputs.iter().map(|i| i.label).collect::<Vec<_>>();
@@ -130,9 +129,9 @@ fn only_the_fields_that_apply_are_shown() {
     assert!(shown("Length"));
     choose(&mut h, "Extent", "Full");
     assert_eq!(inputs(&h), ["Cylindrical face"]);
-    choose(&mut h, "Ease In", "Length");
+    choose(&mut h, "Ease Out", "Length");
     assert_eq!(inputs(&h), ["Cylindrical face", START_END], "a runout starts at an end");
-    assert!(shown("Ease In Length") && !shown("Ease Out Length"));
+    assert!(shown("Ease Out Length"));
     choose(&mut h, "Tip", "Start");
     assert!(shown("Chamfer Angle") && shown("Chamfer Depth"));
     let p = params(&h);
@@ -246,7 +245,7 @@ fn a_saved_thread_reopens_with_every_option() {
     for (made, picks) in [
         (
             json!({"designation":"S20x4","steep_flank":"start","hand":"left","starts":2,"length":"12 mm","from":[10,0,20],"modeled":true,
-                "ease_in":"standard","ease_out":"1 mm","tip":"start","chamfer_angle":"30 deg","chamfer_depth":"0.5 mm"}),
+                "ease_out":"1 mm","tip":"start","chamfer_angle":"30 deg","chamfer_depth":"0.5 mm"}),
             vec!["Cylindrical face", START_END],
         ),
         (json!({"designation":"M20","from":[10,0,20],"up_to":[10,0,5]}), vec!["Cylindrical face", START_END, UP_TO]),

@@ -221,7 +221,6 @@ pub struct Options {
     pub starts: u32,
     /// An index into the extents (full, length, up to).
     pub extent: usize,
-    pub ease_in: Ease,
     pub ease_out: Ease,
     pub tip: ThreadTip,
     pub chamfer_angle: String,
@@ -236,7 +235,6 @@ impl Default for Options {
             hand: ThreadHand::default(),
             starts: 1,
             extent: FULL,
-            ease_in: Ease::default(),
             ease_out: Ease::default(),
             tip: ThreadTip::default(),
             chamfer_angle: String::new(),
@@ -250,7 +248,7 @@ impl Options {
     /// Does the thread start at one end of the face (a length or an Up To extent, a runout or a
     /// tip)? Then the end to start from can be picked.
     pub fn starts_at_an_end(&self) -> bool {
-        self.extent != FULL || self.ease_in.choice != 0 || self.ease_out.choice != 0 || self.tip != ThreadTip::None
+        self.extent != FULL || self.ease_out.choice != 0 || self.tip != ThreadTip::None
     }
 }
 
@@ -402,7 +400,6 @@ pub(crate) fn rows(
     }
 
     crate::ui_kit::section(ui, "thread_ends", "Ends", true, |ui| {
-        enter |= ease_rows(ui, "Ease In", "thread_ease_in", &mut o.ease_in);
         enter |= ease_rows(ui, "Ease Out", "thread_ease_out", &mut o.ease_out);
         pick(ui, "Tip", "thread_tip", &mut o.tip, TIPS);
         if o.tip != ThreadTip::None {
@@ -424,7 +421,7 @@ fn ease_rows(ui: &mut egui::Ui, label: &'static str, id: &str, e: &mut Ease) -> 
     if before != EASE_LENGTH && e.length.trim().is_empty() {
         e.length = "1 mm".into();
     }
-    expr_row(ui, if label == "Ease In" { "Ease In Length" } else { "Ease Out Length" }, &mut e.length)
+    expr_row(ui, "Ease Out Length", &mut e.length)
 }
 
 /// The Size choice of a form with a size table, and the Pitch choice of the metric ones (an
@@ -525,12 +522,10 @@ pub(crate) fn put_params(p: &mut Value, length: &str, o: &Options, inputs: &[Sel
     if let Some(from) = object_point(inputs, START_END) {
         p["from"] = from;
     }
-    for (key, e) in [("ease_in", &o.ease_in), ("ease_out", &o.ease_out)] {
-        match e.choice {
-            EASE_LENGTH => put(p, &[(key, e.length.as_str())]),
-            0 => {}
-            c => p[key] = json!(EASES[c].1),
-        }
+    match o.ease_out.choice {
+        EASE_LENGTH => put(p, &[("ease_out", o.ease_out.length.as_str())]),
+        0 => {}
+        c => p["ease_out"] = json!(EASES[c].1),
     }
     if o.tip != ThreadTip::None {
         p["tip"] = json!(o.tip);
@@ -569,7 +564,6 @@ pub(crate) fn reopen(d: &mut Dialog, s: &Session, kind: &FeatureKind) {
         form,
         hand,
         starts,
-        ease_in,
         ease_out,
         tip,
         chamfer_angle,
@@ -593,7 +587,6 @@ pub(crate) fn reopen(d: &mut Dialog, s: &Session, kind: &FeatureKind) {
         } else {
             FULL
         },
-        ease_in: Ease::of(ease_in),
         ease_out: Ease::of(ease_out),
         tip: *tip,
         chamfer_angle: chamfer_angle.as_ref().map(expr).unwrap_or_default(),

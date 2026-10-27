@@ -8,6 +8,10 @@ pub enum TappedThreadFamily {
     Unf,
     G,
     Rp,
+    /// ISO 7-1's internal taper thread (`Rc 1/2`).
+    Rc,
+    /// ASME B1.20.1's taper pipe thread, internal (`1/2-14 NPT`).
+    Npt,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -22,7 +26,7 @@ pub struct TappedThread {
 impl TappedThread {
     pub fn profile_degrees(&self) -> f64 {
         match self.family {
-            TappedThreadFamily::G | TappedThreadFamily::Rp => 55.0,
+            TappedThreadFamily::G | TappedThreadFamily::Rp | TappedThreadFamily::Rc => 55.0,
             _ => 60.0,
         }
     }
@@ -40,6 +44,24 @@ fn pipe_size(size: crate::pipe_thread_catalog::PipeThread) -> TappedThread {
         pitch: size.pitch(),
         tap_drill: size.process_bore().0,
     }
+}
+
+/// An internal taper thread (Rc, NPT) of the size tables a modelled thread cuts
+/// ([`crate::pipe_thread_sizes`]). Its drill is the internal minor diameter where the thread
+/// ends, the reference plane's d - 2h at the face less the taper over the thread's length (ISO
+/// 7-1's useful thread, NPT's effective thread L2): derived from the standards' dimensions, so
+/// the tap cuts full form over the whole length. It is not a tap maker's recommendation.
+fn taper_size(family: TappedThreadFamily, size: crate::pipe_thread_sizes::PipeSize) -> TappedThread {
+    use crate::thread_forms::ThreadForm;
+    let p = size.pitch();
+    let (form, h) = match family {
+        TappedThreadFamily::Npt => (ThreadForm::Npt, crate::pipe_thread_sizes::NPT_HEIGHT * p),
+        _ => (ThreadForm::Bspt, 0.640327 * p),
+    };
+    let designation = form.format(size.major, p, p);
+    let designation = if form == ThreadForm::Bspt { designation.replacen("R ", "Rc ", 1) } else { designation };
+    let drill = size.major - 2.0 * h - size.length / 16.0;
+    TappedThread { family, designation, major_diameter: size.major, pitch: p, tap_drill: (drill * 1000.0).floor() / 1000.0 }
 }
 
 // Diameter/pitch pairs verified against Guhring, plus Yamawa for M12x1.25.
@@ -110,6 +132,11 @@ pub fn tapped_thread_sizes(family: TappedThreadFamily) -> Vec<TappedThread> {
     if matches!(family, TappedThreadFamily::G | TappedThreadFamily::Rp) {
         return crate::pipe_thread_catalog::pipe_thread_sizes().map(pipe_size).filter(|s| s.family == family).collect();
     }
+    match family {
+        TappedThreadFamily::Rc => return crate::pipe_thread_sizes::iso_7_1().map(|z| taper_size(family, z)).collect(),
+        TappedThreadFamily::Npt => return crate::pipe_thread_sizes::npt().map(|z| taper_size(family, z)).collect(),
+        _ => {}
+    }
 
     if family == TappedThreadFamily::Metric {
         let mut sizes: Vec<_> = crate::metric_thread_sizes().iter().chain(METRIC_FINE).map(|&(d, p)| metric_size(d, p)).collect();
@@ -131,7 +158,8 @@ pub fn tapped_thread_sizes(family: TappedThreadFamily) -> Vec<TappedThread> {
 }
 
 /// Explicit metric custom sizes remain supported. Unified sizes must be in the verified
-/// catalogue and include their UNC/UNF suffix. G/Rp use explicit process drills; modeled Thread stays metric-only.
+/// catalogue and include their UNC/UNF suffix. G/Rp use explicit process drills, Rc/NPT the drill
+/// derived from their standards ([`taper_size`]).
 pub fn parse_tapped_thread(text: &str) -> Option<TappedThread> {
     if text.len() > 128 {
         return None;
@@ -141,6 +169,18 @@ pub fn parse_tapped_thread(text: &str) -> Option<TappedThread> {
     }
     if let Some(size) = crate::pipe_thread_catalog::parse_pipe_thread(text) {
         return Some(pipe_size(size));
+    }
+    // An internal taper thread: Rc or NPT (an external R is no hole's).
+    use crate::thread_forms::ThreadForm;
+    let taper = match ThreadForm::of_designation(text) {
+        Some(ThreadForm::Bspt) if ThreadForm::pipe_internal(text) => Some((TappedThreadFamily::Rc, ThreadForm::Bspt)),
+        Some(ThreadForm::Bspt) => return None,
+        Some(ThreadForm::Npt) => Some((TappedThreadFamily::Npt, ThreadForm::Npt)),
+        _ => None,
+    };
+    if let Some((family, form)) = taper {
+        let size = form.parse(text, 1).ok()?;
+        return tapped_thread_sizes(family).into_iter().find(|s| (s.major_diameter - size.major).abs() < 1e-9);
     }
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_uppercase();
     let &(name, family, major_diameter, tpi, tap_drill) = UNIFIED.iter().find(|row| row.0 == normalized)?;
@@ -163,14 +203,43 @@ mod tests {
         }
     }
 
+    /// Rc and NPT holes: the size tables' diameters, the internal minor where the thread ends for
+    /// the drill (Rc 1/2: d1 18.631 at the face, 13.2 mm of useful thread at 1 in 16; 1/2 NPT:
+    /// E1 - h = 0.77843 - 0.05714 in at the face, L2 = 0.5337 in), and no external R.
+    #[test]
+    fn internal_taper_threads_drill_to_their_minor_where_the_thread_ends() {
+        let rc = parse_tapped_thread("Rc1/2").unwrap();
+        assert_eq!((rc.family, rc.designation.as_str(), rc.major_diameter), (TappedThreadFamily::Rc, "Rc 1/2", 20.955));
+        assert!((rc.tap_drill - (18.631 - 13.2 / 16.0)).abs() < 2e-3, "{}", rc.tap_drill);
+        let npt = parse_tapped_thread("1/2 NPT").unwrap();
+        assert_eq!((npt.family, npt.designation.as_str()), (TappedThreadFamily::Npt, "1/2-14 NPT"));
+        assert!((npt.tap_drill - (0.77843 - 0.8 / 14.0 - 0.5337 / 16.0) * 25.4).abs() < 2e-3, "{}", npt.tap_drill);
+        assert_eq!(rc.profile_degrees(), 55.0);
+        assert_eq!(npt.profile_degrees(), 60.0);
+        assert!(parse_tapped_thread("R 1/2").is_none(), "an external taper thread is no hole's");
+    }
+
     #[test]
     fn tapped_catalogue_has_unique_valid_sizes_and_round_trips() {
         let mut names = std::collections::HashSet::new();
-        for family in [TappedThreadFamily::Metric, TappedThreadFamily::Unc, TappedThreadFamily::Unf, TappedThreadFamily::G, TappedThreadFamily::Rp] {
+        for family in [
+            TappedThreadFamily::Metric,
+            TappedThreadFamily::Unc,
+            TappedThreadFamily::Unf,
+            TappedThreadFamily::G,
+            TappedThreadFamily::Rp,
+            TappedThreadFamily::Rc,
+            TappedThreadFamily::Npt,
+        ] {
             let sizes = tapped_thread_sizes(family);
-            if family != TappedThreadFamily::Metric {
-                assert_eq!(sizes.len(), if matches!(family, TappedThreadFamily::G | TappedThreadFamily::Rp) { 6 } else { 14 });
-            }
+            let count = match family {
+                TappedThreadFamily::Metric => sizes.len(),
+                TappedThreadFamily::G | TappedThreadFamily::Rp => 6,
+                TappedThreadFamily::Rc => 15,
+                TappedThreadFamily::Npt => crate::pipe_thread_sizes::npt().count(),
+                _ => 14,
+            };
+            assert_eq!(sizes.len(), count, "{family:?}");
             for size in sizes {
                 assert!(names.insert(size.designation.clone()));
                 assert_eq!(parse_tapped_thread(&size.designation), Some(size.clone()));
@@ -200,7 +269,7 @@ mod tests {
             let size = parse_tapped_thread(name).unwrap();
             assert_eq!((size.major_diameter, size.pitch, size.tap_drill), (d, p, drill));
         }
-        for invalid in ["1/4-20 UNF", "#10-32 UNC", "1/4-19 BSP", "Rc1/4", "R1/4", "1/4-18 NPT", "1/4-20", "M8xNaN", "M8x8"] {
+        for invalid in ["1/4-20 UNF", "#10-32 UNC", "1/4-19 BSP", "Rc 7/8", "R1/4", "1/4-27 NPT", "1/4-20", "M8xNaN", "M8x8"] {
             assert!(parse_tapped_thread(invalid).is_none(), "{invalid}");
         }
     }

@@ -1954,7 +1954,13 @@ fn step_conformance_parts_read_into_smlib() {
 /// looser than its context. The patch has no closed-form pcurves for them, so SMLib makes them,
 /// on the surface, and they lie `dz` from their edges.
 fn dome_with_edges_raised(dz: f64) -> String {
-    let z = |i: usize, j: usize| if (1..=2).contains(&i) && (1..=2).contains(&j) { 6.0 } else { 0.0 };
+    patch_with_edges_raised(dz, false)
+}
+
+/// [`dome_with_edges_raised`], or with `flat` the plane z = 0 in its place: its edges' pcurves
+/// are then their control points' projections onto it, in closed form.
+fn patch_with_edges_raised(dz: f64, flat: bool) -> String {
+    let z = |i: usize, j: usize| if !flat && (1..=2).contains(&i) && (1..=2).contains(&j) { 6.0 } else { 0.0 };
     let mut t = String::from(HEAD);
     let mut rows = Vec::new();
     for i in 0..4 {
@@ -1964,10 +1970,14 @@ fn dome_with_edges_raised(dz: f64) -> String {
         }
         rows.push(format!("({})", row.join(",")));
     }
-    t += &format!(
-        "#10=B_SPLINE_SURFACE_WITH_KNOTS('',3,3,({}),.UNSPECIFIED.,.F.,.F.,.F.,(4,4),(4,4),(0.,1.),(0.,1.),.UNSPECIFIED.);\n",
-        rows.join(",")
-    );
+    if flat {
+        t += "#10=PLANE('',#13);\n#11=CARTESIAN_POINT('',(0.,0.,0.));\n#12=DIRECTION('',(0.,0.,1.));\n#14=DIRECTION('',(1.,0.,0.));\n#13=AXIS2_PLACEMENT_3D('',#11,#12,#14);\n";
+    } else {
+        t += &format!(
+            "#10=B_SPLINE_SURFACE_WITH_KNOTS('',3,3,({}),.UNSPECIFIED.,.F.,.F.,.F.,(4,4),(4,4),(0.,1.),(0.,1.),.UNSPECIFIED.);\n",
+            rows.join(",")
+        );
+    }
     // The boundary, counter-clockwise from above: (i, j) runs i = 0 → 3 at j = 0, j = 0 → 3 at
     // i = 3, then back; each side's control points are the patch's, raised.
     let sides: [[(usize, usize); 4]; 4] =
@@ -2015,4 +2025,17 @@ fn edges_written_off_their_spline_face_carry_their_gap_as_their_tolerance() {
         Err(e) => e.to_string().contains("off the face's surface"),
     };
     assert!(refused, "{far:?}");
+}
+
+#[test]
+fn spline_edges_off_their_plane_by_less_than_the_file_states_get_their_closed_form() {
+    // 0.8e-6 mm off, inside the file's 1e-6 mm but past the half of it a closed-form pcurve is
+    // checked within: each edge's distance from the plane, measured first, is its tolerance
+    // (with margin), and the face reads with its pcurves the edges' projections. A plane has no
+    // parameter box for SMLib to make pcurves in, so without them the face is refused.
+    let imp = step_import(&patch_with_edges_raised(0.8e-6, true)).unwrap();
+    assert_eq!(imp.bodies.len(), 1, "{:?}", imp.warnings);
+    assert!(imp.warnings.iter().any(|w| w.contains("4 edges lie off their faces' surfaces")), "{:?}", imp.warnings);
+    let m = measure(&imp.bodies[0].body).unwrap();
+    assert!(rel(m.area, 900.0) < 1e-6, "{}", m.area);
 }

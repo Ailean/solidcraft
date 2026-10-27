@@ -73,9 +73,9 @@ fn every_option_reaches_the_command() {
     choose(&mut h, "Starts", "2");
     choose(&mut h, "Extent", "Length");
     type_in(&mut h, "Length", "6 mm");
-    choose(&mut h, "Ease Out", "Length");
-    type_in(&mut h, "Ease Out Length", "1.5 mm");
-    choose(&mut h, "Tip", "Both");
+    choose(&mut h, "End", "ui.fade");
+    type_in(&mut h, "Fade Length", "1.5 mm");
+    choose(&mut h, "Start", "Chamfer");
     type_in(&mut h, "Chamfer Angle", "30 deg");
     type_in(&mut h, "Chamfer Depth", "0.5 mm");
     click(&mut h, &["dialog:Modeled"]);
@@ -85,14 +85,20 @@ fn every_option_reaches_the_command() {
         p,
         json!({
             "designation": "Tr20x4", "form": "trapezoidal", "hand": "left", "starts": 2, "extent": "length", "length": "6 mm",
-            "ease_out": "1.5 mm", "tip": "both", "chamfer_angle": "30 deg", "chamfer_depth": "0.5 mm",
+            "ease_out": "1.5 mm", "tip": "start", "chamfer_angle": "30 deg", "chamfer_depth": "0.5 mm",
             "modeled": true,
         })
     );
-    choose(&mut h, "Ease Out", "Short (1.25 P)");
+    // An empty fade length is ISO 3508's standard runout; a square end has none.
+    click(&mut h, &["dialog:Fade Length"]);
+    h.step(&json!({"key":"A","cmd":true})).unwrap();
+    h.step(&json!({"key":"Backspace"})).unwrap();
+    h.frames(2);
     choose(&mut h, "Hand", "Both");
     let p = params(&h);
-    assert_eq!((&p["ease_out"], &p["hand"]), (&json!("short"), &json!("both")));
+    assert_eq!((&p["ease_out"], &p["hand"]), (&json!("standard"), &json!("both")));
+    choose(&mut h, "End", "thread.end_square");
+    assert!(params(&h).get("ease_out").is_none());
 }
 
 /// Buttress rows only for the buttress forms, the length only with a Length extent, the Up To
@@ -101,10 +107,10 @@ fn every_option_reaches_the_command() {
 #[test]
 fn only_the_fields_that_apply_are_shown() {
     let mut h = shaft();
-    for row in ["Form", "Size", "Pitch", "Designation", "Hand", "Starts", "Extent", "Ease Out", "Tip"] {
+    for row in ["Form", "Size", "Pitch", "Designation", "Hand", "Starts", "Extent", "Start", "End"] {
         assert!(shown(row), "{row}");
     }
-    for row in ["Steep Flank", "Length", "Ease Out Length", "Chamfer Angle", "Chamfer Depth"] {
+    for row in ["Steep Flank", "Length", "Fade Length", "Chamfer Angle", "Chamfer Depth"] {
         assert!(!shown(row), "{row}");
     }
     let inputs = |h: &Harness| h.app.dialog.as_ref().unwrap().inputs.iter().map(|i| i.label).collect::<Vec<_>>();
@@ -129,10 +135,10 @@ fn only_the_fields_that_apply_are_shown() {
     assert!(shown("Length"));
     choose(&mut h, "Extent", "Full");
     assert_eq!(inputs(&h), ["Cylindrical face"]);
-    choose(&mut h, "Ease Out", "Length");
+    choose(&mut h, "End", "ui.fade");
     assert_eq!(inputs(&h), ["Cylindrical face", START_END], "a runout starts at an end");
-    assert!(shown("Ease Out Length"));
-    choose(&mut h, "Tip", "Start");
+    assert!(shown("Fade Length"));
+    choose(&mut h, "Start", "Chamfer");
     assert!(shown("Chamfer Angle") && shown("Chamfer Depth"));
     let p = params(&h);
     assert!(p.get("chamfer_angle").is_none() && p.get("chamfer_depth").is_none(), "empty values take ISO 4753's: {p}");
@@ -177,7 +183,7 @@ fn a_form_change_keeps_what_still_applies() {
     choose(&mut h, "Starts", "3");
     choose(&mut h, "Extent", "Length");
     type_in(&mut h, "Length", "4 mm");
-    choose(&mut h, "Ease Out", "Short (1.25 P)");
+    choose(&mut h, "End", "ui.fade");
     let kept = options(&h);
 
     choose(&mut h, "Form", "Trapezoidal (ISO 2904)");
@@ -195,7 +201,7 @@ fn a_form_change_keeps_what_still_applies() {
     let now = options(&h);
     assert_eq!(Options { form: kept.form, ..now.clone() }, kept);
     let p = params(&h);
-    assert_eq!((&p["hand"], &p["starts"], &p["length"], &p["ease_out"]), (&json!("left"), &json!(3), &json!("4 mm"), &json!("short")));
+    assert_eq!((&p["hand"], &p["starts"], &p["length"], &p["ease_out"]), (&json!("left"), &json!(3), &json!("4 mm"), &json!("standard")));
 }
 
 /// The dialog shows the command's own error text for options it cannot build.
@@ -276,7 +282,7 @@ fn a_saved_thread_reopens_with_every_option() {
         assert_eq!(p["extent"], extent);
         if made["designation"] == "S20x4" {
             assert_eq!(p["form"], "buttress", "the form is saved resolved");
-            assert!(shown("Steep Flank") && shown("Chamfer Angle") && shown("Ease Out Length"));
+            assert!(shown("Steep Flank") && shown("Chamfer Angle") && shown("Fade Length"));
         }
         let (cmd, params) = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap().remove(0);
         h.app.session.execute(&cmd, &params).unwrap_or_else(|e| panic!("{made}: OK on the reopened dialog: {e}"));

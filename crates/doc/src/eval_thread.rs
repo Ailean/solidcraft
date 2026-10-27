@@ -118,12 +118,20 @@ pub(super) struct ThreadOn {
 }
 
 /// The free-end test of a face's two ends (`side` 0 at its start, 1 at its end), each made
-/// once: whether any material lies past the end, over the axial span the groove's one-pitch
-/// overrun reaches beyond its first pitch, within the radii the groove cuts.
+/// once. The groove's one-pitch overrun past a free end reaches 1.5 pitches past it. An end is
+/// closed when, within that reach, material lies outside the face's cylinder (inside it, for a
+/// hole) at the radii the groove cuts beyond the face: a shoulder, a plate, a head, a blind
+/// hole's bottom, however thin, the material stepping out past the face. It is closed too when
+/// material lies in the groove's band of radii beyond its first pitch: the face's cylinder going
+/// on past a split. A chamfer, a neck, a countersink or a counterbore steps the other way and
+/// leaves the end free: the groove runs out through it.
 struct FaceEnds<'a> {
     body: &'a Body,
     cyl: &'a kernel::CylinderFace,
     band: (f64, f64),
+    /// The radii the groove cuts beyond the face's own: from it out to the groove's outer edge
+    /// (external), or in to its inner edge (internal).
+    beyond: (f64, f64),
     pitch: f64,
     free: [Option<bool>; 2],
 }
@@ -134,11 +142,13 @@ impl FaceEnds<'_> {
             return Ok(*f);
         }
         let p = self.pitch;
-        let along = if side == 0 { (self.cyl.start - 1.5 * p, self.cyl.start - p) } else { (self.cyl.end + p, self.cyl.end + 1.5 * p) };
-        // Material that only touches the band's rims (a counterbore as wide as the thread) is
-        // not in the groove's way.
+        let past =
+            |from: f64, to: f64| if side == 0 { (self.cyl.start - to, self.cyl.start - from) } else { (self.cyl.end + from, self.cyl.end + to) };
+        // Material that only touches the band's rims (a counterbore as wide as the thread, the
+        // face's own end) is not in the groove's way.
         let e = p * 1e-3;
-        let free = !kernel::material_in_ring(self.body, self.cyl, self.band.0 + e, self.band.1 - e, along)?;
+        let stepped_out = kernel::material_in_ring(self.body, self.cyl, self.beyond.0 + e, self.beyond.1 - e, past(e, 1.5 * p))?;
+        let free = !stepped_out && !kernel::material_in_ring(self.body, self.cyl, self.band.0 + e, self.band.1 - e, past(p, 1.5 * p))?;
         if let Some(slot) = self.free.get_mut(side) {
             *slot = Some(free);
         }
@@ -240,7 +250,10 @@ pub(super) fn thread_on(st: &ModelState, feature: u64, p: Vec3, ask: &ThreadAsk)
         (form.groove(major, pitch, false).root_r, major / 2.0)
     };
     let band = (cyl.radius.min(r_lo), cyl.radius.max(r_hi));
-    let mut ends = FaceEnds { body: &mb.body, cyl: &cyl, band, pitch, free: [None; 2] };
+    // As far beyond the face as the groove's section reaches ([`thread_grooves`]).
+    let beyond =
+        if cyl.internal { ((cyl.radius.min(r_lo) - 0.1 * pitch).max(0.0), cyl.radius) } else { (cyl.radius, cyl.radius.max(r_hi) + 0.05 * pitch) };
+    let mut ends = FaceEnds { body: &mb.body, cyl: &cyl, band, beyond, pitch, free: [None; 2] };
     let (lo, hi) = (cyl.start, cyl.end);
     let along = |q: Vec3| (q - cyl.axis_point).dot(cyl.axis);
     let span = |side: usize, to: f64| -> Result<(f64, f64)> {

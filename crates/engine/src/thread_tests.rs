@@ -521,43 +521,57 @@ fn a_thread_stops_clear_of_a_shoulder() {
     assert!((got - want).abs() < want * 2e-4, "{got} vs {want}");
 }
 
-/// A d10 boss (z 6..22) joined onto a 40x40x6 plate, threaded M10: the plate's top is the
-/// shoulder. The groove, with or without its runout, stays on the boss: the plate keeps all of
-/// its 40 40 6 (what lies below z = 6 after the boss is cut away), and without a runout the
-/// boss loses (16 - w)/P turns, as at a collar.
+/// A d10 boss (z t..t+16) on a plate t thick, threaded M10: the plate's top is the shoulder.
+/// The groove, with or without its runout, stays on the boss: the plate keeps all of itself
+/// (what lies below z = t after the boss is cut away), and without a runout the boss loses
+/// (16 - w)/P turns, as at a collar. The owner's bug: built as the app builds it (a rounded
+/// plate, a circle sketched on its top face and extruded with Join), a plate thinner than 1.5 P
+/// had no material where the free-end test looked (1 to 1.5 pitches past the face), so its top
+/// was taken for a free end and the overrun cut a pitch into it.
 #[test]
 fn a_thread_on_a_boss_never_cuts_into_the_plate_below() {
-    let boss = |extra: Value| {
+    let boss = |t: f64, extra: Value| {
         let mut s = Session::default();
-        run(&mut s, "solid.box", json!({"corner": [-20, -20, 0], "length": 40, "width": 40, "height": 6, "body_name": "Part"}));
-        run(&mut s, "solid.cylinder", json!({"base": [0, 0, 6], "radius": 5, "height": 16, "operation": "join", "targets": ["Part"]}));
-        let mut p = json!({"face": [5, 0, 14], "designation": "M10", "modeled": true});
+        run(&mut s, "sketch.create", json!({"plane": "XY"}));
+        run(&mut s, "sketch.rectangle.rounded", json!({"p0": [-20, -20], "p1": [20, 20], "radius": 5}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": t}));
+        run(&mut s, "sketch.create", json!({"plane": {"face": [0, 0, t]}}));
+        run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 5}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 16, "operation": "join"}));
+        assert_eq!(s.model.state().bodies.len(), 1);
+        let mut p = json!({"face": [5, 0, t + 8.0], "modeled": true});
         if let (Some(p), Value::Object(e)) = (p.as_object_mut(), extra) {
             p.extend(e);
         }
         run(&mut s, "solid.thread", p);
         s
     };
-    let plate_left = |mut s: Session| {
+    let plate_left = |mut s: Session, t: f64| {
         run(
             &mut s,
             "solid.box",
-            json!({"corner": [-30, -30, 6], "length": 60, "width": 60, "height": 30, "body_name": "Above", "operation": "new_body"}),
+            json!({"corner": [-30, -30, t], "length": 60, "width": 60, "height": 30, "body_name": "Above", "operation": "new_body"}),
         );
-        run(&mut s, "solid.combine", json!({"target": "Part", "tools": ["Above"], "operation": "cut"}));
-        exact_volume(&s, "Part")
+        run(&mut s, "solid.combine", json!({"target": "Body1", "tools": ["Above"], "operation": "cut"}));
+        exact_volume(&s, "Body1")
     };
-    let s = boss(json!({}));
+    let plate = |t: f64| (40.0 * 40.0 - (4.0 - PI) * 25.0) * t;
     let (p, w) = (1.5, ext_half_width(10.0, 1.5));
-    let want = 40.0 * 40.0 * 6.0 + PI * 25.0 * 16.0 - (16.0 - w) / p * ext_turn(10.0, p, 5.0);
-    let got = exact_volume(&s, "Part");
-    assert!((got - want).abs() < want * 2e-4, "{got} vs {want}");
-    assert!((plate_left(s) - 9600.0).abs() < 1e-6);
+    for t in [6.0, 1.0] {
+        let s = boss(t, json!({}));
+        let want = plate(t) + PI * 25.0 * 16.0 - (16.0 - w) / p * ext_turn(10.0, p, 5.0);
+        let got = exact_volume(&s, "Body1");
+        assert!((got - want).abs() < want * 2e-4, "plate {t}: {got} vs {want}");
+        let left = plate_left(s, t);
+        assert!((left - plate(t)).abs() < 1e-6 * plate(t), "plate {t}: lost {} mm³", plate(t) - left);
+    }
     for extra in [json!({"ease_out": "standard"}), json!({"ease_out": "short", "tip": "both"})] {
-        let s = boss(extra.clone());
-        assert!(s.model.state().body("Part").unwrap().body.validity().is_empty(), "{extra}");
-        let left = plate_left(s);
-        assert!((left - 9600.0).abs() < 1e-6, "{extra}: the plate below the boss lost {} mm³", 9600.0 - left);
+        let s = boss(1.0, extra.clone());
+        assert!(s.model.state().body("Body1").unwrap().body.validity().is_empty(), "{extra}");
+        let left = plate_left(s, 1.0);
+        assert!((left - plate(1.0)).abs() < 1e-6 * plate(1.0), "{extra}: the plate below the boss lost {} mm³", plate(1.0) - left);
     }
 }
 

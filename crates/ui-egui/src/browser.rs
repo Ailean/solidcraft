@@ -128,6 +128,9 @@ pub struct TreeState {
     /// Find in Timeline: the feature the history scrolls to the next time it draws its items, in
     /// the bottom strip or in the history on the left (#5850).
     pub timeline_reveal: Option<u64>,
+    /// The feature of the face or edge last picked in the view, so a new pick scrolls the
+    /// history to it once.
+    pub view_pick: Option<u64>,
     /// The Edit Canvas / Calibrate panel.
     pub canvas_panel: Option<CanvasPanel>,
     /// The bodies a row at the top of the history lights this frame (`history_rows`), for the
@@ -728,9 +731,13 @@ pub(crate) fn reveal_pick(app: &mut SolveApp) {
     }
 }
 
-/// Whether the body being revealed is in this placement or one below it: it opens.
-fn reveals_in_occurrence(app: &SolveApp, path: &[u64]) -> bool {
-    app.tree.reveal.as_ref().is_some_and(|r| app.session.occurrence_bodies(path, true).is_ok_and(|bodies| bodies.contains(r)))
+/// The placement path of the body being revealed, resolved once per model: a row opens when
+/// the body's path runs through it, instead of every row expanding its subtree to test
+/// containment (#7502). `None` when nothing is revealed or the body is a top-level design body.
+fn reveal_path(app: &mut SolveApp) -> Option<Vec<u64>> {
+    let body = app.tree.reveal.clone()?;
+    prepare_model(app);
+    app.tree.model.as_mut()?.body_path(&app.session, &body)
 }
 
 pub(crate) fn is_open(app: &SolveApp, key: &str, default: bool) -> bool {
@@ -954,6 +961,12 @@ pub(crate) fn resize_column(app: &mut SolveApp, ui: &egui::Ui, rect: Rect, width
     crate::scenario::publish_handle(handle, pos2(rect.right() - BROWSER_RAIL / 2.0, rect.center().y));
 }
 
+/// The width of the browser folded to its rail beside a left History.
+pub(crate) fn collapsed_width() -> f32 {
+    let t = Tokens::get();
+    t.space_24 + t.space_10
+}
+
 /// One content-hugging browser; the shared container supplies floating or flush compact chrome.
 pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
     let available = ui.available_rect_before_wrap();
@@ -963,6 +976,11 @@ pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
     DRAWN.with(|d| d.borrow_mut().clear());
     OCCURRENCES.with(|d| d.borrow_mut().clear());
     let mut acts = Actions { hover_bodies: std::mem::take(&mut app.viewport.hover_bodies), ..Default::default() };
+    if crate::render_workspace::active(app) {
+        render_card(app, ui, &mut acts);
+        finish_browser(app, ui, acts);
+        return;
+    }
     let stacked = crate::timeline_left::stacked(app);
     let container =
         Container::new(ui.ctx(), Surface::Panel).joined(crate::ui_kit::DockEdges { left: true, top: true, bottom: stacked, ..Default::default() });
@@ -983,11 +1001,12 @@ pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
     let bounds = if stacked {
         crate::timeline_left::stacked_rects(app, available).0
     } else {
-        panel_bounds(available, if vertical { None } else { app.shell.history }, if collapsed { t.space_24 + t.space_10 } else { width }, gap)
+        panel_bounds(available, if vertical { None } else { app.shell.history }, if collapsed { collapsed_width() } else { width }, gap)
     };
     app.shell.browser = None;
     let min_height = HEADER_H + 2.0 * (CARD_INSET + 1.0);
-    if bounds.is_positive() && bounds.height() >= min_height {
+    // A dialog in the left column holds the browser's place (`dialog_column`).
+    if !crate::dialog_column::holds(app) && bounds.is_positive() && bounds.height() >= min_height {
         let fill = if container.floating() && app.preferences.browser_float { t.panel.gamma_multiply(BROWSER_FLOAT_ALPHA) } else { t.panel };
         let frame = container.frame(ui.ctx(), fill, crate::frame::Side::Left).inner_margin(CARD_INSET as i8);
         let inner_width = (bounds.width() - frame.total_margin().sum().x).max(0.0);
@@ -1024,6 +1043,38 @@ pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
     }
     finish_browser(app, ui, acts);
+}
+
+fn render_card(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
+    let bounds = crate::shell::panel_bounds(app, ui.available_rect_before_wrap());
+    let mut side = app.preferences.render_browser_side.clone();
+    let mut width = app.preferences.render_browser_width;
+    let title = app.tr("ui.browser_title").to_string();
+    let content = crate::ui_kit::Panel::workspace(
+        ui,
+        crate::ui_kit::WorkspaceOptions { id: "render:browser", title: &title, icon: "list", bounds, fill_height: true },
+        &mut side,
+        &mut width,
+        |ui| {
+            browser_contents(app, ui, acts, true);
+        },
+    );
+    app.preferences.render_browser_width = width;
+    if app.preferences.render_browser_side != side {
+        app.preferences.render_inspector_side = if side == "left" { "right" } else { "left" }.into();
+    }
+    app.preferences.render_browser_side = side.clone();
+    let rect = content.map(|c| c.response.rect);
+    app.shell.browser = rect;
+    crate::shell::register_panel(
+        app,
+        "render:browser",
+        rect,
+        Some(if side == "left" { crate::ui_kit::Edge::Left } else { crate::ui_kit::Edge::Right }),
+    );
+    if let Some(rect) = rect {
+        crate::scenario::publish_rect("browser:card", rect);
+    }
 }
 
 fn browser_collapsed_rail(app: &mut SolveApp, ui: &mut egui::Ui) {
@@ -1063,9 +1114,13 @@ pub(crate) fn panel_bounds(available: Rect, history: Option<Rect>, width: f32, g
 fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions, collapsible: bool) {
     let t = Tokens::get();
     // Only the floating card folds; the docked column keeps its full height.
-    browser_header(app, ui, collapsible);
-    let stacked = crate::timeline_left::stacked(app);
-    if collapsible
+    let render = crate::render_workspace::active(app);
+    if !render {
+        browser_header(app, ui, collapsible);
+    }
+    let stacked = !render && crate::timeline_left::stacked(app);
+    if !render
+        && collapsible
         && (if stacked {
             (app.preferences.timeline_left_browser_collapsed && app.shell.history_folding.is_none_or(|p| p[0] >= 1.0))
                 || ui.available_height() <= t.space_3
@@ -1307,10 +1362,13 @@ fn component_rows_inner(
     root: &mut cache::Node,
 ) {
     let key = &root.key;
-    if let Some(body) = app.tree.reveal.as_ref()
-        && (cache.root_bodies.contains(body) || root.children.iter().any(|path| reveals_in_occurrence(app, path)))
-    {
-        app.tree.collapsed.remove(key);
+    let reveal = app.tree.reveal.clone();
+    if let Some(body) = reveal.as_ref() {
+        let reveals =
+            cache.root_bodies.contains(body) || reveal_path(app).is_some_and(|rp| root.children.iter().any(|path| rp.starts_with(path.as_slice())));
+        if reveals {
+            app.tree.collapsed.remove(key);
+        }
     }
     let open = is_open(app, key, true);
     let active = app.session.active_component == id;
@@ -1446,7 +1504,7 @@ fn occurrence_rows_inner(
     placement: &mut cache::Node,
 ) {
     let key = &placement.key;
-    if reveals_in_occurrence(app, path) {
+    if reveal_path(app).is_some_and(|rp| rp.starts_with(path)) {
         app.tree.collapsed.remove(key);
     }
     let open = is_open(app, key, true);
@@ -1642,7 +1700,8 @@ fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &Actio
         return;
     }
     for (k, icon, thing) in items {
-        let label = k;
+        // An origin plane by the name the preferences give it; its key stays the id.
+        let label = app.preferences.origin_plane_names.label(k);
         let visible = !app.session.visibility.hidden_origin.iter().any(|h| h == k);
         let sel = match icon {
             "plane" => Some(Sel::Plane { name: k.into() }),
@@ -1653,8 +1712,19 @@ fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &Actio
         let r = draw_row(
             ui,
             ui.id().with(("o", k)),
-            // Faded when hidden itself or with the whole Origin.
-            &Row { depth: depth + 1, eye: Some(visible), icon, label, selected, dim: !visible || !app.origin_shown(), mark, ..Default::default() },
+            // Faded when hidden itself or with the whole Origin. A renamed plane's label is already
+            // in the interface's language (`name`).
+            &Row {
+                depth: depth + 1,
+                eye: Some(visible),
+                icon,
+                label,
+                name: label != k,
+                selected,
+                dim: !visible || !app.origin_shown(),
+                mark,
+                ..Default::default()
+            },
         );
         if r.eye {
             // Through the command, so the Origin row's eye is an undo step (#2219).

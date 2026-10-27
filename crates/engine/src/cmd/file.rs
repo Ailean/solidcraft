@@ -470,9 +470,11 @@ impl Session {
     }
 
     /// Take up a save that ran on `done`, a [`Session::scratch`] copy of this session that
-    /// `file.save` or `file.save_as` ran on (on another thread, so the window keeps drawing)
-    /// while this one did not change: the name the save gave the design, its
-    /// file, and its saved state, as running the command here would have left them.
+    /// `file.save` or `file.save_as` ran on (on another thread, so the window keeps drawing):
+    /// the name the save gave the design, its file, and its saved state, as running the command
+    /// here would have left them. What is saved is the design the file holds, `done`'s, not this
+    /// one's: a change made here while the save was written is not in the file, so it stays
+    /// unsaved (#6003).
     pub fn adopt_save(&mut self, done: &Session) {
         if done.doc.name != self.doc.name {
             let (from, to) = (self.doc.name.clone(), done.doc.name.clone());
@@ -481,7 +483,8 @@ impl Session {
         self.path.clone_from(&done.path);
         self.disk = done.disk;
         self.read_only = done.read_only;
-        self.mark_saved();
+        self.saved = done.saved.clone();
+        self.saved_visibility = done.saved_visibility.clone();
     }
 
     /// Another program or computer wrote the design's file since it was opened or last saved:
@@ -923,6 +926,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// #6003: a session changed while its save ran on a copy takes up the save's file and name,
+    /// but only what the file holds counts as saved: the change stays unsaved, and undoing it
+    /// leaves nothing unsaved again. A hidden body is a change too.
+    #[test]
+    fn a_change_made_while_a_copy_saves_stays_unsaved() {
+        let dir = std::env::temp_dir().join(format!("solidcraft-adopt-changed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Bracket.solidcraft");
+        for hide in [false, true] {
+            let mut s = Session::default();
+            s.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10, "body_name": "Block"})).unwrap();
+            let mut copy = s.scratch();
+            copy.execute("file.save_as", &json!({"path": path.to_string_lossy()})).unwrap();
+            if hide {
+                s.execute("browser.visibility", &json!({"items": ["Block"], "visible": false})).unwrap();
+            } else {
+                s.execute("solid.sphere", &json!({"diameter": 4})).unwrap();
+            }
+            s.adopt_save(&copy);
+            assert_eq!((s.path.as_deref(), s.doc.name.as_str()), (path.to_str(), "Bracket"));
+            assert!(s.is_dirty(), "hide {hide}: the change is not in the file");
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert!(!s.is_dirty(), "hide {hide}: back to what the file holds");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// #5467: a script, the CLI or the control channel never gets a prompt. A Save over a file
     /// another program or computer changed since it was opened is refused with an error naming
     /// `overwrite`, which replaces it; a design opened read-only only saves to another file.
@@ -1144,6 +1174,56 @@ mod tests {
         let d = &reopened.model.results[0].boolean_diagnostics;
         assert_eq!(d.events.len(), 1, "{d:?}");
         assert!(d.rejected.is_empty());
+    }
+
+    /// A design whose saved model would give a body back with other topology opens with the
+    /// bodies it was saved with. A pattern copy cut by an automatic extrude came back from the
+    /// native codec with two loose vertices more (10 faces, 18 edges, 12 vertices instead of 10);
+    /// such a body is not kept, the design is saved without its model and evaluated on opening.
+    #[test]
+    fn a_design_opens_with_the_bodies_it_was_saved_with_when_one_does_not_decode_to_itself() {
+        let mut session = Session::new(Document::new("Roundtrip"));
+        for (cmd, p) in [
+            ("solid.cylinder", json!({"axis": "Z", "base": [-2, -17, -2], "body_name": "B2", "height": 11, "radius": 6})),
+            ("sketch.create", json!({"plane": "YZ"})),
+            (
+                "sketch.line",
+                json!({"closed": true, "ids": ["w3a", "w3b", "w3c", "w3d"], "infer": true, "points": [[-3, -22], [1, -22], [1, -17], [-3, -17]]}),
+            ),
+            ("sketch.dimension", json!({"entities": ["w3a"], "type": "length", "value": 9})),
+            ("solid.extrude", json!({"distance": -1, "operation": "cut"})),
+            ("solid.box", json!({"corner": [27, -22, 0], "height": 12, "length": "d3", "operation": "new", "width": 3})),
+            ("sketch.create", json!({"plane": "YZ"})),
+            (
+                "sketch.line",
+                json!({"closed": true, "ids": ["w6a", "w6b", "w6c", "w6d"], "infer": true, "points": [[-16, -23], [2, -23], [2, -15], [-16, -15]]}),
+            ),
+            ("sketch.dimension", json!({"entities": ["w6a"], "type": "length", "value": 11})),
+            ("solid.extrude", json!({"distance": 18, "operation": "new"})),
+            ("solid.extrude", json!({"distance": -5, "operation": "new"})),
+            ("sketch.create", json!({"plane": "YZ"})),
+            ("sketch.circle.center", json!({"center": [15, -8], "radius": 9})),
+            ("solid.extrude", json!({"distance": "d8", "operation": "new"})),
+            ("solid.pattern.circular", json!({"axis": "Y", "bodies": ["Body4"], "count": 3})),
+            ("solid.extrude", json!({"distance": -16, "operation": "auto"})),
+        ] {
+            session.execute(cmd, &p).unwrap();
+        }
+        let counts = |s: &Session| {
+            s.model
+                .state()
+                .bodies
+                .iter()
+                .map(|b| (b.name.clone(), b.body.face_count(), b.body.edge_count(), b.body.vertex_count()))
+                .collect::<Vec<_>>()
+        };
+        let bytes = session.design_container(solidcraft_io::DesignCompression::Fast, false, true).unwrap();
+        let path = std::env::temp_dir().join(format!("solidcraft-roundtrip-{}.solidcraft", std::process::id()));
+        std::fs::write(&path, &bytes).unwrap();
+        let mut reopened = Session::default();
+        reopened.execute("doc.open", &json!({"path": path})).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(counts(&reopened), counts(&session));
     }
 
     #[test]

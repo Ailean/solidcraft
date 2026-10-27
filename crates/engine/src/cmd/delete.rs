@@ -160,7 +160,11 @@ fn apply(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(cmd, format!("no occurrence `{k}`")));
         };
         if s.doc.occurrences.iter().filter(|x| x.component == o.component).count() > 1 {
-            s.doc_mut().occurrences.retain(|x| x.id != o.id);
+            // The joints on it and the other assembly records naming it go with it: left behind,
+            // a joint stays in the Browser joined to nothing (#7749).
+            let gone = s.doc_mut().remove_occurrences(&std::collections::BTreeSet::from([o.id]));
+            s.visibility.hidden_joints.retain(|h| !gone.contains(h));
+            joints.extend(gone);
             s.pending_moves.remove(&o.id);
             done = true;
         } else {
@@ -268,6 +272,43 @@ mod tests {
         // Deleting anyway (rolled back) still reports what it broke.
         let done = run(&mut s, "selection.delete", json!({"items": [{"type": "body", "name": body}]}));
         assert_eq!(done["would_fail"], json!(["Hole"]), "{done}");
+    }
+
+    /// Deleting a dimension of a sketch with a rolled-back history after it (#7253): the sketch
+    /// keeps its geometry, so the check before the delete does not build the features after the
+    /// marker again (that took minutes on a long history). A deleted line still breaks them, and
+    /// the check still says so.
+    #[test]
+    fn deleting_a_dimension_in_a_rolled_back_history_builds_nothing_after_the_marker() {
+        let mut s = Session::default();
+        let sk = run(&mut s, "sketch.create", json!({"plane": "XY"}))["sketch"].as_u64().unwrap();
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0], [30, 20], [10, 20]], "closed": true}));
+        let lines: Vec<String> = s.model.state().sketch(sk).unwrap().sketch.curves.iter().map(|c| c.id.clone()).collect();
+        let param = run(&mut s, "sketch.dimension", json!({"entities": [lines[0], lines[1]], "type": "angle"}))["param"].as_str().map(str::to_string);
+        let angle = s.model.state().sketch(sk).unwrap().sketch.constraints.iter().find(|c| param.is_some() && c.param == param).unwrap().id.clone();
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 5, "name": "Plate"}));
+        let later = 6;
+        for i in 0..later {
+            run(&mut s, "solid.cylinder", json!({"base": [12 + 3 * i, 8, -1], "radius": 1, "height": 10, "operation": "cut"}));
+        }
+        run(&mut s, "timeline.roll_to", json!({"position": 1}));
+        run(&mut s, "sketch.edit", json!({"sketch": sk}));
+        let cached = |s: &Session| s.model.cache.lock().map(|c| c.len()).unwrap_or(0);
+        let before = cached(&s);
+        let doc = s.doc.clone();
+        let items = json!([{"type": "sketch_constraint", "id": angle}]);
+        let dry = run(&mut s, "selection.delete", json!({"items": items, "dry_run": true}));
+        assert_eq!((&dry["deleted"], &dry["would_fail"]), (&json!([]), &json!([])), "{dry}");
+        assert_eq!(*s.doc, *doc, "the check changes nothing");
+        // The sketch itself is solved again; Plate and the cuts are not built.
+        let built = cached(&s).saturating_sub(before);
+        assert!(built < later, "{built} results built for the check");
+        let line = json!([{"type": "sketch_curve", "id": lines[1]}]);
+        let dry = run(&mut s, "selection.delete", json!({"items": line, "dry_run": true}));
+        assert!(dry["would_fail"].as_array().unwrap().contains(&json!("Plate")), "{dry}");
+        run(&mut s, "selection.delete", json!({"items": items}));
+        assert!(s.model.state().sketch(sk).unwrap().sketch.constraints.iter().all(|c| c.id != angle));
     }
 
     #[test]
@@ -404,6 +445,30 @@ mod tests {
             run(&mut s, "edit.undo", json!({}));
             assert_eq!(s.doc.assembly.joints.len(), 2);
         }
+    }
+
+    /// An instance deleted while its component has others goes alone, and the joints on it go
+    /// with it, with their motion links (#7749): left behind, a joint names an occurrence that is
+    /// gone, and every solve reports it.
+    #[test]
+    fn an_instance_deleted_alone_takes_its_joints_with_it() {
+        let mut s = joint_assembly();
+        let b1 = s.doc.occurrences.iter().find(|o| o.name == "B:1").unwrap().id;
+        let b2 = run(&mut s, "occurrence.copy", json!({"occurrence": "B:1", "translate": [0, 40, 0]}))["occurrence"].as_u64().unwrap();
+        let dry = run(&mut s, "selection.delete", json!({"occurrences": [b1], "dry_run": true}));
+        assert_eq!(s.doc.assembly.joints.len(), 2, "a dry run changes nothing");
+        let deleted = run(&mut s, "selection.delete", json!({"occurrences": [b1]}));
+        assert_eq!(deleted, dry);
+        let left: Vec<&str> = s.doc.assembly.joints.iter().map(|j| j.name.as_str()).collect();
+        assert_eq!(left, ["Glue"], "the joint on the deleted instance goes with it");
+        assert!(s.doc.assembly.links.is_empty(), "and so does its motion link");
+        assert_eq!(deleted["deleted_joints"].as_array().map(Vec::len), Some(1), "the reply names it: {deleted}");
+        assert!(s.doc.occurrences.iter().any(|o| o.id == b2), "the other instance stays");
+        let solved = run(&mut s, "joint.solve", json!({}));
+        assert_eq!(solved["errors"], json!([]), "no joint is left pointing at the deleted instance");
+        run(&mut s, "edit.undo", json!({}));
+        assert_eq!(s.doc.assembly.joints.len(), 2);
+        assert_eq!(s.doc.assembly.links.len(), 1);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icons/app/linux/exports/hicolor/256x256/apps/ai.storyteller.solidcraft.png" width="96" height="96" alt="SolidCraft" />
+  <img src="assets/icons/app/linux/exports/hicolor/256x256/apps/io.tangencylabs.solidcraft.png" width="96" height="96" alt="SolidCraft" />
 </p>
 
 <h1 align="center">SolidCraft</h1>
@@ -120,6 +120,12 @@ the clean-room and licence rules, and where help is wanted most. Open work is in
 
 SolidCraft's continuous integration runs on [Blacksmith](https://www.blacksmith.sh), which
 sponsors its CI minutes.
+
+## Disclaimer
+
+The files in this repository are provided as is, without warranty, liability or indemnity, and
+Tangency Labs and the contributors accept no responsibility for any harmful or unlawful use of
+them: read [DISCLAIMER.md](DISCLAIMER.md).
 
 ## Licence
 

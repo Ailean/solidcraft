@@ -194,11 +194,21 @@ pub(crate) struct Panel<'a> {
     ok: &'a str,
     cancel: &'a str,
     reset_scroll: bool,
+    joined: Option<super::DockEdges>,
+}
+
+pub(crate) struct WorkspaceOptions<'a> {
+    pub id: &'static str,
+    pub title: &'a str,
+    pub icon: &'a str,
+    pub bounds: egui::Rect,
+    pub fill_height: bool,
 }
 
 pub(crate) struct FeatureOptions<'a> {
     pub icon: &'a str,
     pub title: &'a str,
+    /// The dock offset the title band drags; empty for a card that stays in its place.
     pub drag_key: &'a str,
     pub moved: egui::Vec2,
     pub docked: egui::Pos2,
@@ -233,6 +243,121 @@ impl<'a> Panel<'a> {
             .show(ui, add)
     }
 
+    /// Floating workspace strip using the same bottom rectangle and chrome as History.
+    pub(crate) fn bottom_strip<R>(
+        ui: &mut Ui,
+        id: &'static str,
+        available: egui::Rect,
+        height: f32,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>> {
+        let container = super::Container::floating_card(super::Surface::Panel);
+        let rect = container.bottom_strip_rect(available, height);
+        if !rect.is_finite() || rect.width() < Tokens::get().control_height || rect.height() < Tokens::get().control_height {
+            return None;
+        }
+        let ctx = ui.ctx().clone();
+        Some(container.area(egui::Id::new(id)).fixed_pos(rect.min).movable(false).order(egui::Order::Middle).show(&ctx, |ui| {
+            let frame = container.frame(&ctx, Tokens::get().panel, crate::frame::Side::Left).inner_margin(Tokens::get().space_4);
+            container
+                .show_frame(ui, frame, rect, |ui| {
+                    ui.set_min_size((rect.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO));
+                    ui.set_max_size((rect.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO));
+                    super::scope(ui, add)
+                })
+                .inner
+        }))
+    }
+
+    /// Bounded floating workspace card. The shared grip chooses a side; the inner resize
+    /// rail changes its remembered width. Neither gesture changes the document.
+    pub(crate) fn workspace<R>(
+        ui: &mut Ui,
+        options: WorkspaceOptions<'_>,
+        side: &mut String,
+        width: &mut f32,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>> {
+        let container = super::Container::floating_card(super::Surface::Panel);
+        // The ribbon has already reserved the top gap, as for the Design Browser.
+        let gap = Tokens::get().space_8;
+        let bounds = egui::Rect::from_min_max(options.bounds.min + vec2(gap, 0.0), options.bounds.max - vec2(gap, gap));
+        let t = Tokens::get();
+        if !bounds.is_finite() || bounds.width() < t.control_height || bounds.height() < t.form_header_height {
+            return None;
+        }
+        let maximum = (t.form_card_width * 1.8).min((bounds.width() - gap).max(0.0) / 2.0);
+        if maximum < t.control_height * 4.0 {
+            return None;
+        }
+        let minimum = crate::frame::DIALOG_MIN_W.min(maximum);
+        *width = if width.is_finite() { width.clamp(minimum, maximum) } else { t.form_card_width.min(maximum) };
+        let left = side == "left";
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(if left { bounds.left() } else { bounds.right() - *width }, bounds.top()),
+            vec2(*width, bounds.height()),
+        );
+        let ctx = ui.ctx().clone();
+        let response = container.area(egui::Id::new(options.id)).fixed_pos(rect.min).movable(false).order(egui::Order::Middle).show(&ctx, |ui| {
+            let frame = container.frame(&ctx, t.panel, if left { crate::frame::Side::Left } else { crate::frame::Side::Right }).inner_margin(0.0);
+            let content = container.show_frame(ui, frame, bounds, |ui| {
+                let size = (rect.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO);
+                // Allocate the bounded host once; overflowing controls scroll/clip inside a child,
+                // so a short window cannot grow a floating dock over the top bar or bottom strip.
+                let (body, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).id_salt("workspace_body"));
+                let ui = &mut child;
+                ui.set_clip_rect(ui.clip_rect().intersect(body));
+                ui.set_width(size.x);
+                ui.set_max_height(size.y);
+                if options.fill_height {
+                    ui.set_min_height(size.y);
+                }
+                // Use the same fixed-height header as Panel/Window. Workspace cards are
+                // persistent; their navigation lives in the separately padded body.
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let band = egui::Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), header_height()));
+                let grip = ui.interact(band, ui.id().with("workspace_grip"), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+                scenario::publish_target(&format!("{}:grip", options.id), grip.rect);
+                header_impl(ui, options.icon, options.title, None, false, || {});
+                scenario::publish_rect(&format!("{}:header", options.id), band);
+                if grip.dragged() {
+                    let frame_nr = ui.ctx().cumulative_frame_nr();
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("sc_dock_drag_frame"), frame_nr));
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                }
+                if grip.drag_stopped()
+                    && let Some(at) = ui.ctx().pointer_latest_pos()
+                {
+                    *side = if at.x < options.bounds.center().x { "left" } else { "right" }.into();
+                    ui.ctx().request_repaint();
+                }
+                egui::Frame::NONE
+                    .inner_margin(t.space_12)
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = t.form_gap_y;
+                        super::scope(ui, add)
+                    })
+                    .inner
+            });
+            let card = content.response.rect;
+            let rail = egui::Rect::from_x_y_ranges(
+                if left { card.right() - t.space_6..=card.right() } else { card.left()..=card.left() + t.space_6 },
+                card.y_range(),
+            );
+            let resize = ui.interact(rail, ui.id().with("workspace_resize"), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            scenario::publish_target(&format!("{}:resize", options.id), rail);
+            if resize.dragged() {
+                let delta = ui.input(|i| i.pointer.delta().x) * if left { 1.0 } else { -1.0 };
+                if delta.is_finite() {
+                    *width = (*width + delta).clamp(minimum, maximum);
+                }
+            }
+            content.inner
+        });
+        Some(response)
+    }
+
     /// Shared floating card surface for panels, windows and modal confirmations.
     pub(super) fn card_frame(ctx: &egui::Context) -> egui::Frame {
         let t = Tokens::get();
@@ -265,7 +390,15 @@ impl<'a> Panel<'a> {
             ok: "OK",
             cancel: "Cancel",
             reset_scroll: false,
+            joined: None,
         }
+    }
+
+    /// The edges the card meets the window or a docked surface at (a dialog in the left column):
+    /// in Compact, only its other corners round.
+    pub(crate) fn joined(mut self, edges: super::DockEdges) -> Self {
+        self.joined = Some(edges);
+        self
     }
 
     /// A newly opened manager starts at its first section. Later frames retain user scrolling.
@@ -324,7 +457,8 @@ impl<'a> Panel<'a> {
             crate::frame::Side::Right => anchor.x,
             crate::frame::Side::Left => anchor.x + self.width.min(self.viewport.width().max(0.0)),
         };
-        super::Container::new(ctx, super::Surface::Feature).tool_frame(self.frame, right >= self.viewport.right() - 0.5)
+        let container = super::Container::new(ctx, super::Surface::Feature);
+        self.joined.map_or(container, |edges| container.joined(edges)).tool_frame(self.frame, right >= self.viewport.right() - 0.5)
     }
 
     pub(crate) fn window(&self, ctx: &egui::Context) -> egui::Window<'a> {
@@ -403,7 +537,11 @@ impl<'a> Panel<'a> {
             let t = Tokens::get();
             let min = ui.cursor().min;
             let band = egui::Rect::from_min_size(min, vec2(ui.available_width(), super::header_height()));
-            crate::frame::drag_dock(ui, band, heading.drag_key, heading.moved, self.bounded_anchor(ui.ctx()) - heading.docked);
+            if heading.drag_key.is_empty() {
+                scenario::publish_handle("dialog:title", band.center());
+            } else {
+                crate::frame::drag_dock(ui, band, heading.drag_key, heading.moved, self.bounded_anchor(ui.ctx()) - heading.docked);
+            }
             let mut close = false;
             let top = if DialogButtons::current(ui.ctx()) == DialogButtons::Top {
                 Some(TopHeader::new(ui, self.ok, heading.apply_label, self.cancel, collapsed.as_deref_mut(), &mut close))

@@ -83,9 +83,9 @@ pub(super) struct ThreadAsk<'a> {
     pub from: Option<Vec3>,
     /// A modelled thread needs to know how each of its ends meets the face's ends.
     pub modeled: bool,
-    /// Runouts at the end the thread starts from and at the other, each as (mm, pitches): its
-    /// length is mm + pitches x the pitch.
-    pub ease: [(f64, f64); 2],
+    /// The runout at the end away from where the thread starts, as (mm, pitches): its length
+    /// is mm + pitches x the pitch. The start never fades: it runs off its free end.
+    pub ease_out: (f64, f64),
     /// A tapped hole's thread: `designation` is a catalogue size (ISO metric, or a catalogued
     /// UNC/UNF, G or Rp size), and a size that is not metric fits the hole drilled for it.
     pub tapped: bool,
@@ -302,10 +302,9 @@ pub(super) fn thread_on(st: &ModelState, feature: u64, p: Vec3, ask: &ThreadAsk)
             (a, b, side)
         }
     };
-    // The runout at each end of the axis: ease in where the thread starts from.
-    let len = |(mm, pitches): (f64, f64)| mm + pitches * pitch;
-    let (e_in, e_out) = (len(ask.ease[0]), len(ask.ease[1]));
-    let ease = if side == 0 { [e_in, e_out] } else { [e_out, e_in] };
+    // The runout at each end of the axis: only at the end away from where it starts.
+    let e_out = ask.ease_out.0 + ask.ease_out.1 * pitch;
+    let ease = if side == 0 { [0.0, e_out] } else { [e_out, 0.0] };
     if ease.iter().any(|e| !(*e >= 0.0 && e.is_finite())) {
         return Err(DocError::Invalid("a runout length must be positive".into()));
     }
@@ -547,7 +546,7 @@ fn thread_grooves(
         law.extend([(turns - r_out, 0.0), (turns, out)]);
     }
     if r_in > 0.0 && r_out > 0.0 && !(turns - r_out > r_in + 1e-9) || r_in.max(r_out) > turns {
-        return Err(DocError::Invalid(format!("the runouts ({} and {} mm) are longer than the thread", show_mm(ease[0]), show_mm(ease[1]))));
+        return Err(DocError::Invalid(format!("the runout ({} mm) is longer than the thread", show_mm(ease[0].max(ease[1])))));
     }
     if taper_rate != 0.0 {
         law = with_taper(&law, turns, taper_rate);
@@ -670,7 +669,6 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         form,
         hand,
         starts,
-        ease_in,
         ease_out,
         tip,
         chamfer_angle,
@@ -700,7 +698,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         extent,
         from: from.map(|q| q.0),
         modeled: *modeled,
-        ease: [(0.0, 0.0); 2],
+        ease_out: (0.0, 0.0),
         tapped: false,
     };
     // ISO 3508's runouts: standard 2.5 P, short 1.25 P.
@@ -712,10 +710,10 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             Some(crate::ThreadRunout::Length { length }) => (val(vals, length, Kind::Length)?, 0.0),
         })
     };
-    if (ease_in.is_some() || ease_out.is_some()) && !*modeled {
+    if ease_out.is_some() && !*modeled {
         return Err(DocError::Invalid("a runout is cut only on a modelled thread".into()));
     }
-    let ask = ThreadAsk { ease: [runout(ease_in)?, runout(ease_out)?], ..ask };
+    let ask = ThreadAsk { ease_out: runout(ease_out)?, ..ask };
     let ThreadOn { info: t, cyl, ends, steep, ease, from: from_side } = thread_on(st, f.id, face.0, &ask)?;
     if *tip != ThreadTip::None && t.form.is_taper() {
         return Err(DocError::Invalid("not supported yet: a chamfered tip on a taper pipe thread".into()));

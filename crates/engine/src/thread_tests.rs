@@ -985,39 +985,39 @@ fn m10_runout_mean(h: f64) -> f64 {
     simpson / h
 }
 
-/// ISO 3508 runouts on a shaft between two collars: the groove fades out over 2.5 P (standard) at
-/// the end it starts from and 1.25 P (short) at the other, its section moving out past the surface
-/// as it turns, each reaching nothing where its section clears the collar. The cut is the
-/// integral over the turn of the clipped section's 2π∫ r dA (Pappus with the section moving):
-/// full turns at f(0), the runouts at the mean of f over the offsets they pass.
+/// ISO 3508 runouts on a shaft between two collars: the thread starts at the lower collar and
+/// its inner end fades out over 1.25 P (short) or 2.5 P (standard) before the upper one, its
+/// section moving out past the surface as it turns, reaching nothing where its section clears the
+/// collar. The cut is the integral over the turn of the clipped section's 2π∫ r dA (Pappus with
+/// the section moving): full turns at f(0), the runout at the mean of f over the offsets it
+/// passes. A fade shorter than a turn is cut too; the start never fades (`ease_in` is refused).
 #[test]
-fn a_runout_fades_the_groove_out_before_each_shoulder() {
-    let mut s = shaft_on_collar();
-    run(&mut s, "solid.cylinder", json!({"base": [0, 0, 35], "radius": 8, "height": 10, "operation": "join", "targets": ["Part"]}));
-    let before = exact_volume(&s, "Part");
-    run(
-        &mut s,
-        "solid.thread",
-        json!({"face": [5, 0, 20], "designation": "M10", "ease_in": "standard", "ease_out": "short", "from": [0, 0, 10], "modeled": true}),
-    );
-    let st = s.model.state();
-    assert!(st.body("Part").unwrap().body.validity().is_empty());
+fn a_runout_fades_the_groove_out_before_the_shoulder() {
     let (p, w) = (1.5, ext_half_width(10.0, 1.5));
     let root = 5.0 - 5.0 * p * 3f64.sqrt() / 16.0;
     let h = 5.0 - root + 0.05 * p;
     let turns = (35.0 - 10.0 - 2.0 * w) / p;
-    let (r_in, r_out) = (2.5, 1.25);
-    let want = 2.0 * PI * (m10_cut_per_radian(0.0) * (turns - r_in - r_out) + (r_in + r_out) * m10_runout_mean(h));
-    let got = before - exact_volume(&s, "Part");
-    // Where the section moves, the sweep's walls lie within its tolerance (1e-4 P) of the true
-    // surfaces, not on them: up to that times the runouts' walls (about 64 mm² a turn, 3.75 turns),
-    // 0.036 mm³. Full-depth turns are exact radially (6e-4 mm³ here).
-    let bound = 1e-4 * p * 64.0 * (r_in + r_out);
-    assert!((got - want).abs() < bound, "{got} vs {want}");
-    // Longer runouts than the thread are refused.
+    for (ease, r_out) in [(json!("short"), 1.25), (json!("standard"), 2.5), (json!("1 mm"), 1.0 / 1.5)] {
+        let mut s = shaft_on_collar();
+        run(&mut s, "solid.cylinder", json!({"base": [0, 0, 35], "radius": 8, "height": 10, "operation": "join", "targets": ["Part"]}));
+        let before = exact_volume(&s, "Part");
+        run(&mut s, "solid.thread", json!({"face": [5, 0, 20], "designation": "M10", "ease_out": ease, "from": [0, 0, 10], "modeled": true}));
+        assert!(s.model.state().body("Part").unwrap().body.validity().is_empty(), "{ease}");
+        let want = 2.0 * PI * (m10_cut_per_radian(0.0) * (turns - r_out) + r_out * m10_runout_mean(h));
+        let got = before - exact_volume(&s, "Part");
+        // Where the section moves, the sweep's walls lie within its tolerance (1e-4 P) of the
+        // true surfaces, not on them: up to that times the walls (about 64 mm² a turn) of the
+        // runout and of a turn more. Measured: 0.018 (short), 0.012 (standard), 0.011 mm³ (1
+        // mm), not growing with the runout's length; full-depth turns are exact radially.
+        let bound = 1e-4 * p * 64.0 * (r_out + 1.0);
+        assert!((got - want).abs() < bound, "{ease}: {got} vs {want}");
+    }
+    // Longer runouts than the thread are refused, and so is a runout at the start.
     let mut s = shaft_on_collar();
-    let e = s.execute("solid.thread", &json!({"face": [5, 0, 20], "designation": "M10", "ease_in": 14, "ease_out": 14, "modeled": true}));
+    let e = s.execute("solid.thread", &json!({"face": [5, 0, 20], "designation": "M10", "ease_out": 30, "modeled": true}));
     assert!(e.err().map(|e| e.to_string()).unwrap_or_default().contains("longer than the thread"));
+    let e = s.execute("solid.thread", &json!({"face": [5, 0, 20], "designation": "M10", "ease_in": "standard", "modeled": true}));
+    assert!(e.err().map(|e| e.to_string()).unwrap_or_default().contains("`ease_in` is gone"));
 }
 
 /// A modelled M10 thread's flanks are several B-spline faces per turn (spans of one sweep); where

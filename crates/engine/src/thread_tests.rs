@@ -521,6 +521,46 @@ fn a_thread_stops_clear_of_a_shoulder() {
     assert!((got - want).abs() < want * 2e-4, "{got} vs {want}");
 }
 
+/// A d10 boss (z 6..22) joined onto a 40x40x6 plate, threaded M10: the plate's top is the
+/// shoulder. The groove, with or without its runout, stays on the boss: the plate keeps all of
+/// its 40 40 6 (what lies below z = 6 after the boss is cut away), and without a runout the
+/// boss loses (16 - w)/P turns, as at a collar.
+#[test]
+fn a_thread_on_a_boss_never_cuts_into_the_plate_below() {
+    let boss = |extra: Value| {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"corner": [-20, -20, 0], "length": 40, "width": 40, "height": 6, "body_name": "Part"}));
+        run(&mut s, "solid.cylinder", json!({"base": [0, 0, 6], "radius": 5, "height": 16, "operation": "join", "targets": ["Part"]}));
+        let mut p = json!({"face": [5, 0, 14], "designation": "M10", "modeled": true});
+        if let (Some(p), Value::Object(e)) = (p.as_object_mut(), extra) {
+            p.extend(e);
+        }
+        run(&mut s, "solid.thread", p);
+        s
+    };
+    let plate_left = |mut s: Session| {
+        run(
+            &mut s,
+            "solid.box",
+            json!({"corner": [-30, -30, 6], "length": 60, "width": 60, "height": 30, "body_name": "Above", "operation": "new_body"}),
+        );
+        run(&mut s, "solid.combine", json!({"target": "Part", "tools": ["Above"], "operation": "cut"}));
+        exact_volume(&s, "Part")
+    };
+    let s = boss(json!({}));
+    let (p, w) = (1.5, ext_half_width(10.0, 1.5));
+    let want = 40.0 * 40.0 * 6.0 + PI * 25.0 * 16.0 - (16.0 - w) / p * ext_turn(10.0, p, 5.0);
+    let got = exact_volume(&s, "Part");
+    assert!((got - want).abs() < want * 2e-4, "{got} vs {want}");
+    assert!((plate_left(s) - 9600.0).abs() < 1e-6);
+    for extra in [json!({"ease_out": "standard"}), json!({"ease_out": "short", "tip": "chamfer"})] {
+        let s = boss(extra.clone());
+        assert!(s.model.state().body("Part").unwrap().body.validity().is_empty(), "{extra}");
+        let left = plate_left(s);
+        assert!((left - 9600.0).abs() < 1e-6, "{extra}: the plate below the boss lost {} mm³", 9600.0 - left);
+    }
+}
+
 /// Rig 602: "from the end nearest the pick" took the head end for a pick a little above the
 /// middle. A thread of limited length starts at the face's only free end, wherever it is picked.
 #[test]

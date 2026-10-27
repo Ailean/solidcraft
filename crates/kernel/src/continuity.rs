@@ -169,6 +169,120 @@ pub fn seam_diagnostics(body: &Body, edges: &[usize], samples: usize, tolerances
     crate::guard("continuity", || measure(body, edges, samples, tolerances))
 }
 
+/// How the tangent seams round a point fare: the corner a fillet's G2 patch fills, graded as the
+/// kernel ladder grades it (`tests/kernel-cases/README.md`, `continuity`). A seam counts when it
+/// lies wholly within `within` of `near` and is tangent (normals within [`CORNER_SEAM_ANGLE_DEG`]
+/// at every station); its curvature jump is held clear of the vertices where two such seams
+/// turn (where a neighbour's own G1 seam ends, or patches meet at a point), `clear` along it.
+#[derive(Clone, Debug, Serialize)]
+pub struct CornerContinuity {
+    pub seams: Vec<CornerSeam>,
+    /// The worst of each over every seam, the curvature jump also clear of the turns.
+    pub gap_mm: f64,
+    pub normal_angle_deg: f64,
+    pub curvature_jump_per_mm: f64,
+    pub curvature_jump_clear_per_mm: f64,
+    /// Stations clear of the turns.
+    pub stations_clear: usize,
+}
+
+/// One seam of a corner: its worst gap, angle and curvature jump, and its worst jump clear of
+/// the turns (with where: `None` when no station is clear of them).
+#[derive(Clone, Debug, Serialize)]
+pub struct CornerSeam {
+    pub edge: usize,
+    pub length: f64,
+    pub gap_mm: SeamWorst,
+    pub normal_angle_deg: SeamWorst,
+    pub curvature_jump_per_mm: SeamWorst,
+    pub curvature_jump_clear_per_mm: Option<SeamWorst>,
+}
+
+/// Largest normal angle (degrees) of a seam that counts as tangent in [`corner_continuity`].
+pub const CORNER_SEAM_ANGLE_DEG: f64 = 1.0;
+/// Stations a seam [`corner_continuity`] takes.
+pub const CORNER_SEAM_SAMPLES: usize = 65;
+
+/// The continuity of the tangent seams round `near` (see [`CornerContinuity`]).
+pub fn corner_continuity(body: &Body, near: Vec3, within: f64, clear: f64) -> Result<CornerContinuity> {
+    if !(near.is_finite() && within.is_finite() && within > 0.0 && clear.is_finite() && clear >= 0.0) {
+        return Err(KernelError::Invalid("a corner's point, reach and clearance must be finite (reach positive)".into()));
+    }
+    let tol = ContinuityTolerances { gap_mm: 1e-3, angle_deg: CORNER_SEAM_ANGLE_DEG, curvature_per_mm: 0.0 };
+    let report = seam_diagnostics(body, &[], CORNER_SEAM_SAMPLES, tol)?;
+    let seams: Vec<&SeamReport> = report
+        .seams
+        .iter()
+        .filter(|s| s.normal_angle_deg.value <= CORNER_SEAM_ANGLE_DEG && s.points.len() >= 2 && s.points.iter().all(|p| p.dist(near) <= within))
+        .collect();
+    // Each seam's end directions, pointing into it.
+    let ends = |s: &SeamReport| -> Option<[(Vec3, Vec3); 2]> {
+        let (p0, p1) = (*s.points.first()?, *s.points.last()?);
+        let (q0, q1) = (*s.points.get(1)?, *s.points.get(s.points.len().checked_sub(2)?)?);
+        Some([(p0, (q0 - p0).normalized()?), (p1, (q1 - p1).normalized()?)])
+    };
+    let all_ends: Vec<(Vec3, Vec3)> = seams.iter().filter_map(|s| ends(s)).flatten().collect();
+    let weld = 1e-6 * within.max(1.0);
+    let cos = CORNER_SEAM_ANGLE_DEG.to_radians().cos();
+    // A vertex turns where another seam leaves it other than straight on.
+    let turns = |p: Vec3, d: Vec3| all_ends.iter().any(|(q, e)| q.dist(p) <= weld && (*e - d).len() > 1e-9 && -e.dot(d) < cos);
+    let mut out = CornerContinuity {
+        seams: Vec::new(),
+        gap_mm: 0.0,
+        normal_angle_deg: 0.0,
+        curvature_jump_per_mm: 0.0,
+        curvature_jump_clear_per_mm: 0.0,
+        stations_clear: 0,
+    };
+    for s in seams {
+        let Some(e) = ends(s) else { continue };
+        let first = e[0].0;
+        let turning: Vec<Vec3> = e.iter().filter(|(p, d)| turns(*p, *d)).map(|(p, _)| *p).collect();
+        let mut along = vec![0.0f64; s.points.len()];
+        for k in 1..s.points.len() {
+            let step = match (s.points.get(k), s.points.get(k - 1)) {
+                (Some(a), Some(b)) => a.dist(*b),
+                _ => 0.0,
+            };
+            let prev = along.get(k - 1).copied().unwrap_or(0.0);
+            if let Some(slot) = along.get_mut(k) {
+                *slot = prev + step;
+            }
+        }
+        let length = along.last().copied().unwrap_or(0.0);
+        let mut worst_clear: Option<SeamWorst> = None;
+        for (k, st) in s.stations.iter().enumerate() {
+            let a = along.get(k).copied().unwrap_or(0.0);
+            let from_turn = turning.iter().map(|p| if p.dist(first) <= weld { a } else { length - a }).fold(f64::INFINITY, f64::min);
+            if from_turn >= clear {
+                out.stations_clear += 1;
+                if worst_clear.is_none_or(|w| st.curvature_jump_per_mm > w.value) {
+                    worst_clear = Some(SeamWorst {
+                        value: st.curvature_jump_per_mm,
+                        at: s.points.get(k).copied().unwrap_or(first),
+                        edge_fraction: st.edge_fraction,
+                    });
+                }
+            }
+        }
+        out.gap_mm = out.gap_mm.max(s.gap_mm.value);
+        out.normal_angle_deg = out.normal_angle_deg.max(s.normal_angle_deg.value);
+        out.curvature_jump_per_mm = out.curvature_jump_per_mm.max(s.curvature_jump_per_mm.value);
+        if let Some(w) = worst_clear {
+            out.curvature_jump_clear_per_mm = out.curvature_jump_clear_per_mm.max(w.value);
+        }
+        out.seams.push(CornerSeam {
+            edge: s.edge,
+            length: s.length,
+            gap_mm: s.gap_mm,
+            normal_angle_deg: s.normal_angle_deg,
+            curvature_jump_per_mm: s.curvature_jump_per_mm,
+            curvature_jump_clear_per_mm: worst_clear,
+        });
+    }
+    Ok(out)
+}
+
 /// The body's record with, per edge, the faces it bounds (each once: a periodic face's own seam
 /// bounds one), and per face whether its surface's natural normal points out of the material;
 /// refused past the caps.

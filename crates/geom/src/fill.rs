@@ -782,6 +782,50 @@ impl Band {
         self.factor()?.substitute(b)
     }
 
+    /// [`Band::solve`] by the right-looking factorisation: each row, once final, updates the
+    /// rows below it within the band along contiguous storage. The same arithmetic, in an order
+    /// that runs several times faster on wide bands.
+    pub(crate) fn solve_fast(mut self, b: Vec<f64>) -> SplineResult<Vec<f64>> {
+        let (n, bw) = (self.n, self.bw);
+        let w = bw + 1;
+        if self.a.len() != n * w {
+            return invalid("band size");
+        }
+        for r in 0..n {
+            let base = r * w;
+            let d = self.a.get(base).copied().unwrap_or(0.0);
+            if !(d > 0.0) {
+                return invalid("the fit's equations are singular");
+            }
+            let d = d.sqrt();
+            let len = w.min(n - r);
+            // Row r of U: its diagonal, and the rest divided by it.
+            let row: Vec<f64> = {
+                let Some(slice) = self.a.get_mut(base..base + len) else { return invalid("band size") };
+                if let Some(x) = slice.first_mut() {
+                    *x = d;
+                }
+                for x in slice.iter_mut().skip(1) {
+                    *x /= d;
+                }
+                slice.to_vec()
+            };
+            // Rows s = r + 1 … within the band: a[s][t] −= u[r][s]·u[r][t].
+            for (k, &us) in row.iter().enumerate().skip(1) {
+                if us == 0.0 {
+                    continue;
+                }
+                let s = r + k;
+                let sbase = s * w;
+                let Some(target) = self.a.get_mut(sbase..sbase + (len - k)) else { return invalid("band size") };
+                for (t, ut) in target.iter_mut().zip(row.iter().skip(k)) {
+                    *t -= us * ut;
+                }
+            }
+        }
+        self.substitute(b)
+    }
+
     /// The Cholesky factor `U` of `A = Uᵀ·U`, in place; an error when `A` is not positive
     /// definite.
     pub(crate) fn factor(mut self) -> SplineResult<Band> {

@@ -20,7 +20,7 @@
 //! within 15% of each side from the corner (`solidcraft_geom::fill_matched::FADE_SHARE`) and
 //! is G2 along the rest of every seam.
 
-use solidcraft_geom::fill_matched::MatchedFill;
+use solidcraft_geom::fill_quad::QuadFill;
 
 use crate::body::Body;
 use crate::{KernelError, Result};
@@ -35,15 +35,33 @@ pub const DEFAULT_SETBACK_FACTOR: f64 = 1.5;
 /// corners: this share of the corner's round's curvature 1 / r, the jump a rolling ball makes.
 pub const CURVATURE_SHARE: f64 = 5e-3;
 
+/// How far from each corner of the hole, and from the patches' centre, the patch passes from
+/// one neighbour's curvature to the other's: this share of the hole's size (the largest distance
+/// between two of its vertices; 1.06 mm at a box corner's r5 rounds set back 7.5). G2 is held
+/// beyond it.
+pub const FADE_SHARE: f64 = 0.1;
+
 /// The patch filling one open corner of `sheet` (a sheet from
 /// [`crate::blend_smlib::fillet_setback_open`]): `hole` its edges in order, each with whether the
 /// face beside it runs it forwards; `radius` the corner's round's radius, which sets the
 /// curvature tolerance. The patch is a one-face sheet on the sheet's own edges.
-pub(crate) fn corner_patch(sheet: &Body, hole: &[(usize, bool)], radius: f64) -> Result<(Body, MatchedFill)> {
+pub(crate) fn corner_patch(sheet: &Body, hole: &[(usize, bool)], radius: f64) -> Result<(Body, QuadFill)> {
     if !(radius.is_finite() && radius > 0.0) {
         return Err(KernelError::Invalid("a G2 corner's radius must be finite and positive".into()));
     }
-    crate::fill::matched_patch(sheet, hole, CURVATURE_SHARE / radius)
+    let record = crate::native::brep_record(sheet)?;
+    let points: Vec<[f64; 3]> = hole
+        .iter()
+        .filter_map(|(e, _)| record.edges.get(*e))
+        .flat_map(|e| e.vertices)
+        .filter_map(|v| record.vertices.get(v as usize).map(|x| x.point))
+        .collect();
+    let d = |a: &[f64; 3], b: &[f64; 3]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+    let size = points.iter().flat_map(|a| points.iter().map(move |b| d(a, b))).fold(0.0f64, f64::max);
+    if !(size > 0.0 && size.is_finite()) {
+        return Err(KernelError::Failed("a G2 corner's hole has no size".into()));
+    }
+    crate::fill::quad_patch(sheet, hole, CURVATURE_SHARE / radius, FADE_SHARE * size)
 }
 
 #[cfg(test)]

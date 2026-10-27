@@ -173,11 +173,11 @@ const FULL: usize = 0;
 const LENGTH: usize = 1;
 const UP_TO_EXTENT: usize = 2;
 const EXTENTS: &[(&str, &str)] = &[("Full", "full"), ("Length", "length"), ("Up to", "up_to")];
-/// Runout choices (ISO 3508); the last one is a typed length.
-const EASES: &[(&str, &str)] = &[("None", ""), ("Standard (2.5 P)", "standard"), ("Short (1.25 P)", "short"), ("Length", "")];
-const EASE_LENGTH: usize = 3;
-/// Which free ends are chamfered (ISO 4753).
-const TIPS: &[(&str, ThreadTip)] = &[("None", ThreadTip::None), ("Start", ThreadTip::Start), ("Both", ThreadTip::Both)];
+/// The thread's start, its free end: run off it plain, or chamfered (ISO 4753).
+const STARTS_AT: &[&str] = &["None", "Chamfer"];
+/// The thread's inner end: a square stop (the groove ends in its own profile) or a fade
+/// (ISO 3508's runout).
+const ENDS_AT: &[&str] = &["thread.end_square", "ui.fade"];
 const FLANKS: &[(&str, SteepFlank)] = &[("End", SteepFlank::End), ("Start", SteepFlank::Start)];
 
 /// The pick of the end the thread is measured from (`from`).
@@ -191,21 +191,33 @@ pub(crate) fn inputs() -> Vec<SelInput> {
     vec![SelInput::new("Cylindrical face", FACES, false)]
 }
 
-/// A runout at one end: a choice from the runout list and the typed length.
+/// The inner end: square or a fade, the fade's typed length (empty: ISO 3508's runout, the
+/// standard 2.5 P unless the thread was saved with the short 1.25 P).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Ease {
-    pub choice: usize,
+    pub fade: bool,
     pub length: String,
+    pub short: bool,
 }
 
 impl Ease {
     fn of(r: &Option<ThreadRunout>) -> Ease {
         match r {
             None => Ease::default(),
-            Some(ThreadRunout::Standard) => Ease { choice: 1, length: String::new() },
-            Some(ThreadRunout::Short) => Ease { choice: 2, length: String::new() },
-            Some(ThreadRunout::Length { length }) => Ease { choice: EASE_LENGTH, length: expr(length) },
+            Some(ThreadRunout::Standard) => Ease { fade: true, ..Ease::default() },
+            Some(ThreadRunout::Short) => Ease { fade: true, short: true, ..Ease::default() },
+            Some(ThreadRunout::Length { length }) => Ease { fade: true, length: expr(length), short: false },
         }
+    }
+
+    /// The command's `ease_out`, none for a square end.
+    fn param(&self) -> Option<Value> {
+        let typed = self.length.trim();
+        self.fade.then(|| match (typed.is_empty(), self.short) {
+            (false, _) => json!(typed),
+            (true, true) => json!("short"),
+            (true, false) => json!("standard"),
+        })
     }
 }
 
@@ -248,7 +260,7 @@ impl Options {
     /// Does the thread start at one end of the face (a length or an Up To extent, a runout or a
     /// tip)? Then the end to start from can be picked.
     pub fn starts_at_an_end(&self) -> bool {
-        self.extent != FULL || self.ease_out.choice != 0 || self.tip != ThreadTip::None
+        self.extent != FULL || self.ease_out.fade || self.tip != ThreadTip::None
     }
 }
 
@@ -400,28 +412,31 @@ pub(crate) fn rows(
     }
 
     crate::ui_kit::section(ui, "thread_ends", "Ends", true, |ui| {
-        enter |= ease_rows(ui, "Ease Out", "thread_ease_out", &mut o.ease_out);
-        pick(ui, "Tip", "thread_tip", &mut o.tip, TIPS);
+        // The start, a free end: plain or chamfered. A thread saved chamfered at both ends
+        // keeps that.
+        let mut chamfered = usize::from(o.tip != ThreadTip::None);
+        choice_row(ui, "Start", "thread_start", &mut chamfered, STARTS_AT);
+        o.tip = match (chamfered, o.tip) {
+            (0, _) => ThreadTip::None,
+            (_, ThreadTip::None) => ThreadTip::Start,
+            (_, kept) => kept,
+        };
         if o.tip != ThreadTip::None {
             enter |= hint_row(ui, "Chamfer Angle", &mut o.chamfer_angle, tr("ui.iso_4753"));
-            enter |= hint_row(ui, "Chamfer Depth", &mut o.chamfer_depth, tr("ui.iso_4753"));
+            // ISO 4753's depth is for ISO metric threads; the other forms give theirs.
+            let depth = if f == ThreadForm::Metric { "ui.iso_4753" } else { "thread.chamfer_depth_needed" };
+            enter |= hint_row(ui, "Chamfer Depth", &mut o.chamfer_depth, tr(depth));
+        }
+        // The inner end: square, or a fade over its length.
+        let mut fade = usize::from(o.ease_out.fade);
+        choice_row(ui, "End", "thread_end", &mut fade, ENDS_AT);
+        o.ease_out.fade = fade == 1;
+        if o.ease_out.fade {
+            let hint = if o.ease_out.short { tr("thread.fade_short") } else { tr("thread.fade_standard") };
+            enter |= hint_row(ui, "Fade Length", &mut o.ease_out.length, hint);
         }
     });
     (enter, reset)
-}
-
-/// A runout choice, with its length when typed.
-fn ease_rows(ui: &mut egui::Ui, label: &'static str, id: &str, e: &mut Ease) -> bool {
-    let labels: Vec<&str> = EASES.iter().map(|x| x.0).collect();
-    let before = e.choice;
-    choice_row(ui, label, id, &mut e.choice, &labels);
-    if e.choice != EASE_LENGTH {
-        return false;
-    }
-    if before != EASE_LENGTH && e.length.trim().is_empty() {
-        e.length = "1 mm".into();
-    }
-    expr_row(ui, "Ease Out Length", &mut e.length)
 }
 
 /// The Size choice of a form with a size table, and the Pitch choice of the metric ones (an
@@ -522,10 +537,8 @@ pub(crate) fn put_params(p: &mut Value, length: &str, o: &Options, inputs: &[Sel
     if let Some(from) = object_point(inputs, START_END) {
         p["from"] = from;
     }
-    match o.ease_out.choice {
-        EASE_LENGTH => put(p, &[("ease_out", o.ease_out.length.as_str())]),
-        0 => {}
-        c => p["ease_out"] = json!(EASES[c].1),
+    if let Some(e) = o.ease_out.param() {
+        p["ease_out"] = e;
     }
     if o.tip != ThreadTip::None {
         p["tip"] = json!(o.tip);

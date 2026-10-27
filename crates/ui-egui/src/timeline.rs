@@ -76,6 +76,7 @@ pub(crate) fn icon_of(k: &FeatureKind) -> &'static str {
         FeatureKind::Cylinder { .. } => "cylinder",
         FeatureKind::Sphere { .. } => "sphere",
         FeatureKind::Torus { .. } => "torus",
+        FeatureKind::Cone { .. } => "cone",
         FeatureKind::Combine { .. } => "combine",
         FeatureKind::Pattern { pattern: solidcraft_engine::doc::PatternKind::Rectangular { .. }, .. } => "pattern_rect",
         FeatureKind::Pattern { pattern: solidcraft_engine::doc::PatternKind::Path { .. }, .. } => "pattern_path",
@@ -542,6 +543,7 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                     suppressed: *suppressed,
                     error: err.is_some(),
                     warning: warn.is_some(),
+                    reference: false,
                     // A dragged feature takes the colour of its drop bar.
                     accent: if drag == Some(Drag::Feature(*id)) { crate::theme::TabAccent::for_tab(&t, "SKETCH") } else { accent },
                 }
@@ -998,7 +1000,7 @@ mod tests {
             h.step(&json!({"widget": "Paste"})).unwrap();
             assert_eq!(h.app.session.doc.features.len(), 4, "left: {left}");
             let bodies: Vec<String> = h.app.session.model.state().bodies.iter().map(|b| b.name.clone()).collect();
-            assert_eq!(bodies, ["One", "Two", "One (copy)", "Two (copy)"], "left: {left}");
+            assert_eq!(bodies, ["One", "Two", "One (2)", "Two (2)"], "left: {left}");
         }
     }
 

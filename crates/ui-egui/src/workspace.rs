@@ -141,7 +141,7 @@ pub const SECTIONS: &[Section] = &[
         tab: "INSERT",
         panel: "FILES",
         promoted: 3,
-        ids: &["file.insert_step", "file.insert_mesh", "component.insert_design", "file.save_mesh"],
+        ids: &["file.insert_step", "file.insert_mesh", "component.insert_design", "file.save_mesh", "file.send_to_slicer"],
     },
     Section { tab: "INSERT", panel: "IMAGES", promoted: 3, ids: &["canvas.insert", "canvas.decal", "canvas.edit"] },
     Section { tab: "INSERT", panel: "2D", promoted: 2, ids: &["sketch.insert_dxf", "sketch.insert_svg"] },
@@ -222,7 +222,7 @@ pub const SECTIONS: &[Section] = &[
         tab: "SKETCH",
         panel: "MODIFY",
         promoted: 3,
-        ids: &["sketch.trim", "sketch.offset", "sketch.fillet", "sketch.copy", "sketch.cut", "sketch.paste"],
+        ids: &["sketch.trim", "sketch.offset", "sketch.fillet", "sketch.transform", "sketch.copy", "sketch.cut", "sketch.paste"],
     },
     Section { tab: "SKETCH", panel: "PATTERN", promoted: 3, ids: &["sketch.mirror", "sketch.pattern.circular", "sketch.pattern.rectangular"] },
     Section {

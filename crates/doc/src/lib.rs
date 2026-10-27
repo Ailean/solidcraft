@@ -69,8 +69,8 @@ pub mod sheet;
 pub mod text_params;
 
 pub use assembly::{
-    IDENTITY, MAX_PLACEMENT_DEPTH, MAX_PLACEMENTS, Mat, Occurrence, apply_point, apply_vector, is_identity, map_point_expr, mat_inverse, mat_mul,
-    rigid,
+    IDENTITY, MAX_PLACEMENT_DEPTH, MAX_PLACEMENTS, Mat, Occurrence, WorldNames, apply_point, apply_vector, is_identity, map_point_expr, mat_inverse,
+    mat_mul, rigid,
 };
 pub use document::*;
 pub use eval::KeptResults;
@@ -82,7 +82,7 @@ pub use eval::{
     world_state_reusing,
 };
 pub use expr::Expr;
-pub use names::{BodyName, FeatureName, SketchId};
+pub use names::{BodyName, FeatureId, FeatureName, SketchId, copy_name};
 pub use params::{ParamRow, ParamUser, cycles};
 pub use points::{Dir, FacePick, Position, plain};
 pub use solidcraft_kernel as kernel;

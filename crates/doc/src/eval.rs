@@ -15,7 +15,7 @@ use solidcraft_sketch::{CurveKind, Profile, SolveReport, find_profiles};
 
 use crate::expr::{self, Kind, Value};
 use crate::lineage::Traced;
-use crate::{AxisRef, DocError, Document, Feature, FeatureKind, HoleKind, Operation, PlaneRef, ProfileSel, Result};
+use crate::{AxisRef, DocError, Document, Feature, FeatureId, FeatureKind, HoleKind, Operation, PlaneRef, ProfileSel, Result};
 
 type JointFaces = (Body, kernel::Result<Arc<[kernel::FaceInfo]>>);
 
@@ -1490,6 +1490,13 @@ fn adopt_solution(stored: &mut solidcraft_sketch::Sketch, solved: &solidcraft_sk
     true
 }
 
+impl Document {
+    /// The values features are evaluated with: the parameters, and the design's length unit.
+    pub fn evaluation_values(&self) -> BTreeMap<String, Value> {
+        evaluation_values(self).0
+    }
+}
+
 /// The values features are evaluated with: the parameters, and the design's length unit.
 fn evaluation_values(doc: &Document) -> (BTreeMap<String, Value>, BTreeMap<String, String>) {
     let (mut vals, perr) = doc.param_values();
@@ -1561,20 +1568,20 @@ fn chain_fingerprint(
 
 /// The features a pattern or mirror of `features` replays: each source, and the sources of one
 /// that is itself a pattern or mirror of features (see `copy_plan`), each once.
-fn replayed_sources<'a>(doc: &'a Document, features: &[crate::FeatureName]) -> Vec<&'a Feature> {
+fn replayed_sources<'a>(doc: &'a Document, features: &[crate::FeatureId]) -> Vec<&'a Feature> {
     let mut out: Vec<&Feature> = Vec::new();
-    let mut todo: Vec<String> = crate::plain(features);
+    let mut todo: Vec<crate::FeatureId> = features.to_vec();
     // A bound on the walk, as on the copy plan's nesting: a design can't make it run on.
     for _ in 0..1024 {
-        let Some(name) = todo.pop() else { break };
-        let Ok(g) = source_feature(doc, &name) else { continue };
+        let Some(id) = todo.pop() else { break };
+        let Ok(g) = source_feature(doc, id) else { continue };
         if out.iter().any(|x| x.id == g.id) {
             continue;
         }
         if let FeatureKind::Pattern { features, bodies, .. } | FeatureKind::Mirror { features, bodies, .. } = &g.kind
             && bodies.is_empty()
         {
-            todo.extend(crate::plain(features));
+            todo.extend(features.iter().copied());
         }
         out.push(g);
     }
@@ -2280,7 +2287,7 @@ impl Model {
                     // Copies made through a pattern or mirror among the sources come after (#395).
                     let mats = match &f.kind {
                         FeatureKind::Pattern { features, bodies, .. } | FeatureKind::Mirror { features, bodies, .. } if bodies.is_empty() => {
-                            copy_instances(doc, &vals, &state, &crate::plain(features), &mats).unwrap_or(mats)
+                            copy_instances(doc, &vals, &state, features, &mats).unwrap_or(mats)
                         }
                         _ => mats,
                     };
@@ -2665,6 +2672,7 @@ fn note_join_apart(before: &ModelState, after: &ModelState, f: &Feature, warning
         | FeatureKind::Cylinder { operation, .. }
         | FeatureKind::Sphere { operation, .. }
         | FeatureKind::Torus { operation, .. }
+        | FeatureKind::Cone { operation, .. }
         | FeatureKind::Loft { operation, .. }
         | FeatureKind::Sweep { operation, .. }
         | FeatureKind::Pipe { operation, .. }
@@ -2906,13 +2914,27 @@ fn empty_boolean_targets(doc: &Document, state: &ModelState, f: &Feature, tools:
 
 /// [`apply_op`] with tools whose lineage is known: the bodies it makes or changes keep theirs.
 fn apply_traced(doc: &Document, state: &mut ModelState, f: &Feature, tools: Vec<Traced>, op: Operation, targets: &[String]) -> Result<()> {
+    apply_traced_with(doc, state, f, tools, op, targets, &[])
+}
+
+/// [`apply_traced`] with bodies that take part in the boolean besides the feature's targets:
+/// the body a Join extrude runs to (#6424), which joins with the tool.
+fn apply_traced_with(
+    doc: &Document,
+    state: &mut ModelState,
+    f: &Feature,
+    tools: Vec<Traced>,
+    op: Operation,
+    targets: &[String],
+    extra: &[String],
+) -> Result<()> {
     let tools = if op == Operation::Intersect { intersection_tool_union(tools)? } else { tools };
     // Participants: the feature's own targets, else its explicit participants, else the bodies
     // of its component (and what it made itself): other components are left alone.
     let targets: &[String] = if targets.is_empty() { &f.participants } else { targets };
     let all = targets.len() == 1 && targets.first().is_some_and(|t| t == "*");
     let named = !all && !targets.is_empty();
-    let target_idx: Vec<usize> = if all {
+    let mut target_idx: Vec<usize> = if all {
         (0..state.bodies.len()).collect()
     } else if targets.is_empty() {
         (0..state.bodies.len()).filter(|i| state.bodies.get(*i).is_some_and(|b| b.component == f.component || b.feature == f.id)).collect()
@@ -2923,6 +2945,15 @@ fn apply_traced(doc: &Document, state: &mut ModelState, f: &Feature, tools: Vec<
         }
         v
     };
+    // Bodies that take part besides the feature's own targets: the body a Join extrude runs to
+    // joins with the tool (#6424).
+    for name in extra {
+        if let Some(i) = state.bodies.iter().position(|b| &b.name == name)
+            && !target_idx.contains(&i)
+        {
+            target_idx.push(i);
+        }
+    }
     if op == Operation::NewBody || target_idx.is_empty() {
         if op == Operation::Cut || op == Operation::Intersect {
             return Err(empty_boolean_targets(doc, state, f, &tools, targets.is_empty()));
@@ -4982,13 +5013,16 @@ pub(crate) fn thin_regions(vals: &BTreeMap<String, Value>, ss: &SolvedSketch, th
 const APART_GAP: f64 = 1e-3;
 
 /// The tool bodies a feature adds or removes (extrude, revolve, primitives), in the current state.
+/// `to_body` is the body a To Object extent runs to (an extrude), when it found one.
 fn feature_tools_with_constructor(
     doc: &Document,
     vals: &BTreeMap<String, Value>,
     f: &Feature,
     st: &ModelState,
     constructor: &mut Option<ExtrudeConstructor>,
+    to_body: &mut Option<String>,
 ) -> Result<Vec<Traced>> {
+    *to_body = None;
     let unnamed = |bodies: Vec<Body>| -> Vec<Traced> { bodies.into_iter().map(Traced::unnamed).collect() };
     match &f.kind {
         FeatureKind::Extrude { sketch, profiles, extent, operation, targets, thin } => {
@@ -5022,6 +5056,8 @@ fn feature_tools_with_constructor(
             let name = |k: usize| f.face_names.get(k).map(String::as_str);
             let (to_name, from_name) = if extent.to.is_some() { (name(0), name(1)) } else { (None, name(0)) };
             let to_face = extent.to.and_then(|p| object_face(&tst, to_name, p.0, Some(n)));
+            // The body the extent runs to: a Join to it joins that body too (#6424).
+            *to_body = to_face.and_then(|(bi, _)| tst.bodies.get(bi)).map(|b| b.name.clone());
             let centre = {
                 let pts: Vec<Vec2> = regions.iter().flat_map(|r| r.outer.polyline(1e-2)).collect();
                 let c = pts.iter().fold(Vec2::default(), |a, p| a + *p) * (1.0 / pts.len().max(1) as f64);
@@ -5720,6 +5756,13 @@ fn feature_tools_with_constructor(
         FeatureKind::Torus { center, major, minor, .. } => {
             Ok(unnamed(vec![kernel::torus(point(vals, center)?, val(vals, major, Kind::Length)?, val(vals, minor, Kind::Length)?)?]))
         }
+        FeatureKind::Cone { base, axis, radius, top_radius, height, .. } => Ok(unnamed(vec![more::cone(
+            point(vals, base)?,
+            axis.0,
+            val(vals, radius, Kind::Length)?,
+            val(vals, top_radius, Kind::Length)?,
+            val(vals, height, Kind::Length)?,
+        )?])),
         FeatureKind::Hole { .. } => Ok(hole_feature_tools(vals, st, f)?.into_iter().map(|(tool, _)| tool).collect()),
         _ => Err(DocError::Invalid(format!("{} cannot be patterned or mirrored yet", f.name))),
     }
@@ -6014,7 +6057,8 @@ fn feature_op(f: &Feature) -> (Operation, Vec<String>) {
         FeatureKind::Box { operation, .. }
         | FeatureKind::Cylinder { operation, .. }
         | FeatureKind::Sphere { operation, .. }
-        | FeatureKind::Torus { operation, .. } => (*operation, Vec::new()),
+        | FeatureKind::Torus { operation, .. }
+        | FeatureKind::Cone { operation, .. } => (*operation, Vec::new()),
         FeatureKind::Hole { .. } => (Operation::Cut, Vec::new()),
         FeatureKind::Pipe { operation, targets, .. } => (*operation, crate::plain(targets)),
         FeatureKind::Loft { operation, targets, .. } | FeatureKind::Sweep { operation, targets, .. } => (*operation, crate::plain(targets)),
@@ -6312,27 +6356,28 @@ fn copy_misses(st: &ModelState, f: &Feature, targets: &[String], tools: &[Traced
 /// The deepest a pattern or mirror reaches through patterns and mirrors of features (#395).
 const MAX_NESTING: usize = 8;
 
-/// The feature a pattern or mirror names as a source. A sketch and its extrude often share a
-/// name; the feature that makes geometry wins.
-fn source_feature<'a>(doc: &'a Document, name: &str) -> Result<&'a Feature> {
-    doc.features
-        .iter()
-        .find(|x| x.name == name && !matches!(x.kind, FeatureKind::Sketch { .. } | FeatureKind::ConstructionPlane { .. }))
-        .or_else(|| doc.find_feature(name))
-        .ok_or_else(|| DocError::Unknown(format!("feature `{name}`")))
+/// The feature a pattern or mirror names as a source. Seeds are keyed by id (#1134): a
+/// reference that names no feature dangles, as a missing name did before.
+fn source_feature(doc: &Document, id: FeatureId) -> Result<&Feature> {
+    doc.feature(id.0).ok_or_else(|| DocError::Unknown(format!("feature `{id}`")))
+}
+
+/// How a source feature shows in a warning: its name, or its id when it names no feature.
+fn source_label(doc: &Document, id: FeatureId) -> String {
+    doc.feature(id.0).map(|f| f.name.clone()).unwrap_or_else(|| id.to_string())
 }
 
 /// What a pattern or mirror of features copies, when it is the source of another one (#395): its
 /// own sources, and the transforms of its copies. `None` for any other feature, and for a pattern
 /// or mirror of bodies (its copies are bodies, which a pattern or mirror of features can't take).
-fn copied_features(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, src: &Feature) -> Result<Option<(Vec<String>, Vec<Mat>)>> {
+fn copied_features(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, src: &Feature) -> Result<Option<(Vec<FeatureId>, Vec<Mat>)>> {
     match &src.kind {
         FeatureKind::Pattern { features, pattern, bodies } if bodies.is_empty() => {
-            Ok(Some((crate::plain(features), pattern_transforms(doc, vals, st, src.component, pattern)?)))
+            Ok(Some((features.clone(), pattern_transforms(doc, vals, st, src.component, pattern)?)))
         }
         FeatureKind::Mirror { features, plane, bodies, .. } if bodies.is_empty() => {
             let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
-            Ok(Some((crate::plain(features), vec![mirror_matrix(&pl)])))
+            Ok(Some((features.clone(), vec![mirror_matrix(&pl)])))
         }
         _ => Ok(None),
     }
@@ -6396,7 +6441,7 @@ fn copy_plan<'a>(
     doc: &'a Document,
     vals: &BTreeMap<String, Value>,
     st: &ModelState,
-    features: &[String],
+    features: &[FeatureId],
     mats: &[Mat],
 ) -> Result<Vec<(&'a Feature, Vec<Mat>, usize)>> {
     #[allow(clippy::too_many_arguments)]
@@ -6404,18 +6449,18 @@ fn copy_plan<'a>(
         doc: &'a Document,
         vals: &BTreeMap<String, Value>,
         st: &ModelState,
-        features: &[String],
+        features: &[FeatureId],
         mats: &[Mat],
         first: usize,
         next: &mut usize,
         depth: usize,
         out: &mut Vec<(&'a Feature, Vec<Mat>, usize)>,
     ) -> Result<()> {
-        for name in features {
-            if doc.find_feature(name).is_some_and(|x| x.suppressed) {
+        for id in features {
+            if doc.feature(id.0).is_some_and(|x| x.suppressed) {
                 continue;
             }
-            let src = source_feature(doc, name)?;
+            let src = source_feature(doc, *id)?;
             let Some((inner, inner_mats)) = copied_features(doc, vals, st, src)? else {
                 out.push((src, mats.to_vec(), first));
                 continue;
@@ -6442,7 +6487,7 @@ fn copy_plan<'a>(
 /// The transforms of a pattern's or mirror's copies in their instance order (instance `k + 1`
 /// is the `k`-th): `mats`, then those of the copies made through patterns and mirrors among
 /// `features` ([`copy_plan`]). Naming finds a copy's faces through them.
-fn copy_instances(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, features: &[String], mats: &[Mat]) -> Result<Vec<Mat>> {
+fn copy_instances(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, features: &[FeatureId], mats: &[Mat]) -> Result<Vec<Mat>> {
     let plan = copy_plan(doc, vals, st, features, mats)?;
     let len = plan.iter().map(|(_, ms, first)| first + ms.len()).max().unwrap_or(0).max(mats.len());
     let mut all = vec![crate::IDENTITY; len];
@@ -6465,7 +6510,7 @@ fn replay(
     vals: &BTreeMap<String, Value>,
     f: &Feature,
     st: &mut ModelState,
-    features: &[String],
+    features: &[FeatureId],
     mats: &[Mat],
     warning: &mut Option<String>,
 ) -> Result<()> {
@@ -6473,9 +6518,9 @@ fn replay(
         return Err(DocError::Invalid("no features selected".into()));
     }
     // A suppressed feature has nothing to copy: its copies go with it.
-    let suppressed: Vec<&String> = features.iter().filter(|n| doc.find_feature(n).is_some_and(|x| x.suppressed)).collect();
+    let suppressed: Vec<FeatureId> = features.iter().copied().filter(|n| doc.feature(n.0).is_some_and(|x| x.suppressed)).collect();
     if !suppressed.is_empty() {
-        let list = suppressed.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ");
+        let list = suppressed.iter().map(|n| format!("`{}`", source_label(doc, *n))).collect::<Vec<_>>().join(", ");
         *warning = Some(if suppressed.len() == features.len() {
             format!("nothing to copy: {list} suppressed")
         } else {
@@ -6484,8 +6529,8 @@ fn replay(
     }
     // The copies are made in timeline order, whatever order the features were picked in: a
     // chamfer picked before the hole it blends would otherwise find no edge to copy.
-    let mut kept: Vec<String> = features.iter().filter(|n| !suppressed.contains(n)).cloned().collect();
-    let at = |name: &String| source_feature(doc, name).ok().and_then(|f| doc.features.iter().position(|x| std::ptr::eq(x, f))).unwrap_or(usize::MAX);
+    let mut kept: Vec<FeatureId> = features.iter().copied().filter(|n| !suppressed.contains(n)).collect();
+    let at = |id: &FeatureId| doc.features.iter().position(|x| x.id == id.0).unwrap_or(usize::MAX);
     kept.sort_by_key(at);
     kept.dedup();
     let (mut missed, mut total) = (0usize, 0usize);
@@ -6582,7 +6627,7 @@ fn replay(
             // points follow their named faces, as the feature's own did (#2121): a To Object
             // extrude's copies reach the face where it is now, not where it was picked.
             let moved = with_named_face_points(doc, st, src).map(|(g, _)| g);
-            let tools = feature_tools_with_constructor(doc, vals, moved.as_ref().unwrap_or(src), st, &mut None)?;
+            let tools = feature_tools_with_constructor(doc, vals, moved.as_ref().unwrap_or(src), st, &mut None, &mut None)?;
             for (k, m) in mats.iter().enumerate() {
                 let start = copies.len();
                 for t in &tools {
@@ -7107,7 +7152,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         | FeatureKind::Coil { operation, targets, .. }
         | FeatureKind::Sweep { operation, targets, .. } => {
             let mut constructor = None;
-            let tools = feature_tools_with_constructor(doc, vals, f, st, &mut constructor)?;
+            let mut to_body = None;
+            let tools = feature_tools_with_constructor(doc, vals, f, st, &mut constructor, &mut to_body)?;
             // Cuts through sheet metal become cut-outs of its flat pattern.
             if matches!(operation, Operation::Cut | Operation::Intersect) && matches!(f.kind, FeatureKind::Extrude { .. }) && !st.sheets.is_empty() {
                 let bodies: Vec<Body> = tools.iter().map(|t| t.body.clone()).collect();
@@ -7116,7 +7162,10 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     return apply_beside_sheet_cut(doc, st, f, tools, *operation, &crate::plain(targets), &handled);
                 }
             }
-            apply_traced(doc, st, f, tools, *operation, &crate::plain(targets))
+            // A Join extrude to an object joins that object too (#6424): the tool and the body
+            // it runs to are one body, not only the body the profile was sketched on.
+            let extra: Vec<String> = if *operation == Operation::Join { to_body.into_iter().collect() } else { Vec::new() };
+            apply_traced_with(doc, st, f, tools, *operation, &crate::plain(targets), &extra)
         }
         FeatureKind::Hole { thread, thread_depth, diameter, handedness, .. } => {
             let thread_depth = thread_depth.as_ref().map(|d| val(vals, d, Kind::Length)).transpose()?;
@@ -7435,17 +7484,40 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         FeatureKind::Pattern { features, pattern, bodies } => {
             let mats = pattern_transforms(doc, vals, st, f.component, pattern)?;
             if bodies.is_empty() {
-                return replay(doc, vals, f, st, &crate::plain(features), &mats, warning);
+                return replay(doc, vals, f, st, features, &mats, warning);
             }
             // Bodies: each copy is a new body named after its source.
+            let here = doc.component_transform(f.component);
             let mut output = 0;
             for n in bodies {
                 let mb = st.body(n).cloned().ok_or_else(|| DocError::Unknown(format!("body `{n}`")))?;
+                // A body of another component is held in that component's frame, the pattern's
+                // transforms in this feature's: each copy is moved as the pattern moves it in the
+                // world and kept beside its source, in its component (#4763). Taken as they were,
+                // the copies landed where the source sits before its component is placed.
+                let owner = (mb.component != f.component).then(|| {
+                    let frame = doc.component_transform(mb.component);
+                    let singular = || DocError::Invalid(format!("the component holding `{n}` has a singular placement"));
+                    Ok::<_, DocError>((frame, crate::mat_inverse(&frame).ok_or_else(singular)?, crate::mat_inverse(&here).ok_or_else(singular)?))
+                });
+                let owner = owner.transpose()?;
                 for (k, m) in mats.iter().enumerate() {
-                    let copy = moved_copy(&mb, kernel::transform_matrix(&mb.body, *m)?, k + 1);
+                    let local = match &owner {
+                        Some((frame, frame_inv, here_inv)) => {
+                            crate::mat_mul(&crate::mat_mul(frame_inv, &here), &crate::mat_mul(&crate::mat_mul(m, here_inv), frame))
+                        }
+                        None => *m,
+                    };
+                    let copy = moved_copy(&mb, kernel::transform_matrix(&mb.body, local)?, k + 1);
                     let name = pattern_copy_name(st, f, output, &mb.name);
-                    copy_sheet(st, &mb.name, &name, m);
-                    st.bodies.push(ModelBody::traced_new(name, copy, f.id));
+                    copy_sheet(st, &mb.name, &name, &local);
+                    let mut body = ModelBody::traced_new(name, copy, f.id);
+                    if owner.is_some() {
+                        // Kept in that component as a moved body is (and through later features).
+                        body.component = mb.component;
+                        body.transferred = true;
+                    }
+                    st.bodies.push(body);
                     output += 1;
                 }
             }
@@ -7454,7 +7526,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         FeatureKind::Mirror { features, plane, bodies, combine, placements } => {
             let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
             if bodies.is_empty() {
-                return replay(doc, vals, f, st, &crate::plain(features), &[mirror_matrix(&pl)], warning);
+                return replay(doc, vals, f, st, features, &[mirror_matrix(&pl)], warning);
             }
             let m = mirror_matrix(&pl);
             let mut output = 0;
@@ -7595,6 +7667,12 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         }
         FeatureKind::Torus { center, major, minor, operation } => {
             let b = kernel::torus(point(vals, center)?, val(vals, major, Kind::Length)?, val(vals, minor, Kind::Length)?)?;
+            apply_op(doc, st, f, vec![b], *operation, &[])
+        }
+        FeatureKind::Cone { base, axis, radius, top_radius, height, operation } => {
+            let (radius, top_radius, height) =
+                (val(vals, radius, Kind::Length)?, val(vals, top_radius, Kind::Length)?, val(vals, height, Kind::Length)?);
+            let b = more::cone(point(vals, base)?, axis.0, radius, top_radius, height)?;
             apply_op(doc, st, f, vec![b], *operation, &[])
         }
         FeatureKind::Combine { target, tools, operation, keep_tools } => {
@@ -7932,6 +8010,7 @@ fn drawn_tools_change_bodies(kind: &FeatureKind) -> bool {
         | FeatureKind::Cylinder { operation, .. }
         | FeatureKind::Sphere { operation, .. }
         | FeatureKind::Torus { operation, .. }
+        | FeatureKind::Cone { operation, .. }
         | FeatureKind::Extrude { operation, .. }
         | FeatureKind::Revolve { operation, .. }
         | FeatureKind::Loft { operation, .. }
@@ -8286,12 +8365,13 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
     // places hundreds of parts, each a B-rep transform.
     let mut jobs = Vec::new();
     let owners = doc.model_body_components(st);
+    let names = crate::WorldNames::new(doc, st);
     let bodies_of = |comp: u64| st.bodies.iter().zip(&owners).filter(move |(_, owner)| **owner == comp).map(|(b, _)| b);
     for (comp, path, m) in &placements {
         for b in bodies_of(*comp) {
             let bm = body_matrix(b, m);
             if !crate::is_identity(&bm) {
-                jobs.push((b, bm, doc.world_body_name(st, &b.name, *comp, path)));
+                jobs.push((b, bm, names.name(&b.name, *comp, path)));
             }
         }
     }
@@ -8310,14 +8390,14 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
             // A changed placement keeps a distinct mesh, at that placement's coordinates.
             let mut placed = if crate::is_identity(&bm) {
                 let mut placed = b.clone();
-                placed.name = doc.world_body_name(st, &b.name, comp, &path);
+                placed.name = names.name(&b.name, comp, &path);
                 placed
             } else {
                 // The same order as the jobs: this body's, made above (again here if it failed).
                 let placed = match moved.next() {
                     Some((Some(placed), _)) => placed,
                     Some((None, (_, _, name))) => placed_before.placed(b, &bm, name.clone()),
-                    None => placed_before.placed(b, &bm, doc.world_body_name(st, &b.name, comp, &path)),
+                    None => placed_before.placed(b, &bm, names.name(&b.name, comp, &path)),
                 };
                 placed_now.by_source.insert(placed_key(b, &bm), (b.clone(), placed.clone()));
                 placed
@@ -8372,7 +8452,7 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
             .filter(|t| st.body(&t.body).map(|body| doc.model_body_component(body)).unwrap_or_else(|| comp_of_feature(t.feature)) == comp)
         {
             let mut t2 = t.clone();
-            t2.body = doc.world_body_name(st, &t.body, comp, &path);
+            t2.body = names.name(&t.body, comp, &path);
             let frame = st.body(&t.body).and_then(|body| doc.model_body_offset(body)).map(|offset| crate::mat_mul(&m, offset)).unwrap_or(m);
             t2.axis_point = crate::apply_point(&frame, t.axis_point);
             t2.axis = crate::apply_vector(&frame, *t.axis).unit().unwrap_or(t.axis);

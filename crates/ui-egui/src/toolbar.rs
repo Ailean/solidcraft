@@ -672,6 +672,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     FileAction::ExportMesh("3mf").run(app);
                     close = true;
                 }
+                if item_if(ui, "Send to Slicer", "", "mesh_export", shown && crate::dialogs_save_mesh::available(app)) {
+                    app.start("file.send_to_slicer");
+                    close = true;
+                }
                 if item_if(ui, "Export STEP…", "", "export", shown) {
                     FileAction::Export("step").run(app);
                     close = true;
@@ -814,15 +818,23 @@ fn export_as(app: &mut SolveApp, ext: &str, format: Option<&str>) {
 /// Unicode character boundaries. An oversized word stays on one line with an ellipsis.
 fn ribbon_button_lines(painter: &egui::Painter, label: &str, width: f32) -> Vec<String> {
     let mut lines = ribbon_label_lines(painter, label, width);
+    // Right-to-left labels come in display order (see `bidi`): a line reads from its right end,
+    // so a shortened line loses characters on the left, where the ellipsis then goes.
+    let rtl = crate::bidi::has_rtl(label);
     for line in &mut lines {
         if ribbon_label_width(painter, line) > width {
             while !line.is_empty() {
-                line.pop();
-                if ribbon_label_width(painter, &format!("{}…", line.trim_end())) <= width {
+                if rtl {
+                    line.remove(0);
+                } else {
+                    line.pop();
+                }
+                let shortened = if rtl { format!("…{}", line.trim_start()) } else { format!("{}…", line.trim_end()) };
+                if ribbon_label_width(painter, &shortened) <= width {
                     break;
                 }
             }
-            *line = format!("{}…", line.trim_end());
+            *line = if rtl { format!("…{}", line.trim_start()) } else { format!("{}…", line.trim_end()) };
         }
     }
     lines
@@ -847,6 +859,27 @@ fn ribbon_label_lines(painter: &egui::Painter, label: &str, width: f32) -> Vec<S
     let measure = |text: &str| ribbon_label_width(painter, text);
     let normalized = label.split_whitespace().collect::<Vec<_>>().join(" ");
     let label = normalized.as_str();
+    if crate::bidi::has_rtl(label) {
+        // Display-order right-to-left text reads from its end: the first line takes the words
+        // at the end of the string, the second line the words before them.
+        let breaks = label.char_indices().filter(|(_, c)| c.is_whitespace() || *c == '/').map(|(at, c)| at + c.len_utf8());
+        let mut start = label.len();
+        for cut in std::iter::once(0).chain(breaks).collect::<Vec<_>>().into_iter().rev() {
+            if cut >= start {
+                continue;
+            }
+            if start < label.len() && measure(label.get(cut..).unwrap_or_default().trim()) > width {
+                break;
+            }
+            start = cut;
+        }
+        let (rest, first) = label.split_at(start);
+        let mut lines = vec![first.trim().to_owned()];
+        if !rest.trim().is_empty() {
+            lines.push(rest.trim().to_owned());
+        }
+        return lines;
+    }
     let mut end = 0;
     for token in label.split_inclusive(|c: char| c.is_whitespace() || c == '/') {
         let next = end + token.len();
@@ -1691,6 +1724,8 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
         let description = match command.id {
             "render.scene" => Some(app.tr("render.preview_help")),
             "render.start" => Some(app.tr("render.image_help")),
+            // Sending again replaces the file the slicer has open.
+            "file.send_to_slicer" => Some(app.tr("ui.slicer_resend_hint")),
             "render.preset.resolve" | "render.preset.apply" => Some(app.tr("render.ribbon_studios_help")),
             "render.library.appearance.apply" | "render.library.surface.bind" => Some(app.tr("render.ribbon_materials_help")),
             "render.library.studio.prepare" | "render.library.studio.apply" => Some(app.tr("render.ribbon_lights_help")),
@@ -2020,7 +2055,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     if shown {
         crate::edit_clipboard::handle(app, ctx);
     } else {
-        crate::edit_clipboard::flush(ctx);
+        crate::edit_clipboard::flush(app, ctx);
     }
     for (k, repeat) in keys {
         use egui::Key;
@@ -2049,8 +2084,9 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                     }
                 }
                 Key::Y => drop(app.run("edit.redo", json!({}))),
-                // Copy, Cut and Paste (`edit_clipboard::handle`).
-                Key::C | Key::X | Key::V if !mods.shift && !mods.alt => {}
+                // Copy, Cut and Paste, and Paste New with Shift (`edit_clipboard::handle`).
+                Key::C | Key::X if !mods.shift && !mods.alt => {}
+                Key::V if !mods.alt => {}
                 // Ctrl+Shift+S is Save As; Ctrl+S keeps saving over the current file (#6558).
                 Key::S if mods.shift && !mods.alt => save_as(app),
                 Key::S => save(app),
@@ -2103,6 +2139,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 } else if app.dialog.is_some() || app.pending_feature_edit.is_some() {
                     crate::dialogs::cancel(app);
                 } else if !app.session.selection.is_empty() || app.session.active_sketch.is_none() {
+                    crate::edit_clipboard::drop_cut(app);
                     app.tree.picked_joints.clear();
                     let _ = app.run("select.clear", json!({}));
                 }
@@ -3175,6 +3212,25 @@ mod ribbon_label_tests {
                         let galley = ribbon_button_galley(&painter, label, width, Color32::WHITE);
                         assert!(galley.rows.len() <= 2, "{}: {label}", command.id);
                         assert!(galley.size().x <= width + 0.01, "{}: {label}: {} > {width}", command.id, galley.size().x);
+                        if crate::bidi::has_rtl(label) {
+                            // epaint adds zero-width glyphs to right-to-left rows, so their text
+                            // is not the source text: check the lines the galley is built from.
+                            let lines = ribbon_button_lines(&painter, label, width);
+                            let first = lines[0].strip_prefix('…').unwrap_or(&lines[0]);
+                            assert!(label.ends_with(first), "{}: {label} -> {lines:?}", command.id);
+                            if let [first, second] = lines.as_slice()
+                                && !first.starts_with('…')
+                                && !second.starts_with('…')
+                            {
+                                // Both lines whole: they split the label at a space or after a slash.
+                                assert!(
+                                    *label == format!("{second} {first}") || *label == format!("{second}{first}"),
+                                    "{}: {label} -> {lines:?}",
+                                    command.id
+                                );
+                            }
+                            continue;
+                        }
                         let first = galley.rows.first().unwrap().text();
                         let visible = first.strip_suffix('…').unwrap_or(&first);
                         assert!(label.starts_with(visible), "{}: {label} -> {first}", command.id);
@@ -3226,6 +3282,15 @@ mod ribbon_label_tests {
             let lines = ribbon_button_lines(&painter, "長い日本語のラベル 続き", 50.0);
             assert_eq!(lines.len(), 2);
             assert!(lines[0].ends_with('…'));
+            // Hebrew comes in display order (`bidi::visual`): the reader starts at the right end,
+            // so "סקיצה חדשה" (New Sketch, stored as "חדשה סקיצה") puts סקיצה on the first line.
+            let label = crate::bidi::visual("סקיצה חדשה").into_owned();
+            let width = ribbon_label_width(&painter, "סקיצה").max(ribbon_label_width(&painter, "חדשה")) + 1.0;
+            assert!(ribbon_label_width(&painter, &label) > width);
+            assert_eq!(ribbon_button_lines(&painter, &label, width), vec!["סקיצה", "חדשה"]);
+            let lines = ribbon_button_lines(&painter, &crate::bidi::visual("אחת שתיים שלוש ארבע חמש"), 50.0);
+            assert_eq!(lines.len(), 2);
+            assert!(lines[1].starts_with('…'), "{lines:?}");
         });
         output.textures_delta.clear();
     }

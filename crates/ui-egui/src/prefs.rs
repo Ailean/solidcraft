@@ -319,6 +319,19 @@ impl NavigatorStyle {
     }
 }
 
+/// How the History at the left lists sketches (Preferences: "Sketches", #6489). The timeline
+/// along the bottom always keeps the creation order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistorySketches {
+    /// Every sketch is a row of its own, in creation order (how it always was). Also what a
+    /// value this version doesn't know reads as (`lenient`).
+    #[default]
+    InOrder,
+    /// A sketch a feature is built from is listed one level in, under that feature.
+    UnderFeature,
+}
+
 /// What an orbit turns around (Preferences: "Orbit around").
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -601,6 +614,10 @@ preference_settings! {
     /// Up/Down and the wheel over a focused value field step its plain number (`value_step`,
     /// #2320). Off by default: the keys move the text cursor and the wheel scrolls, as before.
     step_values: bool = false, PAGE_DESIGN => check_id("ui.step_values");
+    /// Reopen the saved designs that were open when the app was last closed (#5542).
+    reopen_designs: bool = true, PAGE_GENERAL;
+    /// Those designs' files, in tab order, as the last quit left them.
+    open_designs: Vec<String> = Vec::new(), PAGE_GENERAL;
     /// `dark`, `light` or `system` (follow the operating system), or a theme file's id: a
     /// built-in one (`gruvbox-dark`, …) or one of `custom_themes` (#2255).
     theme: String = "dark".into(), PAGE_INTERFACE;
@@ -615,6 +632,8 @@ preference_settings! {
     layout: crate::shell::LayoutMode = Default::default(), PAGE_INTERFACE;
     /// Show command names beneath ribbon icons, independently of workspace layout.
     ribbon_labels: bool = true, PAGE_INTERFACE;
+    /// Where a dialog's OK and Cancel sit: under its inputs (the default) or in its title row (#6708).
+    dialog_buttons: crate::ui_kit::DialogButtons = Default::default(), PAGE_INTERFACE;
     /// Interface scale (1 = 100 %).
     ui_scale: f32 = 1.0, PAGE_INTERFACE, accept(0.5..=2.5);
     /// Interface font: an installed font family (or a font file), or empty for the built-in one
@@ -633,6 +652,11 @@ preference_settings! {
     timeline_collapsed: bool = false, PAGE_INTERFACE;
     /// Whether the browser beside the vertical history is collapsed to its rail.
     timeline_left_browser_collapsed: bool = false, PAGE_INTERFACE;
+    /// Whether the History at the left lists a sketch under the feature built from it.
+    history_sketches: HistorySketches = HistorySketches::default(), PAGE_INTERFACE;
+    /// The vertical history (left, or under the browser) starts with the active component's Bodies
+    /// folder and the Origin, as the browser shows them (#6490). The bottom strip is unchanged.
+    timeline_origin_bodies: bool = false, PAGE_INTERFACE;
     /// Width of the browser sidebar, which
     /// the user drags wider or narrower at its right edge.
     browser_width: f32 = DEFAULT_BROWSER_WIDTH, PAGE_INTERFACE;
@@ -684,23 +708,31 @@ preference_settings! {
     check_updates: bool = true, 0;
     /// When the last update check ran, and the versions skipped or put off (`update::Memo`).
     update: crate::update::Memo = crate::update::Memo::default();
-    /// Save as mesh: the last format (`stl` or `3mf`), whether it was sent to a slicer, which one
-    /// (an installed slicer's id or a program path), and the programs the user added (newest first).
     /// The variant last started in each split tool family (Rectangle, Circle, Arc, Slot, Polygon, Line,
     /// Spline): the family's button and shortcut start it again (`sketch_families`).
     sketch_variants: crate::sketch_families::Choices = crate::sketch_families::Choices::default();
     /// Personal Hole parameter combinations, shared by every design in this profile.
     /// No page reset discards this user-authored library.
     hole_presets: crate::hole_presets::Library = crate::hole_presets::Library::default();
+    /// Save as mesh: the last format (`stl` or `3mf`). Older versions also kept a "send to slicer"
+    /// choice here (`save_mesh_send`, `save_mesh_slicer`); a settings file that still has them loads,
+    /// and they are ignored.
     save_mesh_format: String = "stl".into();
     /// Hidden edges in the current-view DXF export (false: omit, true: dashed).
     view_dxf_dashed: bool = false;
     /// Model-space chord tolerance for current-view DXF curves, in millimetres.
     view_dxf_tolerance: f64 = 0.01;
-    save_mesh_send: bool = false;
-    save_mesh_slicer: String = String::new();
+    /// Send to Slicer: the last slicer used (an installed slicer's id or a program path).
+    send_slicer: String = String::new();
+    /// Slicers that can load a file into the window that is already open do so (default on).
+    slicer_single_instance: bool = true, 0;
+    /// The line about sending again replacing the slicer's file has been shown.
+    slicer_resend_hint_seen: bool = false;
+    /// The user has agreed to Open with EasyPrint uploading a model to Printables' servers.
+    easyprint_consent: bool = false;
     /// Save as mesh: the last quality (`standard`, `fine` or `finest`, #4747).
     save_mesh_quality: String = "standard".into();
+    /// The programs the user added to the slicer list, newest first.
     custom_slicers: Vec<String> = Vec::new();
     /// AI features (docs/agent-chat.md): the master switch. Off: no AI button, shortcut, menu
     /// entry or panel, and nothing is looked for or started.
@@ -3374,8 +3406,10 @@ mod tests {
             ("ui_font", json!("test font"), PAGE_INTERFACE),
             ("layout", json!("compact"), PAGE_INTERFACE),
             ("ribbon_labels", json!(false), PAGE_INTERFACE),
+            ("dialog_buttons", json!("top"), PAGE_INTERFACE),
             ("timeline_left", json!(true), PAGE_INTERFACE),
             ("timeline_under_browser", json!(true), PAGE_INTERFACE),
+            ("history_sketches", json!("under_feature"), PAGE_INTERFACE),
             ("browser_float", json!(true), PAGE_INTERFACE),
             ("color_vision", json!("protan"), PAGE_INTERFACE),
             ("viewport_theme", json!("light"), PAGE_INTERFACE),
@@ -3966,6 +4000,70 @@ mod tests {
         h.call("ui.click", json!({"x":axis.x,"y":axis.y}));
         assert!(h.app.cam.back().dist(Vec3::Y) < 1e-6, "original axes retain click-again reversal");
         assert_eq!(h.app.session.doc.to_json(), design);
+    }
+
+    #[test]
+    fn history_sketches_defaults_in_order_and_follows_preferences_transactions() {
+        let old: Prefs = serde_json::from_value(json!({"timeline_left": true})).unwrap();
+        assert_eq!(old.history_sketches, HistorySketches::InOrder, "designs and settings from before keep the creation order");
+        assert_eq!(lenient(&json!({"history_sketches": "sideways"})).history_sketches, HistorySketches::InOrder);
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"timeline_left": true, "timeline_under_browser": true}));
+        let design = h.app.session.doc.to_json();
+        h.call("ui.prefs", json!({"open": "Interface"}));
+        let row = h.app.tr("prefs.history_sketches").to_string();
+        let under = h.app.tr("prefs.history_sketches_under_feature").to_string();
+        let handle = format!("dialog:{row}:{under}");
+        super::reveal_preference(&mut h, &handle);
+        let at = crate::scenario::handle_at(&handle).unwrap();
+        h.call("ui.click", json!({"x": at.x, "y": at.y}));
+        assert_eq!(h.app.preferences.history_sketches, HistorySketches::UnderFeature);
+        assert_eq!(h.app.session.doc.to_json(), design, "the preference changes only the History");
+        h.call("ui.prefs", json!({"button": "cancel"}));
+        assert_eq!(h.app.preferences.history_sketches, HistorySketches::InOrder);
+
+        let reply = h.call("ui.prefs", json!({"history_sketches": "under_feature"}));
+        assert_eq!(reply["result"]["history_sketches"], "under_feature");
+        let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert_eq!(restored.preferences.history_sketches, HistorySketches::UnderFeature);
+        let before = h.app.preferences.clone();
+        assert!(control(&mut h.app, &json!({"history_sketches": "sideways"})).is_err());
+        assert_eq!(h.app.preferences, before, "an unknown value changes nothing");
+        h.call("ui.prefs", json!({"open": "Interface"}));
+        h.call("ui.prefs", json!({"button": "defaults"}));
+        assert_eq!(h.app.preferences.history_sketches, HistorySketches::InOrder);
+        h.call("ui.prefs", json!({"button": "cancel"}));
+        assert_eq!(h.app.preferences.history_sketches, HistorySketches::UnderFeature);
+    }
+
+    #[test]
+    fn dialog_buttons_default_bottom_and_follow_preferences_transactions() {
+        use crate::ui_kit::DialogButtons;
+        let old: Prefs = serde_json::from_value(json!({"ribbon_labels": false})).unwrap();
+        assert_eq!(old.dialog_buttons, DialogButtons::Bottom, "settings from before keep the footer");
+        assert_eq!(lenient(&json!({"dialog_buttons": "sideways"})).dialog_buttons, DialogButtons::Bottom);
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"open": "Interface"}));
+        super::reveal_preference(&mut h, "prefs:dialog_buttons:top");
+        h.step(&json!({"click": {"handle": "prefs:dialog_buttons:top"}})).unwrap();
+        assert_eq!(h.app.preferences.dialog_buttons, DialogButtons::Top);
+        h.call("ui.prefs", json!({"button": "cancel"}));
+        assert_eq!(h.app.preferences.dialog_buttons, DialogButtons::Bottom);
+
+        let reply = h.call("ui.prefs", json!({"dialog_buttons": "top"}));
+        assert_eq!(reply["result"]["dialog_buttons"], "top");
+        let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert_eq!(restored.preferences.dialog_buttons, DialogButtons::Top);
+        let before = h.app.preferences.clone();
+        assert!(control(&mut h.app, &json!({"dialog_buttons": "sideways"})).is_err());
+        assert_eq!(h.app.preferences, before, "an unknown value changes nothing");
+        h.call("ui.prefs", json!({"open": "Interface"}));
+        h.call("ui.prefs", json!({"button": "defaults"}));
+        assert_eq!(h.app.preferences.dialog_buttons, DialogButtons::Bottom);
+        h.call("ui.prefs", json!({"button": "cancel"}));
+        assert_eq!(h.app.preferences.dialog_buttons, DialogButtons::Top);
     }
 
     #[test]

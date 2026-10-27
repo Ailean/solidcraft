@@ -42,7 +42,9 @@
   diagonal view; Shift does not request snapping when the preset already requires it to orbit.
 
   Enable **Preferences → Navigation → Free orbit** to rotate the mouse and 3D mouse continuously
-  through both poles, preserving roll without axis snapping. It defaults to off for every mouse
+  through both poles, preserving roll. During an orbit drag, Shift snaps the view direction and
+  the picture rotation to the nearest quarter turn; releasing Shift resumes the unsnapped rotation.
+  Free orbit defaults to off for every mouse
   preset. With SolidWorks navigation, right-click a planar face and choose **Normal to Selection**
   to use Look At (also Ctrl+8); repeat to flip the side, preserving scale and projection.
 
@@ -80,12 +82,20 @@
   identity or change the exported solid. Unsupported or uncertain wall geometry
   keeps its existing edge presentation.
 - **Dialogs** dock on the right with a live preview. Most features also show drag handles and a
-  value box in the viewport.
+  value box in the viewport. Interface › **Dialog buttons** › **Top** puts OK, Cancel and Apply in
+  the dialog's title row, right of the title, where they stay while sections open and close;
+  Cancel then also takes the place of the close button. Enter and Esc work as before.
 - **Timeline** (bottom). Every feature in order. Double-click to edit, drag the marker to roll
   back, and drag features to reorder them. Preferences can put the timeline vertically at the
   far left of the viewport, beside the browser. Its seam handle switches between icon
   chips and compact feature names; the browser can collapse to a rail beside either width.
   Previous, Play and Next sit at the top. Double-click Previous to roll to the start.
+  Interface › **Sketches** › **Under their feature** lists a sketch in the vertical timeline one
+  level in, under the first feature built from it, behind that feature's fold arrow. Dragging the
+  feature takes its sketch along. A later feature built from the same sketch gets a row that
+  selects it, and while the marker sits between a sketch and its feature, or the two are in
+  different folders, the sketch keeps a row of its own. The timeline along the bottom always lists
+  features in creation order.
 - **Command search (S).** Click the ribbon search field or press S to open the search popup
   below it. Results group commands by their ribbon path and show matching features and user
   parameters from this design. With an empty query, recent commands appear first, followed by
@@ -118,6 +128,12 @@ camera, selection and design; Cancel and Restore Defaults work like other prefer
 General › **Show text under ribbon icons** is a separate, saved option for either
 layout. Turn it off for shorter icon-only command buttons; tooltips, section names
 and command menus remain available.
+
+Interface › Layout › **Show origin and bodies at the top** (off by default) puts the active
+component's Bodies folder and the Origin (planes, axes and point) at the top of the History when
+it sits on the left or under the browser and is wide enough for names. They are the browser's own
+rows: the same eyes, folds and right-click menus, so one list is enough for single-part work. The
+History at the bottom is unchanged.
 
 ### Colour themes
 

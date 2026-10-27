@@ -643,8 +643,13 @@ fn body_items(app: &SolveApp, bodies: &[String], browser: bool) -> Vec<Item> {
         act("ui.properties", "Properties", "measure").with(json!({ "bodies": names })),
         Item::sep(),
         act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": names })),
+        act("ui.sendToSlicer", "Send to Slicer", "export").with(json!({ "bodies": names })).on(crate::dialogs_save_mesh::available(app)),
         act("ui.export", "Export…", "export").with(json!({ "bodies": names })),
         Item::sep(),
+        // The clipboard beside Delete, Remove and Rename, as in every menu.
+        act("ui.cut", "Cut", "cut").key("Ctrl+X").on(crate::edit_clipboard::can_cut(app)),
+        act("ui.copy", "Copy", "copy").key("Ctrl+C").on(crate::edit_clipboard::something_to_copy(app)),
+        act("ui.paste", "Paste", "paste").key("Ctrl+V").on(crate::edit_clipboard::can_paste(app)),
         act("ui.delete", "Delete", "delete").key("Del").with(json!({ "items": items })).on(!locked),
         cmd(app, "solid.remove", "Remove").with(json!({ "bodies": names })).on(!locked),
         act("ui.rename", "Rename", "rename").with(json!({ "body": bodies.first() })).on(one),
@@ -680,6 +685,8 @@ fn sketch_items(app: &SolveApp, id: u64) -> Vec<Item> {
         act("ui.redefineSketch", "Redefine Sketch Plane", "plane").with(json!({ "sketch": id })),
         act("ui.exportDxf", "Export DXF…", "export").with(json!({ "sketch": id })),
         Item::sep(),
+        act("ui.copy", "Copy", "copy").key("Ctrl+C").on(crate::edit_clipboard::something_to_copy(app)),
+        act("ui.paste", "Paste", "paste").key("Ctrl+V").on(crate::edit_clipboard::can_paste(app)),
         act("ui.delete", "Delete", "delete").key("Del").with(json!({ "items": [{"type": "feature", "id": id}] })),
         act("ui.rename", "Rename", "rename").with(json!({ "feature": id })),
         Item::sep(),
@@ -780,11 +787,8 @@ fn occurrence_items(app: &SolveApp, path: &[u64]) -> Vec<Item> {
                 }
             }
             "occurrence.copy" => item.params = Some(json!({"occurrence": placement.occurrence, "translate": [10,10,0]})),
+            "ui.paste" | "ui.pasteNew" => item.params = Some(json!({"component": placement.component, "path": path})),
             "component.create" => item.params = Some(json!({"parent": placement.component, "parent_path": path})),
-            "component.paste_new" => {
-                item.label = "Paste New (Own Features)".into();
-                item.params = Some(json!({"component":placement.component,"occurrence":placement.occurrence,"path":path,"translate":[10,10,0]}));
-            }
             "ui.rename" => item.label = "Rename Component".into(),
             "ui.appearance" => item.label = "Component Appearance".into(),
             "ui.material" => item.label = "Component Physical Material".into(),
@@ -798,7 +802,7 @@ fn occurrence_items(app: &SolveApp, path: &[u64]) -> Vec<Item> {
                 item.id = "ui.isolateOccurrence".into();
                 item.params = Some(json!({"path": path}));
             }
-            "ui.export" | "ui.saveMesh" => item.params = Some(json!({"bodies": bodies})),
+            "ui.export" | "ui.saveMesh" | "ui.sendToSlicer" => item.params = Some(json!({"bodies": bodies})),
             "browser.expand_all" | "browser.collapse_all" => item.params = Some(json!({"path": path})),
             _ => {}
         }
@@ -826,6 +830,11 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
     let bodies = component_bodies(app, id);
     let hidden = !bodies.is_empty() && bodies.iter().all(|b| app.session.visibility.hidden_bodies.contains(b));
     let names = json!(bodies);
+    // The clipboard: Copy takes the selection (the row right-clicked); Paste puts what was copied
+    // inside this component (never a component inside itself or what it holds); Paste New pastes
+    // copied components as independent copies.
+    let into = json!({ "component": id, "path": app.session.doc.first_path(id) });
+    let pastes_here = crate::edit_clipboard::can_paste_into(app, id);
     let mut v = Vec::new();
     if doc.parts.contains_key(&id) {
         v.push(cmd(app, "parts.resize", "Edit").with(json!({"component":id})));
@@ -857,8 +866,6 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
     }
     v.push(cmd(app, "component.create", "New Component").with(json!({ "parent": id })));
     if id == 0 {
-        v.push(act("ui.copyDesign", "Copy", "copy").key("Ctrl+C"));
-        v.push(act("ui.paste", "Paste", "paste").key("Ctrl+V").on(crate::edit_clipboard::can_paste(app)));
         v.push(cmd(app, "component.from_bodies", "Create Components from Bodies").with(json!({ "bodies": names })).on(!bodies.is_empty()));
     }
     v.push(Item::sep());
@@ -884,10 +891,28 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
     v.push(Item::sep());
     v.push(act("ui.export", "Export…", "export").with(json!({ "bodies": names })).on(!bodies.is_empty()));
     v.push(act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": names })).on(!bodies.is_empty()));
+    v.push(
+        act("ui.sendToSlicer", "Send to Slicer", "export")
+            .with(json!({ "bodies": names }))
+            .on(!bodies.is_empty() && crate::dialogs_save_mesh::available(app)),
+    );
     v.push(Item::sep());
+    // The clipboard, then Delete and Rename, in the same place for the design and its components
+    // (the design is copied as a saved design to link, and is neither cut nor deleted).
+    if id == 0 {
+        v.push(act("ui.copyDesign", "Copy", "copy").key("Ctrl+C"));
+    } else {
+        v.push(act("ui.cut", "Cut", "cut").key("Ctrl+X").on(crate::edit_clipboard::can_cut(app)));
+        v.push(act("ui.copy", "Copy", "copy").key("Ctrl+C").on(crate::edit_clipboard::something_to_copy(app)));
+    }
+    v.push(act("ui.paste", "Paste", "paste").key("Ctrl+V").with(into.clone()).on(pastes_here));
+    v.push(
+        act("ui.pasteNew", "Paste New", "paste")
+            .key("Ctrl+Shift+V")
+            .with(into.clone())
+            .on(pastes_here && crate::edit_clipboard::pasting_components(app)),
+    );
     if id != 0 {
-        v.push(cmd(app, "occurrence.copy", "Paste (Instance)").with(json!({ "component": id, "translate": [10, 10, 0] })));
-        v.push(cmd(app, "component.paste_new", "Paste New").with(json!({ "component": id, "translate": [10, 10, 0] })));
         v.push(act("ui.delete", "Delete", "delete").key("Del").with(json!({ "occurrences": [occ.map(|o| o.id)] })).on(occ.is_some()));
     }
     v.push(act("ui.rename", "Rename", "rename").with(json!({ "component": id })));
@@ -997,9 +1022,7 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
         v.extend(explode_text(app));
     }
     v.push(cmd(app, "sketch.move", "Move/Copy").key("M"));
-    v.push(act("ui.cut", "Cut", "cut").key("Ctrl+X"));
-    v.push(act("ui.copy", "Copy", "copy").key("Ctrl+C"));
-    v.push(act("ui.paste", "Paste", "paste").key("Ctrl+V").on(app.session.sketch_clipboard.is_some()));
+    v.push(cmd(app, "sketch.transform", "Transform").key("G"));
     if !curves.is_empty() {
         v.push(cmd(app, "sketch.construction", "Normal / Construction").with(json!({ "curves": curves })));
     }
@@ -1021,6 +1044,10 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
         v.push(cmd(app, "sketch.offset.break", "Break Offset Association").with(json!({"curve":curves[0]})));
     }
     v.push(act("ui.fix", "Fix/Unfix", "c_fix").with(json!({ "entities": ents })));
+    // The clipboard beside Delete, as in every menu.
+    v.push(act("ui.cut", "Cut", "cut").key("Ctrl+X"));
+    v.push(act("ui.copy", "Copy", "copy").key("Ctrl+C"));
+    v.push(act("ui.paste", "Paste", "paste").key("Ctrl+V").on(app.session.sketch_clipboard.is_some()));
     v.push(act("ui.delete", "Delete", "delete").key("Del"));
     v.push(cmd(app, "sketch.dimension", "Sketch Dimension").with(json!({ "entities": ents })).on(ents.len() <= 2));
     let mut c = Vec::new();
@@ -1142,7 +1169,21 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         "ui.copy" => drop(crate::edit_clipboard::copy(app)),
         "ui.copyDesign" => drop(crate::edit_clipboard::copy_design(app)),
         "ui.cut" => drop(crate::edit_clipboard::cut(app)),
-        "ui.paste" => drop(crate::edit_clipboard::paste(app, Some(at))),
+        "ui.paste" | "ui.pasteNew" => {
+            // A component's menu pastes into it (that placement); the others into the active one.
+            let into = id_of(&p, "component").map(|c| {
+                let path = p.get("path").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).collect());
+                (c, path.unwrap_or_else(|| app.session.doc.first_path(c)))
+            });
+            match id_of(&p, "group") {
+                // A Bodies group's menu: into the group too.
+                Some(group) => {
+                    let folder = p.get("folder").and_then(Value::as_str).unwrap_or("bodies");
+                    let _ = crate::edit_clipboard::paste_into_group(app, Some(at), into, Some(group), folder);
+                }
+                None => drop(crate::edit_clipboard::paste_into(app, Some(at), item.id == "ui.pasteNew", into)),
+            }
+        }
         "ui.editSketchPattern" => {
             if let Some(id) = p.get("pattern").and_then(Value::as_str) {
                 crate::sketch_modify_ui::edit_pattern(app, id);
@@ -1422,10 +1463,10 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             let _ = app.run("select.set", json!({ "items": items }));
             app.start("material.assign");
         }
-        "ui.saveMesh" => {
+        "ui.saveMesh" | "ui.sendToSlicer" => {
             let items: Vec<Value> = bodies.iter().map(|b| json!({"type": "body", "name": b})).collect();
             let _ = app.run("select.set", json!({ "items": items }));
-            app.start("file.save_mesh");
+            app.start(if item.id == "ui.saveMesh" { "file.save_mesh" } else { "file.send_to_slicer" });
         }
         "ui.exportDxf" => {
             if let Some(id) = id_of(&p, "sketch") {

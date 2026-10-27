@@ -74,8 +74,7 @@ fn call_lines_give_the_function_and_the_c_api_time() {
     let (name, took) = call_time("smlib_boolean(op=1, a=#3 (12 faces), b=#4) -> 0 (12.345 ms)").unwrap();
     assert_eq!((name, took), ("smlib_boolean", std::time::Duration::from_micros(12_345)));
     assert_eq!(call_time("smlib_make_box(origin=(0,0,0)) -> -1002 (0.001 ms)").map(|c| c.0), Some("smlib_make_box"));
-    for bad in ["SMLib warning at x.cpp:12: tolerance (in smlib_boolean(...))", "smlib_x() -> 0 (nan ms)", "smlib_x() -> 0 (-1 ms)", "", "smlib_x"]
-    {
+    for bad in ["SMLib warning at x.cpp:12: tolerance (in smlib_boolean(...))", "smlib_x() -> 0 (nan ms)", "smlib_x() -> 0 (-1 ms)", "", "smlib_x"] {
         assert_eq!(call_time(bad), None, "{bad}");
     }
 }

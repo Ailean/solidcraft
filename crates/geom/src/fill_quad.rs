@@ -128,6 +128,9 @@ pub struct Frame {
 /// What the fill is asked for.
 #[derive(Clone, Copy, Debug)]
 pub struct QuadSpec {
+    /// How far apart two edges' ends may be where they meet (the record's tolerance: each edge
+    /// is its patch's row as it is, so the patches meet there within it).
+    pub tol: f64,
     /// How far (radians) a patch's normal may turn from a neighbour's, or from the next patch's.
     pub angle_tol: f64,
     /// How far (1/length) its normal curvature across an edge or a spoke may be from the other
@@ -186,19 +189,18 @@ pub struct QuadFill {
 pub fn quad_fill(edges: &[QuadEdge], frames: &mut dyn FnMut(usize, &[f64]) -> Result<Vec<Frame>, String>, spec: &QuadSpec) -> SplineResult<QuadFill> {
     let m = edges.len();
     let n = m / 2;
-    if m % 2 != 0 || !(3..=MAX_QUAD_CORNERS).contains(&n) {
+    if !m.is_multiple_of(2) || !(3..=MAX_QUAD_CORNERS).contains(&n) {
         return Err(SplineError::Unsupported(format!("a hole of {m} edges ({} to {} corners, two edges a side)", 3, MAX_QUAD_CORNERS)));
     }
     let positive = |x: f64| x.is_finite() && x > 0.0;
-    if !(positive(spec.angle_tol) && positive(spec.curvature_tol) && positive(spec.fade)) {
+    if !(positive(spec.tol) && positive(spec.angle_tol) && positive(spec.curvature_tol) && positive(spec.fade)) {
         return invalid("the fill's tolerances must be positive");
     }
     let curves: Vec<Curve> = edges.iter().map(Curve::new).collect::<SplineResult<_>>()?;
     for k in 0..m {
         let (Some(a), Some(b)) = (curves.get(k), curves.get((k + 1) % m)) else { return invalid("edges") };
         let gap = a.point(1.0)?.dist(b.point(0.0)?);
-        let size = a.point(0.0)?.dist(a.point(1.0)?).max(1e-9);
-        if !(gap <= 1e-6 * size.max(1.0)) {
+        if !(gap <= spec.tol) {
             return invalid(format!("edge {} does not start where edge {k} ends ({gap:e} apart)", (k + 1) % m));
         }
     }
@@ -868,13 +870,13 @@ impl Quilt {
                     let speed = xnu.len().max(1e-12 * size);
                     let wt = weight.sqrt();
                     // G1.
-                    ne.dot(&jet, &[(cross, 1.0)], frame.normal, 0.0, wt / speed);
+                    ne.dot(jet, &[(cross, 1.0)], frame.normal, 0.0, wt / speed);
                     // Leaving into the patch, about as fast as the edge runs.
                     // (First round only: after it the energy decides what the conditions leave
                     // free.)
                     if first {
                         let run = now[along].len();
-                        ne.vec(&jet, &[(cross, 1.0)], frame.leave * run, WEAK * wt / speed);
+                        ne.vec(jet, &[(cross, 1.0)], frame.leave * run, WEAK * wt / speed);
                     }
                     // G2: the face's normal curvature in the patch's cross direction.
                     if *g2 > 0.0 && !first {
@@ -890,7 +892,7 @@ impl Quilt {
                         let g = *tangent * (a * frame.form[0] + b * frame.form[1])
                             + frame.leave * (a * frame.form[1] + b * frame.form[2])
                             + to * ((1.0 - g2) * delta * xnu.dot(to));
-                        ne.rows(&[(&jet, second, frame.normal), (&jet, cross, g * -2.0)], -ii, g2 * wt * size / (speed * speed));
+                        ne.rows(&[(jet, second, frame.normal), (jet, cross, g * -2.0)], -ii, g2 * wt * size / (speed * speed));
                     }
                 }
                 Station::Spoke { spoke, t, weight } => {
@@ -909,7 +911,7 @@ impl Quilt {
                     // G1: `∂S_{k+1}/∂v = −α ∂S_k/∂u + β ∂S/∂t`, the two patches' cross
                     // derivatives and the spoke in one plane, with fixed α, β.
                     for axis in [Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 1.0)] {
-                        ne.pair(&a, &[(1, alpha), (2, -beta)], &b, &[(2, 1.0)], axis, 0.0, wt / speed);
+                        ne.pair(a, &[(1, alpha), (2, -beta)], b, &[(2, 1.0)], axis, 0.0, wt / speed);
                     }
                     if first {
                         continue;
@@ -920,15 +922,7 @@ impl Quilt {
                     let normal = (na[1].cross(na[2]).normalized().unwrap_or(Vec3::ZERO) + nb[1].cross(nb[2]).normalized().unwrap_or(Vec3::ZERO))
                         .normalized()
                         .unwrap_or(Vec3::ZERO);
-                    ne.pair(
-                        &a,
-                        &[(3, alpha * alpha)],
-                        &b,
-                        &[(5, -1.0), (4, 2.0 * beta), (3, -beta * beta)],
-                        normal,
-                        0.0,
-                        wt * size / (speed * speed),
-                    );
+                    ne.pair(a, &[(3, alpha * alpha)], b, &[(5, -1.0), (4, 2.0 * beta), (3, -beta * beta)], normal, 0.0, wt * size / (speed * speed));
                 }
             }
         }
@@ -1202,8 +1196,7 @@ impl Normal {
         let degree = |i: usize| adj.get(i).map(|v| v.len()).unwrap_or(0);
         let mut seen = vec![false; self.points];
         let mut order: Vec<usize> = Vec::with_capacity(self.points);
-        loop {
-            let Some(start) = (0..self.points).filter(|i| !seen.get(*i).copied().unwrap_or(true)).min_by_key(|i| degree(*i)) else { break };
+        while let Some(start) = (0..self.points).filter(|i| !seen.get(*i).copied().unwrap_or(true)).min_by_key(|i| degree(*i)) {
             if let Some(slot) = seen.get_mut(start) {
                 *slot = true;
             }
@@ -1214,11 +1207,11 @@ impl Normal {
                 let mut next: Vec<usize> = adj.get(p).into_iter().flatten().copied().filter(|q| !seen.get(*q).copied().unwrap_or(true)).collect();
                 next.sort_by_key(|q| degree(*q));
                 for q in next {
-                    if let Some(slot) = seen.get_mut(q) {
-                        if !*slot {
-                            *slot = true;
-                            order.push(q);
-                        }
+                    if let Some(slot) = seen.get_mut(q)
+                        && !*slot
+                    {
+                        *slot = true;
+                        order.push(q);
                     }
                 }
             }

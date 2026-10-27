@@ -203,7 +203,7 @@ pub(crate) fn quad_patch(body: &Body, chain: &[(usize, bool)], curvature_tol: f6
     body.require_brep("patch")?;
     let record = crate::native::brep_record(body)?;
     let n = chain.len();
-    if n < 6 || n % 2 != 0 {
+    if n < 6 || !n.is_multiple_of(2) {
         return Err(KernelError::Invalid(format!("not supported yet: a G2 corner on a hole of {n} edges (two edges a side, three sides or more)")));
     }
     let size = body.size().max(solidcraft_geom::LINEAR_TOL);
@@ -251,7 +251,7 @@ pub(crate) fn quad_patch(body: &Body, chain: &[(usize, bool)], curvature_tol: f6
             })
             .collect()
     };
-    let spec = QuadSpec { angle_tol: PATCH_ANGLE_TOL_DEG.to_radians(), curvature_tol, fade };
+    let spec = QuadSpec { tol: face_tolerance(body), angle_tol: PATCH_ANGLE_TOL_DEG.to_radians(), curvature_tol, fade };
     let fill = solidcraft_geom::fill_quad::quad_fill(&edges, &mut frames, &spec).map_err(spline_error)?;
     let made = quad_body(body, &record, &order, &mobius, &fill, face_tolerance(body))?;
     Ok((made, fill))
@@ -303,18 +303,8 @@ fn quad_edge(record: &b::Brep, e: usize, forward: bool) -> Result<(QuadEdge, f64
             *k = 1.0;
         }
     }
-    let mut points: Vec<Vec3> =
+    let points: Vec<Vec3> =
         h.iter().map(|x| x.project()).collect::<Option<_>>().ok_or_else(|| KernelError::Invalid("a hole edge has a zero weight".into()))?;
-    // Its ends exactly on the loop's vertices (as `iso_edge`: a record's edges end within its
-    // tolerance of them), so neighbouring edges share their end points.
-    let vertex = |end: usize| edge.vertices.get(end).and_then(|v| record.vertices.get(*v as usize)).map(|v| v3(&v.point));
-    let (first, last) = if forward { (vertex(0), vertex(1)) } else { (vertex(1), vertex(0)) };
-    if let (Some(p), Some(q), Some(f)) = (first, last, points.first_mut()) {
-        *f = p;
-        if let Some(l) = points.last_mut() {
-            *l = q;
-        }
-    }
     let w: Vec<f64> = h.iter().map(|x| x.w).collect();
     let (Some(&w0), Some(&wp)) = (w.first(), w.last()) else { return Err(KernelError::Failed("patch: an empty edge".into())) };
     if w.iter().all(|x| (x - w0).abs() <= 1e-14 * w0.abs()) {

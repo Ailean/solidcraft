@@ -25,7 +25,7 @@ fn a_flat_hexagon_fills_flat() {
         let leave = Vec3::new(-t.y, t.x, 0.0);
         Ok(ts.iter().map(|_| Frame { normal: Vec3::new(0.0, 0.0, 1.0), leave, form: [0.0; 3] }).collect())
     };
-    let fill = quad_fill(&edges, &mut frames, &QuadSpec { angle_tol: 1e-3_f64.to_radians(), curvature_tol: 1e-6, fade: 1.0 }).unwrap();
+    let fill = quad_fill(&edges, &mut frames, &QuadSpec { tol: 1e-9, angle_tol: 1e-3_f64.to_radians(), curvature_tol: 1e-6, fade: 1.0 }).unwrap();
     assert_eq!(fill.patches.len(), 6);
     for p in &fill.patches {
         for i in 0..=8 {
@@ -46,7 +46,7 @@ fn a_bad_hole_is_refused() {
     let mut frames = |_: usize, ts: &[f64]| -> Result<Vec<Frame>, String> {
         Ok(ts.iter().map(|_| Frame { normal: Vec3::new(0.0, 0.0, 1.0), leave: Vec3::new(1.0, 0.0, 0.0), form: [0.0; 3] }).collect())
     };
-    let spec = QuadSpec { angle_tol: 1e-3, curvature_tol: 1e-3, fade: 1.0 };
+    let spec = QuadSpec { tol: 1e-9, angle_tol: 1e-3, curvature_tol: 1e-3, fade: 1.0 };
     let p = |x: f64, y: f64| Vec3::new(x, y, 0.0);
     assert!(quad_fill(&[line(p(0.0, 0.0), p(1.0, 0.0))], &mut frames, &spec).is_err());
     let apart: Vec<QuadEdge> = (0..6).map(|k| line(p(k as f64, 0.0), p(k as f64 + 0.5, 0.0))).collect();
@@ -91,7 +91,7 @@ fn a_spherical_cap_fills_g2() {
             })
             .collect()
     };
-    let spec = QuadSpec { angle_tol: 0.05f64.to_radians(), curvature_tol: 1e-3, fade: 1.0 };
+    let spec = QuadSpec { tol: 1e-9, angle_tol: 0.05f64.to_radians(), curvature_tol: 1e-3, fade: 1.0 };
     let fill = quad_fill(&edges, &mut frames, &spec).unwrap();
     assert_eq!(fill.patches.len(), 6);
     let top = big - h;
@@ -145,7 +145,7 @@ fn a_paraboloid_hexagon_fills_g2() {
             })
             .collect()
     };
-    let spec = QuadSpec { angle_tol: 0.05f64.to_radians(), curvature_tol: 1e-3, fade: 1.0 };
+    let spec = QuadSpec { tol: 1e-9, angle_tol: 0.05f64.to_radians(), curvature_tol: 1e-3, fade: 1.0 };
     let fill = quad_fill(&edges, &mut frames, &spec).unwrap();
     eprintln!("paraboloid: centre {:?}", fill.centre);
     // On the axis, at most as high as the paraboloid's rim: the energy settles the middle.
@@ -201,7 +201,7 @@ fn a_cylinder_window_fills_g2() {
             })
             .collect()
     };
-    let spec = QuadSpec { angle_tol: 0.05f64.to_radians(), curvature_tol: 1e-3, fade: 1.0 };
+    let spec = QuadSpec { tol: 1e-9, angle_tol: 0.05f64.to_radians(), curvature_tol: 1e-3, fade: 1.0 };
     let fill = quad_fill(&edges, &mut frames, &spec).unwrap();
     eprintln!("cylinder window: centre {:?}, radius {}", fill.centre, fill.centre.y.hypot(fill.centre.z));
 }
@@ -258,7 +258,7 @@ fn a_cylinder_window_beside_a_tangent_plane_fills_g2() {
             })
             .collect()
     };
-    let spec = QuadSpec { angle_tol: 0.05f64.to_radians(), curvature_tol: 1e-3, fade: 1.0 };
+    let spec = QuadSpec { tol: 1e-9, angle_tol: 0.05f64.to_radians(), curvature_tol: 1e-3, fade: 1.0 };
     let fill = quad_fill(&edges, &mut frames, &spec).unwrap();
     eprintln!("cylinder window: centre {:?}, radius {}", fill.centre, fill.centre.y.hypot(fill.centre.z));
 }
@@ -310,7 +310,7 @@ fn a_mirrored_cylinder_window_fills_g2() {
             })
             .collect()
     };
-    let spec = QuadSpec { angle_tol: 0.05f64.to_radians(), curvature_tol: 1e-3, fade: 1.0 };
+    let spec = QuadSpec { tol: 1e-9, angle_tol: 0.05f64.to_radians(), curvature_tol: 1e-3, fade: 1.0 };
     let fill = quad_fill(&edges, &mut frames, &spec).unwrap();
     eprintln!("cylinder window: centre {:?}, radius {}", fill.centre, fill.centre.y.hypot(fill.centre.z));
 }

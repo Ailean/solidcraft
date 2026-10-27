@@ -237,7 +237,7 @@ pub fn fillet_setback(body: &Body, edges: &[Vec3], radius: f64, setbacks: &[(Vec
 /// [`fillet`]. Refused: a corner where an edge is not rounded, or whose edges are not all of one
 /// convexity (SMLib sets back only corners where all are rounded, alike), a setback that does not reach past
 /// where the rounds would meet, a hole whose sides are not two edges meeting at their middle, or patches that
-/// does not meet its neighbours within the tolerances.
+/// do not meet their neighbours within the tolerances.
 pub fn fillet_g2_corners(body: &Body, edges: &[Vec3], radius: f64, setbacks: &[(Vec3, f64)]) -> Result<Body> {
     let _span = solidcraft_profile::span("kernel", "fillet_g2_corners");
     body.require_brep("fillet")?;

@@ -844,3 +844,16 @@ fn a_face_box_reaches_its_boundary_extremes() {
     let [_, v] = form::extent(&cylinder, &[vec![(&cut, [0.1, 0.1 + TAU], true)]]).expect("an extent");
     assert!((v[0] - 10.0).abs() < 1e-9 && (v[1] - 50.0).abs() < 1e-9, "{v:?}");
 }
+
+/// A point next to a sphere's pole is a pole to within the reach it is given: crossing half a
+/// turn of longitude there moves it about π times its distance from the axis, and no further.
+#[test]
+fn a_point_beside_a_pole_is_one_within_its_reach() {
+    let sphere = eval::SurfaceEval::new(&Surface::Sphere { frame: a_frame(), radius: 2. }).unwrap();
+    let near = [0.3, FRAC_PI_2 - 1e-7];
+    // 2e-7 mm from the axis: half a turn moves it 2π·1e-7.
+    assert_eq!(sphere.pole(near), [false, false]);
+    assert_eq!(sphere.pole_within(near, 1e-6), [true, false]);
+    assert_eq!(sphere.pole_within(near, 1e-7), [false, false]);
+    assert_eq!(sphere.pole_within([0.3, 0.2], 1e-3), [false, false]);
+}

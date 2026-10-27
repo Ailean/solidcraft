@@ -553,7 +553,7 @@ fn a_thread_on_a_boss_never_cuts_into_the_plate_below() {
     let got = exact_volume(&s, "Part");
     assert!((got - want).abs() < want * 2e-4, "{got} vs {want}");
     assert!((plate_left(s) - 9600.0).abs() < 1e-6);
-    for extra in [json!({"ease_out": "standard"}), json!({"ease_out": "short", "tip": "chamfer"})] {
+    for extra in [json!({"ease_out": "standard"}), json!({"ease_out": "short", "tip": "both"})] {
         let s = boss(extra.clone());
         assert!(s.model.state().body("Part").unwrap().body.validity().is_empty(), "{extra}");
         let left = plate_left(s);
@@ -872,7 +872,7 @@ fn m10_stock(z0: f64, z1: f64, rmax: impl Fn(f64) -> f64) -> f64 {
 fn a_chamfered_tip_tapers_the_last_teeth() {
     let mut s = Session::default();
     run(&mut s, "solid.cylinder", json!({"radius": 5, "height": 30, "body_name": "Stud"}));
-    run(&mut s, "solid.thread", json!({"face": [5, 0, 15], "designation": "M10", "tip": "chamfer", "modeled": true}));
+    run(&mut s, "solid.thread", json!({"face": [5, 0, 15], "designation": "M10", "tip": "both", "modeled": true}));
     let st = s.model.state();
     let stud = &st.body("Stud").unwrap().body;
     assert!(stud.validity().is_empty());
@@ -891,7 +891,7 @@ fn a_chamfered_tip_tapers_the_last_teeth() {
     run(
         &mut s,
         "solid.thread",
-        json!({"face": [5, 0, 25], "designation": "M10", "tip": "chamfer", "chamfer_angle": "30 deg", "chamfer_depth": 0.5, "modeled": true}),
+        json!({"face": [5, 0, 25], "designation": "M10", "tip": "both", "chamfer_angle": "30 deg", "chamfer_depth": 0.5, "modeled": true}),
     );
     let w = ext_half_width(10.0, 1.5);
     let rf = 4.5;
@@ -903,21 +903,40 @@ fn a_chamfered_tip_tapers_the_last_teeth() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"corner": [-10, -10, 0], "length": 20, "width": 20, "height": 10, "body_name": "Nut"}));
     run(&mut s, "solid.hole", json!({"position": [0, 0, 10], "diameter": 8.5}));
-    let e = s
-        .execute("solid.thread", &json!({"face": [4.25, 0, 5], "designation": "M10", "tip": "chamfer", "modeled": true}))
-        .err()
-        .map(|e| e.to_string());
+    let e =
+        s.execute("solid.thread", &json!({"face": [4.25, 0, 5], "designation": "M10", "tip": "both", "modeled": true})).err().map(|e| e.to_string());
     assert!(e.unwrap_or_default().contains("countersink"));
     // ISO 4753 is for ISO metric threads: another form names its chamfer depth.
     let mut s = Session::default();
     run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 40, "body_name": "Screw"}));
     let e = s
-        .execute("solid.thread", &json!({"face": [10, 0, 20], "designation": "Tr20x4", "tip": "chamfer", "modeled": true}))
+        .execute("solid.thread", &json!({"face": [10, 0, 20], "designation": "Tr20x4", "tip": "both", "modeled": true}))
         .err()
         .map(|e| e.to_string());
     assert!(e.unwrap_or_default().contains("chamfer depth"));
-    run(&mut s, "solid.thread", json!({"face": [10, 0, 20], "designation": "Tr20x4", "tip": "chamfer", "chamfer_depth": 2.5, "modeled": true}));
+    run(&mut s, "solid.thread", json!({"face": [10, 0, 20], "designation": "Tr20x4", "tip": "both", "chamfer_depth": 2.5, "modeled": true}));
     assert!(s.model.state().body("Screw").unwrap().body.validity().is_empty());
+}
+
+/// `tip: start` chamfers only the end the thread starts from: on a stud started from its top, the
+/// top is chamfered down to d3 and the bottom stays as cut. A start against a shoulder is no free
+/// end and is refused; `both` there chamfers the one free end.
+#[test]
+fn a_tip_at_the_start_chamfers_only_that_end() {
+    let rf = 5.0 - 17.0 / 24.0 * 1.5 * 3f64.sqrt() / 2.0;
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 5, "height": 30, "body_name": "Stud"}));
+    run(&mut s, "solid.thread", json!({"face": [5, 0, 15], "designation": "M10", "tip": "start", "from": [5, 0, 30], "modeled": true}));
+    assert!(s.model.state().body("Stud").unwrap().body.validity().is_empty());
+    let want = m10_stock(0.0, 30.0, |z| 5f64.min(rf + 30.0 - z));
+    let got = exact_volume(&s, "Stud");
+    assert!((got - want).abs() < want * 1e-4, "{got} vs {want}");
+    let mut s = shaft_on_collar();
+    let e = s.execute("solid.thread", &json!({"face": [5, 0, 25], "designation": "M10", "tip": "start", "from": [5, 0, 10], "modeled": true}));
+    assert!(e.err().map(|e| e.to_string()).unwrap_or_default().contains("not a free end"));
+    run(&mut s, "solid.thread", json!({"face": [5, 0, 25], "designation": "M10", "tip": "both", "from": [5, 0, 10], "modeled": true}));
+    let e = s.execute("solid.thread", &json!({"face": [5, 0, 25], "designation": "M10", "tip": "chamfer", "modeled": true}));
+    assert!(e.err().map(|e| e.to_string()).unwrap_or_default().contains("now `both`"));
 }
 
 /// M10's groove section moved `d` out from the axis, clipped at the shaft's radius 5: the cut per

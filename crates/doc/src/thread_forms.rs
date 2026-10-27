@@ -49,13 +49,17 @@ pub enum SteepFlank {
     End,
 }
 
-/// The thread's free end: as cut, or chamfered (ISO 4753).
+/// Which of the thread's free ends are chamfered (ISO 4753's chamfered end).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadTip {
+    /// Every end as cut.
     #[default]
     None,
-    Chamfer,
+    /// The end the thread starts from, which must be free.
+    Start,
+    /// Every free end the thread reaches.
+    Both,
 }
 
 /// For `skip_serializing_if`: a field at its default is left out of the saved document.

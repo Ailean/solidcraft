@@ -113,6 +113,8 @@ pub(super) struct ThreadOn {
     steep: SteepFlank,
     /// Runout lengths (mm) at the thread's start and end along the axis.
     ease: [f64; 2],
+    /// The end of the axis (0: its start, 1: its end) the thread starts from.
+    from: usize,
 }
 
 /// The free-end test of a face's two ends (`side` 0 at its start, 1 at its end), each made
@@ -302,7 +304,7 @@ pub(super) fn thread_on(st: &ModelState, feature: u64, p: Vec3, ask: &ThreadAsk)
         hand: ask.hand,
         starts,
     };
-    Ok(ThreadOn { info, cyl, ends, steep: ask.steep, ease })
+    Ok(ThreadOn { info, cyl, ends, steep: ask.steep, ease, from: side })
 }
 
 /// The end of the face (0: its start, 1: its end) a thread of limited length starts at: the end
@@ -550,7 +552,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         return Err(DocError::Invalid("a runout is cut only on a modelled thread".into()));
     }
     let ask = ThreadAsk { ease: [runout(ease_in)?, runout(ease_out)?], ..ask };
-    let ThreadOn { info: t, cyl, ends, steep, ease } = thread_on(st, f.id, face.0, &ask)?;
+    let ThreadOn { info: t, cyl, ends, steep, ease, from: from_side } = thread_on(st, f.id, face.0, &ask)?;
     if !*modeled {
         st.threads.push(t);
         return Ok(());
@@ -574,10 +576,10 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
     let groove = crate::lineage::Lineage::unnamed_faces(groove_faces);
     let lineage = input.lineage.and_then(|l| crate::lineage::Lineage::step(&nb, &[&l, &groove]));
     let mut nb = Traced { body: nb, lineage };
-    if *tip == ThreadTip::Chamfer {
+    if *tip != ThreadTip::None {
         let angle = chamfer_angle.as_deref().map(|e| val(vals, e, Kind::Angle)).transpose()?;
         let depth = chamfer_depth.as_deref().map(|e| val(vals, e, Kind::Length)).transpose()?;
-        for cone in tip_cones(&t, radius, ends, angle, depth)? {
+        for cone in tip_cones(&t, radius, ends, (*tip, from_side), angle, depth)? {
             let faces = cone.face_count();
             let cut = kernel::boolean(&nb.body, &cone, BoolOp::Cut)?.ok_or_else(|| DocError::Invalid("the chamfer removed everything".into()))?;
             let unnamed = crate::lineage::Lineage::unnamed_faces(faces);
@@ -591,7 +593,8 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
     Ok(())
 }
 
-/// The chamfered tip of an external thread (ISO 4753, chamfered end CH) at each of its free ends:
+/// The chamfered tip of an external thread (ISO 4753, chamfered end CH) at the free ends `tip`
+/// names (`Start`: the end of the axis `from`, which must be free; `Both`: each free end):
 /// the material outside a cone `angle` to the axis (default 45°) that reaches the diameter
 /// d_f = d - 2 `depth` at the face's end, as a ring to cut after the groove, so the last teeth
 /// taper into it. ISO 4753 bounds d_f by the external thread's minor diameter; the default is
@@ -599,7 +602,14 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
 /// below the modelled basic root d1, so the cone crosses the root cylinder and leaves a whole
 /// ring on the end; one ending on the root itself would pinch to nothing wherever the groove
 /// reaches the end. ISO 4753 is for ISO metric threads: other forms give `depth`.
-fn tip_cones(t: &ThreadInfo, radius: f64, ends: [End; 2], angle: Option<f64>, depth: Option<f64>) -> Result<Vec<Body>> {
+fn tip_cones(
+    t: &ThreadInfo,
+    radius: f64,
+    ends: [End; 2],
+    (tip, from): (ThreadTip, usize),
+    angle: Option<f64>,
+    depth: Option<f64>,
+) -> Result<Vec<Body>> {
     if t.internal {
         return Err(DocError::Invalid("a chamfered tip is for an external thread (ISO 4753); countersink the hole's entry instead".into()));
     }
@@ -633,8 +643,12 @@ fn tip_cones(t: &ThreadInfo, radius: f64, ends: [End; 2], angle: Option<f64>, de
     // nothing past a free end beyond the thread is touched.
     let e = 0.5 * t.pitch;
     let mut out = Vec::new();
+    let free = |side: usize| ends.get(side) == Some(&End::Free);
+    if tip == ThreadTip::Start && !free(from) {
+        return Err(DocError::Invalid("the end the thread starts from is not a free end (material goes on past it, or the thread stops inside the face): chamfer it with `tip: both`, or start the thread from its free end".into()));
+    }
     for (side, at, out_dir) in [(0usize, t.start, -k), (1, t.end, k)] {
-        if ends.get(side) != Some(&End::Free) {
+        if !free(side) || (tip == ThreadTip::Start && side != from) {
             continue;
         }
         // In the plane: x radial, y outward along the axis from the end.

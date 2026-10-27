@@ -81,8 +81,8 @@ reaching nothing at the end. No end gets a runout unless asked. Where the sectio
 sweep's walls are within its tolerance (1e-4 P) of the true surfaces; full-depth turns are exact
 radially.
 
-**Tip** (`tip: chamfer`, ISO 4753's chamfered end): at each free end of a modelled external
-thread, after the groove, the material outside a cone `chamfer_angle` to the axis (45°) reaching
+**Tip** (ISO 4753's chamfered end; `tip: start` the end the thread starts from, which must be
+free, `tip: both` each free end it reaches): at those ends of a modelled external thread, after the groove, the material outside a cone `chamfer_angle` to the axis (45°) reaching
 d_f = d − 2 `chamfer_depth` at the end is cut, the last teeth tapering into it. ISO 4753 bounds
 d_f by the minor diameter; the default is that bound, the external minor diameter d3 = d −
 1.226869 P of ISO 724 (8.160 for M10), which lies below the modelled basic root d1. The cone

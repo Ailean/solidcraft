@@ -37,11 +37,12 @@ Where SolidCraft can replace itself safely, the window also has **Update now**:
 Every download is verified before anything changes: its SHA-256 must match the release's
 `SHA256SUMS.txt`, fetched over HTTPS from the same release, and, once the project signs its
 releases, that list must carry a valid signature by SolidCraft's release key that names the
-release (see [releasing](https://github.com/bherbruck/solidcraft/blob/main/docs/releasing.md#update-signing)).
+release (see [releasing](https://github.com/tangency-labs/solidcraft/blob/main/docs/releasing.md#update-signing)).
 A download that doesn't verify is deleted and the installed copy is left as it was; **Download**
 still gets the package for a manual install. On macOS SolidCraft opens the disk image rather than
-replacing the app itself, because the app is ad-hoc signed and not notarized: replacing it in the
-background would install code macOS can't vouch for without you seeing it.
+replacing the app itself: you drag the new app to Applications, as you did the first time. The
+app and the disk image are signed with a Developer ID and notarized by Apple, so macOS opens the
+new copy without a warning.
 
 Update now needs write access to the installed file: an AppImage in a folder you can't write to
 fails with a message, and **Download** is the way to update it.
@@ -64,14 +65,14 @@ affected.
 One HTTPS request each time SolidCraft starts, and once a day while it stays open:
 
 ```text
-GET https://api.github.com/repos/bherbruck/solidcraft/releases/latest
+GET https://api.github.com/repos/tangency-labs/solidcraft/releases/latest
 User-Agent: SolidCraft-update-check
 Accept: application/vnd.github+json
 X-GitHub-Api-Version: 2022-11-28
 ```
 
 **Update now** then downloads `SHA256SUMS.txt` (and its signature) and the one package from the
-release's own `github.com/bherbruck/solidcraft/releases/download/…` links, with the same
+release's own `github.com/tangency-labs/solidcraft/releases/download/…` links, with the same
 User-Agent. That's all: no version number, no machine or user identifier, no usage data, no cookies. GitHub
 sees the request like any other visit to the API (your IP address, the time); see
 [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).
@@ -92,7 +93,7 @@ saved version opens instead, and the download continues for the next reload.
 
 ## Which file Download gets
 
-Releases attach the main packages under fixed names (see [releasing](https://github.com/bherbruck/solidcraft/blob/main/docs/releasing.md)),
+Releases attach the main packages under fixed names (see [releasing](https://github.com/tangency-labs/solidcraft/blob/main/docs/releasing.md)),
 and SolidCraft picks the one matching how it was installed:
 
 | Installed as | Detected by | Download | How to update |

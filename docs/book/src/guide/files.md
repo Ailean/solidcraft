@@ -97,12 +97,12 @@ Closed mechanical meshes with a constant cross-section can be rebuilt as solids 
 ordinary 3MF in which every triangle also names the B-rep face it lies on and every coordinate
 is the tessellation's own double-precision value. Meshing and analysis tools can use the tags to
 keep a model's faces (for loads, boundary conditions or feature edges); other 3MF readers ignore
-them. The format is specified in [`docs/formats/3mf-face-tags.md`](https://github.com/bherbruck/solidcraft/blob/main/docs/formats/3mf-face-tags.md).
+them. The format is specified in [`docs/formats/3mf-face-tags.md`](https://github.com/tangency-labs/solidcraft/blob/main/docs/formats/3mf-face-tags.md).
 
 **File → Export URDF…** (`file.export` with a `.urdf` path) writes the assembly for robot
 simulators and ROS: a link per component placement with its mesh, mass and inertia, and the
 assembly's joints, so the parts move in the simulator as they do in SolidCraft. The meshes are
-written as STL files next to the `.urdf`. See [`docs/urdf.md`](https://github.com/bherbruck/solidcraft/blob/main/docs/urdf.md).
+written as STL files next to the `.urdf`. See [`docs/urdf.md`](https://github.com/tangency-labs/solidcraft/blob/main/docs/urdf.md).
 
 Saves are atomic: a crash at any moment leaves either the old file or the new one, and the
 replaced version is kept as `<file>.bak`. A save keeps the file's permissions, and a design

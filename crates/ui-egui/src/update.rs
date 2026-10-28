@@ -25,14 +25,14 @@ use crate::theme::Tokens;
 use crate::ui_kit;
 
 /// The repository releases come from.
-pub const REPO: &str = "bherbruck/solidcraft";
+pub const REPO: &str = "tangency-labs/solidcraft";
 /// The one request an update check makes.
-pub const LATEST_API: &str = "https://api.github.com/repos/bherbruck/solidcraft/releases/latest";
+pub const LATEST_API: &str = "https://api.github.com/repos/tangency-labs/solidcraft/releases/latest";
 /// Where Download goes when no package fits this installation.
-pub const RELEASES_PAGE: &str = "https://github.com/bherbruck/solidcraft/releases/latest";
-/// Release pages and assets must be on GitHub, under this repository. The repository is moving
-/// to the `tangency-labs` organisation, so releases may name either owner (the API request stays
-/// on the old name, which GitHub redirects after a transfer).
+pub const RELEASES_PAGE: &str = "https://github.com/tangency-labs/solidcraft/releases/latest";
+/// Release pages and assets must be on GitHub, under this repository. The repository moved to the
+/// `tangency-labs` organisation, so releases may still name either owner (older releases and the
+/// links GitHub redirects keep the old one).
 const RELEASE_PREFIXES: [&str; 2] = ["https://github.com/bherbruck/solidcraft/releases/", "https://github.com/tangency-labs/solidcraft/releases/"];
 
 /// A release page or asset URL: github.com, one of the two owners, exactly `solidcraft`, then

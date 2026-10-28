@@ -1,0 +1,26 @@
+{
+  "en": {
+    "update.managed": "Update available: update SolidCraft in {manager}",
+    "update.prefs_managed": "This is SolidCraft {version}, managed by {manager}. A check asks GitHub for the latest release and sends nothing else; update SolidCraft in {manager}."
+  },
+  "ar": {
+    "update.managed": "يتوفر تحديث: حدّث SolidCraft من داخل {manager}",
+    "update.prefs_managed": "هذا هو SolidCraft {version}، ويديره {manager}. يسأل الفحص GitHub عن أحدث إصدار ولا يرسل شيئًا آخر؛ حدّث SolidCraft من داخل {manager}."
+  },
+  "he": {
+    "update.managed": "יש עדכון זמין: עדכנו את SolidCraft ב-{manager}",
+    "update.prefs_managed": "זהו SolidCraft {version}, בניהול {manager}. הבדיקה שואלת את GitHub מהי הגרסה האחרונה ולא שולחת דבר נוסף; עדכנו את SolidCraft ב-{manager}."
+  },
+  "ja": {
+    "update.managed": "アップデートがあります。{manager} で SolidCraft を更新してください",
+    "update.prefs_managed": "これは {manager} が管理している SolidCraft {version} です。確認では GitHub に最新リリースを問い合わせるだけで、ほかには何も送信しません。SolidCraft は {manager} で更新してください。"
+  },
+  "vi": {
+    "update.managed": "Có bản cập nhật: hãy cập nhật SolidCraft trong {manager}",
+    "update.prefs_managed": "Đây là SolidCraft {version}, do {manager} quản lý. Lần kiểm tra chỉ hỏi GitHub về bản phát hành mới nhất và không gửi gì khác; hãy cập nhật SolidCraft trong {manager}."
+  },
+  "zh": {
+    "update.managed": "有可用更新：请在 {manager} 中更新 SolidCraft",
+    "update.prefs_managed": "这是由 {manager} 管理的 SolidCraft {version}。检查时只向 GitHub 询问最新版本，不会发送其他任何内容；请在 {manager} 中更新 SolidCraft。"
+  }
+}

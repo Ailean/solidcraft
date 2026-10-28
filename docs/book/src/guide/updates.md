@@ -90,6 +90,24 @@ no check controls for them. The browser app updates itself: reload the page to g
 version. When the network is unavailable, or the update can't finish downloading in time, the
 saved version opens instead, and the download continues for the next reload.
 
+## Managed by a launcher
+
+When a launcher such as the ArtCraft Launcher installed SolidCraft, it also updates it. SolidCraft
+notices this in two ways:
+
+- the environment variable `SOLIDCRAFT_MANAGED_BY` is set; its value is the launcher's name, for
+  example `ArtCraft Launcher`, and
+- the ArtCraft Launcher's `installed.json` (in its per-user data folder, read-only) lists this
+  SolidCraft: its recorded path is this executable, this AppImage or `.app`, or the folder this
+  executable was unpacked into.
+
+SolidCraft then still checks for a newer release, and the pill and **Check now** work as before, but
+the window says **Update available: update SolidCraft in ArtCraft Launcher** and offers only
+**Skip this version** and **Remind me later**. There is no **Update now**, **Download** or
+AppImage replacement, so the launcher's record of what is installed stays right. Without the
+variable or a record, nothing changes. Setting `SOLIDCRAFT_UPDATE_CHECK=0` still turns the checks
+off.
+
 ## Which file Download gets
 
 Releases attach the main packages under fixed names (see [releasing](https://github.com/bherbruck/solidcraft/blob/main/docs/releasing.md)),

@@ -281,11 +281,129 @@ const WINDOW_PAGES: [ui_kit::WindowPage<SolveApp>; 9] = [
     },
 ];
 
+fn search_header(ui: &mut egui::Ui, app: &mut SolveApp) {
+    let typed = drive_search(ui, app);
+    let (field, _) =
+        ui_kit::search_actions_row(ui, egui::Id::new("prefs_search"), &mut app.prefs_window.filter, crate::i18n::tr("prefs.search"), &[]);
+    if typed {
+        place_search_cursor(ui.ctx(), egui::Id::new("prefs_search"), app.prefs_window.filter.chars().count());
+    }
+    crate::scenario::publish_handle("prefs:search", field.rect.center());
+    if field.has_focus() {
+        crate::prefs_search::note_key_sink(ui.ctx());
+    }
+    settle_search(app);
+    crate::prefs_search::set_reveal(ui.ctx(), app.prefs_window.reveal.clone());
+    crate::prefs_search::set_force_scroll(ui.ctx(), !app.prefs_window.filter.trim().is_empty());
+    ui.add_space(Tokens::get().space_8);
+}
+
+/// Keys for the search field. Shortcut capture keeps the key for itself.
+fn drive_search(ui: &mut egui::Ui, app: &mut SolveApp) -> bool {
+    let ctx = ui.ctx().clone();
+    if crate::keymap::capturing(app) {
+        return false;
+    }
+    let id = egui::Id::new("prefs_search");
+    if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
+        ctx.memory_mut(|memory| memory.request_focus(id));
+    }
+    let sink = crate::prefs_search::key_sink(&ctx);
+    let mut typed = false;
+    if !sink {
+        let modifiers = ctx.input(|input| input.modifiers);
+        if !modifiers.command && !modifiers.ctrl && !modifiers.alt {
+            let mut chars = String::new();
+            ctx.input_mut(|input| {
+                input.events.retain(|event| {
+                    let egui::Event::Text(text) = event else { return true };
+                    if text.chars().any(char::is_control) {
+                        return true;
+                    }
+                    chars.push_str(text);
+                    false
+                });
+            });
+            if !chars.is_empty() {
+                app.prefs_window.filter.push_str(&chars);
+                ctx.memory_mut(|memory| memory.request_focus(id));
+                typed = true;
+            }
+        }
+    }
+    let query = app.prefs_window.filter.trim().to_lowercase();
+    if query.is_empty() {
+        return typed;
+    }
+    let (nav_query, cursor, hits) = crate::prefs_search::nav(&ctx);
+    let fresh = nav_query == query;
+    let cursor = if fresh { cursor.min(hits.len().saturating_sub(1)) } else { 0 };
+    if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)) && fresh && !hits.is_empty() {
+        crate::prefs_search::set_cursor(&ctx, (cursor + 1).min(hits.len() - 1));
+    } else if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)) && fresh && !hits.is_empty() {
+        crate::prefs_search::set_cursor(&ctx, cursor.saturating_sub(1));
+    } else if fresh && !hits.is_empty() && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+        if let Some(hit) = hits.get(cursor) {
+            open_result(app, hit.page, &hit.label);
+            ctx.memory_mut(|memory| memory.surrender_focus(id));
+        }
+    } else {
+        crate::prefs_search::set_cursor(&ctx, cursor);
+    }
+    if !app.prefs_window.filter.trim().is_empty() && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        app.prefs_window.filter.clear();
+        ctx.memory_mut(|memory| memory.surrender_focus(id));
+    }
+    typed
+}
+
+fn place_search_cursor(ctx: &egui::Context, id: egui::Id, chars: usize) {
+    let Some(mut state) = egui::TextEdit::load_state(ctx, id) else { return };
+    let cursor = egui::text::CCursor::new(chars);
+    state.cursor.set_char_range(Some(egui::text::CCursorRange::one(cursor)));
+    state.store(ctx, id);
+}
+
+fn open_result(app: &mut SolveApp, page: usize, label: &str) {
+    app.prefs_window.filter.clear();
+    app.prefs_window.search_from = None;
+    app.prefs_window.section = page;
+    app.prefs_window.land_on = Some(page);
+    app.prefs_window.reveal = Some(crate::prefs_search::reveal_for(page, label));
+}
+
+/// An empty field returns to the page that was up when the search started.
+fn settle_search(app: &mut SolveApp) {
+    if app.prefs_window.filter.trim().is_empty() {
+        if app.prefs_window.reveal.is_none()
+            && let Some(page) = app.prefs_window.search_from.take()
+        {
+            app.prefs_window.section = page;
+            app.prefs_window.land_on = Some(page);
+        }
+    } else if app.prefs_window.search_from.is_none() {
+        app.prefs_window.search_from = Some(app.prefs_window.section);
+    }
+}
+
+/// A page tab leaves search and shows that page on its own.
+fn clear_search(app: &mut SolveApp) {
+    app.prefs_window.filter.clear();
+    app.prefs_window.search_from = None;
+    app.prefs_window.reveal = None;
+}
+
 fn window_page<const INDEX: usize>(ui: &mut egui::Ui, app: &mut SolveApp) {
     if let Some(rect) = crate::scenario::rect_of("prefs:page:Sketch") {
         crate::scenario::publish_target("prefs:page:Selection", rect);
     }
-    if app.prefs_window.section != INDEX {
+    if let Some(page) = app.prefs_window.land_on.take() {
+        if app.prefs_window.section != page {
+            crate::keymap::stop_capture(app);
+            app.keymap.read_only = false;
+        }
+        app.prefs_window.section = page;
+    } else if app.prefs_window.section != INDEX {
         crate::keymap::stop_capture(app);
         app.keymap.read_only = false;
         app.prefs_window.section = INDEX;
@@ -477,6 +595,35 @@ pub const DEFAULT_BROWSER_WIDTH: f32 = 250.0;
 /// The browser's first share of the column it shares with History under it (#7371): the equal
 /// split; the column clamps what the user drags so both cards keep their header and two rows.
 pub const DEFAULT_BROWSER_SHARE: f32 = 0.5;
+
+/// When a component's bodies sit in a Bodies folder of their own in the browser (#4217): each
+/// folder is one more level that pushes deep assemblies right. Only folders inside components
+/// fold; the design's own Bodies folder, and a folder hidden with its eye (its eye is the way
+/// back), always stay (`browser::bodies_folded`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BodiesFolders {
+    Always,
+    /// A component with one body and no groups lists the body straight under it. Also what a
+    /// value this version doesn't know reads as (`lenient`).
+    #[default]
+    Several,
+    /// Components list their bodies and groups straight under them.
+    Never,
+}
+
+impl BodiesFolders {
+    pub const ALL: [Self; 3] = [Self::Always, Self::Several, Self::Never];
+
+    /// Its name in the Preferences (a message id).
+    pub fn label_id(self) -> &'static str {
+        match self {
+            Self::Always => "prefs.bodies_folders_always",
+            Self::Several => "prefs.bodies_folders_several",
+            Self::Never => "prefs.bodies_folders_never",
+        }
+    }
+}
 
 // The stored fields, their defaults, page resets and simple form controls share this table.
 // Omitted pages keep fields such as grid_follows_view and added agents when restoring defaults.
@@ -716,6 +863,8 @@ preference_settings! {
     dialog_place: crate::dialog_column::DialogPlace = Default::default(), PAGE_INTERFACE;
     /// The names the browser, dialogs and lists show for the origin planes (#6491).
     origin_plane_names: OriginPlaneNames = OriginPlaneNames::default(), PAGE_INTERFACE;
+    /// When components' bodies sit in a Bodies folder in the browser (#4217).
+    browser_bodies_folders: BodiesFolders = BodiesFolders::Several, PAGE_INTERFACE;
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
     zoom_to_cursor: bool = true, PAGE_NAVIGATION => check("Zoom to the cursor", "The wheel zooms toward the point under the cursor (off: toward the view's centre)");
     /// Spread discrete wheel input across frames (off: apply each event immediately).
@@ -899,6 +1048,14 @@ pub struct PrefsWindow {
     pub(crate) plugin_query: String,
     /// The followed theme file's state (#7573): its last good theme and why a read failed.
     pub(crate) follow: crate::theme_files::Follow,
+    /// Filters every page. Empty leaves the selected page as it is.
+    pub filter: String,
+    /// The page on screen when the current search started. Clearing the field returns there.
+    search_from: Option<usize>,
+    /// Set when a result is chosen, so the page draw does not put the previous tab back.
+    land_on: Option<usize>,
+    /// The row to scroll to after a result is chosen.
+    reveal: Option<crate::prefs_search::Reveal>,
 }
 
 /// Following a theme file needs the file system: the desktop app only (#7573).
@@ -1588,6 +1745,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         open_at(app, PAGE_SHORTCUTS);
     }
     if !app.prefs_window.open {
+        app.prefs_window.filter.clear();
+        app.prefs_window.search_from = None;
+        app.prefs_window.land_on = None;
+        app.prefs_window.reveal = None;
+        crate::prefs_search::set_reveal(ctx, None);
         app.prefs_window.snapshot = None;
         // A question left up when the dialog closed is not still asked when it opens again.
         app.space_mouse.restore_pending = false;
@@ -1600,6 +1762,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         app.prefs_window.snapshot = Some(Snapshot::take(app));
     }
     unfold(ctx);
+    if let Some(reveal) = &app.prefs_window.reveal
+        && crate::now_ms() > reveal.until
+    {
+        app.prefs_window.reveal = None;
+    }
+    let sink = crate::prefs_search::shift_key_sink(ctx);
+    crate::prefs_search::set_key_sink_prev(ctx, sink);
     let mut button: Option<&str> = None;
     let before = app.preferences.clone();
     let capturing = crate::keymap::capturing(app);
@@ -1611,7 +1780,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .actions("OK", "Cancel", Some("Apply"));
     let window = if capturing { window.keep_open_on_escape() } else { window };
     let mut selected = app.prefs_window.section;
-    let (closed, action) = window.show_pages(ctx, &mut selected, &WINDOW_PAGES, app, |ui| {
+    let (closed, action) = window.show_pages_with_header(ctx, &mut selected, &WINDOW_PAGES, app, search_header, clear_search, |ui| {
         if ui_kit::button(ui, crate::i18n::tr("ui.restore_defaults"), ui_kit::Button::Normal)
             .on_hover_text(crate::i18n::tr("ui.reset_the_settings_on_this_page"))
             .clicked()
@@ -1668,6 +1837,10 @@ pub(crate) fn close(app: &mut SolveApp, revert: bool) {
         }
     }
     app.prefs_window.open = false;
+    app.prefs_window.filter.clear();
+    app.prefs_window.search_from = None;
+    app.prefs_window.land_on = None;
+    app.prefs_window.reveal = None;
     app.keymap.read_only = false;
     crate::keymap::stop_capture(app);
 }
@@ -1683,20 +1856,47 @@ fn up_axis_changed(app: &mut SolveApp) {
 }
 
 /// One page of the dialog. Inputs share the kit's aligned rows and tokenised controls.
+/// A search draws every page and keeps the controls that match.
 fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
-    if app.prefs_window.section == PAGE_SHORTCUTS {
-        crate::keymap::page(app, ui);
-        return;
+    let _search = crate::prefs_search::begin(ui, &app.prefs_window.filter);
+    if crate::prefs_search::querying(ui) {
+        // Paint only the pages that match. A first pass is invisible, so the 3D mouse rows and the
+        // agent list cannot draw on top of the setting that did match.
+        let mut keep = vec![false; WINDOW_PAGES.len()];
+        for (index, item) in WINDOW_PAGES.iter().enumerate() {
+            crate::prefs_search::begin_page(ui, index, crate::i18n::tr(item.label));
+            let before = crate::prefs_search::hits(ui);
+            let mut probe = crate::prefs_search::detached_child(ui, ("prefs-search-probe", index), true);
+            draw_page(app, &mut probe, index, t);
+            keep[index] = crate::prefs_search::hits(ui) > before;
+        }
+        crate::prefs_search::rewind_search_layout(ui);
+        for (index, item) in WINDOW_PAGES.iter().enumerate() {
+            if !keep.get(index).copied().unwrap_or(false) {
+                continue;
+            }
+            crate::prefs_search::begin_page(ui, index, crate::i18n::tr(item.label));
+            let before = crate::prefs_search::hits(ui);
+            let mut child = crate::prefs_search::detached_child(ui, ("prefs-search-page", index), false);
+            draw_page(app, &mut child, index, t);
+            crate::prefs_search::commit_search_child(ui, &child, before);
+        }
+        if crate::prefs_search::hits(ui) == 0 {
+            ui.label(egui::RichText::new(crate::i18n::tr("prefs.search_empty")).size(t.font_body).color(t.form_dim));
+        }
+    } else {
+        let label = WINDOW_PAGES.get(app.prefs_window.section).map(|item| crate::i18n::tr(item.label)).unwrap_or("");
+        crate::prefs_search::begin_page(ui, app.prefs_window.section, label);
+        draw_page(app, ui, app.prefs_window.section, t);
     }
-    if app.prefs_window.section == PAGE_AI {
-        crate::agent_chat::settings::page(app, ui);
-        return;
-    }
-    if app.prefs_window.section == PAGE_PLUGINS {
-        crate::plugins::page(app, ui);
-        return;
-    }
-    match app.prefs_window.section {
+    crate::prefs_search::store_nav(ui);
+}
+
+fn draw_page(app: &mut SolveApp, ui: &mut egui::Ui, index: usize, t: &Tokens) {
+    match index {
+        PAGE_SHORTCUTS => crate::keymap::page(app, ui),
+        PAGE_AI => crate::agent_chat::settings::page(app, ui),
+        PAGE_PLUGINS => crate::plugins::page(app, ui),
         PAGE_GENERAL => general::show(app, ui),
         PAGE_INTERFACE => interface::interface(app, ui, t),
         PAGE_DESIGN => design::show(app, ui),
@@ -3741,6 +3941,39 @@ mod tests {
         assert_eq!(other.preferences.ui_font, family);
         super::defaults(&mut app, super::PAGE_INTERFACE);
         assert_eq!(app.preferences.ui_font, "");
+    }
+
+    /// Bodies folders (#4217): Several bodies only by default, also in preferences saved before it
+    /// existed. Each value is saved and read back; `ui.prefs` refuses anything else and changes
+    /// nothing, and saved preferences read such a value as the default and keep the rest. The
+    /// Interface page's segments set it, Cancel puts it back and the page's Restore Defaults resets it.
+    #[test]
+    fn bodies_folders_is_saved_restored_and_refuses_unknown_values() {
+        use super::*;
+        let mut h = crate::scenario::Harness::new();
+        assert_eq!(h.app.preferences.browser_bodies_folders, BodiesFolders::Several);
+        assert_eq!(lenient(&json!({"theme": "light"})).browser_bodies_folders, BodiesFolders::Several, "saved before it existed");
+        for (mode, id) in [(BodiesFolders::Always, "always"), (BodiesFolders::Several, "several"), (BodiesFolders::Never, "never")] {
+            assert_eq!(control(&mut h.app, &json!({"browser_bodies_folders": id})).unwrap()["browser_bodies_folders"], id);
+            let mut restored = SolveApp::new(Default::default(), Default::default());
+            restored.load_prefs(&h.app.prefs());
+            assert_eq!(restored.preferences.browser_bodies_folders, mode, "{id}");
+        }
+        for bad in [json!("sometimes"), json!("Never"), json!(""), json!(2), json!(null), json!(["never"])] {
+            let before = h.app.preferences.clone();
+            assert!(set(&mut h.app, &json!({"browser_bodies_folders": bad})).is_err(), "{bad}");
+            assert_eq!(h.app.preferences, before, "{bad}: a refused value changes nothing");
+            let saved = lenient(&json!({"browser_bodies_folders": bad, "theme": "light"}));
+            assert_eq!((saved.browser_bodies_folders, saved.theme.as_str()), (BodiesFolders::Several, "light"), "{bad}");
+        }
+        h.call("ui.prefs", json!({"open": "Interface"}));
+        reveal_preference(&mut h, "dialog:Bodies folders:Always");
+        h.step(&json!({"click": {"handle": "dialog:Bodies folders:Always"}})).unwrap();
+        assert_eq!(h.app.preferences.browser_bodies_folders, BodiesFolders::Always);
+        h.call("ui.prefs", json!({"button": "cancel"}));
+        assert_eq!(h.app.preferences.browser_bodies_folders, BodiesFolders::Never, "Cancel puts it back");
+        defaults(&mut h.app, PAGE_INTERFACE);
+        assert_eq!(h.app.preferences.browser_bodies_folders, BodiesFolders::Several, "Interface's Restore Defaults");
     }
 
     /// Theme files (#2255): a built-in one and an imported one turn on through `ui.prefs`, the

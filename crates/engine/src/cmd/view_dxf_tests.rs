@@ -1,5 +1,6 @@
 use super::*;
 use solidcraft_geom::{Vec2, Vec3};
+use solidcraft_io::{DxfFile, DxfLinetype, DxfShape};
 use solidcraft_render::StandardView;
 
 fn run(s: &mut Session, id: &str, p: Value) -> Value {
@@ -18,7 +19,17 @@ fn camera(view: StandardView) -> Camera {
     c
 }
 fn export(s: &mut Session, c: Camera, hidden: &str) -> Value {
-    run(s, CMD, json!({"camera":c,"hidden":hidden}))
+    let result = run(s, CMD, json!({"camera":c,"hidden":hidden}));
+    let file = read_view_dxf(&result);
+    assert!(!file.entities().is_empty());
+    // Current-view curves are LINEs or straight LWPOLYLINEs, not analytic
+    // circles or bulged paths. Keep the separate legacy segment assertions.
+    assert!(file.entities().iter().all(|entity| matches!(entity.geometry(), DxfShape::Line(..) | DxfShape::Polyline { .. })));
+    result
+}
+
+fn read_view_dxf(value: &Value) -> DxfFile<DxfShape> {
+    solidcraft_io::read_dxf_file(value["dxf"].as_str().unwrap()).unwrap()
 }
 
 #[test]
@@ -75,8 +86,15 @@ fn view_dxf_blind_back_hole_is_omitted_or_dashed_and_front_hole_is_visible() {
     assert_eq!(top["hidden"], 0);
     assert!(dashed["hidden"].as_u64().unwrap() > 12, "{dashed}");
     assert_eq!(top["visible"], dashed["visible"]);
-    assert!(!top["dxf"].as_str().unwrap().contains("HIDDEN"));
-    assert!(dashed["dxf"].as_str().unwrap().contains("LWPOLYLINE"));
+    let top_file = read_view_dxf(&top);
+    assert!(!top_file.layers().iter().any(|layer| layer.name() == "HIDDEN"));
+    let dashed_file = read_view_dxf(&dashed);
+    assert!(dashed_file.entities().iter().any(|entity| matches!(entity.geometry(), DxfShape::Polyline { .. })));
+    assert!(dashed_file.entities().iter().enumerate().any(|(index, entity)| {
+        dashed_file.layer(entity.layer()).unwrap().name() == "HIDDEN"
+            && dashed_file.effective_linetype(index).unwrap() == DxfLinetype::Hidden
+    }));
+    // Wire pin: PLINEGEN is not retained as a separate DxfFile property.
     assert!(dashed["dxf"].as_str().unwrap().contains("128\n"));
     let bottom = export(&mut s, camera(StandardView::Bottom), "omit");
     assert!(bottom["visible"].as_u64().unwrap() > top["visible"].as_u64().unwrap());
@@ -187,6 +205,10 @@ fn view_dxf_exports_a_sketch_only_design_on_the_sketch_layer() {
         let v = export(&mut s, camera(StandardView::Top), "omit");
         // Four rectangle sides and one circle, each its own entity.
         assert_eq!(v["sketch"], 5, "{v}");
+        let file = read_view_dxf(&v);
+        assert!(file.entities().iter().enumerate().all(|(index, entity)| {
+            file.layer(entity.layer()).unwrap().name() == "SKETCH" && file.effective_linetype(index).unwrap() == DxfLinetype::Continuous
+        }));
         let geometry = solidcraft_io::read_dxf(v["dxf"].as_str().unwrap()).unwrap();
         let (mut sides, mut circle) = (Vec::new(), 0);
         for g in geometry {
@@ -224,7 +246,9 @@ fn view_dxf_hides_finished_sketches_behind_bodies_but_draws_the_active_sketch_on
     };
     let active = export(&mut s, camera(StandardView::Top), "omit");
     assert_eq!(active["sketch"], 1, "{active}");
-    assert!((length(&active) - 80.).abs() < 1e-3 && active["dxf"].as_str().unwrap().contains("SKETCH"));
+    let active_file = read_view_dxf(&active);
+    assert!(active_file.entities().iter().any(|entity| active_file.layer(entity.layer()).unwrap().name() == "SKETCH"));
+    assert!((length(&active) - 80.).abs() < 1e-3);
     run(&mut s, "sketch.finish", json!({}));
     let finished = export(&mut s, camera(StandardView::Top), "omit");
     assert_eq!(finished["sketch"], 2, "{finished}");

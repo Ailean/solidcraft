@@ -65,21 +65,30 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     writing.check().map_err(|e| bad(CMD, e))?;
     let mut visible = 0;
     let mut hidden = 0;
-    let mut entities = Vec::new();
+    let mut visible_lines = Vec::new();
+    let mut hidden_lines = Vec::new();
     for line in drawing.lines {
-        if line.hidden && !dashed {
-            continue;
-        }
-        let layer = if line.hidden {
+        if line.hidden {
+            if !dashed {
+                continue;
+            }
             hidden += 1;
-            "HIDDEN"
+            hidden_lines.push((line.a, line.b));
         } else {
             visible += 1;
-            "VISIBLE"
-        };
-        entities.push(DxfEntity { layer: layer.into(), shape: DxfShape::Line(line.a, line.b) });
+            visible_lines.push((line.a, line.b));
+        }
     }
-    let mut entities = projection::connect(entities);
+    // Join hidden geometry before constructing any DXF entities. Preserve the
+    // existing output order: visible lines, connected hidden runs, then sketches.
+    let hidden_paths = projection::connect(hidden_lines);
+    let mut entities = Vec::new();
+    for (a, b) in visible_lines {
+        entities.push(DxfEntity { layer: "VISIBLE".into(), shape: DxfShape::Line(a, b) });
+    }
+    for path in hidden_paths {
+        entities.push(DxfEntity { layer: "HIDDEN".into(), shape: DxfShape::Polyline { points: path.points } });
+    }
     let sketch = sketch_entities(drawing.sketch, dashed, &mut entities);
     let mut layers = vec![DxfLayer::new("VISIBLE", 7)];
     if dashed {

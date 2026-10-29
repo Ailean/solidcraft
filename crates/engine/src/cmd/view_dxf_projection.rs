@@ -3,7 +3,6 @@
 #[cfg(test)]
 use solidcraft_geom::Mesh;
 use solidcraft_geom::{Aabb3, Vec2, Vec3};
-use solidcraft_io::{DxfEntity, DxfShape};
 use solidcraft_render::Camera;
 use std::collections::BTreeMap;
 
@@ -33,15 +32,10 @@ pub(super) fn drawing(meshes: &super::meshes::Scene, sketch: &[super::sketch::Pa
 
 /// Keep the hidden curves connected: restarting a dash on every short chord would make a
 /// small circular hole look solid. Degree-two joins continue; junctions end the polyline.
-pub(super) fn connect(entities: Vec<DxfEntity>) -> Vec<DxfEntity> {
+// The caller supplies hidden line endpoints only. Layer names and DXF entity
+// construction belong to the caller; this helper returns geometric runs.
+pub(super) fn connect(lines: Vec<(Vec2, Vec2)>) -> Vec<Path> {
     let mut result = Vec::new();
-    let mut lines = Vec::new();
-    for entity in entities {
-        match entity {
-            DxfEntity { layer, shape: DxfShape::Line(a, b) } if layer == "HIDDEN" => lines.push((a, b)),
-            e => result.push(e),
-        }
-    }
     let extent = lines.iter().flat_map(|(a, b)| [a, b]).fold(1.0_f64, |s, p| s.max(p.x.abs()).max(p.y.abs()));
     let eps = extent * 1e-8;
     let key = |p: Vec2| [(p.x / eps).round() as i64, (p.y / eps).round() as i64];
@@ -71,7 +65,7 @@ pub(super) fn connect(entities: Vec<DxfEntity>) -> Vec<DxfEntity> {
             }
             points.reverse();
         }
-        result.push(DxfEntity { layer: "HIDDEN".into(), shape: DxfShape::Polyline { points } });
+        result.push(Path { points, hidden: true });
     }
     result
 }
@@ -370,5 +364,29 @@ mod tests {
         assert!(occluded(Vec3::new(0., 0.5, 2.), Vec3::new(1., 0.5, 2.), t, 0.).is_none());
         let (lo, hi) = occluded(Vec3::new(0., 0.5, 0.), Vec3::new(1., 0.5, 2.), t, 0.).unwrap();
         assert!(lo.abs() < 1e-9 && (hi - 0.5).abs() < 1e-9);
+    }
+    #[test]
+    fn hidden_line_runs_keep_endpoint_order_and_disconnected_runs() {
+        let (a, b, c) = (Vec2::new(0., 0.), Vec2::new(1., 0.), Vec2::new(2., 0.));
+        let (d, e) = (Vec2::new(10., 0.), Vec2::new(11., 0.));
+        let paths = connect(vec![(a, b), (c, b), (d, e)]);
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0].points, [a, b, c]);
+        assert_eq!(paths[1].points, [d, e]);
+        assert!(paths.iter().all(|path| path.hidden));
+    }
+
+    #[test]
+    fn hidden_line_junctions_stop_runs_and_cycles_keep_the_repeated_endpoint() {
+        let (a, b, c, d) = (Vec2::new(0., 0.), Vec2::new(1., 0.), Vec2::new(1., 1.), Vec2::new(0., 1.));
+        let junction = connect(vec![(d, a), (a, b), (a, c)]);
+        assert_eq!(junction.len(), 3);
+        assert_eq!(junction[0].points, [d, a]);
+        assert_eq!(junction[1].points, [a, b]);
+        assert_eq!(junction[2].points, [a, c]);
+        let cycle = connect(vec![(a, b), (b, c), (c, d), (d, a)]);
+        assert_eq!(cycle.len(), 1);
+        assert_eq!(cycle[0].points, [a, b, c, d, a]);
+        assert!(junction.iter().chain(&cycle).all(|path| path.hidden));
     }
 }

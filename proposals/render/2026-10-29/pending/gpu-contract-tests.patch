@@ -1,0 +1,116 @@
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -123,6 +123,113 @@
+         assert!(input.led_strip.is_none() && input.led_samples.is_none());
+         assert_eq!(wire["environment"]["path"], json!("unopened.hdr"));
+     }
++    // These contract tests never register a host, read a resource file or create a device.
++    #[test]
++    fn portable_gpu_extensions_survive_request_normalization_without_an_executor() {
++        let s = Session::default();
++        let camera = solidcraft_render::Camera { fov: 0.8, ..Default::default() };
++        let settings = json!({
++            "width":16,"height":8,"camera":camera,"exposure_ev":1.25,
++            "job":{"method":"gpu_path","options":{
++                "samples":96,"max_depth":11,"seed":1234,"denoise":false,"tone_map":"aces_fitted",
++                "nested_media":true,"transmission_samples":1,
++                "volume":{"min_mm":[-20.0,-10.0,-5.0],"max_mm":[20.0,10.0,5.0],
++                    "extinction_per_mm":0.002,"scattering_albedo":[0.2,0.4,0.7],"anisotropy":0.3},
++                "adaptive":{"pilot_samples":16,"min_samples":32,"relative_error":0.08,
++                    "absolute_error":0.003,"coverage_error":0.02},
++                "finishing":{"rgb_gain":[1.2,0.8,1.1],"contrast":1.3,"saturation":0.7,"vignette":0.2,
++                    "bloom":{"strength":0.15,"threshold":2.0,"radius":7}},
++                "backdrop":{"mode":"radial","first_srgb":[10,20,30],"second_srgb":[80,90,100],
++                    "center":[0.25,0.75],"radius":0.8},
++                "linear_exr":true,"lens":{"aperture_radius_mm":0.25,"focus_distance_mm":42.0},
++                "lighting":{"sun":null,"environment":[0.2,0.4,0.6],"area_lights":[]}
++            }}
++        });
++        let input = json!({"settings":settings,"replace":true});
++        let before = s.doc.to_json();
++        let revision = s.revision;
++        let normalized = normalize_saved_job(&s, &input, "render.preflight").unwrap().unwrap();
++        assert_eq!(normalized.params["progressive"], true);
++        assert_eq!(normalized.params["replace"], true);
++        assert!(normalized.params["settings"]["job"].is_null());
++        assert_eq!(normalized.params["settings"]["exposure_ev"], 1.25);
++        for field in ["samples","max_depth","seed","denoise","tone_map","nested_media","transmission_samples",
++            "volume","adaptive","finishing","backdrop","linear_exr","lens","lighting"] {
++            assert_eq!(normalized.params[field], settings["job"]["options"][field], "lost portable field {field}");
++        }
++        let lowered: ProgressiveStart = serde_json::from_value(normalized.params).unwrap();
++        assert!(lowered.progressive && lowered.linear_exr && lowered.nested_media);
++        assert_eq!(lowered.volume.unwrap().extinction_per_mm, 0.002);
++        assert_eq!(lowered.adaptive.unwrap().min_samples, 32);
++        assert_eq!(lowered.finishing.bloom.unwrap().radius, 7);
++        assert_eq!(lowered.lens.unwrap().focus_distance_mm, 42.0);
++        assert_eq!(input, json!({"settings":settings,"replace":true}));
++        assert_eq!(s.doc.to_json(), before);
++        assert_eq!(s.revision, revision);
++        assert!(s.render_job_host().is_none());
++    }
++
++    #[test]
++    fn portable_gpu_intent_rejects_runtime_extension_overrides_before_resource_capture() {
++        let s = Session::default();
++        let original = json!({"settings":{"job":{"method":"gpu_path"}}});
++        let before = s.doc.to_json();
++        for (key, value) in [
++            ("volume", json!({})), ("adaptive", json!({})), ("nested_media", json!(false)),
++            ("transmission_samples", json!(1)), ("aging", json!([])),
++            ("finishing", json!({})), ("linear_exr", json!(false)), ("backdrop", json!(null)),
++            ("lens", json!(null)), ("denoise", json!(false)),
++            ("environment", json!({"kind":"hdr","path":"must-never-be-read.hdr"})),
++        ] {
++            let mut mixed = original.clone();
++            mixed[key] = value;
++            for command in ["render.preflight", "render.start"] {
++                let error = match normalize_saved_job(&s, &mixed, command) {
++                    Err(error) => error.to_string(),
++                    Ok(_) => panic!("runtime extension {key} overrode portable GPU intent"),
++                };
++                assert!(error.contains("cannot override"), "{key}: {error}");
++            }
++        }
++        assert_eq!(s.doc.to_json(), before);
++        assert!(s.render_job_host().is_none());
++    }
++
++    #[test]
++    fn portable_gpu_intent_refuses_cpu_only_optics_instead_of_dropping_them() {
++        let s = Session::default();
++        for (field, value) in [
++            ("punctual_lights", json!([])), ("reflections", json!({})),
++            ("anisotropic_faces", json!([null,null])), ("emissions", json!([])),
++        ] {
++            let mut input = json!({"settings":{"job":{"method":"gpu_path","options":{}}}});
++            input["settings"]["job"]["options"][field] = value;
++            let error = match normalize_saved_job(&s, &input, "render.preflight") {
++                Err(error) => error.to_string(),
++                Ok(_) => panic!("GPU silently accepted CPU-only option {field}"),
++            };
++            assert!(error.contains("unknown field") && error.contains(field), "{error}");
++        }
++        assert!(s.render_job_host().is_none());
++    }
++
++    #[test]
++    fn portable_gpu_volume_conflicts_refuse_before_any_executor_is_available() {
++        let s = Session::default();
++        for options in [
++            json!({"volume":{},"denoise":true}),
++            json!({"volume":{},"transmission_samples":2}),
++        ] {
++            let input = json!({"settings":{"job":{"method":"gpu_path","options":options}}});
++            let error = match normalize_saved_job(&s, &input, "render.preflight") {
++                Err(error) => error.to_string(),
++                Ok(_) => panic!("incompatible volume transport was admitted"),
++            };
++            assert!(error.contains("volume"), "{error}");
++        }
++        assert!(s.render_job_host().is_none());
++    }
++
+ }
+ 
+ /// Resolve portable intent before choosing an executor. Legacy requests are left intact;

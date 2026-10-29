@@ -1,0 +1,225 @@
+--- a/crates/render/src/raytrace/planar_shadow_tests.rs
++++ b/crates/render/src/raytrace/planar_shadow_tests.rs
+@@ -121,5 +121,222 @@
+         assert!(plane.intersect(&Ray::new(point, direction, 0.0_f64.next_up(), 8.0).unwrap()).is_none());
+     }
+     let oblique = Triangle::new([Vec3::new(-4.0, -4.0, -4.0), Vec3::new(4.0, -4.0, 4.0), Vec3::new(4.0, 4.0, 4.0)]).unwrap();
+     assert_eq!(oblique.intersect(&Ray::new(Vec3::new(1.0, 1.0, 9.0), -Vec3::Z, 0.0, 10.0).unwrap()).unwrap().distance, 8.0);
+ }
++
++fn near_coordinate_cases(mut check: impl FnMut(Triangle, Triangle, Ray, usize, f64)) {
++    for axis in 0..3 {
++        for scale in [1e-6, 1.0, 1e6] {
++            for delta in [1e-16, 1e-14, 1e-12] {
++                for translated in [false, true] {
++                    let translation = if translated { Vec3::new(1e8, -2e8, 0.0) } else { Vec3::ZERO };
++                    let transform = |v| permute(v * scale + translation, axis);
++                    let mut vertices = floor();
++                    vertices[1].z = delta;
++                    let vertices = vertices.map(transform);
++                    let far = Triangle::new(
++                        [Vec3::new(-1200.0, -1200.0, 1.0), Vec3::new(-1000.0, -1200.0, 1.0), Vec3::new(-1000.0, -1000.0, 1.0)]
++                            .map(transform),
++                    ).unwrap();
++                    for reverse in [false, true] {
++                        let [a, b, c] = vertices;
++                        let triangle = Triangle::new(if reverse { [a, c, b] } else { [a, b, c] }).unwrap();
++                        let (x, y) = (73.17, -21.19);
++                        let point = transform(Vec3::new(x, y, delta * (x - y) / 360.0));
++                        for direction in [Vec3::new(0.7, -1.0, 0.2), Vec3::new(-1.0, 0.3, 1e-6)] {
++                            for sign in [-1.0, 1.0] {
++                                let ray = spawned(triangle, point, scale, permute(direction * sign, axis));
++                                check(triangle, far, ray, axis, scale);
++                            }
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
++
++fn planar_cursor_result(bvh: &Bvh, ray: Ray, any: bool) -> Option<Hit> {
++    let cancel = CancelToken::default();
++    let mut work = WorkBudget::new(MAX_WORK).unwrap();
++    let mut cursor = bvh::TraceCursor::new(ray, any);
++    // These fixtures contain at most three triangles. Bound stepping by structure,
++    // not wall-clock time, and fail if the cursor never publishes its answer.
++    for _ in 0..256 {
++        if let Some(result) = cursor.step(bvh, &mut work, &cancel).unwrap() {
++            return result;
++        }
++    }
++    panic!("small planar fixture cursor did not complete");
++}
++
++#[test]
++fn almost_coordinate_planes_leave_both_sides_after_shared_spawn_without_self_hits() {
++    near_coordinate_cases(|triangle, far, ray, _, _| {
++        assert!(far.intersect(&ray).is_none(), "the remote fixture must not occlude this ray");
++        assert!(triangle.intersect(&ray).is_none(), "departed triangle={triangle:?}, ray={ray:?}");
++    });
++}
++
++#[test]
++fn almost_coordinate_depth_survives_mixed_leaves_and_keeps_distinct_close_blockers() {
++    near_coordinate_cases(|triangle, far, ray, axis, scale| {
++        let cancel = CancelToken::default();
++        let height = 0.005 * scale;
++        let center = ray.at(height / component(ray.direction(), axis).abs()).unwrap();
++        let blocker = Triangle::new(
++            [Vec3::new(-180.0, -180.0, 0.0), Vec3::new(180.0, -180.0, 0.0), Vec3::new(0.0, 180.0, 0.0)]
++                .map(|v| permute(v * scale, axis) + center),
++        ).unwrap();
++        assert!(blocker.intersect(&ray).is_some(), "a distinct nearby triangle must remain visible");
++        for leaf_size in [1, 2, 8] {
++            for sources in [vec![triangle, far], vec![far, triangle]] {
++                let bvh = build(sources, leaf_size);
++                assert!(bvh.closest_hit(&ray, &mut WorkBudget::new(MAX_WORK).unwrap(), &cancel).unwrap().is_none());
++                assert!(!bvh.any_hit(&ray, &mut WorkBudget::new(MAX_WORK).unwrap(), &cancel).unwrap());
++                assert!(planar_cursor_result(&bvh, ray, false).is_none());
++                assert!(planar_cursor_result(&bvh, ray, true).is_none());
++            }
++            for (sources, expected) in [(vec![triangle, far, blocker], 2), (vec![blocker, far, triangle], 0)] {
++                let bvh = build(sources, leaf_size);
++                assert_eq!(bvh.closest_hit(&ray, &mut WorkBudget::new(MAX_WORK).unwrap(), &cancel).unwrap().unwrap().primitive_index, expected);
++                assert!(bvh.any_hit(&ray, &mut WorkBudget::new(MAX_WORK).unwrap(), &cancel).unwrap());
++                assert_eq!(planar_cursor_result(&bvh, ray, false).unwrap().primitive_index, expected);
++                assert_eq!(planar_cursor_result(&bvh, ray, true).unwrap().primitive_index, expected);
++            }
++        }
++    });
++}
++
++#[test]
++fn oblique_plane_depth_preserves_closed_edges_intervals_grazing_and_closest_ties() {
++    for axis in 0..3 {
++        let unpermute = |v: Vec3| match axis {
++            0 => Vec3::new(v.y, v.z, v.x),
++            1 => Vec3::new(v.z, v.x, v.y),
++            _ => v,
++        };
++        for translation in [Vec3::ZERO, Vec3::new(100.0, -200.0, 300.0)] {
++            let transform = |v| permute(v + translation, axis);
++            let [a, b, c, d] = [Vec3::new(-4.0, -4.0, -4.0), Vec3::new(4.0, -4.0, 4.0), Vec3::new(4.0, 4.0, 4.0), Vec3::new(-4.0, 4.0, -4.0)]
++                .map(transform);
++            for reverse in [false, true] {
++                let first = Triangle::new(if reverse { [a, c, b] } else { [a, b, c] }).unwrap();
++                let second = Triangle::new(if reverse { [a, d, c] } else { [a, c, d] }).unwrap();
++                for point in [Vec3::new(1.0, 1.0, 1.0), Vec3::new(4.0, 4.0, 4.0)] {
++                    let origin = transform(point + Vec3::Z * 8.0);
++                    let direction = permute(-Vec3::Z, axis);
++                    let ray = Ray::new(origin, direction, 8.0, 8.0).unwrap();
++                    assert_eq!(first.intersect(&ray).unwrap().distance, 8.0);
++                    assert_eq!(second.intersect(&ray).unwrap().distance, 8.0);
++                    assert!(first.intersect(&Ray::new(origin, direction, 8.0_f64.next_up(), 12.0).unwrap()).is_none());
++                    assert!(first.intersect(&Ray::new(origin, direction, 0.0, 8.0_f64.next_down()).unwrap()).is_none());
++                    for leaf_size in [1, 2, 8] {
++                        for sources in [vec![first, second], vec![second, first], vec![first, first]] {
++                            let bvh = build(sources, leaf_size);
++                            let hit = bvh.closest_hit(&ray, &mut WorkBudget::new(MAX_WORK).unwrap(), &CancelToken::default()).unwrap().unwrap();
++                            assert_eq!(hit.primitive_index, 0);
++                            assert_eq!(planar_cursor_result(&bvh, ray, false).unwrap().primitive_index, 0);
++                        }
++                    }
++                }
++                // Independent analytic plane z=x. Use the actual normalized ray,
++                // not the production plane normal, for the expected distance.
++                for tilt in [1.0 / 1024.0, 1.0 / 1_073_741_824.0] {
++                    let direction = Vec3::new(1.0, 0.0, 1.0 + tilt);
++                    let ray = Ray::new(transform(Vec3::new(1.0, 0.0, 1.0) - direction * 4.0), permute(direction, axis), 0.0, 20.0).unwrap();
++                    let origin = unpermute(ray.origin()) - translation;
++                    let direction = unpermute(ray.direction());
++                    let expected = (origin.x - origin.z) / (direction.z - direction.x);
++                    assert!(expected.is_finite() && expected > 0.0);
++                    assert_eq!(first.intersect(&ray).unwrap().distance, expected);
++                }
++                for zero in [0.0, -0.0] {
++                    let ray = Ray::new(transform(Vec3::new(1.0, 0.0, 1.0)), permute(Vec3::new(1.0, zero, 1.0), axis), 0.0, 20.0).unwrap();
++                    assert!(first.intersect(&ray).is_none(), "a ray in the oblique plane remains a miss");
++                }
++            }
++        }
++    }
++}
++
++#[test]
++fn nonconstant_dyadic_plane_keeps_its_tiny_positive_closed_depth() {
++    let length = (1_u64 << 39) as f64;
++    let elevation = f64::from_bits(1_u64 << 34); // 2^-1040
++    let expected = f64::from_bits(3_u64 << 33); // 3 * 2^-1041
++    for axis in 0..3 {
++        let vertices = [Vec3::ZERO, Vec3::new(length, 0.0, elevation), Vec3::new(0.0, length, elevation)].map(|v| permute(v, axis));
++        for reverse in [false, true] {
++            let [a, b, c] = vertices;
++            let triangle = Triangle::new(if reverse { [a, c, b] } else { [a, b, c] }).unwrap();
++            let origin = permute(Vec3::new(length / 4.0, length / 4.0, -elevation), axis);
++            let direction = permute(Vec3::Z, axis);
++            // The vertex plane is z=e*(x+y)/L. At this interior point it is
++            // e/2, hence the exact forward depth from -e is 3e/2.
++            let closed = Ray::new(origin, direction, expected, expected).unwrap();
++            assert_eq!(triangle.intersect(&closed).unwrap().distance, expected);
++            let broad = Ray::new(origin, direction, 0.0, elevation * 4.0).unwrap();
++            assert_eq!(triangle.intersect(&broad).unwrap().distance, expected);
++            assert!(triangle.intersect(&Ray::new(origin, direction, expected.next_up(), elevation * 4.0).unwrap()).is_none());
++            assert!(triangle.intersect(&Ray::new(origin, direction, 0.0, expected.next_down()).unwrap()).is_none());
++        }
++    }
++}
++
++fn dyadic_cursor_result(bvh: &Bvh, ray: Ray, any: bool) -> Option<Hit> {
++    let cancel = CancelToken::default();
++    let mut work = WorkBudget::new(MAX_WORK).unwrap();
++    let mut cursor = bvh::TraceCursor::new(ray, any);
++    for _ in 0..128 {
++        if let Some(result) = cursor.step(bvh, &mut work, &cancel).unwrap() {
++            return result;
++        }
++    }
++    panic!("two-triangle dyadic cursor did not complete");
++}
++
++#[test]
++fn a_distinct_near_oblique_blocker_keeps_its_analytic_depth_after_spawn() {
++    let length = (1_u64 << 39) as f64;
++    let elevation = f64::from_bits(1_u64 << 34); // 2^-1040
++    let expected = f64::from_bits(3_u64 << 33); // 3 * 2^-1041
++    for axis in 0..3 {
++        let source = [Vec3::ZERO, Vec3::new(length, 0.0, 0.0), Vec3::new(0.0, length, 0.0)].map(|v| permute(v, axis));
++        for reverse in [false, true] {
++            let [a, b, c] = source;
++            let departed = Triangle::new(if reverse { [a, c, b] } else { [a, b, c] }).unwrap();
++            let point = permute(Vec3::new(length / 4.0, length / 4.0, 0.0), axis);
++            let spawned = spawned(departed, point, 1.0, permute(Vec3::Z, axis));
++            let origin_height = component(spawned.origin(), axis);
++            // Anchor the independent oblique blocker above the actual spawned
++            // ray. Its three heights differ; no exact-coordinate-plane shortcut
++            // applies. At x=y=L/4 its height above the origin is exactly3e/2.
++            let blocker = [
++                Vec3::new(0.0, 0.0, origin_height + elevation),
++                Vec3::new(length, 0.0, origin_height + elevation * 2.0),
++                Vec3::new(0.0, length, origin_height + elevation * 2.0),
++            ].map(|v| permute(v, axis));
++            let [a, b, c] = blocker;
++            let blocker = Triangle::new(if reverse { [a, c, b] } else { [a, b, c] }).unwrap();
++            let ray = Ray::new(spawned.origin(), spawned.direction(), expected, expected).unwrap();
++            assert!(departed.intersect(&ray).is_none());
++            assert_eq!(blocker.intersect(&ray).unwrap().distance, expected);
++            let cancel = CancelToken::default();
++            for leaf_size in [1, 2, 8] {
++                for (sources, index) in [(vec![departed, blocker], 1), (vec![blocker, departed], 0)] {
++                    let bvh = build(sources, leaf_size);
++                    let hit = bvh.closest_hit(&ray, &mut WorkBudget::new(MAX_WORK).unwrap(), &cancel).unwrap().unwrap();
++                    assert_eq!(hit.primitive_index, index);
++                    assert_eq!(hit.geometry.distance, expected);
++                    assert!(bvh.any_hit(&ray, &mut WorkBudget::new(MAX_WORK).unwrap(), &cancel).unwrap());
++                    for any in [false, true] {
++                        let hit = dyadic_cursor_result(&bvh, ray, any).unwrap();
++                        assert_eq!(hit.primitive_index, index);
++                        assert_eq!(hit.geometry.distance, expected);
++                    }
++                }
++            }
++        }
++    }
++}

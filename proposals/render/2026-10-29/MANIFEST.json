@@ -1,0 +1,226 @@
+{
+  "utc": "2026-10-29T21:37:05.005566+00:00",
+  "parent": "a077906234972dbbf11e80c54893f85ece97c8b7",
+  "source_files": {
+    "assets/locales/pending/render-interactive.json": "4502966fe59189042d2420defa75091036599c0cb14d573027eb76fca1511a63",
+    "crates/engine/src/cmd/mod.rs": "ee2a6307c9bc27436ab1d381e1994f44feb1336055d8f9c0bda9dcaa23cb4ebb",
+    "crates/engine/src/cmd/render.rs": "6a1e3f963783adef24f2094e8c648e6d53ae1cc893c953a0ecc1bbb2067bfa24",
+    "crates/engine/src/cmd/render/jobs.rs": "1cb96c6189fbbf9b904579d6c230aff004004249fcd89a86c3a82d87dc41bd68",
+    "crates/engine/src/cmd/render_ui.rs": "45d0f233b6788de8f28037cc9ea4447aed19405334f6648dc60943c24672d020",
+    "crates/engine/src/lib.rs": "3e1109f30b89552f7114276b5ca0fd5d335f845132bca798a091ce7d1a917701",
+    "crates/engine/src/render_interactive.rs": "c6aecaed7a5f83dec1e158161854e9284213c938015df192566f4511b57ed7b0",
+    "crates/engine/src/render_jobs.rs": "ca096820db7ecc6b5cd234d25ab9bdbb9f62e06b2ce876a2c8707d0838d6e5af",
+    "crates/engine/src/schema/render_ui.rs": "80793c893f50e4dc2f785ff5dd7652c1ef984a4f307e9225a6196203812b4653",
+    "crates/render/src/job/host.rs": "7d2e248f8c7d6586f18d8b9840da9074514ed4672bc8a8845170a805b1bf9315",
+    "crates/render/src/job/host_tests.rs": "0febf5af52d7aa24f3b0586e230752a17b6c0e30b33d79810c8b7338a34c941a",
+    "crates/render/src/job/interactive.rs": "ccc8aaa5fc76038b39e8829f87b0888ccd92816567ea8b3d83778201364a4cce",
+    "crates/ui-egui/src/command_help.rs": "861f005ae58c4d685ef8e2d30e372454607755a3eea3854b37f33147758930ba",
+    "crates/ui-egui/src/render_ui/mod.rs": "d5599245102801e15d592ee28f069bdcb1f4afb1beaec3c5e85eeb5be8312df2",
+    "crates/ui-egui/src/render_workspace.rs": "e7ff050984f0f59d3dc44fa03b8076d48093f965048a74cb8aba0db9023d0a60",
+    "crates/ui-egui/src/render_workspace_cpu.rs": "a1534b73a972fffbfad50b831a00e3166c3d668ae7fb978b1286a3f390f4ade8",
+    "crates/ui-egui/src/render_workspace_interactive.rs": "0105efe25e758a750fcdad192d27f60f7af59b87030f0f6f7d1697bf7d593e76",
+    "crates/ui-egui/src/render_workspace_ribbon.rs": "27fc255da6da75976edb4b37928b78ea034c6c579f258b3155f15d43e3237ffb",
+    "crates/ui-egui/src/render_workspace_tests.rs": "bfc8bf587d1369a88eaa697620f071d5fbe3605d46cc92fc01c2096539a77b8a",
+    "docs/render-interactive.md": "df880685523b128fc42ae542567794ceef281839025a8ab16ffcef08d5cedc95"
+  },
+  "files": [
+    {
+      "path": "proposals/render/2026-10-29/README.md",
+      "bytes": 3893,
+      "sha256": "a8e974bb9b8ea67aeb6c84a183ee6d1bdf7a13668aebf44bed240a784ea36cf6",
+      "role": "Entry point and restart instructions"
+    },
+    {
+      "path": "proposals/render/2026-10-29/VALIDATION.md",
+      "bytes": 2441,
+      "sha256": "0639258173d1156ae3162c9477033dd9a299b5ab2ed538fca39b9f24433a4013",
+      "role": "Verified result summary with explicit source/qualification boundaries"
+    },
+    {
+      "path": "proposals/render/2026-10-29/interactive-working-changes.patch",
+      "bytes": 188555,
+      "sha256": "f97f6a976a61c8275fd31c7c0ca69a0b23108911591f1ea8b8e79761c5d89a38",
+      "role": "Apply once to exact parent a0779062 in a clean agreed scope; current local checkout already contains it"
+    },
+    {
+      "path": "proposals/render/2026-10-29/pending/cpu-area-led.patch",
+      "bytes": 34053,
+      "sha256": "317fee6c98e03758c933e3c51cb0aea5231fac46c5d9f80d2c8105efd79dfe9f",
+      "role": "Separate unapplied/uncompiled/unrun proposal; not part of Interactive source snapshot"
+    },
+    {
+      "path": "proposals/render/2026-10-29/pending/gpu-contract-tests.patch",
+      "bytes": 6405,
+      "sha256": "6888070fb9b6435d6bba803ba26a7b557c2b5b24a81de3eb1f2bb77c4326b68e",
+      "role": "Separate unapplied/uncompiled/unrun proposal; not part of Interactive source snapshot"
+    },
+    {
+      "path": "proposals/render/2026-10-29/pending/gpu-light-contract.json",
+      "bytes": 24690,
+      "sha256": "1d03c9fcabc107c5a3371011f30eaac665d2af8f7080d9c7a6b306b68abd0ec6",
+      "role": "Proposal only; new payload/ABI/caps pending owner decisions"
+    },
+    {
+      "path": "proposals/render/2026-10-29/pending/gpu-point-spot-refusal-tests.rs",
+      "bytes": 1510,
+      "sha256": "345de11965e16d26e7cfa3023e6599feb01564ae7981590990e032ff4f2acfd1",
+      "role": "Separate unapplied/uncompiled/unrun proposal; not part of Interactive source snapshot"
+    },
+    {
+      "path": "proposals/render/2026-10-29/pending/gpu-session-diagnostic.patch",
+      "bytes": 5117,
+      "sha256": "e8b5f05c9f4582f8733eb9c3911d64a8f232e981c81fe552c2314d1090a1cd19",
+      "role": "Separate unapplied/uncompiled/unrun proposal; not part of Interactive source snapshot"
+    },
+    {
+      "path": "proposals/render/2026-10-29/pending/punctual-analytic-tests.rs",
+      "bytes": 2752,
+      "sha256": "7237f3468ede92417dfd14c6f6849e86dd8fc4f1168a8c9188bce03a9bad3388",
+      "role": "Separate unapplied/uncompiled/unrun proposal; not part of Interactive source snapshot"
+    },
+    {
+      "path": "proposals/render/2026-10-29/pending/raster-view-direction.patch",
+      "bytes": 5356,
+      "sha256": "b0b3e9f4edfe41a05315b1dc722653dc2691efd5b62cc233e56027e9a98ab9e9",
+      "role": "Separate unapplied/uncompiled/unrun proposal; not part of Interactive source snapshot"
+    },
+    {
+      "path": "proposals/render/2026-10-29/pending/shadow-baseline-tests.patch",
+      "bytes": 12941,
+      "sha256": "23b9082ca1abf5f89e89a9d5ef4b38ee566c5aed8b08d8a18c2713e88448e448",
+      "role": "Separate unapplied/uncompiled/unrun proposal; not part of Interactive source snapshot"
+    },
+    {
+      "path": "proposals/render/2026-10-29/retired-do-not-apply/README.md",
+      "bytes": 345,
+      "sha256": "4941b7741d270aa43288fd7022ce3a8ae09b6375b01a9ff6715a2c85709cd0d0",
+      "role": "Retirement notice"
+    },
+    {
+      "path": "proposals/render/2026-10-29/retired-do-not-apply/plane-depth-candidate.patch",
+      "bytes": 2755,
+      "sha256": "31626aedd16c170fb544489e29a733dbf8d5e94ba2a5fe8fbe422bb1f4eb8f74",
+      "role": "RETIRED P1; DO NOT APPLY"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/assets/locales/pending/render-interactive.json",
+      "bytes": 10165,
+      "sha256": "4502966fe59189042d2420defa75091036599c0cb14d573027eb76fca1511a63",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/engine/src/cmd/mod.rs",
+      "bytes": 15081,
+      "sha256": "ee2a6307c9bc27436ab1d381e1994f44feb1336055d8f9c0bda9dcaa23cb4ebb",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/engine/src/cmd/render.rs",
+      "bytes": 40522,
+      "sha256": "6a1e3f963783adef24f2094e8c648e6d53ae1cc893c953a0ecc1bbb2067bfa24",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/engine/src/cmd/render/jobs.rs",
+      "bytes": 53584,
+      "sha256": "1cb96c6189fbbf9b904579d6c230aff004004249fcd89a86c3a82d87dc41bd68",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/engine/src/cmd/render_ui.rs",
+      "bytes": 17867,
+      "sha256": "45d0f233b6788de8f28037cc9ea4447aed19405334f6648dc60943c24672d020",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/engine/src/lib.rs",
+      "bytes": 91531,
+      "sha256": "3e1109f30b89552f7114276b5ca0fd5d335f845132bca798a091ce7d1a917701",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/engine/src/render_interactive.rs",
+      "bytes": 16244,
+      "sha256": "c6aecaed7a5f83dec1e158161854e9284213c938015df192566f4511b57ed7b0",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/engine/src/render_jobs.rs",
+      "bytes": 32277,
+      "sha256": "ca096820db7ecc6b5cd234d25ab9bdbb9f62e06b2ce876a2c8707d0838d6e5af",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/engine/src/schema/render_ui.rs",
+      "bytes": 905,
+      "sha256": "80793c893f50e4dc2f785ff5dd7652c1ef984a4f307e9225a6196203812b4653",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/render/src/job/host.rs",
+      "bytes": 83135,
+      "sha256": "7d2e248f8c7d6586f18d8b9840da9074514ed4672bc8a8845170a805b1bf9315",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/render/src/job/host_tests.rs",
+      "bytes": 55469,
+      "sha256": "0febf5af52d7aa24f3b0586e230752a17b6c0e30b33d79810c8b7338a34c941a",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/render/src/job/interactive.rs",
+      "bytes": 11088,
+      "sha256": "ccc8aaa5fc76038b39e8829f87b0888ccd92816567ea8b3d83778201364a4cce",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/ui-egui/src/command_help.rs",
+      "bytes": 15013,
+      "sha256": "861f005ae58c4d685ef8e2d30e372454607755a3eea3854b37f33147758930ba",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/ui-egui/src/render_ui/mod.rs",
+      "bytes": 13748,
+      "sha256": "d5599245102801e15d592ee28f069bdcb1f4afb1beaec3c5e85eeb5be8312df2",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/ui-egui/src/render_workspace.rs",
+      "bytes": 97904,
+      "sha256": "e7ff050984f0f59d3dc44fa03b8076d48093f965048a74cb8aba0db9023d0a60",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/ui-egui/src/render_workspace_cpu.rs",
+      "bytes": 27471,
+      "sha256": "a1534b73a972fffbfad50b831a00e3166c3d668ae7fb978b1286a3f390f4ade8",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/ui-egui/src/render_workspace_interactive.rs",
+      "bytes": 25844,
+      "sha256": "0105efe25e758a750fcdad192d27f60f7af59b87030f0f6f7d1697bf7d593e76",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/ui-egui/src/render_workspace_ribbon.rs",
+      "bytes": 13010,
+      "sha256": "27fc255da6da75976edb4b37928b78ea034c6c579f258b3155f15d43e3237ffb",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/crates/ui-egui/src/render_workspace_tests.rs",
+      "bytes": 404612,
+      "sha256": "bfc8bf587d1369a88eaa697620f071d5fbe3605d46cc92fc01c2096539a77b8a",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    },
+    {
+      "path": "proposals/render/2026-10-29/source/docs/render-interactive.md",
+      "bytes": 4048,
+      "sha256": "df880685523b128fc42ae542567794ceef281839025a8ab16ffcef08d5cedc95",
+      "role": "Exact current RAW working-source snapshot; combined candidate uncompiled/unrun"
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+--- a/crates/gpu/src/path/mod.rs
++++ b/crates/gpu/src/path/mod.rs
+@@ -100,7 +100,7 @@
+     let policy = crate::select::Policy::from_env().map_err(gpu)?;
+     let info = adapter.get_info();
+     if !viewport_path_backends(info.backend, cfg!(target_os = "windows")).intersects(crate::select::path_backends()) {
+-        return Err(gpu(format!("{VULKAN_ONLY}; the viewport uses {:?}", info.backend)));
++        return Err(viewport_path_refusal(info.backend, cfg!(target_os = "windows")));
+     }
+     if !policy.admits(crate::select::tier_of(info.device_type)) {
+         return Err(gpu(format!("viewport adapter does not satisfy SOLIDCRAFT_GPU={}", policy.name())));
+@@ -119,6 +119,23 @@
+ 
+ // D3D12 shader compilation is avoided; the user can select a CPU image method instead.
+ const VULKAN_ONLY: &str = "the GPU path tracer requires a Vulkan driver (Metal on macOS); select a CPU image method when none is available";
++
++/// Explain a metadata-only refusal without treating it as a driver survey.
++/// The caller retains the existing backend guard before any device is opened.
++fn viewport_path_refusal(backend: wgpu::Backend, windows: bool) -> JobError {
++    let reason = if windows && !matches!(backend, wgpu::Backend::Vulkan | wgpu::Backend::Metal) {
++        format!(
++            "GPU path tracing is unavailable in this Windows session: the viewport uses {backend:?}, while path tracing requires Vulkan. \
++             This request did not open a Vulkan device and did not test driver availability. Select a CPU image method to continue."
++        )
++    } else {
++        format!(
++            "GPU path tracing is unavailable for the selected graphics backend and configured backend policy; the viewport uses {backend:?}. \
++             Vulkan, or Metal on macOS, is required. Driver availability was not established. Select a CPU image method to continue."
++        )
++    };
++    gpu(reason)
++}
+ 
+ /// Backends a viewport's path device may open, before any driver is loaded.
+ fn viewport_path_backends(backend: wgpu::Backend, windows: bool) -> wgpu::Backends {
+--- a/crates/gpu/src/path/tests.rs
++++ b/crates/gpu/src/path/tests.rs
+@@ -556,6 +556,31 @@
+         let allowed = viewport_path_backends(backend, true);
+         assert_eq!(allowed, wgpu::Backends::from(backend));
+         assert_eq!(allowed.contains(wgpu::Backends::VULKAN), backend == wgpu::Backend::Vulkan);
++    }
++}
++
++#[test]
++fn windows_path_refusal_names_the_selected_session_without_testing_a_driver() {
++    for backend in [wgpu::Backend::Dx12, wgpu::Backend::Gl] {
++        let error = viewport_path_refusal(backend, true);
++        assert_eq!(error.code, ErrorCode::HostUnavailable);
++        assert!(error.message.contains("this Windows session"));
++        assert!(error.message.contains(&format!("viewport uses {backend:?}")));
++        assert!(error.message.contains("did not test driver availability"));
++        assert!(error.message.contains("CPU image method"));
++        assert!(!error.message.contains("driver is missing"));
++    }
++}
++
++#[test]
++fn path_policy_refusal_is_not_presented_as_a_driver_survey() {
++    for (backend, windows) in [(wgpu::Backend::Vulkan, true), (wgpu::Backend::Gl, false), (wgpu::Backend::Metal, false)] {
++        let error = viewport_path_refusal(backend, windows);
++        assert_eq!(error.code, ErrorCode::HostUnavailable);
++        assert!(error.message.contains("configured backend policy"));
++        assert!(error.message.contains(&format!("viewport uses {backend:?}")));
++        assert!(error.message.contains("Driver availability was not established"));
++        assert!(error.message.contains("CPU image method"));
+     }
+ }
+ 
+--- a/docs/render-path.md
++++ b/docs/render-path.md
+@@ -17,10 +17,12 @@
+ It opens its independent job device on the viewport's selected adapter,
+ so software fallback and safe mode do not rediscover a failing hardware driver.
+ An incompatible explicit GPU policy leaves progressive rendering unavailable there.
+-The path tracer runs on Vulkan, or on Metal on macOS (#3217). A viewport on D3D12 is reopened on the
+-same GPU through Vulkan. Where there is no Vulkan or Metal driver (Windows over
+-Remote Desktop or on the WARP software adapter, older drivers), the path executor reports
+-itself unavailable and images render on the CPU. On an RTX 4090, D3D12 was never faster:
++The path tracer runs on Vulkan, or on Metal on macOS (#3217). On Windows it retains the
++viewport's selected backend: a D3D12 or OpenGL session does not open a different Vulkan
++device for path tracing. That refusal does not determine whether a compatible Vulkan
++driver is installed. On other native platforms the same GPU may be reopened through
++the configured Vulkan or Metal backend. An unavailable path executor leaves CPU image
++methods available for explicit selection; it never silently changes a GPU request to CPU. On an RTX 4090, D3D12 was never faster:
+ equal per sample with DXC and about 55% slower with FXC, and it compiles the path shader
+ at every start (about 82 s with DXC, about 2 hours with FXC), where Vulkan's compiled
+ pipelines persist between runs.

@@ -1,0 +1,3677 @@
+diff --git a/crates/engine/src/cmd/mod.rs b/crates/engine/src/cmd/mod.rs
+index 894ddc76..5175b2f0 100644
+--- a/crates/engine/src/cmd/mod.rs
++++ b/crates/engine/src/cmd/mod.rs
+@@ -398,3 +398,7 @@ pub(super) fn reversed_param(p: &Value, key: &str, cmd: &str) -> Result<bool> {
+         serde_json::from_value(value.clone()).map_err(|_| crate::params::bad(cmd, format!("`{key}` must be true or false")))
+     })
+ }
++
++pub(crate) fn prepare_interactive(s: &crate::Session, params: &serde_json::Value) -> crate::Result<crate::render_interactive::Prepared> {
++    render::prepare_interactive(s, params)
++}
+diff --git a/crates/engine/src/cmd/render.rs b/crates/engine/src/cmd/render.rs
+index 71b66993..39d41c8e 100644
+--- a/crates/engine/src/cmd/render.rs
++++ b/crates/engine/src/cmd/render.rs
+@@ -418,3 +418,7 @@ mod settings_tests;
+ 
+ #[cfg(test)]
+ mod job_tests;
++
++pub(super) fn prepare_interactive(s: &crate::Session, params: &serde_json::Value) -> crate::Result<crate::render_interactive::Prepared> {
++    jobs::interactive(s, params)
++}
+diff --git a/crates/engine/src/cmd/render/jobs.rs b/crates/engine/src/cmd/render/jobs.rs
+index b0b0b29d..efb547e5 100644
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -99,6 +99,91 @@ fn lower_led(input: &mut Start, command: &str) -> Result<()> {
+     Ok(())
+ }
+ 
++/// Pure preview lowering. Parse the existing CPU wire before changing its sampling;
++/// unsupported effects remain errors rather than disappearing from the request.
++fn interactive_params(params: &Value) -> Result<Value> {
++    let command = "render.interactive";
++    let mut input: Start = serde_json::from_value(params.clone()).map_err(|e| bad(command, e.to_string()))?;
++    let object = params.as_object().ok_or_else(|| bad(command, "Interactive requires an explicit CPU request object"))?;
++    if object.contains_key("setup") || object.contains_key("replace") {
++        return Err(bad(command, "Interactive requires an explicit settings snapshot without setup or replace"));
++    }
++    if input.integrator != Integrator::Raytrace || input.progressive || input.transparent_background {
++        return Err(bad(command, "Interactive requires opaque CPU ray tracing, not GPU progressive or raster rendering"));
++    }
++    if input.studio_weights.is_some() || input.denoise || input.samples.is_some() || input.max_depth.is_some() || input.seed.is_some() {
++        return Err(bad(command, "Interactive cannot accept GPU studio, denoise or sampling controls"));
++    }
++    let mut settings = input.settings.take().ok_or_else(|| bad(command, "Interactive requires explicit settings"))?;
++    if settings.job.is_some() {
++        return Err(bad(command, "Interactive requires a lowered CPU runtime request with settings.job: null"));
++    }
++    if settings.mode != solidcraft_render::RenderMode::Preview || settings.format != solidcraft_render::RenderFormat::Png {
++        return Err(bad(command, "Interactive CPU requires the existing Preview/Image/PNG profile"));
++    }
++    // Keep the existing CPU runtime exposure authority; never silently neutralize
++    // saved/common controls in order to make a request acceptable.
++    if settings.exposure_ev != 0.0 || settings.environment_rotation != 0.0 || settings.environment_intensity != 1.0 {
++        return Err(bad(command, "Interactive CPU exposure belongs to raytrace.exposure_ev; environment controls belong to the captured input"));
++    }
++    lower_led(&mut input, command)?;
++    if let Some(environment) = &input.environment {
++        // Same numerical controls as EnvironmentInput::new, checked before a path
++        // can be read. Resource bytes and primaries remain prepare's responsibility.
++        if !environment.rotation_radians.is_finite()
++            || !environment.intensity.is_finite()
++            || !(0.0..=64.0).contains(&environment.intensity)
++            || !matches!(environment.samples, 1 | 4 | 16 | 64)
++        {
++            return Err(bad(command, "invalid Interactive environment controls"));
++        }
++        if input.raytrace.as_ref().is_some_and(|options| options.environment.is_some()) {
++            return Err(bad(command, "choose either captured HDR or constant CPU environment"));
++        }
++    }
++    let final_request = ImageRequest {
++        camera: settings.camera,
++        width: settings.width,
++        height: settings.height,
++        background: settings.background,
++        transparent_background: input.transparent_background,
++        integrator: input.integrator,
++        raytrace: input.raytrace,
++        studio_weights: input.studio_weights,
++        environment: None,
++        textures: None,
++    };
++    let preview = solidcraft_render::job::interactive::cpu_request(&final_request).map_err(job_error)?;
++    settings.width = preview.width;
++    settings.height = preview.height;
++    let budget = preview.raytrace.as_ref().map_or(solidcraft_render::job::CpuBudget::Compact, |options| options.budget);
++    settings.validate_for_cpu(budget).map_err(|e| bad(command, e.to_string()))?;
++    // Preserve every original field after strict deserialization. Only the LED
++    // recipe has been consumed into real area lights; do not lower it twice.
++    let mut lowered = object.clone();
++    lowered.remove("led_strip");
++    lowered.remove("led_samples");
++    lowered.insert("settings".into(), serde_json::to_value(settings).map_err(|e| bad(command, e.to_string()))?);
++    lowered.insert("raytrace".into(), serde_json::to_value(preview.raytrace).map_err(|e| bad(command, e.to_string()))?);
++    Ok(Value::Object(lowered))
++}
++
++/// Capture/admit only. The engine's Interactive owner submits outside the final
++/// registry; this helper never starts, replaces, cancels or exports a job.
++pub(super) fn interactive(s: &Session, params: &Value) -> Result<crate::render_interactive::Prepared> {
++    let params = interactive_params(params)?;
++    let prepared = prepare(s, &params, "render.interactive")?;
++    if prepared.executor.as_str() != "cpu-raytrace" {
++        return Err(bad("render.interactive", "Interactive requires the installed cpu-raytrace executor"));
++    }
++    Ok(crate::render_interactive::Prepared {
++        scene: prepared.scene,
++        request: prepared.request,
++        options: prepared.options,
++        environment: prepared.environment,
++    })
++}
++
+ #[cfg(test)]
+ mod union_lowering_tests {
+     use super::*;
+@@ -123,6 +208,179 @@ mod union_lowering_tests {
+         assert!(input.led_strip.is_none() && input.led_samples.is_none());
+         assert_eq!(wire["environment"]["path"], json!("unopened.hdr"));
+     }
++    fn interactive_final_wire() -> Value {
++        let camera = solidcraft_render::Camera { fov: 0.8, ..Default::default() };
++        json!({"integrator":"raytrace","settings":{
++            "width":3840,"height":2160,"camera":camera,"background":[20,40,60],"job":null,
++            "stage":[{"id":"floor","center_mm":[0.0,0.0,-5.0],"half_u_mm":[40.0,0.0,0.0],
++                "half_v_mm":[0.0,40.0,0.0],"reflectance_linear":[0.1,0.2,0.3]}]},
++            "raytrace":{"primary_samples":4,"shadows":false,"exposure_ev":1.25,"lights":[],
++                "reflections":{"bodies":[{"body":"receiver","mode":"mirror"}],"samples":16,"max_bounces":3},
++                "punctual_lights":[{"position_mm":[0.0,0.0,20.0],"color":[1.0,0.5,0.25],"intensity":2.0,
++                    "reference_distance_mm":20.0,"minimum_distance_mm":0.01}],
++                "emissions":[{"body_index":0,"body":"receiver","color":[0.2,0.4,0.8],"strength":3.0}],
++                "surface_effects":[{"body":"receiver","repeat_mm":[2.0,3.0,4.0],"roughness_amplitude":0.1,"bump_amplitude_mm":0.01}]},
++            "environment":{"path":"unopened-original.hdr","expected_sha256":"a".repeat(64),
++                "rotation_radians":0.75,"intensity":2.0,"samples":16}})
++    }
++
++    #[test]
++    fn interactive_fits_4k_before_admission_and_preserves_final_wire_and_transport() {
++        let wire = interactive_final_wire();
++        let original = wire.clone();
++        let lowered = interactive_params(&wire).unwrap();
++        let before: Start = serde_json::from_value(wire.clone()).unwrap();
++        let after: Start = serde_json::from_value(lowered.clone()).unwrap();
++        let final_settings = before.settings.unwrap();
++        let preview_settings = after.settings.unwrap();
++        assert_eq!((final_settings.width, final_settings.height), (3840, 2160));
++        assert_eq!((preview_settings.width, preview_settings.height), (1024, 576));
++        assert!(before.raytrace.as_ref().unwrap().budget.validate_image(3840, 2160, None).is_err(), "Compact final exceeds pixel cap");
++        let mut expected_settings = final_settings;
++        expected_settings.width = 1024;
++        expected_settings.height = 576;
++        assert_eq!(preview_settings, expected_settings, "camera, stage, background and other settings remain exact");
++        let mut expected_options = before.raytrace.unwrap();
++        expected_options.primary_samples = 1;
++        expected_options.progressive = Some(Default::default());
++        expected_options.reflections.as_mut().unwrap().samples = 1;
++        assert_eq!(after.raytrace.unwrap(), expected_options, "no lighting, emission, shading effect or EV is discarded");
++        assert_eq!(lowered["environment"], wire["environment"], "unopened HDR path and expected digest stay pinned");
++        assert_eq!(lowered["raytrace"]["progressive"], json!({"samples_per_pixel":16,"seed":0}));
++        assert_eq!(wire, original);
++    }
++
++    #[test]
++    fn interactive_small_and_extreme_aspects_fit_without_enlarging_or_zero_dimensions() {
++        for (width, height, expected) in [(320, 200, (320, 200)), (4096, 1, (1024, 1)), (1, 4096, (1, 1024))] {
++            let wire = json!({"integrator":"raytrace","settings":{"width":width,"height":height}});
++            let output = interactive_params(&wire).unwrap();
++            assert_eq!((output["settings"]["width"].as_u64().unwrap(), output["settings"]["height"].as_u64().unwrap()), (expected.0, expected.1));
++        }
++    }
++
++    #[test]
++    fn interactive_refuses_alternate_authorities_and_unknown_fields_without_io() {
++        let s = Session::default();
++        let base = interactive_final_wire();
++        for (key, value) in [
++            ("setup", json!(null)),
++            ("setup", json!("Saved")),
++            ("replace", json!(false)),
++            ("replace", json!(true)),
++            ("integrator", json!("raster")),
++            ("progressive", json!(true)),
++            ("transparent_background", json!(true)),
++            ("denoise", json!(true)),
++            ("samples", json!(1)),
++            ("max_depth", json!(2)),
++            ("seed", json!(0)),
++            ("studio_weights", json!([1, 1, 1])),
++            ("unknown", json!(true)),
++            ("lens", json!(null)),
++        ] {
++            let mut wire = base.clone();
++            wire[key] = value;
++            let error = match interactive(&s, &wire) {
++                Err(error) => error.to_string(),
++                Ok(_) => panic!("Interactive accepted conflicting input {key}"),
++            };
++            assert!(!error.contains("could not read") && !error.contains("no image host"), "refuse before host/IO: {key}: {error}");
++        }
++        for settings in [
++            json!(null),
++            json!({"job":{"method":"cpu_raytrace"}}),
++            json!({"job":{"method":"gpu_path"}}),
++            json!({"exposure_ev":1.0}),
++            json!({"environment_rotation":1.0}),
++            json!({"width":0}),
++            json!({"mode":"final"}),
++            json!({"format":"exr"}),
++        ] {
++            let mut wire = base.clone();
++            wire["settings"] = settings;
++            assert!(interactive_params(&wire).is_err());
++        }
++        let mut missing = base.clone();
++        missing.as_object_mut().unwrap().remove("settings");
++        assert!(interactive_params(&missing).is_err());
++        for wire in [json!(null), json!([]), json!(false)] {
++            assert!(interactive_params(&wire).is_err());
++        }
++        assert!(s.render_job_host().is_none());
++    }
++
++    #[test]
++    fn interactive_refuses_invalid_or_unsupported_effects_before_unopened_hdr() {
++        let base = interactive_final_wire();
++        for (key, value) in [
++            ("primary_samples", json!(0)),
++            ("exposure_ev", json!(33.0)),
++            (
++                "dielectrics",
++                json!([{"body_index":0,"body_name":"receiver","ior":1.5,"absorption_per_mm":[0,0,0],
++                "boundary":"closed_box","thickness_mm":0}]),
++            ),
++            (
++                "anisotropic_faces",
++                json!([{"body_index":0,"body_name":"receiver","face":0,"tangent":[1,0,0],
++                "orientation":"zero","roughness_x":0.2,"roughness_y":0.4},null]),
++            ),
++            ("textures", json!([])),
++        ] {
++            let mut wire = base.clone();
++            wire["raytrace"][key] = value;
++            assert!(interactive_params(&wire).is_err(), "unsupported {key} must not disappear");
++        }
++        for (key, value) in [("intensity", json!(-1.0)), ("samples", json!(3))] {
++            let mut wire = base.clone();
++            wire["environment"][key] = value;
++            assert!(interactive_params(&wire).is_err());
++        }
++        let mut ambiguous = base.clone();
++        ambiguous["raytrace"]["environment"] = json!({"color":[1.0,1.0,1.0],"intensity":1.0});
++        assert!(interactive_params(&ambiguous).is_err());
++        let mut orphaned_led_samples = base;
++        orphaned_led_samples["led_samples"] = json!(16);
++        assert!(interactive_params(&orphaned_led_samples).is_err());
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn interactive_capture_reuses_cpu_scene_stage_and_admission_without_starting_a_job() {
++        let mut s = Session::default();
++        s.execute("solid.box", &json!({"length":10,"width":8,"height":4,"body_name":"receiver"})).unwrap();
++        s.execute(
++            "appearance.assign",
++            &json!({"bodies":["receiver"],"color":"#4080c0",
++            "pbr":{"metallic":1.0,"roughness":0.25,"dielectric_ior":1.5}}),
++        )
++        .unwrap();
++        s.execute("render.scene", &json!({})).unwrap();
++        let subject = crate::product_scene::extract(&s).unwrap();
++        let host = solidcraft_render::job::CpuHost::for_platform().unwrap();
++        s.set_render_job_host(Some(host.clone())).unwrap();
++        let mut wire = interactive_final_wire();
++        wire.as_object_mut().unwrap().remove("environment");
++        let document = s.doc.clone();
++        let before = (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty());
++        let captured = interactive(&s, &wire).unwrap();
++        assert_eq!((captured.request.width, captured.request.height), (1024, 576));
++        assert_eq!(captured.request.integrator, Integrator::Raytrace);
++        assert_eq!(captured.request.raytrace.as_ref().unwrap().exposure_ev, 1.25);
++        let body = captured.scene.meshes.iter().find(|mesh| mesh.name == "receiver").unwrap();
++        assert_eq!(body.surface, subject.meshes[0].surface);
++        assert_eq!(body.faces, subject.meshes[0].faces);
++        assert!(std::sync::Arc::ptr_eq(&body.mesh, &subject.meshes[0].mesh));
++        assert_eq!(captured.scene.meshes.len(), 2, "subject and render-only floor are both captured");
++        assert!(captured.scene.meshes.iter().any(|mesh| mesh.name == "__render_stage__/floor"));
++        assert_eq!(captured.options, solidcraft_render::job::JobOptions::default());
++        assert!(captured.environment.is_none());
++        assert_eq!(host.admitted_bytes(), 0, "capture validates but does not submit/reserve a job");
++        assert!(std::sync::Arc::ptr_eq(&document, &s.doc));
++        assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty()));
++        assert_eq!(wire["settings"]["width"], 3840);
++    }
+ }
+ 
+ /// Resolve portable intent before choosing an executor. Legacy requests are left intact;
+diff --git a/crates/engine/src/cmd/render_ui.rs b/crates/engine/src/cmd/render_ui.rs
+index d6f4f28d..be7ca6e3 100644
+--- a/crates/engine/src/cmd/render_ui.rs
++++ b/crates/engine/src/cmd/render_ui.rs
+@@ -1,7 +1,10 @@
+ //! Planned Render interactions, with explicit non-mutating refusals.
+ use super::CommandSpec;
+ use crate::schema::render_lights::{MuteParams, SoloParams};
+-use crate::schema::{TypedContract, output_schema_for, render_ui::CheckReport};
++use crate::schema::{
++    TypedContract, output_schema_for,
++    render_ui::{CheckReport, InteractiveParams},
++};
+ use crate::{Result, Session, params::bad};
+ use serde::Deserialize;
+ use serde_json::{Value, json};
+@@ -48,8 +51,16 @@ macro_rules! waiting {
+ }
+ 
+ const CHECK_REPORT: TypedContract<CheckReport> = TypedContract::new();
++const INTERACTIVE: TypedContract<InteractiveParams> = TypedContract::new();
+ 
+ pub static COMMANDS: &[CommandSpec] = &[
++    CommandSpec::new("render.interactive", "Interactive Render", crate::checked!("render.interactive", interactive))
++        .icon("render_image")
++        .contract(&INTERACTIVE)
++        .output(output_schema_for::<InteractiveParams>)
++        .noundo()
++        .doc_only()
++        .params("action: on|off|pause|resume. Validates and echoes an explicit CPU Interactive preview request for the UI adapter. Headless calls never start, pause or cancel a render job, open UI, or change the design, final render settings or exportable images."),
+     CommandSpec::new("render.preflight.copy", "Copy Render Check Report", crate::checked!("render.preflight.copy", copy_check))
+         .icon("copy")
+         .contract(&CHECK_REPORT)
+@@ -210,3 +221,118 @@ fn output_sections_copy_report_validates_without_design_history_or_job_changes()
+     assert!(std::sync::Arc::ptr_eq(&doc, &s.doc));
+     assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty()));
+ }
++
++/// The UI adapter owns provisional preview actions; headless execution only echoes.
++fn interactive(_: &mut Session, params: &Value) -> Result<Value> {
++    let command = "render.interactive";
++    if !params.is_object() {
++        return Err(bad(command, "expected an object"));
++    }
++    let request: InteractiveParams = serde_json::from_value(params.clone()).map_err(|error| bad(command, error.to_string()))?;
++    serde_json::to_value(request).map_err(|error| bad(command, error.to_string()))
++}
++
++#[cfg(test)]
++#[test]
++fn interactive_contract_describes_exact_actions_and_a_nonmutating_echo() {
++    use crate::schema::{input_schema_for, render_ui::Action};
++    let command = super::find_command("render.interactive").unwrap();
++    assert!(!command.undoable);
++    assert!(!command.reads_model);
++    assert!(command.planned.is_none());
++    assert_eq!(command.icon, "render_image");
++    let contract = command.contract.unwrap();
++    assert_eq!(contract.allowed_keys().iter().map(String::as_str).collect::<Vec<_>>(), ["action"]);
++    assert!(command.output.is_some());
++    let action_schema = serde_json::to_value(input_schema_for::<Action>()).unwrap();
++    assert_eq!(action_schema["enum"], json!(["on", "off", "pause", "resume"]));
++    let request_schema = serde_json::to_value(input_schema_for::<InteractiveParams>()).unwrap();
++    assert_eq!(request_schema["additionalProperties"], false);
++    assert_eq!(request_schema["required"], json!(["action"]));
++    let reply_schema = serde_json::to_value(output_schema_for::<InteractiveParams>()).unwrap();
++    assert_eq!(reply_schema["required"], json!(["action"]));
++    assert_eq!(reply_schema["properties"].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["action"]);
++}
++
++#[cfg(test)]
++#[test]
++fn interactive_valid_and_hostile_requests_preserve_headless_document_history_and_host() {
++    use crate::schema::ParamCheck;
++    let mut session = Session::default();
++    session.execute("render.settings.set", &json!({"name":"Original","set":{"width":800}})).unwrap();
++    session.execute("render.settings.set", &json!({"name":"Original","set":{"width":900}})).unwrap();
++    session.execute("edit.undo", &json!({})).unwrap();
++    let document = session.doc.clone();
++    let before = (session.revision, session.undo.len(), session.redo.len(), session.evaluations, session.is_dirty());
++    assert!(session.render_job_host().is_none());
++    for level in [ParamCheck::Off, ParamCheck::Warn, ParamCheck::Strict] {
++        session.param_check = level;
++        for action in ["on", "off", "pause", "resume"] {
++            let params = json!({"action":action});
++            assert_eq!(session.execute("render.interactive", &params).unwrap(), params);
++        }
++        for hostile in [
++            json!(null),
++            json!(true),
++            json!(0),
++            json!("on"),
++            json!([]),
++            json!(["on"]),
++            json!({}),
++            json!({"action":null}),
++            json!({"action":true}),
++            json!({"action":1e300}),
++            json!({"action":["on"]}),
++            json!({"action":{"on":true}}),
++            json!({"action":"start"}),
++            json!({"action":"On"}),
++            json!({"action":" on"}),
++            json!({"action":"on\n"}),
++            json!({"action":"x".repeat(65536)}),
++            json!({"action":"on","slot":0}),
++            json!({"action":"off","job":{"session":1,"serial":1,"generation":1}}),
++            json!({"action":"pause","replace":true}),
++            json!({"action":"resume","settings":{}}),
++            json!({"action":"on","path":"must-not-be-read.hdr"}),
++        ] {
++            assert!(session.execute("render.interactive", &hostile).is_err(), "{level:?}: {hostile}");
++        }
++        assert!(std::sync::Arc::ptr_eq(&document, &session.doc));
++        assert_eq!(before, (session.revision, session.undo.len(), session.redo.len(), session.evaluations, session.is_dirty()));
++        assert!(session.render_job_host().is_none());
++    }
++}
++
++#[cfg(test)]
++#[test]
++fn interactive_echo_preserves_a_queued_final_job_and_its_resource_lease() {
++    use solidcraft_render::job::{CpuHost, JobId};
++    let host = CpuHost::cooperative();
++    let mut session = Session::default();
++    session.set_render_job_host(Some(host.clone())).unwrap();
++    // Queue a tiny raster job without pumping the cooperative host or opening a device.
++    let started = session.execute("render.start", &json!({"settings":{"width":16,"height":16}})).unwrap();
++    let first_id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++    let first = session.render_job_handle(first_id).unwrap();
++    let status = serde_json::to_value(first.status().unwrap()).unwrap();
++    let admitted = host.admitted_bytes();
++    assert!(admitted > 0);
++    let document = session.doc.clone();
++    let before = (session.revision, session.undo.len(), session.redo.len(), session.evaluations, session.is_dirty());
++    for action in ["on", "pause", "resume", "off"] {
++        let params = json!({"action":action});
++        assert_eq!(session.execute("render.interactive", &params).unwrap(), params);
++        assert_eq!(serde_json::to_value(first.status().unwrap()).unwrap(), status);
++        assert_eq!(host.admitted_bytes(), admitted);
++        assert!(session.render_job_host().unwrap().same_host(&host));
++        assert!(std::sync::Arc::ptr_eq(&document, &session.doc));
++        assert_eq!(before, (session.revision, session.undo.len(), session.redo.len(), session.evaluations, session.is_dirty()));
++    }
++    assert!(session.execute("render.interactive", &json!({"action":"off","job":first_id})).is_err());
++    assert_eq!(serde_json::to_value(first.status().unwrap()).unwrap(), status);
++    assert_eq!(host.admitted_bytes(), admitted);
++    let next = session.execute("render.start", &json!({"settings":{"width":16,"height":16}})).unwrap();
++    let next_id: JobId = serde_json::from_value(next["job"].clone()).unwrap();
++    assert_eq!(next_id.session, first_id.session);
++    assert_eq!(next_id.serial, first_id.serial + 1, "echo actions must not allocate or replace final job identities");
++}
+diff --git a/crates/engine/src/lib.rs b/crates/engine/src/lib.rs
+index 296bd363..12be5f40 100644
+--- a/crates/engine/src/lib.rs
++++ b/crates/engine/src/lib.rs
+@@ -24,6 +24,7 @@ pub mod occurrences;
+ pub mod params;
+ pub mod product_scene;
+ pub mod recovery;
++pub mod render_interactive;
+ pub mod render_jobs;
+ pub mod render_lights;
+ pub mod sample;
+diff --git a/crates/engine/src/render_jobs.rs b/crates/engine/src/render_jobs.rs
+index 7ea41531..8197a8f7 100644
+--- a/crates/engine/src/render_jobs.rs
++++ b/crates/engine/src/render_jobs.rs
+@@ -1,13 +1,14 @@
+ //! Per-document, transient render ownership. Captured scenes remain immutable when CAD edits
+ //! continue; callers get the captured revision and must never present it as a newer scene.
+ 
++use crate::render_interactive::{Controller, InteractiveRender, with_controller};
+ use solidcraft_render::{
+     ExecutorDescriptor,
+     job::{CpuHost, ErrorCode, HostKind, Integrator, JobError, JobHandle, JobId, JobStatus, Phase, RenderFrame},
+ };
+ use std::collections::VecDeque;
+ use std::sync::{
+-    Arc,
++    Arc, Weak,
+     atomic::{AtomicU64, Ordering},
+ };
+ 
+@@ -51,6 +52,8 @@ pub(crate) struct Jobs {
+     /// One explicitly displayed completed result, independent of a newer completion.
+     /// The existing frame Arc keeps its original host reservation accounted for.
+     pinned: Option<JobHandle>,
++    /// Preview lifetime only; it never joins final live/history/export ownership.
++    interactive: Weak<Controller>,
+ }
+ 
+ impl Default for Jobs {
+@@ -66,12 +69,14 @@ impl Default for Jobs {
+             history: VecDeque::new(),
+             last_good: None,
+             pinned: None,
++            interactive: Weak::new(),
+         }
+     }
+ }
+ 
+ impl Drop for Jobs {
+     fn drop(&mut self) {
++        let _ = self.revoke_interactive();
+         for job in &self.live {
+             let _ = job.cancel();
+         }
+@@ -79,6 +84,56 @@ impl Drop for Jobs {
+ }
+ 
+ impl Jobs {
++    pub(crate) fn is_interactive_current(&self, controller: &Weak<Controller>) -> bool {
++        Weak::ptr_eq(&self.interactive, controller)
++    }
++
++    fn revoke_interactive(&mut self) -> Result<(), JobError> {
++        let previous = std::mem::take(&mut self.interactive);
++        match previous.upgrade() {
++            Some(controller) => with_controller(&controller, |state| state.disable()),
++            None => Ok(()),
++        }
++    }
++
++    fn suspend_interactive(&self) -> Result<(), JobError> {
++        match self.interactive.upgrade() {
++            Some(controller) => with_controller(&controller, |state| state.set_final_active(true, std::time::Duration::ZERO)),
++            None => Ok(()),
++        }
++    }
++
++    fn final_active(&self) -> Result<bool, JobError> {
++        for job in &self.live {
++            if !job.status()?.progress.phase.terminal() {
++                return Ok(true);
++            }
++        }
++        Ok(false)
++    }
++
++    fn create_interactive(&mut self, document_uid: u64) -> Result<InteractiveRender, JobError> {
++        let host = self.host.as_ref().ok_or_else(|| JobError::new(ErrorCode::HostUnavailable, "no CPU image host is installed"))?;
++        if !host.is_available() || host.kind() != HostKind::NativeWorker {
++            return Err(JobError::new(ErrorCode::HostUnavailable, "Interactive CPU requires an available native CPU host"));
++        }
++        host.validate_integrator(Integrator::Raytrace)?;
++        let final_active = self.final_active()?;
++        if document_uid == 0 || self.owner == 0 {
++            return Err(JobError::new(ErrorCode::LimitExceeded, "render session identity exhausted"));
++        }
++        // Use the same allocator as final owners; never reuse the document uid or
++        // scratch owner as a preview namespace. Zero reports allocator exhaustion.
++        let preview_session = owner();
++        if preview_session == 0 {
++            return Err(JobError::new(ErrorCode::LimitExceeded, "Interactive owner identity exhausted"));
++        }
++        let next = InteractiveRender::new(document_uid, preview_session, final_active)?;
++        self.revoke_interactive()?;
++        self.interactive = next.weak();
++        Ok(next)
++    }
++
+     pub(crate) fn host_for(&self, executor: &solidcraft_render::ExecutorId) -> Option<&CpuHost> {
+         if executor.as_str() == "cpu-raytrace" {
+             return self
+@@ -154,6 +209,7 @@ impl Jobs {
+         }
+         let serial = self.serial.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "render job identity exhausted"))?;
+         let generation = self.generation.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "render generation exhausted"))?;
++        self.suspend_interactive()?;
+         let handle = host.submit_with_environment_and_options(
+             JobId { session: self.owner, serial, generation },
+             revision,
+@@ -174,6 +230,7 @@ impl Jobs {
+         source_id: JobId,
+         presentation: solidcraft_render::job::presentation::Presentation,
+     ) -> Result<JobStatus, JobError> {
++        presentation.validate()?;
+         self.collect()?;
+         let source = self.handle(source_id)?;
+         let frame = source.frame()?.ok_or_else(|| JobError::new(ErrorCode::NotCompleted, "regrade requires a completed frame"))?;
+@@ -190,6 +247,10 @@ impl Jobs {
+         }
+         let serial = self.serial.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "render job identity exhausted"))?;
+         let generation = self.generation.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "render generation exhausted"))?;
++        if self.owner == 0 {
++            return Err(JobError::new(ErrorCode::LimitExceeded, "render session identity exhausted"));
++        }
++        self.suspend_interactive()?;
+         let handle = host.submit_regrade(JobId { session: self.owner, serial, generation }, &source, presentation)?;
+         let status = handle.status()?;
+         self.serial = serial;
+@@ -244,6 +305,18 @@ impl Jobs {
+ }
+ 
+ impl crate::Session {
++    /// Explicit activation support. The caller owns one app-wide capture worker.
++    /// This registers a lifetime only; it never captures or starts an image.
++    pub fn interactive_render(&mut self) -> crate::Result<InteractiveRender> {
++        self.render_jobs.create_interactive(self.uid).map_err(job_error)
++    }
++
++    /// Bounded final-job metadata for current/background document scheduling.
++    /// Retained completed images do not block Interactive; unknown status fails.
++    pub fn render_final_active(&self) -> crate::Result<bool> {
++        self.render_jobs.final_active().map_err(job_error)
++    }
++
+     /// A host is installed by the application, never by document data or a command.
+     pub fn set_render_job_host(&mut self, host: Option<CpuHost>) -> crate::Result<()> {
+         if self.render_jobs.host.as_ref().zip(host.as_ref()).is_some_and(|(a, b)| a.same_host(b)) {
+@@ -378,3 +451,238 @@ mod displayed_result_tests {
+         assert!(s.execute("render.result.pin", &json!({"job":reply["job"]})).is_err(), "a pending result is never exportable");
+     }
+ }
++
++// Original context ownership and real capture integration cases.
++#[cfg(all(test, feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++mod interactive_context_tests {
++    use super::*;
++    use crate::render_interactive::{InteractiveRender, Snapshot, adopt_created};
++    use serde_json::{Value, json};
++    use solidcraft_render::job::interactive::{State, VisualRevision};
++    use std::time::Duration;
++
++    fn native() -> (crate::Session, CpuHost) {
++        let host = CpuHost::for_platform().unwrap();
++        let mut session = crate::Session::default();
++        session.set_render_job_host(Some(host.clone())).unwrap();
++        (session, host)
++    }
++
++    fn wire(background: [u8; 3]) -> Value {
++        json!({"integrator":"raytrace","settings":{"width":16,"height":16,"background":background},"raytrace":{"lights":[],"shadows":false}})
++    }
++
++    fn capture(context: &InteractiveRender, session: &crate::Session, request: &Value) -> Snapshot {
++        context.enable(VisualRevision { scene_generation: session.revision, visual_revision: 1 }, Duration::ZERO).unwrap();
++        let ticket = context.capture(Duration::from_millis(200)).unwrap().unwrap();
++        context.snapshot(session, ticket, request).unwrap()
++    }
++
++    fn terminal(job: &JobHandle) -> Phase {
++        // Completion watchdog follows existing native job tests; no speed assertion.
++        job.wait_timeout(Duration::from_secs(60)).unwrap().progress.phase
++    }
++
++    fn created(session: &crate::Session, ticket: solidcraft_render::job::interactive::CaptureTicket, request: &Value) -> JobHandle {
++        let p = crate::cmd::prepare_interactive(session, request).unwrap();
++        session
++            .render_job_host()
++            .unwrap()
++            .submit_with_environment_and_options(ticket.job_id(), ticket.revision().scene_generation, p.scene, p.request, p.options, p.environment)
++            .unwrap()
++    }
++
++    #[test]
++    fn registration_is_explicit_and_preview_frames_never_join_final_registry() {
++        let (mut session, _) = native();
++        let document = session.doc.clone();
++        let history = (session.revision, session.undo.len(), session.redo.len());
++        let context = session.interactive_render().unwrap();
++        assert_eq!(context.state().unwrap(), State::Off);
++        assert!(context.is_current(&session));
++        assert!(context.capture(Duration::from_secs(1)).unwrap().is_none());
++        let snapshot = capture(&context, &session, &wire([31, 67, 101]));
++        let ticket = snapshot.ticket();
++        assert_ne!(ticket.job_id().session, session.render_jobs.owner);
++        assert_eq!(snapshot.document_uid(), session.uid);
++        assert!(snapshot.run().unwrap());
++        let preview = context.current().unwrap().unwrap();
++        assert_eq!(terminal(&preview), Phase::Completed);
++        assert!(preview.frame().unwrap().is_some());
++        assert!(session.render_job_handle(preview.id()).is_err());
++        assert!(session.execute("render.status", &json!({"job":preview.id()})).is_err());
++        assert!(session.render_jobs.live.is_empty());
++        assert!(session.render_jobs.last_good.is_none());
++        assert!(session.render_jobs.pinned.is_none());
++        assert_eq!(history, (session.revision, session.undo.len(), session.redo.len()));
++        assert!(Arc::ptr_eq(&document, &session.doc));
++    }
++
++    #[test]
++    fn direct_final_start_preempts_only_interactive_and_finishes() {
++        let (mut session, _) = native();
++        let context = session.interactive_render().unwrap();
++        assert!(capture(&context, &session, &wire([11, 29, 47])).run().unwrap());
++        let old = context.current().unwrap().unwrap();
++        let reply = session.execute("render.start", &wire([83, 107, 139])).unwrap();
++        let final_id: JobId = serde_json::from_value(reply["job"].clone()).unwrap();
++        let final_job = session.render_job_handle(final_id).unwrap();
++        assert_ne!(final_id.session, old.id().session);
++        assert_eq!(context.state().unwrap(), State::Paused);
++        assert!(context.current().unwrap().is_none());
++        assert!(context.capture(Duration::from_secs(100)).unwrap().is_none());
++        assert_eq!(terminal(&final_job), Phase::Completed);
++        assert!(matches!(terminal(&old), Phase::Cancelled | Phase::Completed));
++        assert!(!session.render_final_active().unwrap());
++        let digest = final_job.frame().unwrap().unwrap().info.png_sha256.clone();
++        context.disable().unwrap();
++        drop(context);
++        assert_eq!(session.render_job_handle(final_id).unwrap().frame().unwrap().unwrap().info.png_sha256, digest);
++    }
++
++    #[test]
++    fn replacement_context_revokes_old_capture_without_meshing() {
++        let (mut session, host) = native();
++        session.execute("solid.box", &json!({"length":10,"width":20,"height":5,"body_name":"Source"})).unwrap();
++        let world = session.world_state();
++        assert!(world.body("Source").unwrap().cached_mesh().is_none());
++        let old = session.interactive_render().unwrap();
++        let snapshot = capture(&old, &session, &wire([1, 2, 3]));
++        let old_owner = snapshot.ticket().job_id().session;
++        let fresh = session.interactive_render().unwrap();
++        assert!(!old.is_current(&session));
++        assert_eq!(old.state().unwrap(), State::Off);
++        assert_eq!(fresh.state().unwrap(), State::Off);
++        assert!(!snapshot.run().unwrap());
++        assert!(world.body("Source").unwrap().cached_mesh().is_none());
++        assert_eq!(host.admitted_bytes(), 0);
++        let next = capture(&fresh, &session, &wire([4, 5, 6]));
++        assert_ne!(next.ticket().job_id().session, old_owner);
++    }
++
++    #[test]
++    fn host_a_b_a_cannot_revive_old_registration_in_the_same_document() {
++        let (mut session, host_a) = native();
++        let uid = session.uid;
++        let old = session.interactive_render().unwrap();
++        let snapshot = capture(&old, &session, &wire([1, 2, 3]));
++        let host_b = CpuHost::for_platform().unwrap();
++        session.set_render_job_host(Some(host_b)).unwrap();
++        assert_eq!(session.uid, uid);
++        assert!(!old.is_current(&session));
++        assert_eq!(old.state().unwrap(), State::Off);
++        assert!(!snapshot.run().unwrap());
++        session.set_render_job_host(Some(host_a.clone())).unwrap();
++        assert!(!old.is_current(&session));
++        old.enable(VisualRevision { scene_generation: session.revision, visual_revision: 2 }, Duration::ZERO).unwrap();
++        let stale = old.capture(Duration::from_millis(200)).unwrap().unwrap();
++        assert!(old.snapshot(&session, stale, &wire([7, 8, 9])).is_err());
++        assert_eq!(host_a.admitted_bytes(), 0);
++        assert!(session.interactive_render().unwrap().is_current(&session));
++    }
++
++    #[test]
++    fn new_design_and_equal_revision_foreign_session_refuse_old_tickets() {
++        let (mut session, host) = native();
++        let context = session.interactive_render().unwrap();
++        let snapshot = capture(&context, &session, &wire([1, 2, 3]));
++        let ticket = snapshot.ticket();
++        let uid = session.uid;
++        let mut foreign = crate::Session::new((*session.doc).clone());
++        foreign.revision = session.revision;
++        foreign.set_render_job_host(Some(host.clone())).unwrap();
++        assert_ne!(foreign.uid, uid);
++        assert!(!context.is_current(&foreign));
++        assert!(context.snapshot(&foreign, ticket, &wire([4, 5, 6])).is_err());
++        session.execute("file.new", &json!({})).unwrap();
++        assert_ne!(session.uid, uid);
++        assert!(!context.is_current(&session));
++        assert_eq!(context.state().unwrap(), State::Off);
++        assert!(!snapshot.run().unwrap());
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++
++    #[test]
++    fn scratch_drop_does_not_revoke_source_and_exhaustion_is_local() {
++        let (mut session, _) = native();
++        let context = session.interactive_render().unwrap();
++        drop(session.scratch());
++        assert!(context.is_current(&session));
++        assert_eq!(context.state().unwrap(), State::Off);
++        assert!(InteractiveRender::new(session.uid, 0, false).is_err());
++        let original_owner = session.render_jobs.owner;
++        session.render_jobs.owner = 0;
++        assert!(session.interactive_render().is_err());
++        assert!(context.is_current(&session));
++        session.render_jobs.owner = original_owner;
++    }
++
++    #[test]
++    fn failed_adoption_with_poisoned_controller_cancels_unpumped_cooperative_record() {
++        let (mut session, _) = native();
++        let context = session.interactive_render().unwrap();
++        let snapshot = capture(&context, &session, &wire([1, 2, 3]));
++        let ticket = snapshot.ticket();
++        let p = crate::cmd::prepare_interactive(&session, &wire([1, 2, 3])).unwrap();
++        let mut request = p.request;
++        request.integrator = Integrator::Raster;
++        request.raytrace = None;
++        // A real cooperative queue cannot complete without an explicit pump.
++        // Adoption checks owner, then the poisoned lifecycle before integrator.
++        let cooperative = CpuHost::cooperative();
++        let job = cooperative.submit(ticket.job_id(), ticket.revision().scene_generation, p.scene, request).unwrap();
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Queued);
++        let controller = session.render_jobs.interactive.upgrade().unwrap();
++        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++            let _guard = controller.lock().unwrap();
++            panic!("original poison fixture");
++        }));
++        assert!(adopt_created(&controller, ticket, job.clone()).is_err());
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Cancelled);
++        assert!(context.current().is_err(), "a poisoned lifecycle is not resumed");
++        // No pump, sleeps, synthetic executor or large scene is needed. Removing
++        // Unadopted::drop cancellation leaves Queued and fails this assertion.
++        // Only controller poison is tested; record.data poison is best-effort.
++    }
++
++    #[test]
++    fn rejected_fresh_equal_id_record_preserves_retained_completed_frame() {
++        let (mut session, _) = native();
++        let context = session.interactive_render().unwrap();
++        let snapshot = capture(&context, &session, &wire([17, 31, 59]));
++        let ticket = snapshot.ticket();
++        assert!(snapshot.run().unwrap());
++        let accepted = context.current().unwrap().unwrap();
++        assert_eq!(terminal(&accepted), Phase::Completed);
++        let frame = accepted.frame().unwrap().unwrap();
++        let digest = frame.info.png_sha256.clone();
++        let duplicate = created(&session, ticket, &wire([83, 107, 139]));
++        assert_eq!(duplicate.id(), accepted.id());
++        let controller = session.render_jobs.interactive.upgrade().unwrap();
++        assert!(!adopt_created(&controller, ticket, duplicate.clone()).unwrap());
++        let phase = duplicate.status().unwrap().progress.phase;
++        assert!(phase.terminal() || phase == Phase::Cancelling);
++        assert!(matches!(terminal(&duplicate), Phase::Cancelled | Phase::Completed));
++        let retained = context.current().unwrap().unwrap().frame().unwrap().unwrap();
++        assert!(Arc::ptr_eq(&retained, &frame));
++        assert_eq!(retained.info.png_sha256, digest);
++        // This native fixture proves accepted-record retention only. Completed
++        // duplicate work does not prove a cancellation request; core queued
++        // distinct-record acceptance covers that separate invariant.
++        assert_eq!(accepted.status().unwrap().request.background, [17, 31, 59]);
++    }
++
++    #[test]
++    fn dropping_context_before_worker_start_keeps_the_source_mesh_cold() {
++        let (mut session, host) = native();
++        session.execute("solid.box", &json!({"length":10,"width":20,"height":5,"body_name":"Source"})).unwrap();
++        let world = session.world_state();
++        assert!(world.body("Source").unwrap().cached_mesh().is_none());
++        let context = session.interactive_render().unwrap();
++        let snapshot = capture(&context, &session, &wire([1, 2, 3]));
++        drop(context);
++        assert!(!snapshot.run().unwrap());
++        assert!(world.body("Source").unwrap().cached_mesh().is_none());
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++}
+diff --git a/crates/engine/src/schema/render_ui.rs b/crates/engine/src/schema/render_ui.rs
+index eef51c95..2cc4998a 100644
+--- a/crates/engine/src/schema/render_ui.rs
++++ b/crates/engine/src/schema/render_ui.rs
+@@ -1,4 +1,4 @@
+-//! Clipboard requests for the Render workspace; headless calls only echo validated text.
++//! Typed Render workspace UI requests; headless calls only echo validated inputs.
+ use schemars::JsonSchema;
+ use serde::{Deserialize, Serialize};
+ 
+@@ -9,3 +9,20 @@ pub struct CheckReport {
+     #[schemars(length(min = 1, max = 65536))]
+     pub text: String,
+ }
++
++/// Explicit provisional-preview action; no implicit toggle or default activation.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
++#[serde(rename_all = "snake_case")]
++pub enum Action {
++    On,
++    Off,
++    Pause,
++    Resume,
++}
++
++/// A validated UI action echoed unchanged by the headless command handler.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct InteractiveParams {
++    pub action: Action,
++}
+diff --git a/crates/render/src/job/host.rs b/crates/render/src/job/host.rs
+index 8c06a153..2a39848f 100644
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -396,6 +396,11 @@ impl Record {
+ pub struct JobHandle(Arc<Record>);
+ 
+ impl JobHandle {
++    /// Internal admitted-work identity. Equal public IDs need not be one record.
++    pub(super) fn same_record(&self, other: &Self) -> bool {
++        Arc::ptr_eq(&self.0, &other.0)
++    }
++
+     pub fn id(&self) -> JobId {
+         self.0.id
+     }
+diff --git a/crates/render/src/job/host_tests.rs b/crates/render/src/job/host_tests.rs
+index cff1b519..173e096a 100644
+--- a/crates/render/src/job/host_tests.rs
++++ b/crates/render/src/job/host_tests.rs
+@@ -78,13 +78,16 @@ mod interactive {
+         assert!(interactive.capture(ms(1398)).unwrap().is_none());
+         let b = interactive.capture(ms(1399)).unwrap().unwrap();
+         assert_eq!(b.revision(), revision(2));
++        assert!(interactive.accepts_capture(b));
+         assert!(interactive.capture(ms(9999)).unwrap().is_none());
+         interactive.edit(revision(3), ms(1400)).unwrap();
++        assert!(!interactive.accepts_capture(b));
+         // Delayed failure of B cannot poison C.
+         interactive.capture_failed(b, JobError::new(ErrorCode::InvalidScene, "old capture"));
+         assert_eq!(interactive.state().unwrap(), State::Updating);
+         let c = interactive.capture(ms(1600)).unwrap().unwrap();
+         interactive.capture_failed(c, JobError::new(ErrorCode::InvalidScene, "current capture"));
++        assert!(!interactive.accepts_capture(c));
+         assert_eq!(interactive.state().unwrap(), State::Error);
+         assert_eq!(interactive.error().unwrap().message, "current capture");
+         assert!(interactive.capture(ms(9999)).unwrap().is_none(), "no automatic failure retry loop");
+@@ -138,7 +141,10 @@ mod interactive {
+         assert_eq!(first.status().unwrap().progress.phase, Phase::Cancelled);
+         assert!(interactive.current().is_none());
+         let b = interactive.capture(ms(401)).unwrap().unwrap();
+-        let late = host.submit(id(9003, 2), 19, empty(), cpu_request(&cpu()).unwrap()).unwrap();
++        // A delayed A admission must carry A's identity, not the pending B's.
++        let late = host.submit(a.job_id(), 19, empty(), cpu_request(&cpu()).unwrap()).unwrap();
++        assert_eq!(late.id(), a.job_id());
++        assert_ne!(late.id(), b.job_id());
+         assert!(!interactive.attach(a, late.clone()).unwrap());
+         assert_eq!(late.status().unwrap().progress.phase, Phase::Cancelled);
+         // Drain cancelled queue entries before admitting another real job.
+@@ -251,6 +257,89 @@ mod interactive {
+         drop(interactive);
+         assert_eq!(job.status().unwrap().progress.phase, Phase::Cancelled);
+     }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn stale_ticket_cannot_cancel_current_job_before_acknowledgement() {
++        let host = host();
++        let mut interactive = Interactive::new(9008);
++        interactive.enable(revision(1), ms(0)).unwrap();
++        let old = interactive.capture(ms(200)).unwrap().unwrap();
++        interactive.edit(revision(2), ms(201)).unwrap();
++        let current = interactive.capture(ms(401)).unwrap().unwrap();
++        let job = host.submit(current.job_id(), 19, empty(), cpu_request(&cpu()).unwrap()).unwrap();
++        // B is admitted but not yet acknowledged. A delayed A callback has no
++        // authority to cancel B, including before current() can return a handle.
++        assert!(interactive.current().is_none());
++        assert!(interactive.accepts_capture(current));
++        assert!(!interactive.accepts_capture(old));
++        assert!(!interactive.attach(old, job.clone()).unwrap());
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Queued);
++        assert!(interactive.current().is_none());
++        assert_eq!(interactive.state().unwrap(), State::Updating);
++        assert!(interactive.attach(current, job.clone()).unwrap());
++        assert!(!interactive.accepts_capture(current));
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        let mut running = Running::begin(work).unwrap();
++        for _ in 0..100_000 {
++            if !running.advance(16).unwrap() {
++                break;
++            }
++        }
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
++        assert!(job.frame().unwrap().is_some());
++        assert_eq!(interactive.state().unwrap(), State::TargetReached);
++        drop(running);
++        drop(interactive);
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn distinct_same_id_records_are_cancelled_but_current_handle_clones_finish() {
++        let host = host();
++        let mut interactive = Interactive::new(9009);
++        interactive.enable(revision(1), ms(0)).unwrap();
++        let old = interactive.capture(ms(200)).unwrap().unwrap();
++        interactive.edit(revision(2), ms(201)).unwrap();
++        let current = interactive.capture(ms(401)).unwrap().unwrap();
++        let accepted = host.submit(current.job_id(), 19, empty(), cpu_request(&cpu()).unwrap()).unwrap();
++        assert!(interactive.attach(current, accepted.clone()).unwrap());
++        for callback in [old, current] {
++            // The host accepts an explicit JobId; submitting twice creates two
++            // records. Metadata equality is not actual admitted-work identity.
++            let duplicate = host.submit(current.job_id(), 19, empty(), cpu_request(&cpu()).unwrap()).unwrap();
++            assert_eq!(accepted.id(), duplicate.id());
++            assert!(!Arc::ptr_eq(&accepted.0, &duplicate.0));
++            assert!(!interactive.attach(callback, duplicate.clone()).unwrap());
++            assert_eq!(duplicate.status().unwrap().progress.phase, Phase::Cancelled);
++            assert_eq!(accepted.status().unwrap().progress.phase, Phase::Queued);
++            assert!(Arc::ptr_eq(&interactive.current().unwrap().0, &accepted.0));
++            // A second callback for the original Arc is harmless for both an
++            // obsolete ticket and the already acknowledged current ticket.
++            assert!(!interactive.attach(callback, accepted.clone()).unwrap());
++            assert_eq!(accepted.status().unwrap().progress.phase, Phase::Queued);
++        }
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        let mut running = Running::begin(work).unwrap();
++        for _ in 0..100_000 {
++            if !running.advance(16).unwrap() {
++                break;
++            }
++        }
++        assert_eq!(accepted.status().unwrap().progress.phase, Phase::Completed);
++        assert!(accepted.frame().unwrap().is_some());
++        assert_eq!(interactive.state().unwrap(), State::TargetReached);
++        while let Some(work) = host.0.shared.queue.lock().unwrap().pop_front() {
++            assert_eq!(work.handle.status().unwrap().progress.phase, Phase::Cancelled);
++            drop(work);
++        }
++        drop(running);
++        drop(interactive);
++        drop(accepted);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
+ }
+ 
+ #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
+diff --git a/crates/render/src/job/interactive.rs b/crates/render/src/job/interactive.rs
+index e9711445..0742e581 100644
+--- a/crates/render/src/job/interactive.rs
++++ b/crates/render/src/job/interactive.rs
+@@ -192,6 +192,12 @@ impl Interactive {
+         Ok(Some(ticket))
+     }
+ 
++    /// Recheck before expensive capture/admission, including after a worker delay.
++    /// A ticket is not permission to prepare an obsolete or already adopted job.
++    pub fn accepts_capture(&self, ticket: CaptureTicket) -> bool {
++        self.enabled && !self.paused && !self.final_active && self.error.is_none() && self.ticket == Some(ticket) && self.active.is_none()
++    }
++
+     /// Attach an admitted preview-only job after immutable capture. Delayed jobs
+     /// are cancelled, including a previous ticket for the same visual revision.
+     /// Use a separate engine job session/registry from final-image export.
+@@ -203,7 +209,13 @@ impl Interactive {
+             return Ok(false);
+         }
+         if self.ticket != Some(ticket) || ticket.session != self.session {
+-            if self.active.as_ref().is_none_or(|active| active.id() != job.id()) {
++            // Protect an admitted current capture even before acknowledgement.
++            // Once accepted, only the same record (not merely its JobId) is ours.
++            let current = match &self.active {
++                Some(active) => active.same_record(&job),
++                None => self.ticket.is_some_and(|ticket| ticket.job_id() == job.id()),
++            };
++            if !current {
+                 job.cancel()?;
+             }
+             return Ok(false);
+@@ -222,7 +234,7 @@ impl Interactive {
+         // A ticket is acknowledged exactly once, even if the same capture is
+         // delivered twice while an earlier attached job is still running.
+         if self.active.is_some() {
+-            if self.active.as_ref().is_none_or(|active| active.id() != job.id()) {
++            if self.active.as_ref().is_none_or(|active| !active.same_record(&job)) {
+                 job.cancel()?;
+             }
+             return Ok(false);
+diff --git a/crates/ui-egui/src/command_help.rs b/crates/ui-egui/src/command_help.rs
+index ec1d5fd0..e4cbc2ce 100644
+--- a/crates/ui-egui/src/command_help.rs
++++ b/crates/ui-egui/src/command_help.rs
+@@ -15,6 +15,7 @@ pub const DOCUMENTED: &[&str] = &[
+     "occurrence.move",
+     "parameters.change",
+     "pointcloud.insert",
++    "render.interactive",
+     "solid.align",
+     "solid.chamfer",
+     "solid.combine",
+diff --git a/crates/ui-egui/src/render_ui/mod.rs b/crates/ui-egui/src/render_ui/mod.rs
+index 3634f924..25b0419d 100644
+--- a/crates/ui-egui/src/render_ui/mod.rs
++++ b/crates/ui-egui/src/render_ui/mod.rs
+@@ -185,6 +185,7 @@ pub(crate) fn overlays(app: &mut SolveApp, ui: &mut egui::Ui) {
+     if !free.is_positive() {
+         return;
+     }
++    crate::shell::register_panel(app, "render:interactive-card", None, None);
+     if crate::render_workspace::job_busy(app) {
+         let pill = Container::navigation_card(ui.ctx(), egui::Id::new("sc_render_progress"), free.center_top(), egui::Align2::CENTER_TOP, |ui| {
+             crate::render_workspace::progress_pill(app, ui);
+@@ -193,6 +194,7 @@ pub(crate) fn overlays(app: &mut SolveApp, ui: &mut egui::Ui) {
+         crate::scenario::publish_rect("render:progress-pill", pill.response.rect);
+     } else {
+         crate::shell::register_panel(app, "render:progress-pill", None, None);
++        crate::render_workspace::interactive::overlay(app, ui, free);
+     }
+     crate::render_workspace::environment_overlay(app, ui, viewport);
+     crate::render_workspace::assign::selection_bar(app, ui, free);
+diff --git a/crates/ui-egui/src/render_workspace.rs b/crates/ui-egui/src/render_workspace.rs
+index 511d15be..bad31537 100644
+--- a/crates/ui-egui/src/render_workspace.rs
++++ b/crates/ui-egui/src/render_workspace.rs
+@@ -38,6 +38,9 @@ mod environment;
+ #[path = "render_workspace_inspector.rs"]
+ mod inspector;
+ 
++#[path = "render_workspace_interactive.rs"]
++pub(crate) mod interactive;
++
+ #[path = "render_workspace_library.rs"]
+ mod library;
+ 
+@@ -132,6 +135,7 @@ pub struct State {
+     pub upload_error: crate::gpu::UploadError,
+     pub image_host: Option<solidcraft_engine::render::job::CpuHost>,
+     pub view: ViewState,
++    interactive: interactive::State,
+     revision: u64,
+     design_camera: Option<(Camera, bool)>,
+     slot: SceneSlot,
+@@ -461,6 +465,7 @@ impl Default for State {
+             upload_error: Arc::new(Mutex::new(None)),
+             image_host: None,
+             view: Default::default(),
++            interactive: Default::default(),
+             revision: u64::MAX,
+             design_camera: None,
+             slot: Arc::new(Mutex::new(None)),
+@@ -480,8 +485,9 @@ impl Default for State {
+ 
+ impl State {
+     /// Retain the selected viewport adapter, but do not open another device or
+-    /// compile shaders until Render is used. A later viewport installation (for
+-    /// example safe-mode fallback) replaces only a not-yet-started factory.
++    /// compile shaders until GPU path tracing is selected in Render. Raster and
++    /// CPU image methods retain this factory without starting it. A later viewport
++    /// installation (for example safe-mode fallback) replaces only an unstarted factory.
+     #[cfg(not(target_arch = "wasm32"))]
+     pub(crate) fn defer_path_host(&mut self, key: String, create: impl FnOnce() -> Result<ImageHost, String> + Send + 'static) {
+         if matches!(self.path_host, PathHost::NotStarted) {
+@@ -492,7 +498,8 @@ impl State {
+ 
+     #[cfg(not(target_arch = "wasm32"))]
+     fn start_deferred_path_host(&mut self) {
+-        if matches!(self.path_host, PathHost::NotStarted)
++        if self.view.method == ImageMethod::GpuRaytrace
++            && matches!(self.path_host, PathHost::NotStarted)
+             && let Some(create) = self.pending_setup.take()
+         {
+             self.path_host.start(create);
+@@ -525,6 +532,7 @@ pub(crate) fn inspect_state(app: &SolveApp) -> serde_json::Value {
+     json!({
+         "active": active(app), "stage": view.stage.key(), "setup": view.name, "draft_dirty": view.dirty,
+         "method": method, "job": view.job, "completed": view.completed,
++        "interactive": interactive::inspect(app),
+         "showing_result": view.result, "export_format": if view.studio.export_exr {"exr"} else {"png"},
+     })
+ }
+@@ -588,6 +596,7 @@ pub fn sync_backend(app: &mut SolveApp) {
+ /// Cooperative work belongs to the frame loop, never to a status/control request. Keep
+ /// scheduling frames even after leaving Render so a browser job can finish in Design.
+ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
++    interactive::tick(app, ctx);
+     if let Some(text) = app.render_workspace.clipboard_text.take() {
+         ctx.copy_text(text);
+     }
+@@ -620,7 +629,10 @@ pub fn reset_document(app: &mut SolveApp) {
+     let setup_seconds = std::mem::take(&mut app.render_workspace.setup_seconds);
+     let setup_key = app.render_workspace.setup_key.take();
+     let pending_setup = app.render_workspace.pending_setup.take();
+-    app.render_workspace = State { host, image_host, path_host, setup_seconds, setup_key, pending_setup, geometry_budget, ..Default::default() };
++    let mut interactive = std::mem::take(&mut app.render_workspace.interactive);
++    interactive.reset_document();
++    app.render_workspace =
++        State { host, image_host, path_host, setup_seconds, setup_key, pending_setup, geometry_budget, interactive, ..Default::default() };
+     if active(app) {
+         app.ui.tab = "MODEL".into();
+     }
+@@ -671,6 +683,7 @@ pub fn enter(app: &mut SolveApp, render: bool) -> Result<(), String> {
+         #[cfg(not(target_arch = "wasm32"))]
+         app.render_workspace.start_deferred_path_host();
+     } else {
++        app.render_workspace.interactive.reset_document();
+         assign::stop(app);
+         if let Some((camera, perspective)) = app.render_workspace.design_camera.take() {
+             app.cam = camera;
+@@ -858,6 +871,20 @@ fn raw_image_request(app: &SolveApp) -> Result<serde_json::Value, String> {
+     if !setups::has_runtime_inputs(app) {
+         return Ok(json!({"settings":setups::snapshot(app)?}));
+     }
++    runtime_image_request(app, false)
++}
++
++/// CPU Interactive skips final-dimension admission and the portable snapshot path.
++/// The engine fits/admit/captures this complete runtime intent off the window.
++fn interactive_request(app: &SolveApp) -> Result<serde_json::Value, String> {
++    if app.render_workspace.view.method != ImageMethod::CpuRaytrace {
++        return Err(app.tr("render.interactive_requires_cpu").into());
++    }
++    light::filter_request(app, runtime_image_request(app, true)?)
++}
++
++/// The existing runtime branch, shared without changing Final Check/Start policy.
++fn runtime_image_request(app: &SolveApp, interactive_cpu: bool) -> Result<serde_json::Value, String> {
+     let view = &app.render_workspace.view;
+     // Temporary bindings and unsaved HDR captures use the runtime API. Embedded HDRs
+     // still resolve by their document resource ID when a temporary binding is present.
+@@ -872,7 +899,11 @@ fn raw_image_request(app: &SolveApp) -> Result<serde_json::Value, String> {
+             if view.transparent {
+                 return Err(app.tr("render.cpu_opaque_required").to_string());
+             }
+-            cpu::params(app, &mut params)?;
++            if interactive_cpu {
++                cpu::params_interactive(app, &mut params)?;
++            } else {
++                cpu::params(app, &mut params)?;
++            }
+         }
+         ImageMethod::GpuRaytrace => {
+             params["progressive"] = json!(true);
+@@ -1917,6 +1948,7 @@ pub fn preview_size(executor: Option<&ExecutorDescriptor>, full: (u64, u64)) ->
+ 
+ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
+     if app.render_workspace.view.result {
++        interactive::before_paint(app, ui.ctx());
+         app.render_workspace.view.environment_ring = environment::RingView::default();
+         assign::stop(app);
+         show_result(app, ui);
+@@ -1971,6 +2003,14 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
+     }
+     let bg = app.render_workspace.view.draft.background;
+     ui.painter().rect_filled(viewport, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
++    // Reobserve after the existing shared navigation path, before any pixel paint.
++    interactive::before_paint(app, ui.ctx());
++    if interactive::paint(app, ui, rect) {
++        shot::overlay(app, ui, viewport);
++        crate::viewport::axis_view(app, ui, viewport);
++        crate::navigation_bar_view::show(app, ui, viewport);
++        return;
++    }
+     let result = (|| -> Result<(), String> {
+         if app.viewport.gpu.is_none() {
+             return Err(crate::i18n::tr("render.error_gpu_preview").into());
+@@ -2088,6 +2128,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
+ /// Apply validated UI requests after the same registry call used by automation.
+ pub(crate) fn apply_command(app: &mut SolveApp, id: &str, reply: &serde_json::Value) -> Result<(), String> {
+     match id {
++        "render.interactive" => {
++            let input: solidcraft_engine::schema::render_ui::InteractiveParams =
++                serde_json::from_value(reply.clone()).map_err(|error| error.to_string())?;
++            interactive::apply_command(app, input.action)?;
++        }
+         "render.preflight.copy" => {
+             app.render_workspace.clipboard_text = Some(reply["text"].as_str().ok_or("invalid check report")?.to_string());
+         }
+diff --git a/crates/ui-egui/src/render_workspace_cpu.rs b/crates/ui-egui/src/render_workspace_cpu.rs
+index 694467ea..99638782 100644
+--- a/crates/ui-egui/src/render_workspace_cpu.rs
++++ b/crates/ui-egui/src/render_workspace_cpu.rs
+@@ -160,6 +160,11 @@ struct Binding {
+     target: Target,
+     revision: u64,
+     document: std::sync::Weak<solidcraft_engine::doc::Document>,
++    // Interactive may follow appearance/render-only edits only while this exact
++    // evaluated world survives in the same open document. Weak ownership avoids
++    // retaining old geometry and prevents pointer reuse after the world drops.
++    session_uid: u64,
++    world: std::sync::Weak<solidcraft_engine::doc::ModelState>,
+ }
+ 
+ #[derive(Clone, Debug)]
+@@ -218,6 +223,25 @@ fn binding_current(app: &SolveApp, name: &str) -> bool {
+     })
+ }
+ 
++// Unlike final Check/Start, Interactive may refresh harmless appearance/render
++// edits. The engine retains the exact world Arc for those edits (refresh_render).
++// No geometry extraction, cold meshing, name-only rebinding or revision stamping.
++fn binding_interactive_world_current(app: &SolveApp, name: &str) -> bool {
++    app.render_workspace.view.cpu.bindings.get(name).is_some_and(|binding| {
++        binding.session_uid == app.session.uid
++            && !app.session.model.is_stale()
++            && app
++                .session
++                .interactive_cached_world_state()
++                .is_some_and(|world| std::sync::Weak::ptr_eq(&binding.world, &std::sync::Arc::downgrade(&world)))
++    })
++}
++
++fn binding_interactive_current(app: &SolveApp, name: &str) -> bool {
++    binding_interactive_world_current(app, name)
++        && app.render_workspace.view.cpu.bindings.get(name).is_some_and(|binding| target(app, name).as_ref() == Some(&binding.target))
++}
++
+ pub(super) fn revalidate(app: &mut SolveApp, name: &str) -> Result<(), String> {
+     let current = target(app, name).ok_or_else(|| app.tr("render.cpu_body_missing").to_string())?;
+     if app.render_workspace.view.cpu.bindings.get(name).is_none_or(|binding| binding.target != current) {
+@@ -225,9 +249,13 @@ pub(super) fn revalidate(app: &mut SolveApp, name: &str) -> Result<(), String> {
+     }
+     let revision = app.session.revision;
+     let document = std::sync::Arc::downgrade(&app.session.doc);
++    let world = std::sync::Arc::downgrade(&app.session.world_state());
++    let session_uid = app.session.uid;
+     if let Some(binding) = app.render_workspace.view.cpu.bindings.get_mut(name) {
+         binding.revision = revision;
+         binding.document = document;
++        binding.session_uid = session_uid;
++        binding.world = world;
+     }
+     Ok(())
+ }
+@@ -268,11 +296,16 @@ pub(super) fn set_reflection(app: &mut SolveApp, name: &str, mode: Option<Reflec
+         }
+     }
+     if let Some(target) = selected {
+-        app.render_workspace
+-            .view
+-            .cpu
+-            .bindings
+-            .insert(name.to_string(), Binding { target, revision: app.session.revision, document: std::sync::Arc::downgrade(&app.session.doc) });
++        app.render_workspace.view.cpu.bindings.insert(
++            name.to_string(),
++            Binding {
++                target,
++                revision: app.session.revision,
++                document: std::sync::Arc::downgrade(&app.session.doc),
++                session_uid: app.session.uid,
++                world: std::sync::Arc::downgrade(&app.session.world_state()),
++            },
++        );
+     } else {
+         app.render_workspace.view.cpu.bindings.remove(name);
+     }
+@@ -281,6 +314,28 @@ pub(super) fn set_reflection(app: &mut SolveApp, name: &str, mode: Option<Reflec
+ 
+ /// Shared by the parent Check and Start builder. This does not read an HDR file.
+ pub(super) fn params(app: &SolveApp, params: &mut Value) -> Result<(), String> {
++    params_with_binding_policy(app, params, binding_current)
++}
++
++/// Interactive-only wire lowering. This does not requalify final Check/Start,
++/// change a stored binding or read an HDR file; the engine still captures and admits it.
++pub(super) fn params_interactive(app: &SolveApp, params: &mut Value) -> Result<(), String> {
++    // Refuse unproved bound worlds before shared lowering checks visibility via
++    // target()/world_state(). Empty reflections never require a warm world.
++    if app
++        .render_workspace
++        .view
++        .raytrace
++        .reflections
++        .as_ref()
++        .is_some_and(|r| r.bodies.iter().any(|entry| !binding_interactive_world_current(app, &entry.body)))
++    {
++        return Err(app.tr("render.cpu_binding_stale").to_string());
++    }
++    params_with_binding_policy(app, params, binding_interactive_current)
++}
++
++fn params_with_binding_policy(app: &SolveApp, params: &mut Value, current: fn(&SolveApp, &str) -> bool) -> Result<(), String> {
+     let base = &app.render_workspace.view.raytrace;
+     if base.anisotropic_faces.iter().any(Option::is_some)
+         || !base.dielectrics.is_empty()
+@@ -293,7 +348,7 @@ pub(super) fn params(app: &SolveApp, params: &mut Value) -> Result<(), String> {
+     if base.reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|entry| !unique_visible_body(app, &entry.body))) {
+         return Err(app.tr("render.cpu_body_missing").to_string());
+     }
+-    if base.reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|entry| !binding_current(app, &entry.body))) {
++    if base.reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|entry| !current(app, &entry.body))) {
+         return Err(app.tr("render.cpu_binding_stale").to_string());
+     }
+     let view = &app.render_workspace.view.cpu;
+diff --git a/crates/ui-egui/src/render_workspace_ribbon.rs b/crates/ui-egui/src/render_workspace_ribbon.rs
+index ce8ec02f..925ee9f7 100644
+--- a/crates/ui-egui/src/render_workspace_ribbon.rs
++++ b/crates/ui-egui/src/render_workspace_ribbon.rs
+@@ -13,7 +13,8 @@ fn handled(id: &str) -> bool {
+     is_job_action(id)
+         || matches!(
+             id,
+-            "render.aging.describe"
++            "render.interactive"
++                | "render.aging.describe"
+                 | "render.effects.describe"
+                 | "render.environment.set"
+                 | "render.preset.resolve"
+@@ -66,6 +67,7 @@ pub(super) fn action_ready(app: &SolveApp, id: &str) -> Result<(), String> {
+         return Err(app.tr("render.ribbon_finish_dialog").into());
+     }
+     match id {
++        "render.interactive" => super::interactive::command_ready(app),
+         "render.preflight" | "render.start" => {
+             if id == "render.start" && busy(app) {
+                 return Err(app.tr("render.ribbon_job_active").into());
+@@ -209,6 +211,10 @@ fn focus(app: &mut SolveApp, page: inspector::Page, category: Option<&str>) {
+ /// Parameterless command activation opens the already implemented editor. The
+ /// engine's explicit resolve/apply methods still require their original params.
+ pub(super) fn start(app: &mut SolveApp, id: &str) -> bool {
++    if id == "render.interactive" {
++        super::interactive::activate(app);
++        return true;
++    }
+     if !handled(id) {
+         return false;
+     }
+diff --git a/crates/ui-egui/src/render_workspace_tests.rs b/crates/ui-egui/src/render_workspace_tests.rs
+index ea8a43c7..a7f16060 100644
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -826,6 +826,106 @@ fn render_lights_list_inspects_unsaved_ui_draft_without_applying_or_opening_anyt
+ 
+ #[cfg(not(target_arch = "wasm32"))]
+ mod async_path_host {
++
++    #[test]
++    fn cpu_and_raster_render_entries_keep_gpu_setup_unstarted_across_document_reset() {
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        for method in [ImageMethod::Raster, ImageMethod::CpuRaytrace] {
++            let mut h = Harness::new();
++            let calls = Arc::new(AtomicUsize::new(0));
++            let observed = calls.clone();
++            h.app.render_workspace.defer_path_host("not requested".into(), move || {
++                observed.fetch_add(1, Ordering::SeqCst);
++                Err("a CPU/Raster method must not call this GPU factory".into())
++            });
++            select_image_method(&mut h.app, method);
++            sync_backend(&mut h.app);
++            enter(&mut h.app, true).unwrap();
++            for _ in 0..3 {
++                sync_backend(&mut h.app);
++            }
++            // The synchronous state and retained factory prove that no worker was
++            // launched, even if a wrongly launched thread had not been scheduled yet.
++            assert!(matches!(h.app.render_workspace.path_host, PathHost::NotStarted));
++            assert!(h.app.render_workspace.pending_setup.is_some());
++            assert_eq!(calls.load(Ordering::SeqCst), 0);
++
++            crate::documents::adopt(&mut h.app, Session::default());
++            select_image_method(&mut h.app, method);
++            enter(&mut h.app, true).unwrap();
++            sync_backend(&mut h.app);
++            assert!(matches!(h.app.render_workspace.path_host, PathHost::NotStarted));
++            assert!(h.app.render_workspace.pending_setup.is_some());
++            assert_eq!(h.app.render_workspace.setup_key.as_deref(), Some("not requested"));
++            assert_eq!(calls.load(Ordering::SeqCst), 0);
++        }
++    }
++
++    #[test]
++    fn explicit_gpu_selection_starts_once_and_keeps_its_receiver_across_document_changes() {
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        let mut h = Harness::new();
++        let calls = Arc::new(AtomicUsize::new(0));
++        let observed = calls.clone();
++        let (started, seen) = mpsc::channel();
++        let (release, wait) = mpsc::channel();
++        h.app.render_workspace.defer_path_host("explicit request".into(), move || {
++            observed.fetch_add(1, Ordering::SeqCst);
++            started.send(()).unwrap();
++            wait.recv_timeout(Duration::from_secs(10)).unwrap();
++            Err("deliberate device-free refusal".into())
++        });
++        select_image_method(&mut h.app, ImageMethod::CpuRaytrace);
++        enter(&mut h.app, true).unwrap();
++        assert!(matches!(h.app.render_workspace.path_host, PathHost::NotStarted));
++        assert!(h.app.render_workspace.pending_setup.is_some());
++
++        select_image_method(&mut h.app, ImageMethod::GpuRaytrace);
++        sync_backend(&mut h.app);
++        seen.recv_timeout(Duration::from_secs(10)).unwrap();
++        assert!(matches!(h.app.render_workspace.path_host, PathHost::Preparing(..)));
++        assert!(h.app.render_workspace.pending_setup.is_none());
++        assert_eq!(calls.load(Ordering::SeqCst), 1);
++
++        // A real in-progress factory is not abandoned or duplicated when a new
++        // document defaults back to Raster, or the user changes methods meanwhile.
++        crate::documents::adopt(&mut h.app, Session::default());
++        enter(&mut h.app, true).unwrap();
++        assert!(matches!(h.app.render_workspace.path_host, PathHost::Preparing(..)));
++        let duplicate_calls = calls.clone();
++        h.app.render_workspace.defer_path_host("must not duplicate".into(), move || {
++            duplicate_calls.fetch_add(1, Ordering::SeqCst);
++            Err("unexpected duplicate preparation".into())
++        });
++        for method in [ImageMethod::Raster, ImageMethod::CpuRaytrace, ImageMethod::GpuRaytrace] {
++            select_image_method(&mut h.app, method);
++            sync_backend(&mut h.app);
++        }
++        assert_eq!(calls.load(Ordering::SeqCst), 1);
++        release.send(()).unwrap();
++        finish_setup(&mut h);
++        let PathHost::Failed(error) = &h.app.render_workspace.path_host else { panic!("expected deliberate refusal") };
++        assert_eq!(error, "deliberate device-free refusal");
++
++        // A method change or new document does not become an automatic retry.
++        crate::documents::adopt(&mut h.app, Session::default());
++        let PathHost::Failed(error) = &h.app.render_workspace.path_host else { panic!("document reset lost the original failure") };
++        assert_eq!(error, "deliberate device-free refusal");
++        select_image_method(&mut h.app, ImageMethod::GpuRaytrace);
++        enter(&mut h.app, true).unwrap();
++        let PathHost::Failed(error) = &h.app.render_workspace.path_host else { panic!("GPU selection lost the original failure") };
++        assert_eq!(error, "deliberate device-free refusal");
++        let retry_calls = calls.clone();
++        h.app.render_workspace.defer_path_host("must not retry".into(), move || {
++            retry_calls.fetch_add(1, Ordering::SeqCst);
++            Err("unexpected replacement after terminal failure".into())
++        });
++        sync_backend(&mut h.app);
++        let PathHost::Failed(error) = &h.app.render_workspace.path_host else { panic!("terminal failure was replaced") };
++        assert_eq!(error, "deliberate device-free refusal");
++        assert!(h.app.render_workspace.pending_setup.is_none());
++        assert_eq!(calls.load(Ordering::SeqCst), 1);
++    }
+     use super::*;
+     use solidcraft_engine::render::job;
+     use std::sync::mpsc;
+@@ -884,6 +984,11 @@ mod async_path_host {
+         assert!(matches!(h.app.render_workspace.path_host, PathHost::NotStarted));
+         assert!(h.app.render_workspace.pending_setup.is_some());
+         enter(&mut h.app, true).unwrap();
++        assert!(matches!(h.app.render_workspace.path_host, PathHost::NotStarted));
++        assert!(h.app.render_workspace.pending_setup.is_some());
++        assert_eq!(calls.load(Ordering::SeqCst), 0);
++        select_image_method(&mut h.app, ImageMethod::GpuRaytrace);
++        sync_backend(&mut h.app);
+         finish_setup(&mut h);
+         assert_eq!(calls.load(Ordering::SeqCst), 1);
+         assert!(matches!(h.app.render_workspace.path_host, PathHost::Ready(_)));
+@@ -899,6 +1004,8 @@ mod async_path_host {
+         let calls = Arc::new(AtomicUsize::new(0));
+         let observed = calls.clone();
+         let mut h = panel_fixture();
++        select_image_method(&mut h.app, ImageMethod::GpuRaytrace);
++        sync_backend(&mut h.app);
+         assert!(matches!(h.app.render_workspace.path_host, PathHost::NotStarted));
+         h.app.render_workspace.defer_path_host("late selected viewport".into(), move || {
+             observed.fetch_add(1, Ordering::SeqCst);
+@@ -922,6 +1029,7 @@ mod async_path_host {
+         h.app.render_workspace.defer_path_host("selected safe-mode adapter".into(), || Err("selected adapter unavailable".into()));
+         h.frames(5);
+         assert_eq!(h.app.render_workspace.setup_key.as_deref(), Some("selected safe-mode adapter"));
++        select_image_method(&mut h.app, ImageMethod::GpuRaytrace);
+         enter(&mut h.app, true).unwrap();
+         finish_setup(&mut h);
+         let PathHost::Failed(message) = &h.app.render_workspace.path_host else { panic!("expected selected adapter result") };
+@@ -2710,6 +2818,132 @@ fn cpu_reflection_binding_requires_confirmation_and_never_follows_a_reused_name(
+     assert!(cpu::params(&h.app, &mut json!({})).unwrap_err().contains(h.app.tr("render.cpu_binding_stale")));
+ }
+ 
++#[test]
++fn cpu_interactive_reflection_binding_accepts_appearance_and_render_intent_without_qualifying_final() {
++    use solidcraft_engine::render::job::ReflectionMode;
++    let mut h = Harness::new();
++    h.app.run("solid.box", json!({"length":10,"width":20,"height":5,"body_name":"Reflector"})).unwrap();
++    h.app.run("render.scene", json!({})).unwrap();
++    let world = h.app.session.world_state();
++    let mesh = world.body("Reflector").unwrap().cached_mesh().unwrap();
++    let document = h.app.session.doc.clone();
++    cpu::set_reflection(&mut h.app, "Reflector", Some(ReflectionMode::Mirror)).unwrap();
++    h.app.run("appearance.assign", json!({"bodies":["Reflector"],"color":"#123456"})).unwrap();
++    assert!(!Arc::ptr_eq(&document, &h.app.session.doc));
++    assert!(Arc::ptr_eq(&world, &h.app.session.world_state()));
++    assert!(Arc::ptr_eq(&mesh, &h.app.session.world_state().body("Reflector").unwrap().cached_mesh().unwrap()));
++    h.app.run("render.settings.set", json!({"name":"Interactive target proof","set":{"width":800,"height":600}})).unwrap();
++    assert!(Arc::ptr_eq(&world, &h.app.session.world_state()));
++    h.app.render_workspace.view.draft.exposure_ev = 1.5;
++    h.app.render_workspace.view.cpu.environment = cpu::Environment::Hdr;
++    h.app.render_workspace.view.cpu.hdr = captured_hdr_input("not-opened-by-interactive-ui.hdr");
++    h.app.render_workspace.view.cpu.rotation_rad = 0.25;
++    h.app.render_workspace.view.cpu.intensity = 2.0;
++    let before = json!(h.app.render_workspace.view.raytrace.reflections);
++    let mut interactive = json!({});
++    cpu::params_interactive(&h.app, &mut interactive).unwrap();
++    assert_eq!(interactive["raytrace"]["reflections"]["bodies"], json!([{"body":"Reflector","mode":"mirror"}]));
++    assert_eq!(interactive["raytrace"]["exposure_ev"], 1.5);
++    assert_eq!(interactive["environment"]["rotation_radians"], 0.25);
++    assert_eq!(interactive["environment"]["expected_sha256"], json!(h.app.render_workspace.view.cpu.hdr.resource().unwrap()));
++    assert_eq!(json!(h.app.render_workspace.view.raytrace.reflections), before);
++    assert!(
++        cpu::params(&h.app, &mut json!({})).unwrap_err().contains(h.app.tr("render.cpu_binding_stale")),
++        "Interactive refresh cannot qualify final Check/Start"
++    );
++    assert!(
++        cpu::set_reflection(&mut h.app, "Reflector", Some(ReflectionMode::RoughSpecular)).is_err(),
++        "mode changes still require explicit confirmation"
++    );
++}
++
++#[test]
++fn cpu_interactive_binding_keeps_cold_meshes_cold_and_refuses_another_world_until_confirmation() {
++    use solidcraft_engine::render::job::ReflectionMode;
++    let mut h = Harness::new();
++    h.app.session.execute("solid.box", &json!({"length":10,"width":20,"height":5,"body_name":"Reflector"})).unwrap();
++    let world = h.app.session.world_state();
++    assert!(world.body("Reflector").unwrap().cached_mesh().is_none());
++    let retained = Arc::strong_count(&world);
++    cpu::set_reflection(&mut h.app, "Reflector", Some(ReflectionMode::Mirror)).unwrap();
++    cpu::params_interactive(&h.app, &mut json!({})).unwrap();
++    assert!(world.body("Reflector").unwrap().cached_mesh().is_none(), "request lowering must not tessellate");
++    assert_eq!(Arc::strong_count(&world), retained, "the binding must not retain the evaluated world");
++    h.app.session.execute("appearance.assign", &json!({"bodies":["Reflector"],"color":"#654321"})).unwrap();
++    cpu::params_interactive(&h.app, &mut json!({})).unwrap();
++    assert!(world.body("Reflector").unwrap().cached_mesh().is_none());
++    h.app.session.execute("solid.box", &json!({"length":3,"width":3,"height":3,"corner":[30,0,0],"body_name":"Other","operation":"new"})).unwrap();
++    assert!(!Arc::ptr_eq(&world, &h.app.session.world_state()));
++    assert!(cpu::params_interactive(&h.app, &mut json!({})).unwrap_err().contains(h.app.tr("render.cpu_binding_stale")));
++    cpu::revalidate(&mut h.app, "Reflector").unwrap();
++    cpu::params_interactive(&h.app, &mut json!({})).unwrap();
++    cpu::params(&h.app, &mut json!({})).unwrap();
++}
++
++#[test]
++fn cpu_interactive_binding_refuses_reused_names_and_same_revision_in_a_new_document() {
++    use solidcraft_engine::render::job::ReflectionMode;
++    let mut h = Harness::new();
++    h.app.run("solid.box", json!({"length":10,"width":20,"height":5,"body_name":"Reflector"})).unwrap();
++    h.app.run("solid.box", json!({"length":3,"width":3,"height":3,"corner":[30,0,0],"body_name":"Other","operation":"new"})).unwrap();
++    cpu::set_reflection(&mut h.app, "Reflector", Some(ReflectionMode::Mirror)).unwrap();
++    h.app.run("body.rename", json!({"body":"Reflector","name":"Original"})).unwrap();
++    h.app.run("body.rename", json!({"body":"Other","name":"Reflector"})).unwrap();
++    assert!(cpu::params_interactive(&h.app, &mut json!({})).is_err());
++    assert!(cpu::revalidate(&mut h.app, "Reflector").is_err());
++    cpu::set_reflection(&mut h.app, "Reflector", None).unwrap();
++    cpu::set_reflection(&mut h.app, "Reflector", Some(ReflectionMode::Mirror)).unwrap();
++    cpu::params_interactive(&h.app, &mut json!({})).unwrap();
++    let document = h.app.session.doc.clone();
++    let revision = h.app.session.revision;
++    let uid = h.app.session.uid;
++    h.app.session = Session::new((*document).clone());
++    h.app.session.revision = revision;
++    assert_ne!(h.app.session.uid, uid);
++    assert!(cpu::params_interactive(&h.app, &mut json!({})).is_err());
++}
++
++#[test]
++fn cpu_interactive_binding_refuses_moved_occurrences_and_hidden_targets() {
++    use solidcraft_engine::render::job::ReflectionMode;
++    let mut h = Harness::new();
++    let component = h.app.run("component.create", json!({"name":"Part","grounded":false})).unwrap();
++    h.app.run("solid.box", json!({"length":10,"width":20,"height":5,"body_name":"Reflector"})).unwrap();
++    let world = h.app.session.world_state();
++    let name = world.bodies[0].name.clone();
++    let mesh = world.bodies[0].mesh();
++    cpu::set_reflection(&mut h.app, &name, Some(ReflectionMode::Mirror)).unwrap();
++    h.app.run("occurrence.move", json!({"occurrence":component["occurrence"],"translate":[20,0,0]})).unwrap();
++    let moved = h.app.session.world_state();
++    assert!(!Arc::ptr_eq(&world, &moved));
++    assert!(!Arc::ptr_eq(&mesh, &moved.bodies[0].mesh()));
++    assert!(cpu::params_interactive(&h.app, &mut json!({})).is_err(), "same creator and name cannot certify a moved instance");
++    cpu::revalidate(&mut h.app, &name).unwrap();
++    cpu::params_interactive(&h.app, &mut json!({})).unwrap();
++    h.app.session.visibility.hidden_bodies.push(name);
++    assert!(cpu::params_interactive(&h.app, &mut json!({})).unwrap_err().contains(h.app.tr("render.cpu_body_missing")));
++}
++
++#[test]
++fn cpu_interactive_binding_refuses_deleted_then_recreated_equal_looking_targets() {
++    use solidcraft_engine::render::job::ReflectionMode;
++    let mut h = Harness::new();
++    h.app.run("solid.box", json!({"length":10,"width":20,"height":5,"body_name":"Reflector"})).unwrap();
++    let world = h.app.session.world_state();
++    let feature = world.body("Reflector").unwrap().feature;
++    cpu::set_reflection(&mut h.app, "Reflector", Some(ReflectionMode::Mirror)).unwrap();
++    h.app.run("timeline.delete", json!({"feature":feature.to_string()})).unwrap();
++    assert!(cpu::params_interactive(&h.app, &mut json!({})).unwrap_err().contains(h.app.tr("render.cpu_binding_stale")));
++    h.app.run("solid.box", json!({"length":10,"width":20,"height":5,"body_name":"Reflector"})).unwrap();
++    assert!(h.app.session.world_state().body("Reflector").is_some(), "the recreated case must actually reuse the selected name");
++    assert!(!Arc::ptr_eq(&world, &h.app.session.world_state()));
++    assert!(cpu::params_interactive(&h.app, &mut json!({})).is_err(), "identical names/dimensions cannot certify recreated geometry");
++    assert!(cpu::params(&h.app, &mut json!({})).is_err());
++    cpu::set_reflection(&mut h.app, "Reflector", None).unwrap();
++    cpu::set_reflection(&mut h.app, "Reflector", Some(ReflectionMode::Mirror)).unwrap();
++    cpu::params_interactive(&h.app, &mut json!({})).unwrap();
++}
++
+ #[test]
+ fn cpu_environment_controls_keep_wire_schemas_separate_without_reading_files() {
+     let mut h = Harness::new();
+@@ -6380,3 +6614,809 @@ fn geometry_budget_change_retries_cached_admission_without_document_changes() {
+     assert_eq!(state.preview_upload_bytes, Some(bytes as usize));
+     assert!(state.scene_error.is_none());
+ }
++
++#[test]
++fn cpu_interactive_cold_assembly_binding_refuses_without_preparing_world() {
++    use solidcraft_engine::render::job::ReflectionMode;
++    let mut h = Harness::new();
++    let component = h.app.session.execute("component.create", &json!({"name":"Part","grounded":false})).unwrap();
++    h.app.session.execute("solid.box", &json!({"length":10,"width":20,"height":5,"body_name":"Reflector"})).unwrap();
++    let initial = h.app.session.world_state();
++    let name = initial.bodies[0].name.clone();
++    cpu::set_reflection(&mut h.app, &name, Some(ReflectionMode::Mirror)).unwrap();
++    // Exact placement metadata changes without running a UI paint or world query.
++    let occurrence: u64 = serde_json::from_value(component["occurrence"].clone()).unwrap();
++    h.app.session.pending_moves.insert(occurrence, solidcraft_engine::doc::IDENTITY);
++    assert!(h.app.session.interactive_cached_world_state().is_none());
++    let model = h.app.session.model.state();
++    assert!(model.bodies.iter().all(|body| body.cached_mesh().is_none()));
++    assert!(cpu::params_interactive(&h.app, &mut json!({})).unwrap_err().contains(h.app.tr("render.cpu_binding_stale")));
++    assert!(h.app.session.interactive_cached_world_state().is_none(), "binding proof must not prepare cold placements");
++    assert!(model.bodies.iter().all(|body| body.cached_mesh().is_none()));
++    cpu::set_reflection(&mut h.app, &name, None).unwrap();
++    cpu::params_interactive(&h.app, &mut json!({})).unwrap();
++    assert!(h.app.session.interactive_cached_world_state().is_none(), "empty reflections need no prepared world");
++}
++
++#[test]
++fn interactive_egui_clock_is_finite_monotonic_and_requires_no_platform_instant() {
++    use std::time::Duration;
++    let mark = Duration::from_secs(2);
++    for time in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, 1.0, f64::MAX] {
++        assert_eq!(interactive::monotonic(mark, time), mark);
++    }
++    assert_eq!(interactive::monotonic(mark, 3.5), Duration::from_millis(3500));
++}
++
++fn interactive_control_frame(h: &mut Harness, time: f64, events: Vec<egui::Event>) {
++    let mut output = h.ctx.run_ui(
++        egui::RawInput {
++            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 420.0))),
++            time: Some(time),
++            events,
++            ..Default::default()
++        },
++        |ui| {
++            ui.set_width(300.0);
++            interactive::before_paint(&mut h.app, ui.ctx());
++            interactive::controls(&mut h.app, ui);
++        },
++    );
++    output.textures_delta.clear();
++}
++
++#[test]
++fn interactive_is_opt_in_and_refuses_raster_or_cooperative_hosts_without_fallback() {
++    let mut h = Harness::new();
++    h.app.ui.tab = "RENDER".into();
++    h.app.render_workspace.view.method = ImageMethod::Raster;
++    assert_eq!(interactive::inspect(&h.app)["enabled"], false);
++    let document = h.app.session.doc.clone();
++    let path = matches!(h.app.render_workspace.path_host, PathHost::NotStarted);
++    assert!(h.app.run("render.interactive", json!({"action":"on"})).is_err());
++    assert_eq!(h.app.render_workspace.view.method, ImageMethod::Raster);
++    h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++    h.app.session.set_render_job_host(Some(solidcraft_engine::render::job::CpuHost::cooperative())).unwrap();
++    assert!(h.app.run("render.interactive", json!({"action":"on"})).is_err());
++    interactive_control_frame(&mut h, 1.0, vec![]);
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Off");
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!(matches!(h.app.render_workspace.path_host, PathHost::NotStarted), path);
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_ui_fixture() -> Harness {
++    let mut h = Harness::new();
++    h.app.run("solid.box", json!({"length":10,"width":8,"height":4,"body_name":"Subject"})).unwrap();
++    h.app.run("render.scene", json!({})).unwrap();
++    let host = solidcraft_engine::render::job::CpuHost::for_platform().unwrap();
++    h.app.session.set_render_job_host(Some(host)).unwrap();
++    h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++    h.app.render_workspace.view.draft.width = 16;
++    h.app.render_workspace.view.draft.height = 16;
++    // Do not enter through a deferred GPU factory in CPU-only adapter tests.
++    h.app.ui.tab = "RENDER".into();
++    h
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_test_cpu_branch(h: &mut Harness, case: &str) -> bool {
++    let host = h.app.session.render_job_host().unwrap();
++    let supported = host.kind() == solidcraft_engine::render::job::HostKind::NativeWorker
++        && host.is_available()
++        && host.validate_integrator(Integrator::Raytrace).is_ok();
++    if supported {
++        eprintln!("INTERACTIVE_BRANCH case={case} cpu_supported=true");
++        return true;
++    }
++    let document = h.app.session.doc.clone();
++    let before = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
++    assert!(h.app.run("render.interactive", json!({"action":"on"})).is_err());
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Off");
++    assert_eq!(interactive::inspect(&h.app)["enabled"], false);
++    assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!(before, (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()));
++    eprintln!("INTERACTIVE_BRANCH case={case} cpu_supported=false unsupported_refusal_asserted=true");
++    false
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_runtime_builder_preserves_hdr_ev_and_muted_lights_without_final_dimension_admission() {
++    let mut h = interactive_ui_fixture();
++    let name = h.app.render_workspace.view.name.clone();
++    h.app.run("render.settings.set", json!({"name":name,"set":{"job":{"method":"cpu_raytrace"}}})).unwrap();
++    h.app.run("render.library.environment.apply", json!({"id":"HDR-001","name":name,"replace_environment":true})).unwrap();
++    setups::load(&mut h.app);
++    assert!(h.app.render_workspace.view.cpu.hdr.embedded());
++    h.app.render_workspace.view.draft.width = 3840;
++    h.app.render_workspace.view.draft.height = 2160;
++    h.app.render_workspace.view.draft.exposure_ev = 1.5;
++    h.app.render_workspace.view.raytrace.shadows = false;
++    h.app.run("render.lights.mute", json!({"id":"directional:0","mute":true})).unwrap();
++    let before = h.app.session.doc.clone();
++    let wire = interactive_request(&h.app).unwrap();
++    assert_eq!(wire["settings"]["width"], 3840, "engine must fit before admission");
++    assert!(wire["settings"]["job"].is_null());
++    assert_eq!(wire["settings"]["exposure_ev"], 0.0);
++    assert_eq!(wire["raytrace"]["exposure_ev"], 1.5);
++    assert_eq!(wire["raytrace"]["shadows"], false);
++    assert_eq!(wire["raytrace"]["lights"][0]["intensity"], 0.0);
++    assert_eq!(wire["environment"]["resource"], json!(h.app.render_workspace.view.cpu.hdr.resource().unwrap()));
++    assert!(wire["environment"].get("path").is_none());
++    assert!(raw_image_request(&h.app).is_err(), "final admission must remain unchanged");
++    assert!(Arc::ptr_eq(&before, &h.app.session.doc));
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_identity_tracks_camera_transport_and_visibility_before_paint_without_dispatching() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_identity_tracks_camera_transport_and_visibility_before_paint_without_dispatching") {
++        return;
++    }
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_control_frame(&mut h, 0.0, vec![]);
++    let first = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    let revision = h.app.session.revision;
++    h.app.cam.yaw += 0.2;
++    interactive_control_frame(&mut h, 0.5, vec![]);
++    let camera = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    assert!(camera > first);
++    h.app.render_workspace.view.raytrace.shadows = false;
++    interactive_control_frame(&mut h, 1.0, vec![]);
++    let transport = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    assert!(transport > camera);
++    h.app.session.visibility.hidden_bodies.push("Subject".into());
++    interactive_control_frame(&mut h, 1.5, vec![]);
++    let visibility = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    assert!(visibility > transport);
++    assert_eq!(h.app.session.revision, revision, "all three edits deliberately bypass CAD revision");
++    assert_eq!(interactive::inspect(&h.app)["pending_capture"], false, "before_paint never dispatches a worker");
++    assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_real_command_controls_pause_resume_and_leave_without_changing_final_slots() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_real_command_controls_pause_resume_and_leave_without_changing_final_slots") {
++        return;
++    }
++    interactive_control_frame(&mut h, 0.0, vec![]);
++    let mut time = 0.01;
++    for action in ["on", "pause", "resume", "off"] {
++        let rect = crate::scenario::rect_of(&format!("render:interactive:{action}")).unwrap();
++        let at = rect.center();
++        interactive_control_frame(
++            &mut h,
++            time,
++            vec![
++                egui::Event::PointerMoved(at),
++                egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
++                egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE },
++            ],
++        );
++        time += 0.01;
++        interactive_control_frame(&mut h, time, vec![]);
++        time += 0.01;
++        assert_eq!(interactive::inspect(&h.app)["enabled"], action != "off");
++        assert_eq!(interactive::inspect(&h.app)["paused"], action == "pause");
++        assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
++        assert!(!h.app.render_workspace.view.result);
++    }
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    enter(&mut h.app, false).unwrap();
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Off");
++}
++
++#[test]
++fn interactive_reset_retains_one_real_receiver_and_discards_its_late_foreign_error() {
++    use solidcraft_engine::render::job::interactive::{Interactive, VisualRevision};
++    use std::{sync::mpsc, time::Duration};
++    let mut h = Harness::new();
++    let mut controller = Interactive::new(7001);
++    controller.enable(VisualRevision { scene_generation: 0, visual_revision: 1 }, Duration::ZERO).unwrap();
++    let ticket = controller.capture(Duration::from_millis(200)).unwrap().unwrap();
++    let (sender, receiver) = mpsc::channel();
++    h.app.render_workspace.interactive.pending = Some(interactive::Pending { uid: h.app.session.uid, ticket, receiver });
++    reset_document(&mut h.app);
++    assert!(h.app.render_workspace.interactive.pending());
++    reset_document(&mut h.app);
++    assert!(h.app.render_workspace.interactive.pending(), "a second document reset cannot orphan the pending worker");
++    sender.send(Err("late old capture".into())).unwrap();
++    interactive_control_frame(&mut h, 1.0, vec![]);
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Off");
++    assert!(interactive::inspect(&h.app)["error"].is_null());
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_background_final_metadata_suspends_without_cancelling_queued_final() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_background_final_metadata_suspends_without_cancelling_queued_final") {
++        return;
++    }
++    crate::documents::open_tab(&mut h.app, Session::default()).unwrap();
++    crate::documents::switch(&mut h.app, 0);
++    h.app.ui.tab = "RENDER".into();
++    h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    let host = solidcraft_engine::render::job::CpuHost::cooperative();
++    let job = {
++        let background = h.app.docs.background_mut().next().unwrap();
++        background.session.set_render_job_host(Some(host.clone())).unwrap();
++        let reply = background.session.execute("render.start", &json!({"settings":{"width":8,"height":8}})).unwrap();
++        serde_json::from_value::<solidcraft_engine::render::job::JobId>(reply["job"].clone()).unwrap()
++    };
++    let retained = host.admitted_bytes();
++    interactive_control_frame(&mut h, 1.0, vec![]);
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Paused");
++    let background = h.app.docs.background().next().unwrap();
++    assert_eq!(background.render_job_handle(job).unwrap().status().unwrap().progress.phase, solidcraft_engine::render::job::Phase::Queued);
++    assert_eq!(host.admitted_bytes(), retained);
++    assert!(!h.app.render_workspace.interactive.pending());
++}
++
++// Native CPU acceptance of the real M3 dispatcher; no native window or GPU.
++#[cfg(not(target_arch = "wasm32"))]
++struct InteractiveHeldCallback {
++    job: solidcraft_engine::render::job::JobHandle,
++    sender: std::sync::mpsc::Sender<Result<bool, String>>,
++    reply: Result<bool, String>,
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_acceptance_frame(h: &mut Harness, time: f64, dispatch: bool, paint: bool) -> (egui::FullOutput, bool) {
++    let mut painted = false;
++    let output = h.ctx.run_ui(
++        egui::RawInput {
++            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 420.0))),
++            time: Some(time),
++            ..Default::default()
++        },
++        |ui| {
++            // tick dispatches through the actual production spawn(Snapshot) path.
++            // Do not run a second refresh here: the callback must be held before UI delivery.
++            if dispatch {
++                interactive::tick(&mut h.app, ui.ctx());
++            } else {
++                interactive::before_paint(&mut h.app, ui.ctx());
++            }
++            if paint {
++                painted = interactive::paint(&h.app, ui, ui.max_rect());
++            }
++        },
++    );
++    (output, painted)
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_clear_acceptance_frame(h: &mut Harness, time: f64, dispatch: bool) {
++    let (mut output, painted) = interactive_acceptance_frame(h, time, dispatch, false);
++    assert!(!painted);
++    output.textures_delta.clear();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_hold_real_completed_callback(h: &mut Harness) -> InteractiveHeldCallback {
++    use solidcraft_engine::render::job::Phase;
++    use std::{sync::mpsc, time::Duration};
++    // The actual capture thread owns and invokes the real engine Snapshot.run.
++    // This test only withholds its actual returned message from the UI consumer.
++    // No tick/paint is called while the receiver is temporarily removed.
++    let mut pending = h.app.render_workspace.interactive.pending.take().expect("production tick must start a capture");
++    let reply = pending.receiver.recv_timeout(Duration::from_secs(60)).expect("real snapshot worker did not return");
++    assert!(matches!(&reply, Ok(true)), "real snapshot must be adopted: {reply:?}");
++    let job = interactive::test_current(&h.app).expect("Snapshot.run must attach the real CPU job");
++    assert_eq!(job.id(), pending.ticket.job_id());
++    assert_eq!(pending.uid, h.app.session.uid);
++    let status = job.wait_timeout(Duration::from_secs(60)).expect("real CPU job did not finish");
++    assert_eq!(status.progress.phase, Phase::Completed);
++    assert!(status.error.is_none());
++    assert_eq!(status.request.integrator, Integrator::Raytrace);
++    assert_eq!(status.request.raytrace.as_ref().unwrap().progressive.unwrap().samples_per_pixel, 16);
++    assert_eq!((status.request.width, status.request.height), (16, 16));
++    let frame = job.frame().unwrap().expect("Completed requires real frame bytes");
++    assert_eq!(frame.info.executor.as_str(), "cpu-raytrace");
++    assert_eq!(frame.info.job, job.id());
++    assert_eq!(frame.info.scene_generation, pending.ticket.revision().scene_generation);
++    assert!(!frame.png().is_empty());
++    assert_eq!(frame.info.png_bytes, frame.png().len() as u64);
++    {
++        use sha2::{Digest, Sha256};
++        assert_eq!(frame.info.png_sha256, format!("{:x}", Sha256::digest(frame.png())));
++    }
++    assert!(job.preview().unwrap().is_none(), "terminal image is distinct from the intermediate preview slot");
++    // The renderer's Completed progress is normalized to 1/1, not an SPP counter.
++    assert_eq!((status.progress.done, status.progress.total), (1, 1));
++    let (sender, receiver) = mpsc::channel();
++    pending.receiver = receiver;
++    h.app.render_workspace.interactive.pending = Some(pending);
++    InteractiveHeldCallback { job, sender, reply }
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_assert_final_export_isolation(h: &mut Harness, job: &solidcraft_engine::render::job::JobHandle) {
++    assert!(h.app.render_workspace.view.job.is_none());
++    assert!(h.app.render_workspace.view.completed.is_none());
++    assert!(!h.app.render_workspace.view.result);
++    assert!(h.app.render_workspace.image.is_none());
++    assert!(!studio::linear_export_available(&h.app));
++    let registry_error = h.app.session.render_job_handle(job.id()).err().expect("preview must not enter the final registry");
++    assert!(registry_error.to_string().contains("WrongOwner"), "{registry_error}");
++    let path = h.dir.join(format!("interactive-not-exportable-{}-{}.png", job.id().session, job.id().serial));
++    assert!(!path.exists());
++    let error = h.app.session.execute("render.export", &json!({"job":job.id(),"path":path,"format":"png"})).unwrap_err();
++    // Require the actual preview/final ownership guard, rather than accepting a
++    // path/format/refusal error which would not prove final-registry isolation.
++    assert!(error.to_string().contains("WrongOwner"), "{error}");
++    assert!(!path.exists());
++    assert!(job.frame().unwrap().is_some(), "export refusal must not consume preview pixels");
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_real_snapshot_worker_cpu16_png_is_cached_painted_reused_and_never_final_exported() {
++    let mut h = interactive_ui_fixture();
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    if !interactive_test_cpu_branch(&mut h, "interactive_real_snapshot_worker_cpu16_png_is_cached_painted_reused_and_never_final_exported") {
++        return;
++    }
++    let document = h.app.session.doc.clone();
++    let before = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.0, true);
++    assert!(!h.app.render_workspace.interactive.pending());
++    // Explicit egui time relative to the inherited clock crosses the 200 ms group;
++    // this does not wait on wall time or sleep to make a race likely.
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let held = interactive_hold_real_completed_callback(&mut h);
++    assert!(interactive::test_cache(&h.app).is_none(), "worker completion alone must not fabricate a UI cache");
++    let frame = held.job.frame().unwrap().unwrap();
++    held.sender.send(held.reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.3, false, true);
++    assert!(painted);
++    assert!(!h.app.render_workspace.interactive.pending());
++    let (cached, samples, complete, texture) = interactive::test_cache(&h.app).unwrap();
++    assert_eq!(cached.job, held.job.id());
++    assert_eq!(cached.png_sha256, frame.info.png_sha256);
++    assert_eq!(samples, 16);
++    assert!(complete, "completed16 must use the completed key, still only in the provisional UI cache");
++    assert_eq!(interactive::inspect(&h.app)["phase"], "TargetReached");
++    assert_eq!(interactive::inspect(&h.app)["provisional"], true);
++    assert_eq!(interactive::inspect(&h.app)["stale"], false);
++    assert!(interactive::inspect(&h.app)["error"].is_null());
++    let uploaded = &output.textures_delta.set.get(&texture).expect("first real PNG publication must upload a texture").first().unwrap().image;
++    let egui::ImageData::Color(pixels) = uploaded;
++    let png = image::load_from_memory_with_format(frame.png(), image::ImageFormat::Png).unwrap().to_rgba8();
++    assert_eq!(pixels.size, [png.width() as usize, png.height() as usize]);
++    assert_eq!(pixels.pixels.len(), png.pixels().len());
++    assert!(
++        pixels.pixels.iter().zip(png.pixels()).all(|(actual, rgba)| *actual == Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]))
++    );
++    output.textures_delta.clear();
++    assert!(
++        h.ctx
++            .tessellate(output.shapes, output.pixels_per_point)
++            .iter()
++            .any(|shape| matches!(&shape.primitive, egui::epaint::Primitive::Mesh(mesh) if mesh.texture_id == texture && !mesh.indices.is_empty()))
++    );
++    let (mut repaint, painted) = interactive_acceptance_frame(&mut h, epoch + 0.4, false, true);
++    assert!(painted);
++    assert_eq!(interactive::test_cache(&h.app).unwrap().3, texture);
++    assert!(!repaint.textures_delta.set.contains_key(&texture), "unchanged JobId/sequence/revision must reuse its texture");
++    repaint.textures_delta.clear();
++    interactive_assert_final_export_isolation(&mut h, &held.job);
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!(before, (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()));
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_real_completed_callback_after_off_and_reenable_cannot_fill_new_cache_or_spawn_twice() {
++    let mut h = interactive_ui_fixture();
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    if !interactive_test_cpu_branch(&mut h, "interactive_real_completed_callback_after_off_and_reenable_cannot_fill_new_cache_or_spawn_twice") {
++        return;
++    }
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.0, true);
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let held = interactive_hold_real_completed_callback(&mut h);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++    assert!(h.app.render_workspace.interactive.pending(), "Off retains the single undrained receiver");
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch + 1.0, true);
++    let pending = h.app.render_workspace.interactive.pending.as_ref().unwrap();
++    assert_eq!(pending.ticket.job_id(), held.job.id(), "reactivation cannot replace an undrained capture");
++    assert!(interactive::test_current(&h.app).is_none());
++    held.sender.send(held.reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 1.1, false, true);
++    assert!(!painted);
++    output.textures_delta.clear();
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(interactive::test_current(&h.app).is_none());
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Updating");
++    assert!(interactive::inspect(&h.app)["error"].is_null());
++    interactive_assert_final_export_isolation(&mut h, &held.job);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_real_completed_callback_after_pause_cannot_publish_unseen_old_pixels() {
++    let mut h = interactive_ui_fixture();
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    if !interactive_test_cpu_branch(&mut h, "interactive_real_completed_callback_after_pause_cannot_publish_unseen_old_pixels") {
++        return;
++    }
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.0, true);
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let held = interactive_hold_real_completed_callback(&mut h);
++    h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++    assert!(h.app.render_workspace.interactive.pending());
++    held.sender.send(held.reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.3, false, true);
++    assert!(!painted, "Pause may retain already displayed pixels, but cannot adopt this unseen callback");
++    output.textures_delta.clear();
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Paused");
++    assert!(interactive::inspect(&h.app)["error"].is_null());
++    interactive_assert_final_export_isolation(&mut h, &held.job);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_real_completed_callback_after_camera_edit_is_discarded_then_new_capture_can_publish() {
++    let mut h = interactive_ui_fixture();
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    if !interactive_test_cpu_branch(&mut h, "interactive_real_completed_callback_after_camera_edit_is_discarded_then_new_capture_can_publish") {
++        return;
++    }
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.0, true);
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let held = interactive_hold_real_completed_callback(&mut h);
++    let old = held.job.id();
++    let visual = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    let revision = h.app.session.revision;
++    h.app.cam.yaw += 0.2;
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.3, false);
++    assert!(interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap() > visual);
++    assert_eq!(h.app.session.revision, revision);
++    assert!(interactive::test_current(&h.app).is_none());
++    held.sender.send(held.reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.4, false, true);
++    assert!(!painted);
++    output.textures_delta.clear();
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(interactive::inspect(&h.app)["error"].is_null());
++    interactive_assert_final_export_isolation(&mut h, &held.job);
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.501, true);
++    let newer = interactive_hold_real_completed_callback(&mut h);
++    assert_ne!(newer.job.id(), old);
++    newer.sender.send(newer.reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.6, false, true);
++    assert!(painted);
++    output.textures_delta.clear();
++    assert_eq!(interactive::test_cache(&h.app).unwrap().0.job, newer.job.id());
++    assert_eq!(interactive::inspect(&h.app)["samples"], 16);
++    assert_eq!(interactive::inspect(&h.app)["provisional"], true);
++    interactive_assert_final_export_isolation(&mut h, &newer.job);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++struct InteractiveRecoveryReply {
++    id: solidcraft_engine::render::job::JobId,
++    sender: std::sync::mpsc::Sender<Result<bool, String>>,
++    reply: Result<bool, String>,
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_recovery_hold_reply(h: &mut Harness) -> InteractiveRecoveryReply {
++    use std::{sync::mpsc, time::Duration};
++    let mut pending = h.app.render_workspace.interactive.pending.take().expect("actual tick must dispatch a Snapshot");
++    let reply = pending.receiver.recv_timeout(Duration::from_secs(60)).expect("actual capture worker did not return");
++    let id = pending.ticket.job_id();
++    let (sender, receiver) = mpsc::channel();
++    pending.receiver = receiver;
++    h.app.render_workspace.interactive.pending = Some(pending);
++    InteractiveRecoveryReply { id, sender, reply }
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_recovery_missing_hdr(h: &mut Harness) -> (std::path::PathBuf, Vec<u8>) {
++    let path = h.dir.join("interactive-recovery-original.hdr");
++    let bytes = original_hdr_bytes(128, true);
++    std::fs::write(&path, &bytes).unwrap();
++    h.app.render_workspace.view.cpu.environment = cpu::Environment::Hdr;
++    hdr::inspect(&mut h.app, hdr::Target::Cpu, path.to_string_lossy().into_owned()).unwrap();
++    assert!(interactive_request(&h.app).is_ok(), "valid inspected metadata must reach actual worker preparation");
++    std::fs::remove_file(&path).unwrap();
++    (path, bytes)
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_recovery_require_error(h: &mut Harness, time: f64) -> serde_json::Value {
++    interactive_clear_acceptance_frame(h, time, true);
++    let status = interactive::inspect(&h.app);
++    assert_eq!(status["phase"], "Error");
++    assert!(status["error"].as_str().is_some_and(|error| !error.is_empty()));
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert!(interactive::test_current(&h.app).is_none());
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
++    status["error"].clone()
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_recovery_require_success(h: &mut Harness, dispatch_time: f64, paint_time: f64) -> solidcraft_engine::render::job::JobId {
++    interactive_clear_acceptance_frame(h, dispatch_time, true);
++    let held = interactive_hold_real_completed_callback(h);
++    let id = held.job.id();
++    held.sender.send(held.reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(h, paint_time, false, true);
++    assert!(painted);
++    output.textures_delta.clear();
++    assert_eq!(interactive::inspect(&h.app)["phase"], "TargetReached");
++    assert_eq!(interactive::inspect(&h.app)["samples"], 16);
++    assert!(interactive::inspect(&h.app)["error"].is_null());
++    assert_eq!(interactive::test_cache(&h.app).unwrap().0.job, id);
++    interactive_assert_final_export_isolation(h, &held.job);
++    id
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_invalid_hdr_selection_never_dispatches_and_input_edit_can_recover() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_invalid_hdr_selection_never_dispatches_and_input_edit_can_recover") { return; }
++    h.app.render_workspace.view.cpu.environment = cpu::Environment::Hdr;
++    h.app.render_workspace.view.cpu.hdr = hdr::Input::FilePending { path:h.dir.join("not-inspected.hdr").to_string_lossy().into_owned() };
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    let error = interactive_recovery_require_error(&mut h, epoch + 0.3);
++    assert!(h.app.run("render.interactive", json!({"action":"resume"})).is_err());
++    assert_eq!(interactive_recovery_require_error(&mut h, epoch + 2.0), error);
++    h.app.render_workspace.view.cpu.environment = cpu::Environment::Constant;
++    interactive_clear_acceptance_frame(&mut h, epoch + 2.1, false);
++    assert!(interactive::inspect(&h.app)["error"].is_null());
++    interactive_recovery_require_success(&mut h, epoch + 2.301, epoch + 2.4);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_real_hdr_file_error_latches_until_same_intent_resume_or_actual_input_edit() {
++    for recovery in ["resume", "edit"] {
++        let mut h = interactive_ui_fixture();
++        let case = format!("interactive_real_hdr_file_error_latches_until_same_intent_resume_or_actual_input_edit:{recovery}");
++        if !interactive_test_cpu_branch(&mut h, &case) { continue; }
++        let (path, bytes) = interactive_recovery_missing_hdr(&mut h);
++        let request = interactive_request(&h.app).unwrap();
++        let epoch = interactive::test_clock(&h.app).as_secs_f64();
++        h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++        interactive_clear_acceptance_frame(&mut h, epoch, true);
++        interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++        let failed = interactive_recovery_hold_reply(&mut h);
++        assert!(failed.reply.as_ref().is_err_and(|error| !error.is_empty()), "missing HDR must fail actual preparation: {:?}", failed.reply);
++        assert!(interactive::test_current(&h.app).is_none(), "preparation failure is not an admitted job-status failure");
++        let failed_id = failed.id;
++        failed.sender.send(failed.reply).unwrap();
++        let error = interactive_recovery_require_error(&mut h, epoch + 0.3);
++        for offset in [0.6, 1.0] {
++            assert_eq!(interactive_recovery_require_error(&mut h, epoch + offset), error, "unchanged input must not retry");
++        }
++        if recovery == "resume" {
++            std::fs::write(&path, bytes).unwrap();
++            assert_eq!(interactive_request(&h.app).unwrap(), request, "repairing external bytes is not a UI intent edit");
++            assert_eq!(interactive_recovery_require_error(&mut h, epoch + 1.1), error, "file repair alone cannot silently resume");
++            h.app.run("render.interactive", json!({"action":"resume"})).unwrap();
++        } else {
++            h.app.render_workspace.view.cpu.environment = cpu::Environment::Constant;
++            interactive_clear_acceptance_frame(&mut h, epoch + 1.1, false);
++            assert!(interactive::inspect(&h.app)["error"].is_null());
++        }
++        let new_id = interactive_recovery_require_success(&mut h, epoch + 1.301, epoch + 1.4);
++        assert_ne!(new_id, failed_id);
++        h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++    }
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_user_pause_survives_error_fixing_edit_until_explicit_resume() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_user_pause_survives_error_fixing_edit_until_explicit_resume") { return; }
++    let _ = interactive_recovery_missing_hdr(&mut h);
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let failed = interactive_recovery_hold_reply(&mut h);
++    assert!(failed.reply.is_err());
++    failed.sender.send(failed.reply).unwrap();
++    interactive_recovery_require_error(&mut h, epoch + 0.3);
++    h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++    h.app.render_workspace.view.cpu.environment = cpu::Environment::Constant;
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.4, false);
++    interactive_clear_acceptance_frame(&mut h, epoch + 2.0, true);
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Paused");
++    assert_eq!(interactive::inspect(&h.app)["paused"], true);
++    assert!(interactive::inspect(&h.app)["error"].is_null());
++    assert!(!h.app.render_workspace.interactive.pending());
++    h.app.run("render.interactive", json!({"action":"resume"})).unwrap();
++    interactive_recovery_require_success(&mut h, epoch + 2.201, epoch + 2.3);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_disconnected_real_callback_transport_latches_and_resume_creates_fresh_capture() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_disconnected_real_callback_transport_latches_and_resume_creates_fresh_capture") { return; }
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let held = interactive_hold_real_completed_callback(&mut h);
++    assert!(held.reply.unwrap(), "native Snapshot/CPU work really finished before transport failure");
++    // Deliberately close the actual std channel instead of fabricating an Err.
++    // This covers consumer Disconnected, not a claim that the native worker crashed.
++    drop(held.sender);
++    let error = interactive_recovery_require_error(&mut h, epoch + 0.3);
++    assert_eq!(error, h.app.tr("render.interactive_error"));
++    assert_eq!(interactive_recovery_require_error(&mut h, epoch + 1.0), error);
++    interactive_assert_final_export_isolation(&mut h, &held.job);
++    h.app.run("render.interactive", json!({"action":"resume"})).unwrap();
++    let newer = interactive_recovery_require_success(&mut h, epoch + 1.201, epoch + 1.3);
++    assert_ne!(newer, held.job.id());
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_late_real_preparation_error_cannot_overwrite_edited_or_resumed_intent() {
++    for recovery in ["edit", "resume"] {
++        let mut h = interactive_ui_fixture();
++        let case = format!("interactive_late_real_preparation_error_cannot_overwrite_edited_or_resumed_intent:{recovery}");
++        if !interactive_test_cpu_branch(&mut h, &case) { continue; }
++        let (path, bytes) = interactive_recovery_missing_hdr(&mut h);
++        let epoch = interactive::test_clock(&h.app).as_secs_f64();
++        h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++        interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++        let failed = interactive_recovery_hold_reply(&mut h);
++        assert!(failed.reply.is_err());
++        if recovery == "edit" {
++            h.app.render_workspace.view.cpu.environment = cpu::Environment::Constant;
++            interactive_clear_acceptance_frame(&mut h, epoch + 0.3, false);
++        } else {
++            std::fs::write(path, bytes).unwrap();
++            // First consume clock input without consuming the still-held reply.
++            interactive_clear_acceptance_frame(&mut h, epoch + 0.3, false);
++            h.app.run("render.interactive", json!({"action":"resume"})).unwrap();
++        }
++        interactive_clear_acceptance_frame(&mut h, epoch + 0.501, true);
++        assert_eq!(h.app.render_workspace.interactive.pending.as_ref().unwrap().ticket.job_id(), failed.id,
++            "one old receiver still blocks new dispatch");
++        failed.sender.send(failed.reply).unwrap();
++        interactive_clear_acceptance_frame(&mut h, epoch + 0.6, false);
++        assert!(interactive::inspect(&h.app)["error"].is_null(), "actual old failure must be discarded");
++        assert!(!h.app.render_workspace.interactive.pending());
++        assert!(interactive::test_cache(&h.app).is_none());
++        let new_id = interactive_recovery_require_success(&mut h, epoch + 0.7, epoch + 0.8);
++        assert_ne!(new_id, failed.id);
++        h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++    }
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_final_priority_never_clears_a_latched_error_or_retries_without_resume() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_final_priority_never_clears_a_latched_error_or_retries_without_resume") { return; }
++    crate::documents::open_tab(&mut h.app, Session::default()).unwrap();
++    crate::documents::switch(&mut h.app, 0);
++    h.app.ui.tab = "RENDER".into();
++    h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++    h.app.render_workspace.view.draft.width = 16;
++    h.app.render_workspace.view.draft.height = 16;
++    let (path, bytes) = interactive_recovery_missing_hdr(&mut h);
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let failed = interactive_recovery_hold_reply(&mut h);
++    assert!(failed.reply.is_err());
++    failed.sender.send(failed.reply).unwrap();
++    let error = interactive_recovery_require_error(&mut h, epoch + 0.3);
++    let final_job = {
++        let background = h.app.docs.background_mut().next().unwrap();
++        background.session.set_render_job_host(Some(solidcraft_engine::render::job::CpuHost::cooperative())).unwrap();
++        let reply = background.session.execute("render.start", &json!({"settings":{"width":8,"height":8}})).unwrap();
++        let id = serde_json::from_value(reply["job"].clone()).unwrap();
++        background.session.render_job_handle(id).unwrap()
++    };
++    assert_eq!(interactive_recovery_require_error(&mut h, epoch + 0.4), error);
++    assert_eq!(final_job.status().unwrap().progress.phase, solidcraft_engine::render::job::Phase::Queued);
++    assert!(h.app.run("render.interactive", json!({"action":"resume"})).unwrap_err().contains(h.app.tr("render.interactive_final_active")));
++    assert_eq!(final_job.status().unwrap().progress.phase, solidcraft_engine::render::job::Phase::Queued);
++    // Only the test's explicit owner cancellation ends its queued final.
++    final_job.cancel().unwrap();
++    assert_eq!(interactive_recovery_require_error(&mut h, epoch + 0.5), error);
++    std::fs::write(path, bytes).unwrap();
++    h.app.run("render.interactive", json!({"action":"resume"})).unwrap();
++    interactive_recovery_require_success(&mut h, epoch + 0.701, epoch + 0.8);
++    assert_eq!(final_job.status().unwrap().progress.phase, solidcraft_engine::render::job::Phase::Cancelled);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_actual_png_display_cap_error_latches_until_explicit_resume() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_actual_png_display_cap_error_latches_until_explicit_resume") { return; }
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let held = interactive_hold_real_completed_callback(&mut h);
++    held.sender.send(held.reply).unwrap();
++    let mut output = h.ctx.run_ui(egui::RawInput {
++        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 420.0))),
++        time:Some(epoch + 0.3), ..Default::default()
++    }, |ui| {
++        // Real decoder admission against an invalid display capability; retain
++        // the real CPU PNG and restore input before fonts/end-frame processing.
++        let previous = ui.ctx().input(|input| input.max_texture_side);
++        ui.ctx().input_mut(|input| input.max_texture_side = 0);
++        interactive::before_paint(&mut h.app, ui.ctx());
++        ui.ctx().input_mut(|input| input.max_texture_side = previous);
++        assert!(!interactive::paint(&h.app, ui, ui.max_rect()));
++    });
++    output.textures_delta.clear();
++    let error = interactive_recovery_require_error(&mut h, epoch + 0.4);
++    assert_eq!(error, h.app.tr("render.error_display_dimensions"));
++    assert_eq!(interactive_recovery_require_error(&mut h, epoch + 1.0), error, "restoring display cap alone cannot rearm capture");
++    interactive_assert_final_export_isolation(&mut h, &held.job);
++    h.app.run("render.interactive", json!({"action":"resume"})).unwrap();
++    let newer = interactive_recovery_require_success(&mut h, epoch + 1.201, epoch + 1.3);
++    assert_ne!(newer, held.job.id());
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_card_dimensions_use_real_paused_preview_not_changed_final_draft() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_card_dimensions_use_real_paused_preview_not_changed_final_draft") { return; }
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_recovery_require_success(&mut h, epoch + 0.201, epoch + 0.3);
++    h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++    h.app.render_workspace.view.draft.width = 3840;
++    h.app.render_workspace.view.draft.height = 2160;
++    let mut output = h.ctx.run_ui(egui::RawInput {
++        screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(420.0,420.0))),
++        time:Some(epoch + 0.4), ..Default::default()
++    }, |ui| {
++        interactive::before_paint(&mut h.app, ui.ctx());
++        interactive::controls(&mut h.app, ui);
++    });
++    let text = crate::test_support::text_shapes(&output).map(|shape| shape.galley.job.text.clone()).collect::<Vec<_>>().join("\n");
++    assert!(text.contains("16 × 16 px"), "actual cached dimensions must be visible: {text}");
++    assert!(!text.contains("3840 × 2160 px"), "final draft cannot relabel the captured preview");
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Paused");
++    assert_eq!(interactive::inspect(&h.app)["stale"], true);
++    let (info, samples, complete, _) = interactive::test_cache(&h.app).unwrap();
++    assert_eq!((info.width,info.height,samples,complete), (16,16,16,true));
++    output.textures_delta.clear();
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
+diff --git a/docs/render-interactive.md b/docs/render-interactive.md
+index bea2e2ca..d2e76de3 100644
+--- a/docs/render-interactive.md
++++ b/docs/render-interactive.md
+@@ -29,6 +29,9 @@ The existing profile and host still enforce geometry, traversal and memory limit
+ - Explicit activation calls `enable`; edits call `edit`. Supply monotonic elapsed
+   `Duration` values. `capture` issues one ticket after 200 ms without a newer edit.
+   Do not evaluate geometry or read files every frame just to compare identity.
++- Recheck `accepts_capture(ticket)` before expensive capture/admission and after
++  worker preparation. This avoids preparing an already obsolete request; it does
++  not replace the mandatory identity checks in `attach` after admission.
+ - Capture through the existing authoritative engine boundary, prepare the CPU
+   request, then admit/submit through the installed CPU host using
+   `CaptureTicket::job_id()`. Pass the resulting handle to `attach`
+diff --git a/assets/locales/pending/render-interactive.json b/assets/locales/pending/render-interactive.json
+new file mode 100644
+--- /dev/null
++++ b/assets/locales/pending/render-interactive.json
+@@ -0,0 +1,164 @@
++{
++  "en": {
++    "cmd.render.interactive": "Interactive Render",
++    "help.render.interactive": "Explicitly enable a provisional CPU preview while editing. Final render settings and exportable images stay unchanged.",
++    "render.interactive_error": "Interactive preview error",
++    "render.interactive_final_active": "Final render active",
++    "render.interactive_off": "Off",
++    "render.interactive_on": "On",
++    "render.interactive_pause": "Pause",
++    "render.interactive_paused": "Paused",
++    "render.interactive_provisional": "Provisional preview",
++    "render.interactive_refining": "Refining preview",
++    "render.interactive_requires_cpu": "Interactive preview requires CPU ray tracing.",
++    "render.interactive_resume": "Resume",
++    "render.interactive_samples": "{done}/{total} SPP",
++    "render.interactive_stale": "Out of date",
++    "render.interactive_target": "Sample target reached",
++    "render.interactive_updating": "Updating"
++  },
++  "ar": {
++    "cmd.render.interactive": "تصيير تفاعلي",
++    "help.render.interactive": "فعّل معاينة مؤقتة باستخدام المعالج CPU أثناء التحرير. تبقى إعدادات التصيير النهائي والصور القابلة للتصدير دون تغيير.",
++    "render.interactive_error": "خطأ في المعاينة التفاعلية",
++    "render.interactive_final_active": "التصيير النهائي قيد التنفيذ",
++    "render.interactive_off": "إيقاف",
++    "render.interactive_on": "تفعيل",
++    "render.interactive_pause": "إيقاف مؤقت",
++    "render.interactive_paused": "متوقف مؤقتًا",
++    "render.interactive_provisional": "معاينة مؤقتة",
++    "render.interactive_refining": "جارٍ تحسين المعاينة",
++    "render.interactive_requires_cpu": "تتطلب المعاينة التفاعلية تتبّع الأشعة على المعالج CPU.",
++    "render.interactive_resume": "استئناف",
++    "render.interactive_samples": "{done}/{total} SPP",
++    "render.interactive_stale": "غير محدثة",
++    "render.interactive_target": "تم بلوغ عدد العينات المطلوب",
++    "render.interactive_updating": "جارٍ التحديث"
++  },
++  "de": {
++    "cmd.render.interactive": "Interaktives Rendering",
++    "help.render.interactive": "Aktivieren Sie die vorläufige CPU-Vorschau zum Bearbeiten manuell. Einstellungen für das finale Rendering und exportierbare Bilder bleiben unverändert.",
++    "render.interactive_error": "Fehler in der interaktiven Vorschau",
++    "render.interactive_final_active": "Finales Rendering aktiv",
++    "render.interactive_off": "Aus",
++    "render.interactive_on": "Ein",
++    "render.interactive_pause": "Pausieren",
++    "render.interactive_paused": "Pausiert",
++    "render.interactive_provisional": "Vorläufige Vorschau",
++    "render.interactive_refining": "Vorschau wird verfeinert",
++    "render.interactive_requires_cpu": "Die interaktive Vorschau erfordert CPU-Raytracing.",
++    "render.interactive_resume": "Fortsetzen",
++    "render.interactive_samples": "{done}/{total} SPP",
++    "render.interactive_stale": "Nicht aktuell",
++    "render.interactive_target": "Zielanzahl an Samples erreicht",
++    "render.interactive_updating": "Wird aktualisiert"
++  },
++  "es": {
++    "cmd.render.interactive": "Render interactivo",
++    "help.render.interactive": "Activa explícitamente una vista previa provisional por CPU mientras editas. Los ajustes del render final y las imágenes exportables se mantienen intactos.",
++    "render.interactive_error": "Error en la vista previa interactiva",
++    "render.interactive_final_active": "Render final activo",
++    "render.interactive_off": "Desactivar",
++    "render.interactive_on": "Activar",
++    "render.interactive_pause": "Pausar",
++    "render.interactive_paused": "En pausa",
++    "render.interactive_provisional": "Vista previa provisional",
++    "render.interactive_refining": "Refinando vista previa",
++    "render.interactive_requires_cpu": "La vista previa interactiva requiere trazado de rayos por CPU.",
++    "render.interactive_resume": "Reanudar",
++    "render.interactive_samples": "{done}/{total} SPP",
++    "render.interactive_stale": "Desactualizada",
++    "render.interactive_target": "Número objetivo de muestras alcanzado",
++    "render.interactive_updating": "Actualizando"
++  },
++  "he": {
++    "cmd.render.interactive": "רינדור אינטראקטיבי",
++    "help.render.interactive": "יש להפעיל במפורש תצוגה מקדימה זמנית במעבד CPU בזמן העריכה. הגדרות הרינדור הסופי והתמונות הזמינות לייצוא נשארות ללא שינוי.",
++    "render.interactive_error": "שגיאה בתצוגה המקדימה האינטראקטיבית",
++    "render.interactive_final_active": "הרינדור הסופי פעיל",
++    "render.interactive_off": "כיבוי",
++    "render.interactive_on": "הפעלה",
++    "render.interactive_pause": "השהיה",
++    "render.interactive_paused": "מושהה",
++    "render.interactive_provisional": "תצוגה מקדימה זמנית",
++    "render.interactive_refining": "משפר את התצוגה המקדימה",
++    "render.interactive_requires_cpu": "תצוגה מקדימה אינטראקטיבית דורשת עקיבת קרניים במעבד CPU.",
++    "render.interactive_resume": "המשך",
++    "render.interactive_samples": "{done}/{total} SPP",
++    "render.interactive_stale": "לא עדכני",
++    "render.interactive_target": "הושג מספר הדגימות המבוקש",
++    "render.interactive_updating": "מעדכן"
++  },
++  "ja": {
++    "cmd.render.interactive": "インタラクティブレンダリング",
++    "help.render.interactive": "編集中にCPUによる暫定プレビューを明示的に有効にします。最終レンダリングの設定とエクスポート可能な画像は変更しません。",
++    "render.interactive_error": "インタラクティブプレビューのエラー",
++    "render.interactive_final_active": "最終レンダリング中",
++    "render.interactive_off": "無効にする",
++    "render.interactive_on": "有効にする",
++    "render.interactive_pause": "一時停止",
++    "render.interactive_paused": "一時停止中",
++    "render.interactive_provisional": "暫定プレビュー",
++    "render.interactive_refining": "プレビューを改善中",
++    "render.interactive_requires_cpu": "インタラクティブプレビューにはCPUレイトレーシングが必要です。",
++    "render.interactive_resume": "再開",
++    "render.interactive_samples": "{done}/{total} SPP",
++    "render.interactive_stale": "最新ではありません",
++    "render.interactive_target": "目標サンプル数に到達",
++    "render.interactive_updating": "更新中"
++  },
++  "ko": {
++    "cmd.render.interactive": "대화형 렌더링",
++    "help.render.interactive": "편집하는 동안 임시 CPU 미리 보기를 직접 켭니다. 최종 렌더링 설정과 내보낼 수 있는 이미지는 변경하지 않습니다.",
++    "render.interactive_error": "대화형 미리 보기 오류",
++    "render.interactive_final_active": "최종 렌더링 진행 중",
++    "render.interactive_off": "끄기",
++    "render.interactive_on": "켜기",
++    "render.interactive_pause": "일시 중지",
++    "render.interactive_paused": "일시 중지됨",
++    "render.interactive_provisional": "임시 미리 보기",
++    "render.interactive_refining": "미리 보기 개선 중",
++    "render.interactive_requires_cpu": "대화형 미리 보기에는 CPU 레이 트레이싱이 필요합니다.",
++    "render.interactive_resume": "계속",
++    "render.interactive_samples": "{done}/{total} SPP",
++    "render.interactive_stale": "최신 상태가 아님",
++    "render.interactive_target": "목표 샘플 수 도달",
++    "render.interactive_updating": "업데이트 중"
++  },
++  "vi": {
++    "cmd.render.interactive": "Kết xuất tương tác",
++    "help.render.interactive": "Chủ động bật bản xem trước tạm thời bằng CPU khi chỉnh sửa. Thiết lập kết xuất cuối và các ảnh có thể xuất vẫn được giữ nguyên.",
++    "render.interactive_error": "Lỗi xem trước tương tác",
++    "render.interactive_final_active": "Đang kết xuất ảnh cuối",
++    "render.interactive_off": "Tắt",
++    "render.interactive_on": "Bật",
++    "render.interactive_pause": "Tạm dừng",
++    "render.interactive_paused": "Đã tạm dừng",
++    "render.interactive_provisional": "Bản xem trước tạm thời",
++    "render.interactive_refining": "Đang cải thiện bản xem trước",
++    "render.interactive_requires_cpu": "Xem trước tương tác yêu cầu dò tia bằng CPU.",
++    "render.interactive_resume": "Tiếp tục",
++    "render.interactive_samples": "{done}/{total} SPP",
++    "render.interactive_stale": "Chưa cập nhật",
++    "render.interactive_target": "Đã đạt số mẫu mục tiêu",
++    "render.interactive_updating": "Đang cập nhật"
++  },
++  "zh": {
++    "cmd.render.interactive": "交互式渲染",
++    "help.render.interactive": "编辑时手动启用临时 CPU 预览。最终渲染设置和可导出的图像保持不变。",
++    "render.interactive_error": "交互式预览错误",
++    "render.interactive_final_active": "最终渲染进行中",
++    "render.interactive_off": "关闭",
++    "render.interactive_on": "启用",
++    "render.interactive_pause": "暂停",
++    "render.interactive_paused": "已暂停",
++    "render.interactive_provisional": "临时预览",
++    "render.interactive_refining": "正在细化预览",
++    "render.interactive_requires_cpu": "交互式预览需要 CPU 光线追踪。",
++    "render.interactive_resume": "继续",
++    "render.interactive_samples": "{done}/{total} SPP",
++    "render.interactive_stale": "不是最新状态",
++    "render.interactive_target": "已达到目标采样数",
++    "render.interactive_updating": "正在更新"
++  }
++}
+diff --git a/crates/engine/src/render_interactive.rs b/crates/engine/src/render_interactive.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/engine/src/render_interactive.rs
+@@ -0,0 +1,402 @@
++//! Transient CPU Interactive capture, separate from final render ownership/export.
++use std::sync::{Arc, Mutex, Weak};
++use std::time::Duration;
++
++use serde_json::Value;
++use solidcraft_render::job::{
++    self, ErrorCode, JobError, JobHandle,
++    interactive::{CaptureTicket, Interactive, State, VisualRevision},
++};
++
++use crate::{Result, Session, render_jobs::job_error};
++
++pub(crate) type Controller = Mutex<Interactive>;
++
++/// A poisoned lifecycle is never resumed. Cleanup only its owned work, then fail.
++pub(crate) fn with_controller<T>(controller: &Controller, f: impl FnOnce(&mut Interactive) -> job::Result<T>) -> job::Result<T> {
++    match controller.lock() {
++        Ok(mut state) => f(&mut state),
++        Err(poisoned) => {
++            let _ = poisoned.into_inner().disable();
++            Err(JobError::new(ErrorCode::Internal, "Interactive lifecycle lock poisoned"))
++        }
++    }
++}
++
++/// One transient controller for the current document/service registration.
++/// Only Session::interactive_render allocates its dedicated preview namespace.
++pub struct InteractiveRender {
++    document_uid: u64,
++    preview_session: u64,
++    controller: Arc<Controller>,
++}
++
++impl InteractiveRender {
++    pub(crate) fn new(document_uid: u64, preview_session: u64, final_active: bool) -> job::Result<Self> {
++        if document_uid == 0 || preview_session == 0 {
++            return Err(JobError::new(ErrorCode::LimitExceeded, "Interactive identity exhausted"));
++        }
++        let mut state = Interactive::new(preview_session);
++        state.set_final_active(final_active, Duration::ZERO)?;
++        Ok(Self { document_uid, preview_session, controller: Arc::new(Mutex::new(state)) })
++    }
++
++    pub(crate) fn weak(&self) -> Weak<Controller> {
++        Arc::downgrade(&self.controller)
++    }
++
++    fn with<T>(&self, f: impl FnOnce(&mut Interactive) -> job::Result<T>) -> Result<T> {
++        with_controller(&self.controller, f).map_err(job_error)
++    }
++
++    /// Cheap ownership metadata only: no geometry, files, host discovery or work.
++    pub fn is_current(&self, session: &Session) -> bool {
++        self.document_uid == session.uid && session.render_jobs.is_interactive_current(&self.weak())
++    }
++
++    pub fn document_uid(&self) -> u64 {
++        self.document_uid
++    }
++
++    pub fn enable(&self, revision: VisualRevision, now: Duration) -> Result<()> {
++        self.with(|state| state.enable(revision, now))
++    }
++
++    pub fn edit(&self, revision: VisualRevision, now: Duration) -> Result<()> {
++        self.with(|state| state.edit(revision, now))
++    }
++
++    pub fn disable(&self) -> Result<()> {
++        self.with(Interactive::disable)
++    }
++
++    pub fn pause(&self) -> Result<()> {
++        self.with(Interactive::pause)
++    }
++
++    pub fn resume(&self, now: Duration) -> Result<()> {
++        self.with(|state| state.resume(now))
++    }
++
++    pub fn set_final_active(&self, active: bool, now: Duration) -> Result<()> {
++        self.with(|state| state.set_final_active(active, now))
++    }
++
++    pub fn capture(&self, now: Duration) -> Result<Option<CaptureTicket>> {
++        self.with(|state| state.capture(now))
++    }
++
++    pub fn state(&self) -> Result<State> {
++        self.with(|state| state.state())
++    }
++
++    pub fn current(&self) -> Result<Option<JobHandle>> {
++        self.with(|state| Ok(state.current().cloned()))
++    }
++
++    /// Capture failures live in the controller; worker failures live in its job.
++    pub fn error(&self) -> Result<Option<String>> {
++        self.with(|state| {
++            if let Some(error) = state.error() {
++                return Ok(Some(error.to_string()));
++            }
++            let status = state.current().map(JobHandle::status).transpose()?;
++            Ok(status.and_then(|status| status.error).map(|error| error.to_string()))
++        })
++    }
++
++    pub fn capture_failed(&self, ticket: CaptureTicket, message: String) -> Result<()> {
++        self.with(|state| {
++            state.capture_failed(ticket, JobError::new(ErrorCode::InvalidScene, message));
++            Ok(())
++        })
++    }
++
++    fn reject_snapshot(&self, ticket: CaptureTicket, error: JobError) -> Result<Snapshot> {
++        self.with(|state| {
++            state.capture_failed(ticket, error.clone());
++            Ok(())
++        })?;
++        Err(job_error(error))
++    }
++
++    /// Freeze one complete UI intent and document. The caller supplies the same
++    /// immutable numerical intent that produced this visual revision/ticket.
++    /// A name, CAD revision or reused Value alone is not visual provenance.
++    pub fn snapshot(&self, session: &Session, ticket: CaptureTicket, params: &Value) -> Result<Snapshot> {
++        if !self.is_current(session) || ticket.job_id().session != self.preview_session || ticket.revision().scene_generation != session.revision {
++            return self.reject_snapshot(
++                ticket,
++                JobError::new(ErrorCode::WrongOwner, "Interactive capture belongs to another document or service revision"),
++            );
++        }
++        if session.model.is_stale() {
++            return self.reject_snapshot(ticket, JobError::new(ErrorCode::InvalidScene, "finish the modelling gesture before Interactive capture"));
++        }
++        if !self.with(|state| Ok(state.accepts_capture(ticket)))? {
++            return self.reject_snapshot(ticket, JobError::new(ErrorCode::WrongOwner, "Interactive capture ticket is no longer current"));
++        }
++        Ok(Snapshot {
++            session: session.scratch(),
++            params: params.clone(),
++            ticket,
++            controller: self.weak(),
++            scope: solidcraft_io::vfs::current_scope(),
++        })
++    }
++}
++
++impl Drop for InteractiveRender {
++    fn drop(&mut self) {
++        let _ = self.disable();
++    }
++}
++
++/// Immutable capture envelope; no engine worker or queue is created here.
++/// The caller maintains one app-wide capture worker, including across tab swaps.
++pub struct Snapshot {
++    session: Session,
++    params: Value,
++    ticket: CaptureTicket,
++    controller: Weak<Controller>,
++    scope: Option<solidcraft_io::vfs::PathScope>,
++}
++
++/// Internal output of the ordinary authoritative CPU preparation boundary.
++pub(crate) struct Prepared {
++    pub(crate) scene: solidcraft_render::ProductScene,
++    pub(crate) request: job::ImageRequest,
++    pub(crate) options: job::JobOptions,
++    pub(crate) environment: Option<solidcraft_render::lighting::environment_input::EnvironmentInput>,
++}
++
++/// This guard only receives a record just created by this capture, never a
++/// caller's retained/manual/foreign handle. Dropping a JobHandle alone is not a
++/// cancellation request: native queue/running work keeps its own clone.
++struct Unadopted {
++    job: JobHandle,
++    adopted: bool,
++}
++
++impl Drop for Unadopted {
++    fn drop(&mut self) {
++        if !self.adopted {
++            let _ = self.job.cancel();
++        }
++    }
++}
++
++/// Adopt a newly submitted local record. Even an equal-ID duplicate is cancelled
++/// when rejected: it is a different new record, not a copy of the accepted job.
++pub(crate) fn adopt_created(controller: &Controller, ticket: CaptureTicket, job: JobHandle) -> job::Result<bool> {
++    if job.id().session != ticket.job_id().session {
++        return Err(JobError::new(ErrorCode::WrongOwner, "created Interactive record has another identity"));
++    }
++    let mut pending = Unadopted { job, adopted: false };
++    let accepted = with_controller(controller, |state| state.attach(ticket, pending.job.clone()))?;
++    pending.adopted = accepted;
++    Ok(accepted)
++}
++
++impl Snapshot {
++    /// Correlate the caller's receiver and discard old errors after tab changes.
++    pub fn ticket(&self) -> CaptureTicket {
++        self.ticket
++    }
++
++    pub fn document_uid(&self) -> u64 {
++        self.session.uid
++    }
++
++    /// Invoke beside the window, never while holding a lifecycle lock. Both
++    /// preparation and admission may be long; edits/finals can invalidate either.
++    pub fn run(mut self) -> Result<bool> {
++        let Some(controller) = self.controller.upgrade() else { return Ok(false) };
++        if !with_controller(&controller, |state| Ok(state.accepts_capture(self.ticket))).map_err(job_error)? {
++            return Ok(false);
++        }
++        let result = (|| {
++            let prepared = solidcraft_io::vfs::scoped(self.scope.take(), || crate::cmd::prepare_interactive(&self.session, &self.params))?;
++            if !with_controller(&controller, |state| Ok(state.accepts_capture(self.ticket))).map_err(job_error)? {
++                return Ok(false);
++            }
++            let host = self
++                .session
++                .render_job_host()
++                .ok_or_else(|| job_error(JobError::new(ErrorCode::HostUnavailable, "CPU image host is unavailable")))?;
++            let job = host
++                .submit_with_environment_and_options(
++                    self.ticket.job_id(),
++                    self.ticket.revision().scene_generation,
++                    prepared.scene,
++                    prepared.request,
++                    prepared.options,
++                    prepared.environment,
++                )
++                .map_err(job_error)?;
++            adopt_created(&controller, self.ticket, job).map_err(job_error)
++        })();
++        if let Err(error) = &result {
++            let _ = with_controller(&controller, |state| {
++                state.capture_failed(self.ticket, JobError::new(ErrorCode::InvalidScene, error.to_string()));
++                Ok(())
++            });
++        }
++        result
++    }
++}
++
++/// Opaque visual-source stamp: no placed world, mesh, strong document or B-rep
++/// ownership. Construct only after the previous stamp stops matching; retain it
++/// and call is_current on each frame instead of cloning session metadata again.
++pub struct SceneIdentity {
++    uid: u64,
++    revision: u64,
++    document: Weak<solidcraft_doc::Document>,
++    model: Weak<solidcraft_doc::ModelState>,
++    pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
++    active_sketch: Option<u64>,
++    active_component: u64,
++    active_occurrence_path: Option<Vec<u64>>,
++    visibility: solidcraft_doc::Visibility,
++}
++
++impl SceneIdentity {
++    /// Exact metadata comparison. model.state only clones the existing evaluated
++    /// Arc; it neither evaluates nor places bodies nor obtains a display mesh.
++    /// Weak allocation identities cannot alias a later allocation while retained.
++    pub fn is_current(&self, session: &Session) -> bool {
++        self.uid == session.uid
++            && self.revision == session.revision
++            && Weak::ptr_eq(&self.document, &Arc::downgrade(&session.doc))
++            && Weak::ptr_eq(&self.model, &Arc::downgrade(&session.model.state()))
++            && self.pending_moves == session.pending_moves
++            && self.active_sketch == session.active_sketch
++            && self.active_component == session.active_component
++            && self.active_occurrence_path == session.active_occurrence_path
++            && self.visibility == session.visibility
++    }
++}
++
++impl Session {
++    /// Source identity without computing cold assembly placements or meshes.
++    /// Stale modelling gestures must still be rejected separately before capture.
++    /// View camera/draft/output edits belong to the caller's visual intent stamp.
++    pub fn interactive_scene_identity(&self) -> SceneIdentity {
++        SceneIdentity {
++            uid: self.uid,
++            revision: self.revision,
++            document: Arc::downgrade(&self.doc),
++            model: Arc::downgrade(&self.model.state()),
++            pending_moves: self.pending_moves.clone(),
++            active_sketch: self.active_sketch,
++            active_component: self.active_component,
++            active_occurrence_path: self.active_occurrence_path.clone(),
++            visibility: self.visibility.clone(),
++        }
++    }
++}
++
++impl Session {
++    /// Existing prepared world only, for Interactive reflection-binding proof.
++    /// None is not a capture-availability decision: SceneIdentity remains valid
++    /// for cold assemblies and the capture worker prepares their real world.
++    pub fn interactive_cached_world_state(&self) -> Option<Arc<solidcraft_doc::ModelState>> {
++        self.cached_world_state()
++    }
++}
++
++// Exact identity checks must not prepare cold geometry on the window thread.
++#[cfg(test)]
++#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
++mod scene_identity_tests {
++    use super::*;
++    use serde_json::json;
++
++    #[test]
++    fn cold_assembly_stamp_neither_places_nor_meshes() {
++        let mut session = Session::default();
++        session.execute("solid.box", &json!({"length":10,"width":20,"height":5,"body_name":"Source"})).unwrap();
++        // A root body plus an empty placed component is a valid cold assembly.
++        let doc = session.doc_mut();
++        doc.components.push(solidcraft_doc::Component { id: 100, name: "Empty component".into(), ..Default::default() });
++        doc.occurrences.push(solidcraft_doc::Occurrence {
++            id: 101,
++            component: 100,
++            parent: 0,
++            name: "Empty placement".into(),
++            transform: solidcraft_doc::IDENTITY,
++            grounded: false,
++        });
++        assert!(session.world_cache.lock().unwrap().is_none());
++        let state = session.model.state();
++        assert!(state.body("Source").unwrap().cached_mesh().is_none());
++        let stamp = session.interactive_scene_identity();
++        for _ in 0..10 {
++            assert!(stamp.is_current(&session));
++        }
++        assert!(session.world_cache.lock().unwrap().is_none());
++        assert!(state.body("Source").unwrap().cached_mesh().is_none());
++    }
++
++    #[test]
++    fn exact_context_and_visibility_changes_invalidate_without_revision() {
++        let mut session = Session::default();
++        let revision = session.revision;
++        let stamp = session.interactive_scene_identity();
++        session.pending_moves.insert(7, solidcraft_doc::IDENTITY);
++        assert!(!stamp.is_current(&session));
++        session.pending_moves.clear();
++        assert!(stamp.is_current(&session));
++        session.active_component = 7;
++        assert!(!stamp.is_current(&session));
++        session.active_component = 0;
++        session.active_occurrence_path = Some(vec![7, 8]);
++        assert!(!stamp.is_current(&session));
++        session.active_occurrence_path = None;
++        session.active_sketch = Some(9);
++        assert!(!stamp.is_current(&session));
++        session.active_sketch = None;
++        session.visibility.hidden_occurrences.push(vec![7, 8]);
++        assert!(!stamp.is_current(&session));
++        session.visibility.hidden_occurrences.clear();
++        session.visibility.hidden_folders.push("c0/bodies".into());
++        assert!(!stamp.is_current(&session));
++        assert_eq!(session.revision, revision);
++    }
++
++    #[test]
++    fn stamp_has_no_strong_document_or_model_retention() {
++        let session = Session::default();
++        let model = session.model.state();
++        let doc_count = Arc::strong_count(&session.doc);
++        let model_count = Arc::strong_count(&model);
++        let doc = Arc::downgrade(&session.doc);
++        let weak_model = Arc::downgrade(&model);
++        let stamp = session.interactive_scene_identity();
++        assert_eq!(Arc::strong_count(&session.doc), doc_count);
++        assert_eq!(Arc::strong_count(&model), model_count);
++        assert!(stamp.is_current(&session));
++        drop(model);
++        drop(session);
++        assert!(doc.upgrade().is_none());
++        assert!(weak_model.upgrade().is_none());
++        // Retained Weak allocation identities cannot be recycled for a new object.
++        let mut replacement = Session::default();
++        replacement.uid = stamp.uid;
++        replacement.revision = stamp.revision;
++        assert!(!stamp.is_current(&replacement));
++    }
++
++    #[test]
++    fn same_document_and_revision_do_not_hide_a_replaced_evaluated_model() {
++        let mut session = Session::default();
++        let stamp = session.interactive_scene_identity();
++        session.model = Session::default().model;
++        assert!(!stamp.is_current(&session));
++        let refreshed = session.interactive_scene_identity();
++        assert!(refreshed.is_current(&session));
++        session.revision += 1;
++        assert!(!refreshed.is_current(&session));
++    }
++}
+diff --git a/crates/ui-egui/src/render_workspace_interactive.rs b/crates/ui-egui/src/render_workspace_interactive.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/ui-egui/src/render_workspace_interactive.rs
+@@ -0,0 +1,600 @@
++//! Opt-in CPU checkpoints. This cache and its capture receiver are app-wide,
++//! never part of saved setups, final results or export ownership.
++use super::ImageMethod;
++use crate::{SolveApp, theme::Tokens, ui_kit};
++use serde_json::{Value, json};
++#[cfg(not(target_arch = "wasm32"))]
++use solidcraft_engine::render_interactive::Snapshot;
++use solidcraft_engine::{
++    render::job::{
++        FrameInfo, HostKind, Integrator, JobId,
++        interactive::{CaptureTicket, State as Phase, VisualRevision},
++    },
++    render_interactive::{InteractiveRender, SceneIdentity},
++    schema::render_ui::Action,
++};
++use std::{sync::mpsc, time::Duration};
++
++struct Intent {
++    scene: SceneIdentity,
++    uid: u64,
++    revision: u64,
++    camera: solidcraft_engine::render::Camera,
++    stale: bool,
++    request: Result<Value, String>,
++}
++
++pub(super) struct Pending {
++    pub(super) uid: u64,
++    pub(super) ticket: CaptureTicket,
++    pub(super) receiver: mpsc::Receiver<Result<bool, String>>,
++}
++#[derive(Clone, Copy, PartialEq, Eq)]
++struct PixelKey {
++    job: JobId,
++    sequence: u32,
++    complete: bool,
++}
++struct Cached {
++    key: PixelKey,
++    revision: VisualRevision,
++    info: FrameInfo,
++    samples: u32,
++    stale: bool,
++    texture: Result<egui::TextureHandle, String>,
++}
++
++pub(super) struct State {
++    context: Option<InteractiveRender>,
++    pub(super) pending: Option<Pending>,
++    issued: Option<CaptureTicket>,
++    observed: Option<Intent>,
++    visual: u64,
++    clock: Duration,
++    phase: Phase,
++    user_paused: bool,
++    final_active: bool,
++    error: Option<String>,
++    frame: Option<Cached>,
++}
++impl Default for State {
++    fn default() -> Self {
++        Self {
++            context: None,
++            pending: None,
++            issued: None,
++            observed: None,
++            visual: 0,
++            clock: Duration::ZERO,
++            phase: Phase::Off,
++            user_paused: false,
++            final_active: false,
++            error: None,
++            frame: None,
++        }
++    }
++}
++impl State {
++    /// Never drop a live receiver to make room for a second capture thread.
++    pub(super) fn reset_document(&mut self) {
++        if let Some(context) = self.context.take() {
++            let _ = context.disable();
++        }
++        self.issued = None;
++        self.observed = None;
++        self.phase = Phase::Off;
++        self.user_paused = false;
++        self.final_active = false;
++        self.error = None;
++        self.frame = None;
++    }
++    #[cfg(test)]
++    pub(super) fn pending(&self) -> bool {
++        self.pending.is_some()
++    }
++    fn revision(&self) -> Option<VisualRevision> {
++        self.observed.as_ref().map(|intent| VisualRevision { scene_generation: intent.revision, visual_revision: self.visual })
++    }
++    fn drain(&mut self, app: &SolveApp) {
++        let Some(pending) = self.pending.take() else { return };
++        let reply = match pending.receiver.try_recv() {
++            Ok(reply) => reply,
++            Err(mpsc::TryRecvError::Empty) => {
++                self.pending = Some(pending);
++                return;
++            }
++            Err(mpsc::TryRecvError::Disconnected) => Err(app.tr("render.interactive_error").into()),
++        };
++        if pending.uid != app.session.uid
++            || self.issued != Some(pending.ticket)
++            || self.revision() != Some(pending.ticket.revision())
++            || self.context.as_ref().is_none_or(|context| !context.is_current(&app.session))
++        {
++            return;
++        }
++        // Final preemption or a user pause invalidates the outstanding ticket;
++        // an expected rejected capture is not a fresh preparation failure.
++        if self.user_paused
++            || self.final_active
++            || self.context.as_ref().is_some_and(|context| matches!(context.state(), Ok(Phase::Paused | Phase::Off)))
++        {
++            return;
++        }
++        match reply {
++            Err(error) => {
++                if let Some(context) = &self.context {
++                    let _ = context.capture_failed(pending.ticket, error.clone());
++                }
++                self.error = Some(error);
++                self.phase = Phase::Error;
++            }
++            Ok(false) => {
++                self.error = Some(app.tr("render.interactive_error").into());
++                self.phase = Phase::Error;
++            }
++            Ok(true) => {}
++        }
++    }
++    fn observe(&mut self, app: &SolveApp) -> Result<(), String> {
++        // The exact-input stamp never computes world placements/meshes.
++        // Preserve a current stamp across request-only edits; its weak identities
++        // prevent pointer reuse without retaining CAD data or changing COW behavior.
++        let stale = app.session.model.is_stale();
++        let request = if stale { Err(app.tr("render.error_finish_gesture").into()) } else { super::interactive_request(app) };
++        let current_scene = self.observed.as_ref().is_some_and(|old| old.scene.is_current(&app.session));
++        if current_scene
++            && self.observed.as_ref().is_some_and(|old| {
++                old.uid == app.session.uid
++                    && old.revision == app.session.revision
++                    && old.camera == app.cam
++                    && old.stale == stale
++                    && old.request == request
++            })
++        {
++            return Ok(());
++        }
++        let scene = match self.observed.take() {
++            Some(old) if current_scene => old.scene,
++            _ => app.session.interactive_scene_identity(),
++        };
++        let intent = Intent { scene, uid: app.session.uid, revision: app.session.revision, camera: app.cam, stale, request };
++        let recovering = self.error.is_some() || self.phase == Phase::Error;
++        self.visual = self.visual.checked_add(1).ok_or_else(|| app.tr("render.interactive_error").to_string())?;
++        self.observed = Some(intent);
++        self.issued = None;
++        self.error = None;
++        if self.user_paused {
++            if let Some(frame) = &mut self.frame {
++                frame.stale = true;
++            }
++        } else {
++            self.frame = None;
++        }
++        if let (Some(context), Some(revision)) = (&self.context, self.revision()) {
++            context.edit(revision, self.clock).map_err(|error| error.to_string())?;
++            if recovering && !self.user_paused {
++                context.resume(self.clock).map_err(|error| error.to_string())?;
++            }
++        }
++        if !stale && let Some(Err(error)) = self.observed.as_ref().map(|intent| &intent.request) {
++            self.error = Some(error.clone());
++        }
++        Ok(())
++    }
++    fn update(&mut self, app: &mut SolveApp, ctx: &egui::Context, dispatch: bool) -> Result<(), String> {
++        self.clock = monotonic(self.clock, ctx.input(|input| input.time));
++        self.drain(app);
++        if self.context.is_none() {
++            return Ok(());
++        }
++        if !super::active(app)
++            || app.render_workspace.view.method != ImageMethod::CpuRaytrace
++            || self.context.as_ref().is_some_and(|context| !context.is_current(&app.session))
++        {
++            self.reset_document();
++            return Ok(());
++        }
++        self.observe(app)?;
++        let final_active = finals_active(app);
++        let suspend = final_active.as_ref().copied().unwrap_or(true) || app.render_workspace.view.result;
++        self.final_active = suspend;
++        let waiting_for_model = self.observed.as_ref().is_some_and(|intent| intent.stale);
++        let context = self.context.as_ref().ok_or_else(|| app.tr("render.interactive_error").to_string())?;
++        context.set_final_active(suspend || waiting_for_model, self.clock).map_err(|error| error.to_string())?;
++        if suspend || waiting_for_model {
++            self.issued = None;
++        }
++        if suspend && !self.user_paused {
++            self.frame = None;
++        }
++        if let Err(error) = final_active {
++            self.error = Some(error);
++        }
++        if waiting_for_model {
++            self.phase = if self.user_paused || suspend { Phase::Paused } else { Phase::Updating };
++            if let Some(frame) = &mut self.frame {
++                frame.stale = true;
++            }
++            return Ok(());
++        }
++        if self.error.is_some() {
++            // Request errors must cancel an already attached old capture, too.
++            context.pause().map_err(|error| error.to_string())?;
++            self.phase = Phase::Error;
++            return Ok(());
++        }
++        self.phase = context.state().map_err(|error| error.to_string())?;
++        if self.phase == Phase::Error {
++            self.error = context.error().map_err(|error| error.to_string())?.or_else(|| Some(app.tr("render.interactive_error").into()));
++            self.frame = None;
++            return Ok(());
++        }
++        self.cache(ctx)?;
++        if !dispatch || self.pending.is_some() || suspend || self.user_paused {
++            return Ok(());
++        }
++        #[cfg(not(target_arch = "wasm32"))]
++        if let Some(ticket) = self
++            .context
++            .as_ref()
++            .ok_or_else(|| app.tr("render.interactive_error").to_string())?
++            .capture(self.clock)
++            .map_err(|error| error.to_string())?
++        {
++            let request = self
++                .observed
++                .as_ref()
++                .and_then(|intent| intent.request.as_ref().ok())
++                .ok_or_else(|| app.tr("render.interactive_error").to_string())?;
++            let snapshot = self
++                .context
++                .as_ref()
++                .ok_or_else(|| app.tr("render.interactive_error").to_string())?
++                .snapshot(&app.session, ticket, request)
++                .map_err(|error| error.to_string())?;
++            self.issued = Some(ticket);
++            self.pending = Some(spawn(snapshot)?);
++            self.phase = Phase::Updating;
++        }
++        Ok(())
++    }
++    fn cache(&mut self, ctx: &egui::Context) -> Result<(), String> {
++        if self.user_paused || self.final_active {
++            return Ok(());
++        }
++        let Some(context) = &self.context else { return Ok(()) };
++        let Some(job) = context.current().map_err(|error| error.to_string())? else { return Ok(()) };
++        let Some(ticket) = self.issued else { return Ok(()) };
++        if job.id() != ticket.job_id() || self.revision() != Some(ticket.revision()) {
++            return Ok(());
++        }
++        let status = job.status().map_err(|error| error.to_string())?;
++        if status.request.integrator != Integrator::Raytrace || status.scene_generation != ticket.revision().scene_generation {
++            return Err(crate::i18n::tr("render.interactive_error").into());
++        }
++        // Prefer an immutable checkpoint. A completed 16-SPP preview is also
++        // provisional and is never inserted into view.job/completed/result slots.
++        let preview = job.preview().map_err(|error| error.to_string())?;
++        if let Some(preview) = preview {
++            let key = PixelKey { job: job.id(), sequence: preview.info.frame_sequence, complete: false };
++            self.cache_png(ctx, key, ticket.revision(), &preview.info.frame, preview.info.samples_per_pixel, (preview.png(), &status.request))?;
++        } else if let Some(frame) = job.frame().map_err(|error| error.to_string())? {
++            let key = PixelKey { job: job.id(), sequence: 0, complete: true };
++            let samples = status.request.raytrace.as_ref().and_then(|options| options.progressive).map_or(0, |options| options.samples_per_pixel);
++            self.cache_png(ctx, key, ticket.revision(), &frame.info, samples, (frame.png(), &status.request))?;
++        }
++        Ok(())
++    }
++    fn cache_png(
++        &mut self,
++        ctx: &egui::Context,
++        key: PixelKey,
++        revision: VisualRevision,
++        info: &FrameInfo,
++        samples: u32,
++        payload: (&[u8], &solidcraft_engine::render::job::ImageRequest),
++    ) -> Result<(), String> {
++        let (png, request) = payload;
++        if self.frame.as_ref().is_some_and(|frame| frame.key == key && frame.revision == revision) {
++            return Ok(());
++        }
++        if info.job != key.job
++            || info.scene_generation != revision.scene_generation
++            || !(1..=16).contains(&samples)
++            || (info.width, info.height) != (request.width, request.height)
++            || info.width > 1024
++            || info.height > 1024
++        {
++            return Err(crate::i18n::tr("render.error_provisional_identity").into());
++        }
++        let texture = super::decode_render_image(
++            png,
++            info.width,
++            info.height,
++            super::captured_image_limits(request),
++            ctx.input(|input| input.max_texture_side),
++        )
++        .map(|image| ctx.load_texture("sc_render_interactive", image, egui::TextureOptions::LINEAR));
++        let error = texture.as_ref().err().cloned();
++        self.frame = Some(Cached { key, revision, info: info.clone(), samples, stale: false, texture });
++        if let Some(error) = error {
++            return Err(error);
++        }
++        Ok(())
++    }
++}
++
++pub(super) fn monotonic(previous: Duration, seconds: f64) -> Duration {
++    if !seconds.is_finite() || seconds < 0.0 {
++        return previous;
++    }
++    match Duration::try_from_secs_f64(seconds) {
++        Ok(now) => previous.max(now),
++        Err(_) => previous,
++    }
++}
++fn finals_active(app: &SolveApp) -> Result<bool, String> {
++    let mut active = false;
++    for session in std::iter::once(&app.session).chain(app.docs.background()) {
++        active |= session.render_final_active().map_err(|error| error.to_string())?;
++    }
++    Ok(active)
++}
++
++pub(super) fn ready(app: &SolveApp) -> Result<(), String> {
++    if cfg!(target_arch = "wasm32") || !super::active(app) || app.render_workspace.view.method != ImageMethod::CpuRaytrace {
++        return Err(app.tr("render.interactive_requires_cpu").into());
++    }
++    let host = app.session.render_job_host().ok_or_else(|| app.tr("render.interactive_requires_cpu").to_string())?;
++    if host.kind() != HostKind::NativeWorker || !host.is_available() || host.validate_integrator(Integrator::Raytrace).is_err() {
++        return Err(app.tr("render.interactive_requires_cpu").into());
++    }
++    if finals_active(app)? || app.render_workspace.view.result {
++        return Err(app.tr("render.interactive_final_active").into());
++    }
++    Ok(())
++}
++
++pub(super) fn apply_command(app: &mut SolveApp, action: Action) -> Result<(), String> {
++    if matches!(action, Action::On | Action::Resume) {
++        ready(app)?;
++    }
++    let mut state = std::mem::take(&mut app.render_workspace.interactive);
++    let result = (|| {
++        match action {
++            Action::Off => state.reset_document(),
++            Action::On => {
++                state.reset_document();
++                state.context = Some(app.session.interactive_render().map_err(|error| error.to_string())?);
++                state.observe(app)?;
++                let revision = state.revision().ok_or_else(|| app.tr("render.interactive_error").to_string())?;
++                state
++                    .context
++                    .as_ref()
++                    .ok_or_else(|| app.tr("render.interactive_error").to_string())?
++                    .enable(revision, state.clock)
++                    .map_err(|error| error.to_string())?;
++                state.phase = Phase::Updating;
++            }
++            Action::Pause => {
++                let context = state.context.as_ref().ok_or_else(|| app.tr("render.interactive_requires_cpu").to_string())?;
++                context.pause().map_err(|error| error.to_string())?;
++                state.user_paused = true;
++                state.issued = None;
++                state.phase = Phase::Paused;
++            }
++            Action::Resume => {
++                state.observe(app)?;
++                if let Some(Err(error)) = state.observed.as_ref().map(|intent| &intent.request) {
++                    return Err(error.clone());
++                }
++                let context = state.context.as_ref().ok_or_else(|| app.tr("render.interactive_requires_cpu").to_string())?;
++                context.resume(state.clock).map_err(|error| error.to_string())?;
++                state.user_paused = false;
++                state.issued = None;
++                state.error = None;
++                state.frame = None;
++                state.phase = Phase::Updating;
++            }
++        }
++        Ok(())
++    })();
++    app.render_workspace.interactive = state;
++    result
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn spawn(snapshot: Snapshot) -> Result<Pending, String> {
++    let uid = snapshot.document_uid();
++    let ticket = snapshot.ticket();
++    let (sender, receiver) = mpsc::channel();
++    let _worker = std::thread::Builder::new()
++        .name("solidcraft-interactive-capture".into())
++        .spawn(move || {
++            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| snapshot.run()))
++                .map_err(|_| crate::i18n::tr("render.interactive_error").to_string())
++                .and_then(|result| result.map_err(|error| error.to_string()));
++            let _ = sender.send(result);
++        })
++        .map_err(|error| error.to_string())?;
++    Ok(Pending { uid, ticket, receiver })
++}
++
++fn refresh(app: &mut SolveApp, ctx: &egui::Context, dispatch: bool) {
++    let mut state = std::mem::take(&mut app.render_workspace.interactive);
++    if let Err(error) = state.update(app, ctx, dispatch) {
++        if let Some(context) = &state.context {
++            let _ = context.pause();
++        }
++        state.error = Some(error);
++        state.phase = Phase::Error;
++        state.frame = None;
++    }
++    let poll = state.pending.is_some() || matches!(state.phase, Phase::Updating | Phase::Refining);
++    app.render_workspace.interactive = state;
++    if poll {
++        ctx.request_repaint_after(Duration::from_millis(100));
++    }
++}
++pub(super) fn tick(app: &mut SolveApp, ctx: &egui::Context) {
++    refresh(app, ctx, true);
++}
++pub(super) fn before_paint(app: &mut SolveApp, ctx: &egui::Context) {
++    refresh(app, ctx, false);
++}
++
++pub(super) fn paint(app: &SolveApp, ui: &egui::Ui, rect: egui::Rect) -> bool {
++    let state = &app.render_workspace.interactive;
++    if state.context.is_none() || state.final_active || state.error.is_some() {
++        return false;
++    }
++    let Some(frame) = &state.frame else { return false };
++    if !state.user_paused && (frame.stale || state.revision() != Some(frame.revision)) {
++        return false;
++    }
++    let Ok(texture) = &frame.texture else { return false };
++    let scale = (rect.width() / frame.info.width as f32).min(rect.height() / frame.info.height as f32);
++    let target = egui::Rect::from_center_size(rect.center(), egui::vec2(frame.info.width as f32, frame.info.height as f32) * scale);
++    ui.painter().with_clip_rect(rect).image(
++        texture.id(),
++        target,
++        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
++        Tokens::get().file_image_tint,
++    );
++    true
++}
++
++pub(crate) fn overlay(app: &mut SolveApp, ui: &egui::Ui, free: egui::Rect) {
++    let width = (free.width() - Tokens::get().space_8 * 2.0).min(Tokens::get().form_card_width);
++    if width < Tokens::get().control_height {
++        return;
++    }
++    let card = ui_kit::Container::navigation_card(
++        ui.ctx(),
++        egui::Id::new("sc_render_interactive_controls"),
++        free.center_top(),
++        egui::Align2::CENTER_TOP,
++        |ui| {
++            ui.set_width(width);
++            ui.set_max_width(width);
++            ui.set_clip_rect(ui.clip_rect().intersect(free));
++            controls(app, ui);
++        },
++    );
++    crate::shell::register_panel(app, "render:interactive-card", Some(card.response.rect.intersect(free)), None);
++    crate::scenario::publish_rect("render:interactive-card", card.response.rect.intersect(free));
++}
++pub(super) fn controls(app: &mut SolveApp, ui: &mut egui::Ui) {
++    let state = &app.render_workspace.interactive;
++    let phase = state.phase;
++    let running = state.context.is_some();
++    let paused = state.user_paused;
++    let key = match phase {
++        Phase::Off => "render.interactive_off",
++        Phase::Updating => "render.interactive_updating",
++        Phase::Refining => "render.interactive_refining",
++        Phase::Paused => "render.interactive_paused",
++        Phase::TargetReached => "render.interactive_target",
++        Phase::Error => "render.interactive_error",
++    };
++    let label = app.tr(key).to_string();
++    let error = state.error.clone();
++    let samples = state.frame.as_ref().map(|frame| frame.samples);
++    let dimensions = state.frame.as_ref().map(|frame| (frame.info.width, frame.info.height));
++    let stale = state.frame.as_ref().is_some_and(|frame| frame.stale);
++    let final_active = state.final_active;
++    ui_kit::text(ui, &label, ui_kit::Text::Inline);
++    if running {
++        ui_kit::text(ui, app.tr("render.interactive_provisional"), ui_kit::Text::Note("render.interactive_provisional"));
++    }
++    if let Some(samples) = samples {
++        let label = crate::i18n::format("render.interactive_samples", &[("done", &samples.to_string()), ("total", "16")]);
++        ui_kit::text(ui, &label, ui_kit::Text::Inline);
++    }
++    if let Some((width, height)) = dimensions {
++        ui_kit::text(ui, &format!("{width} × {height} px"), ui_kit::Text::Inline);
++    }
++    if stale {
++        ui_kit::text(ui, app.tr("render.interactive_stale"), ui_kit::Text::Note("render.interactive_stale"));
++    }
++    if final_active {
++        ui_kit::text(ui, app.tr("render.interactive_final_active"), ui_kit::Text::Note("render.interactive_final_active"));
++    }
++    if let Some(error) = error {
++        ui_kit::text(ui, &error, ui_kit::Text::Error("render.interactive_error"));
++    }
++    let reason = ready(app).err();
++    if let Some(reason) = &reason {
++        ui_kit::text(ui, reason, ui_kit::Text::Note("render.interactive_requires_cpu"));
++    }
++    let mut action = None;
++    ui.horizontal_wrapped(|ui| {
++        for (action_value, name, key, enabled) in if !running {
++            vec![(Action::On, "on", "render.interactive_on", reason.is_none())]
++        } else {
++            vec![
++                (
++                    if paused || phase == Phase::Error { Action::Resume } else { Action::Pause },
++                    if paused || phase == Phase::Error { "resume" } else { "pause" },
++                    if paused || phase == Phase::Error { "render.interactive_resume" } else { "render.interactive_pause" },
++                    !final_active && (reason.is_none() || !(paused || phase == Phase::Error)),
++                ),
++                (Action::Off, "off", "render.interactive_off", true),
++            ]
++        } {
++            let label = app.tr(key).to_string();
++            let response = ui_kit::button(ui, label, ui_kit::Button::Enabled(enabled));
++            crate::scenario::publish_target(&format!("render:interactive:{name}"), response.rect);
++            if response.clicked() {
++                action = Some(action_value);
++            }
++        }
++    });
++    if let Some(action) = action {
++        if let Err(error) = app.run("render.interactive", json!({"action":action})) {
++            app.set_status(error, true);
++        }
++        ui.ctx().request_repaint();
++    }
++}
++pub(super) fn command_ready(app: &SolveApp) -> Result<(), String> {
++    if app.render_workspace.interactive.context.is_some() { Ok(()) } else { ready(app) }
++}
++pub(super) fn activate(app: &mut SolveApp) {
++    let state = &app.render_workspace.interactive;
++    let action = if state.context.is_none() {
++        Action::On
++    } else if state.user_paused || state.phase == Phase::Error {
++        Action::Resume
++    } else {
++        Action::Pause
++    };
++    if let Err(error) = app.run("render.interactive", json!({"action":action})) {
++        app.set_status(error, true);
++    }
++}
++pub(super) fn inspect(app: &SolveApp) -> Value {
++    let state = &app.render_workspace.interactive;
++    json!({"enabled":state.context.is_some(),"phase":format!("{:?}",state.phase),"visual_revision":state.visual,
++        "pending_capture":state.pending.is_some(),"paused":state.user_paused,"error":state.error,
++        "samples":state.frame.as_ref().map(|frame| frame.samples),"stale":state.frame.as_ref().is_some_and(|frame|frame.stale),
++        "job":state.frame.as_ref().map(|frame|frame.info.job),"provisional":true})
++}
++
++// Read-only private observations for original UI acceptance tests. No production
++// command/API, host factory, renderer injection, worker gate or timing hook.
++#[cfg(all(test, not(target_arch = "wasm32")))]
++pub(super) fn test_current(app: &SolveApp) -> Option<solidcraft_engine::render::job::JobHandle> {
++    app.render_workspace.interactive.context.as_ref()?.current().unwrap()
++}
++#[cfg(all(test, not(target_arch = "wasm32")))]
++pub(super) fn test_cache(app: &SolveApp) -> Option<(FrameInfo, u32, bool, egui::TextureId)> {
++    let frame = app.render_workspace.interactive.frame.as_ref()?;
++    Some((frame.info.clone(), frame.samples, frame.key.complete, frame.texture.as_ref().ok()?.id()))
++}
++
++// Harness frames advance this clock even while Interactive is Off.
++#[cfg(all(test, not(target_arch = "wasm32")))]
++pub(super) fn test_clock(app: &SolveApp) -> Duration {
++    app.render_workspace.interactive.clock
++}

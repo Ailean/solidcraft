@@ -1,0 +1,52 @@
+--- a/crates/render/src/raytrace/mod.rs
++++ b/crates/render/src/raytrace/mod.rs
+@@ -269,9 +269,9 @@
+         let projected = self.vertices.map(|v| {
+             let delta = v - ray.origin;
+             let z = component(delta, kz);
+-            [component(delta, kx) - sx * z, component(delta, ky) - sy * z, z / dominant]
++            [component(delta, kx) - sx * z, component(delta, ky) - sy * z]
+         });
+-        let [[ax, ay, az], [bx, by, bz], [cx, cy, cz]] = projected;
++        let [[ax, ay], [bx, by], [cx, cy]] = projected;
+         let weights = [bx * cy - by * cx, cx * ay - cy * ax, ax * by - ay * bx];
+         let [u, v, w] = weights;
+         if (u < 0.0 || v < 0.0 || w < 0.0) && (u > 0.0 || v > 0.0 || w > 0.0) {
+@@ -282,9 +282,6 @@
+             return None;
+         }
+         let barycentric = weights.map(|value| value / determinant);
+-        let [u, v, w] = barycentric;
+-        // Divide before multiplying by depth: very small triangle areas need not
+-        // underflow their otherwise well-represented hit distance.
+         // An exact coordinate plane has a direct depth equation. Summing
+         // depths along another dominant ray axis can cancel large tangential
+         // terms into a false positive. No interval or edge policy changes.
+@@ -295,7 +292,26 @@
+         let distance = if let Some((axis, coordinate)) = axis_plane {
+             (coordinate - component(ray.origin, axis)) / component(d, axis)
+         } else {
+-            u * az + v * bz + w * cz
++            // Evaluate the plane directly rather than cancelling tangential
++            // depths from the shear. Scale by the largest normal component:
++            // its coefficient is exactly one, without a normalisation factor
++            // multiplying nearly equal terms in a grazing-ray denominator.
++            let kn = if normal.x.abs() >= normal.y.abs() && normal.x.abs() >= normal.z.abs() {
++                0
++            } else if normal.y.abs() >= normal.z.abs() {
++                1
++            } else {
++                2
++            };
++            let ka = (kn + 1) % 3;
++            let kb = (ka + 1) % 3;
++            let major = component(normal, kn);
++            let a = component(normal, ka) / major;
++            let b = component(normal, kb) / major;
++            let delta = self.vertices[0] - ray.origin;
++            let numerator = component(delta, kn) + a * component(delta, ka) + b * component(delta, kb);
++            let denominator = component(d, kn) + a * component(d, ka) + b * component(d, kb);
++            numerator / denominator
+         };
+         if !distance.is_finite() || distance < ray.min || distance > ray.max {
+             return None;

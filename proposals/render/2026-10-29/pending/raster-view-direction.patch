@@ -1,0 +1,98 @@
+--- a/crates/render/src/job/image.rs
++++ b/crates/render/src/job/image.rs
+@@ -771,10 +771,14 @@
+         let radiance = crate::studio::shade_weighted(surface, n, view, studio_weights.unwrap_or([1.0; 3])).map_err(|e| invalid(&e.to_string()))?;
+         let mapped = crate::studio::tone_map(radiance).map_err(|e| invalid(&e.to_string()))?;
+         [mapped.x, mapped.y, mapped.z]
+-    } else if let Some(weights) = studio_weights {
++    } else if let Some(light_weights) = studio_weights {
+         let [r, g, b] = t.colour;
+         let surface = crate::surface::OpaqueSurface::new(Vec3::new(r, g, b), 0.0, 1.0, 1.5).map_err(|e| invalid(&e.to_string()))?;
+-        let radiance = crate::studio::shade_weighted(surface, n, back, weights).map_err(|e| invalid(&e.to_string()))?;
++        let view = eye.map_or(back, |eye| {
++            let world = t.world.iter().zip(weights).fold(Vec3::ZERO, |p, (v, w)| p + *v * (w / sum));
++            eye - world
++        });
++        let radiance = crate::studio::shade_weighted(surface, n, view, light_weights).map_err(|e| invalid(&e.to_string()))?;
+         let mapped = crate::studio::tone_map(radiance).map_err(|e| invalid(&e.to_string()))?;
+         [mapped.x, mapped.y, mapped.z]
+     } else {
+--- a/crates/render/src/job/image_tests.rs
++++ b/crates/render/src/job/image_tests.rs
+@@ -202,3 +202,76 @@
+     // The CPU host itself keeps rejecting the source.
+     assert_eq!(admit(&source, &r).unwrap_err().code, ErrorCode::LimitExceeded);
+ }
++
++// Original fixture: a plane at x=40, with exact +X normals. The perspective
++// camera looks diagonally from (50/sqrt(2), -50/sqrt(2), 0). Its actual eye is
++// on the -X side of this plane, although camera.back has a positive X component.
++// The wide field of view keeps the off-axis plane in the image.
++fn weighted_matte_view_scene(explicit: bool) -> ProductScene {
++    let color = [96, 160, 220];
++    let mut part = square("weighted matte plane", color, 1.0, Vec3::ZERO);
++    let mesh = Arc::make_mut(&mut part.mesh);
++    for p in &mut mesh.positions {
++        *p = Vec3::new(40.0, p.x + 10.0, p.z);
++    }
++    mesh.normals = vec![Vec3::X; 4];
++    if explicit {
++        let [r, g, b] = color.map(crate::surface::srgb8_to_linear);
++        part.surface = Some(crate::surface::OpaqueSurface::new(Vec3::new(r, g, b), 0.0, 1.0, 1.5).unwrap());
++    }
++    scene(vec![part])
++}
++
++fn weighted_matte_view_request(perspective: bool) -> ImageRequest {
++    let mut input = request();
++    input.camera.yaw = -std::f64::consts::FRAC_PI_4;
++    input.camera.distance = if perspective { 50.0 } else { 100.0 };
++    input.camera.fov = if perspective { 2.4 } else { 0.0 };
++    input.transparent_background = false;
++    // Deliberately not equal: accidentally using light weights instead of
++    // perspective barycentric weights must not be an equivalent calculation.
++    input.studio_weights = Some([1.0, 0.35, 0.8]);
++    input
++}
++
++#[test]
++fn weighted_scalar_matte_uses_the_same_perspective_view_as_its_explicit_surface() {
++    let input = weighted_matte_view_request(true);
++    assert!(input.camera.back().x > 0.0 && input.camera.eye().x < 40.0);
++    let scalar = finish(ImageTask::new(weighted_matte_view_scene(false), input.clone(), CancelToken::default()).unwrap());
++    let explicit = finish(ImageTask::new(weighted_matte_view_scene(true), input, CancelToken::default()).unwrap());
++    // Same admitted geometry, exact unit-axis normals, colour decoder, matte
++    // response, lights, camera, buffers and encoder. No tolerance or golden.
++    assert_eq!(scalar, explicit);
++    let image = image::load_from_memory(&scalar).unwrap().to_rgba8();
++    assert_eq!(image.get_pixel(0, 0).0, [20, 40, 60, 255]);
++    // Actual view is behind +X everywhere on the plane, so the existing
++    // one-sided BRDF returns zero. This also proves visible product coverage.
++    assert!(image.pixels().any(|pixel| pixel.0 == [0, 0, 0, 255]));
++}
++
++#[test]
++fn weighted_scalar_matte_keeps_exact_orthographic_surface_equivalence() {
++    let input = weighted_matte_view_request(false);
++    let scalar = finish(ImageTask::new(weighted_matte_view_scene(false), input.clone(), CancelToken::default()).unwrap());
++    let explicit = finish(ImageTask::new(weighted_matte_view_scene(true), input, CancelToken::default()).unwrap());
++    assert_eq!(scalar, explicit);
++    let image = image::load_from_memory(&scalar).unwrap().to_rgba8();
++    assert_eq!(image.get_pixel(0, 0).0, [20, 40, 60, 255]);
++    assert!(image.pixels().any(|pixel| pixel.0 != [20, 40, 60, 255] && pixel.0 != [0, 0, 0, 255]));
++}
++
++#[test]
++fn weighted_scalar_matte_mute_still_removes_only_product_light() {
++    let mut input = weighted_matte_view_request(false);
++    let lit = finish(ImageTask::new(weighted_matte_view_scene(false), input.clone(), CancelToken::default()).unwrap());
++    input.studio_weights = Some([0.0; 3]);
++    let muted = finish(ImageTask::new(weighted_matte_view_scene(false), input, CancelToken::default()).unwrap());
++    assert_ne!(lit, muted);
++    for bytes in [&lit, &muted] {
++        let image = image::load_from_memory(bytes).unwrap().to_rgba8();
++        assert_eq!(image.get_pixel(0, 0).0, [20, 40, 60, 255]);
++    }
++    let image = image::load_from_memory(&muted).unwrap().to_rgba8();
++    assert!(image.pixels().any(|pixel| pixel.0 == [0, 0, 0, 255]));
++}

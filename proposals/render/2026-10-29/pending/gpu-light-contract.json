@@ -1,0 +1,275 @@
+{
+  "task": "Minimal integration contract: GPU Point/Spot and multiple arbitrary Directional lights",
+  "owner": "Worker #2",
+  "status": "PRIVATE_PROPOSAL_NOT_IMPLEMENTED_UNCOMPILED_UNRUN",
+  "scope": "Read actual integrated sources and current PRs; define transport and original tests. No checkout/shader edits, renderer/GPU execution, build, publication, or new claim.",
+  "result": "This is an engine/document/runtime payload and transport gap, not a missing UI control. Current unsupported requests are refused. No silent Point-to-Area, Spot-to-Sun, or hard-Directional-to-finite-Sun conversion is acceptable for the extension.",
+  "current_source": {
+    "adapter": {
+      "file": "crates/engine/src/render_lights.rs",
+      "anchors": [
+        "parse_id",
+        "write",
+        "inspect",
+        "filter"
+      ],
+      "facts": [
+        "parse_id permits directional:0..7, punctual indices0..7 shared between point and spot, area:0..3.",
+        "write first caps total analytic lights at20, then directional<=8, combined punctual<=8, area<=4.",
+        "CPU write preserves hard directional options and PunctualLightOptions including optional SpotConeOptions; nonempty angular radius on CPU directional is refused.",
+        "GPU write explicitly refuses nonempty punctual or more than one directional before saving. It retains environment and turns rectangles' full sides into half edges.",
+        "Current GPU mapping of the one Directional with angular_radius_rad=None uses unwrap_or(0.02) and becomes a finite Sun; it multiplies colour by intensity into radiance. This is observable semantic conversion, not preservation of a hard source. ROOT attributes the adapter to Nathan Dane/3cc10aca/#6281/#7265; local blame was reported by ROOT, not rerun here.",
+        "GPU inspect exposes only the one Sun as Geometry::Directional with Some(radius), and four areas. When no explicit lighting/HDR/sky exists, three implicit fixed hard lights are listed.",
+        "Visibility is ephemeral and filters a rendering copy. Implicit studio uses three weights; explicit sources are removed from the rendering copy and rewritten. New families must join this same path without saving mute/solo or renumbering a source merely because it is hidden."
+      ]
+    },
+    "existing_types": [
+      {
+        "type": "schema::render_lights::Geometry::Point",
+        "fields": [
+          "position_mm:[f64;3]",
+          "reference_distance_mm:f64",
+          "minimum_distance_mm:f64"
+        ],
+        "existing_saved_representation": "PunctualLightOptions cone=None in CpuJob only"
+      },
+      {
+        "type": "schema::render_lights::Geometry::Spot",
+        "fields": [
+          "Point fields",
+          "emitted_axis:[f64;3] FROM source",
+          "inner_half_angle_radians",
+          "outer_half_angle_radians"
+        ],
+        "existing_saved_representation": "PunctualLightOptions cone=Some(SpotConeOptions) in CpuJob only"
+      },
+      {
+        "type": "schema::render_lights::Geometry::Directional",
+        "fields": [
+          "direction:[f64;3] TOWARD source",
+          "angular_radius_rad:Option<f64>"
+        ],
+        "existing_saved_representation": "CPU DirectionalLightOptions has no radius; GPU StudioLighting.sun has mandatory finite radius"
+      },
+      {
+        "type": "job::StudioLighting",
+        "fields": [
+          "sun:Option<Sun>",
+          "environment:[f64;3]",
+          "area_lights:AreaLights<=4"
+        ],
+        "missing": "No arbitrary hard directional list or punctual list; deny_unknown_fields rejects extensions."
+      },
+      {
+        "type": "doc::GpuJob / job::JobOptions",
+        "facts": [
+          "Both carry Option<StudioLighting>; GpuJob.to_runtime and saved GPU normalization carry that exact value.",
+          "No point/spot or hard-directional values exist to lower; no scalar field is silently dropped from an otherwise accepted existing GPU punctual value.",
+          "GPU admission rejects CPU raytrace options; passing RaytraceOptions.punctual_lights cannot bypass that contract."
+        ]
+      }
+    ],
+    "gpu_payload": {
+      "file": "crates/gpu/src/path/mod.rs::Task::parameters / path.wgsl::Params",
+      "parameter_bytes": 1184,
+      "existing": "One environment;4 rectangular emitters; one normalized toward-Sun axis, cos radius and RGB/density. World positions are recentered relative to camera.target. No punctual position/reference/minimum/cone or arbitrary-directional array/count exists."
+    },
+    "transport": {
+      "files": [
+        "crates/gpu/src/path/path.wgsl",
+        "crates/gpu/src/path/shadows.wgsl",
+        "crates/gpu/src/path/volume.wgsl"
+      ],
+      "facts": [
+        "Existing Sun is a uniform finite angular disk with density1/solid_angle and NEE/MIS, and contributes on escaped paths. This is not a delta directional source.",
+        "Surface direct_studio presently has area/environment/Sun branches; #6850 replaces it plus fixed lights with one source loop and one shadow_transmittance call site.",
+        "Volume direct already has one loop for area/environment/Sun and a single volume_visible call. New punctual/delta sources require volume integration too, or a clear pre-device refusal when combined with active volume.",
+        "Visibility carries RGB transmittance, branch PDF, crossings and solid-boundary information. Do not substitute a boolean occlusion check for supported transmission/volume connections."
+      ]
+    }
+  },
+  "proposed_contract": {
+    "status": "ALL changes in this section are pending design/owner agreement; none exist in the reviewed checkout.",
+    "types_and_persistence": [
+      "Extend the shared StudioLighting numerical intent with bounded arbitrary DirectionalLightOptions and PunctualLightOptions lists, reusing SpotConeOptions. Keep existing Sun and areas independent. Exact field names and bounded wrapper types are proposed, not available APIs.",
+      "Keep JobOptions and StudioLighting Copy. PunctualLightOptions already is Copy; DirectionalLightOptions currently is Clone, not Copy, so using it in a Copy fixed-capacity wrapper requires an explicit small derive/API decision rather than pretending this compiles today.",
+      "Use bounded decode visitors/fallible construction as existing area/punctual decoders do, not an unbounded Vec followed by truncate. Default empty extension fields and omit them when serialized; absent lighting still means legacy implicit studio, while explicit empty lighting means no direct lights.",
+      "Adding persistent GPU light intent requires one pending-format descriptor and saved/readback validation with the persistence owner. No released format/history edits. Do not persist schema Light IDs/names as a competing light model.",
+      "Update actual GpuJob.to_runtime, normalize_saved_job, ProgressiveStart, validation, light write/inspect/filter and command schemas as one coherent change. Saved setups still forbid runtime overrides; raw job:null requests and setup paths must agree. Do not add a second UI authority or edit Nathan's panels/gizmos.",
+      "Do not silently reinterpret saved finite Sun or its radiance. A hard Directional has no angular spread and no solid-angle scaling. The current None->0.02 conversion must be resolved explicitly with the light author; do not freeze it as desired new hard-light behavior."
+    ],
+    "units_and_equations": {
+      "colour": "Linear RGB, exposure/tonemapping only after accumulation. All positions and reference/minimum distances are world mm. Relative intensity is not lumen/lux/watts/IES/CCT calibration.",
+      "point": "For unshifted shading position x and source p: d=|p-x|, L=(p-x)/d, incident_rgb=colour*I*(reference_mm/d)^2. At d<minimum_mm contribute zero with a diagnostic, not a clamped brightness; d==minimum_mm remains admissible subject to radiance bound.",
+      "spot": "Normalize emitted_axis FROM source; c=dot(axis,-L). t=clamp((c-cos(outer))/(cos(inner)-cos(outer)),0,1), weight=t*t*(3-2*t). Multiply Point incident by weight. Require0<=inner<outer<=pi/2 and distinct representable cosine bounds. Both direction sign and angle units are contractual.",
+      "hard_directional": "Normalize direction TOWARD source. Per-source direct contribution is throughput*opaque_fraction*BRDF*NdotL*colour*I*RGB_visibility, with the same geometric-hemisphere rules as the current GPU opaque path. No distance falloff, finite emitter surface, environment-miss radiance, or solid-angle division.",
+      "delta_estimator": "Deterministically visit each point/spot/hard-directional source once. They are delta sources: no finite solid-angle PDF, no continuous-light MIS power weight and no division by a fake pdf=1. If later selecting one light randomly, include its discrete selection probability explicitly; that is outside this minimal proposal.",
+      "finite_sun": "Keep existing finite-disk sampling/evaluation/MIS and legacy random-number order for areas/environment/Sun when extension lists are empty. Do not consume additional random numbers for delta lights."
+    },
+    "visibility_and_precision": [
+      "Evaluate distance and cone at unshifted x. Re-aim the shadow segment from the robust geometric origin o toward p; its finite endpoint must exclude the source and everything beyond it. Reject or record an offset that crosses the source instead of sending a backwards ray. Directional uses an unbounded-to-scene connection, not the punctual endpoint.",
+      "Use the existing area-emitter blocking, shadow_transmittance and volume attenuation semantics in the common source loop. Glass shadow transmission remains a bounded straight connection, not caustic/refraction transport. Do not change existing glass, volume, nesting, denoise or Fresnel-strata exclusions.",
+      "Preserve the one BVH call site per shared direct source loop required by #6850. Append new source descriptions/selection branches to the agreed loop; do not add one visibility/traversal helper call per family or duplicate sample_path calls.",
+      "Host-side f64 validation is insufficient for f32 upload: validate finite normalized vectors, camera-relative positions and reference/minimum distances after conversion, and require spot cos(inner)>cos(outer) in the actual uploaded precision. A very narrow valid f64 feather may collapse to identical f32 cosines; refuse clearly before device work rather than widening the cone.",
+      "Light/geometry precision near very large translations needs an explicit representability rule tied to actual robust geometry/offset policy. A light position that collapses onto a hit after f32 recentering is not permission to increase the minimum distance or silently clamp. Exact precision tolerance/diagnostic code is a pending owner decision."
+    ],
+    "diagnostics": {
+      "existing": "job::PunctualDiagnostics already carries near_source, radiance_limit, shadow_offset_crossed; CPU image tracks sample and accumulation failures. CPU max relative intensity64 and max linear radiance1e12 are explicit numerical bounds.",
+      "gap": "GPU currently has medium-failure atomic readback and ImageWork.step; no implemented punctual diagnostic hook is exposed by GPU Task through that boundary. Reusing a return type by name does not make its transport available.",
+      "proposal": "Agree a bounded counter/readback/report seam that can carry the existing diagnostic meaning without breaking medium failure layout or poisoning a valid frame with an unrelated error. Reuse PunctualDiagnostics values if practical; exact ImageWork/host seam or added failure words/codes are pending APIs. Silent singular-sample omission is not a parity-complete result.",
+      "fallback": "If diagnostic transport is deliberately deferred, restrict the accepted GPU domain with a proved preflight rule or refuse that combination. Do not advertise full current CPU singularity semantics."
+    },
+    "bounds_and_budget": {
+      "observed_caps": [
+        "engine render_lights::write: total20, directional family8, combined point+spot8, rectangle4. parse_id uses8/8/4. These are existing adapter ceilings, not a currently supported GPU envelope.",
+        "CPU raytrace::lighting::MAX_LIGHTS=8; MAX_LIGHT_INTENSITY=64; MAX_LINEAR_RADIANCE=1e12. job::PunctualLightOptions validates position |component|<=1e9, RGB0..1, I0..64, reference0.001..1e6mm, minimum0.001..reference.",
+        "Spot axis finite with nonzero component, per-component<=1e9; angles0<=inner<outer<=pi/2 and distinct f64 cosines. CPU directional/radiance validators and GPU Sun/Area validators are different existing domains; do not silently apply the Sun1e8 radiance ceiling to relative punctual intensity.",
+        "GPU StudioLighting currently only one Sun and MAX_AREA_LIGHTS=4. GPU_PATH_LIMITS: dimension8192, pixels16777216, scratch8GiB; MAX_GPU_PATH_TRIANGLES8000000, MAX_GPU_PATH_BODIES65536, dielectric32; samples1..4096, depth1..16.",
+        "Dispatch Budget currently64..16384 paths and20ms feedback target, wait30s and setup600s. These are ceilings/controller targets, not a driver-time guarantee."
+      ],
+      "pending_cap_decision": "Reuse existing adapter caps as ceilings. Whether finite Sun occupies one of the8 directional-family slots (then up to7 extra hard sources when Sun exists) or gets a separately named slot is an explicit pending decision. The former fits existing IDs/total20; allowing8 hard+Sun would exceed the current directional-family8 and total20 at full occupancy and must not be silently introduced.",
+      "memory": "Keep current GPU and host pool/admission ceilings. Account additional host/upload/device uniform/readback bytes within those ceilings with checked arithmetic. More lights increase per-path visibility work; preserve dispatch cancellation/feedback and require bounded full-cap cases. Do not transfer raster pixel-work budgets or raise thresholds.",
+      "illustrative_abi_only": {
+        "status": "Proposed layout, NOT implemented or approved ABI",
+        "strategy": "Append after existing1184 bytes so current offsets remain stable; update shared Params plus every uploader/denoise/test parameter construction together.",
+        "counts_bytes": 16,
+        "directional_slot_bytes": 32,
+        "directional_slots_reserved": 8,
+        "punctual_slot_bytes": 64,
+        "punctual_slots_reserved": 8,
+        "proposed_total_bytes": 1968,
+        "directional_fields": "normalized toward axis; colour and relative intensity in two vec4 blocks",
+        "punctual_fields": "relative position+minimum; colour+I; normalized emitted axis+inner cosine; reference+outer cosine+cone-kind flag+reserved in four vec4 blocks",
+        "caution": "Validate exact Rust/WGSL alignment/span and bounds. Count types/flags and unused slots must be explicit and zeroed. Fixed reservation8 is a capacity proposal derived from adapter ceilings, not evidence that GPU supports8 today. A different owner-approved payload is equally valid."
+      }
+    }
+  },
+  "original_test_plan": [
+    {
+      "id": "NOW1",
+      "status": "PRIVATE_WRITTEN_UNCOMPILED_UNRUN",
+      "target": "crates/engine/src/cmd/render/settings_tests.rs",
+      "file": "engine-current-refusal-tests.rs",
+      "purpose": "Current point/spot add and second directional duplicate refuse with the actual unsupported-GPU error; document Arc/revision/history/dirty stay unchanged. No device/host selected. Replace refusal oracle when real support lands."
+    },
+    {
+      "id": "NOW2",
+      "status": "PRIVATE_WRITTEN_UNCOMPILED_UNRUN_CPU_REFERENCE_ONLY",
+      "target": "crates/render/src/raytrace/punctual_tests.rs",
+      "file": "existing-punctual-analytic-tests.rs",
+      "purpose": "Original3-4-5 spot: cos0.8 halfway between0.9/0.7 -> weight0.5; I4/ref10/d5 -> RGB(8,2,0.5); distance doubled quarters response; reversed axis yields zero. No production oracle copied."
+    },
+    {
+      "id": "NOW3",
+      "status": "PRIVATE_WRITTEN_UNCOMPILED_UNRUN_CPU_REFERENCE_ONLY",
+      "target": "crates/render/src/raytrace/punctual_tests.rs",
+      "file": "existing-punctual-analytic-tests.rs",
+      "purpose": "Source translated by(1024,-2048,4096) preserves RGB(1.5,6,12); scaling all lengths including reference/minimum preserves response, while doubling only reference multiplies response4. These test existing numerical APIs, not GPU support."
+    },
+    {
+      "id": "GPU1",
+      "status": "PENDING_PAYLOAD_AND_SHADER_API",
+      "target": "existing path/tests.rs",
+      "purpose": "No-device serialization/layout tests for all counts/fields and zeros; saved/raw lowering equality, hostile bounds and ninth/fifth/total overflow refusal before host/device; schema/persistence round-trip. Verify Params span and offsets against actual uploader, not duplicate constants."
+    },
+    {
+      "id": "GPU2",
+      "status": "PENDING_REAL_TRANSPORT",
+      "target": "existing path/tests.rs",
+      "purpose": "Run actual accepted GPU punctual/cone evaluator with NOW2/NOW3 constants and raw linear readback. Add axis reversal, exact inner/outer, cosine-quarter weights0.15625/0.84375, same angle at2d, and f32 collapsed-cosine refusal. No fake new API or ignored green test."
+    },
+    {
+      "id": "GPU3",
+      "status": "PENDING_REAL_TRANSPORT",
+      "target": "existing path/tests.rs and shadows coverage",
+      "purpose": "Point source at(3,4,12), receiver atorigin; a broad triangle atz6 blocks, a triangle atz18 does not. Compare re-aimed finite segment and a source endpoint excluded from blockers; equivalent directional should still see beyond-point geometry. Translate scene/light/camera together. Test geometric offset crossing source and its diagnostic separately."
+    },
+    {
+      "id": "GPU4",
+      "status": "PENDING_REAL_TRANSPORT",
+      "target": "existing path/tests.rs",
+      "purpose": "Two unequal colored hard directionals, non-collinear axes, flat opaque receiver, black explicit environment, one bounce; raw combined signal equals sum of separately evaluated direct contributions. Block only one direction with a small original occluder; the other survives. Reverse direction sign and back-hemisphere cases distinguish normalized TOWARD conventions. Distance translation must not cause attenuation."
+    },
+    {
+      "id": "GPU5",
+      "status": "PENDING_REAL_TRANSPORT",
+      "target": "existing path/tests.rs",
+      "purpose": "Hard-directional contribution stays invariant when no angular parameter exists; Sun disk remains its own radiance/solid-angle/MIS model. No test should certify silently changing a hard light to radius0.02. Legacy no-extension seeded renders keep their previous byte/linear result and RNG sequence."
+    },
+    {
+      "id": "GPU6",
+      "status": "PENDING_LIFECYCLE_AND_DIAGNOSTIC_SEAMS",
+      "target": "existing path/tests.rs plus existing host tests",
+      "purpose": "Singular-near/radiance-limit/offset diagnostics, full-cap counts, cancellation, no publication after invalidation, and admission at exact existing pool limits. Volume Point/Spot/directional phase and finite-distance Beer visibility must be qualified or refused; no silent omission. Medium/glass exclusions remain unchanged."
+    },
+    {
+      "id": "GPU7",
+      "status": "PENDING_SOURCE_OWNER_AND_RUNTIME_GRANT",
+      "target": "existing shader/static tests and actual GPU qualification",
+      "purpose": "Preserve #6850 Naga inlined-BVH-call-graph bound and one sample_path site, #6813 serial compile guard, and exact main source after both merge. Check shader only without a device first; runtime only under ROOT's fresh resource/grant procedure. Additive loop work must not increase shader call-site expansion."
+    },
+    {
+      "id": "UI1",
+      "status": "PENDING_OWNER_INTEGRATION",
+      "target": "existing engine/UI light tests",
+      "purpose": "Existing list/edit/duplicate/remove/mute/solo with durable setup undo/redo/save/reopen; point/spot shared slot IDs and optional Sun slot agreed; hiding never mutates saved rig. Appearance/result/export/gizmo behavior stays with existing owners. Actual screenshots required later for visible support."
+    }
+  ],
+  "ownership_and_dependencies": [
+    {
+      "pr": 6813,
+      "owner": "plexi32",
+      "head": "a7b769c676e1fed71003d57adb1e193e5ce9e55a",
+      "state": "open at observation",
+      "rule": "Preserve process-wide path pipeline compile serialization. Not applied here."
+    },
+    {
+      "pr": 6850,
+      "owner": "plexi32",
+      "head": "f76bd351d74753674d42f05f17fab2d9aecffa84",
+      "state": "open at observation",
+      "rule": "Preserve one direct-light shadow traversal site, one sample_path call, next_vertex compiler fix and Naga BVH-expansion regression. Author says intended setup includes both PRs; ROOT has committed to waiting until both land for runtime qualification."
+    },
+    {
+      "pr": 4016,
+      "owner": "Karl-VonRichter",
+      "head": "a556a4938f0bf0d1eb426cf3fef87104b6ae01e1",
+      "state": "open at observation",
+      "rule": "Graphics trial/revert/backend decisions untouched. No backend/driver/device-policy change is needed for a light transport contract."
+    },
+    {
+      "pr": 3434,
+      "owner": "bluecmd",
+      "head": "7f604e09cc7b9d6b392a0b48bacee03ebbaf4a0c",
+      "state": "open at observation",
+      "rule": "Pipeline cache path may overlap GPU constructor/denoiser changes. Do not edit or assume merged; layout/shader changes need fresh exact-source qualification."
+    },
+    {
+      "pr": 8000,
+      "owner": "Nathan-Dane",
+      "head": "4ccbb633121628e5d0f3222bd2ab5d1d0e07c6ea",
+      "state": "open at observation",
+      "rule": "Panels/editors/gizmos and persistent light editing belong to this owner. Prior agreement frees CPU Interactive domain, not GPU light semantics; ROOT will ask specific light-owner question."
+    },
+    {
+      "pr": 5728,
+      "owner": "cfaulkingham",
+      "head": "e1ebd81dab723a02cafba09248ab5805985db5fa",
+      "state": "open at observation",
+      "rule": "Preserve GPU-specific admission versus raster projected-work budget. No source from foreign PR is applied."
+    }
+  ],
+  "questions_for_engineer_to_take_to_authors": [
+    "Light/persistence owner: should Directional angular_radius=None become explicit hard delta intent, retaining Some(radius) for the existing finite Sun? What compatibility behavior is intended for editing existing saved finite Suns and the current None-to0.02 adapter? No conversion will be changed without a concrete answer.",
+    "Light owner: count Sun within the existing8 directional-family slots and20 total, or define another slot/ID? The latter changes existing adapter bounds/IDs and remains pending. Can new bounded lists be added to shared StudioLighting with empty defaults and one pending format entry without touching gizmos?",
+    "Shader owner: after #6813/#6850 merge, can new delta source branches join the existing one-site surface and volume loops without increasing the current inlined BVH bound? Existing random order for legacy fields remains unchanged.",
+    "Host/renderer owner: how should existing PunctualDiagnostics cross GPU readback/ImageWork into job status without reusing medium-failure codes incorrectly? What f32 position/cone representability refusal rule is accepted?"
+  ],
+  "claim_and_licensing": {
+    "inventory": "github-observed.json records full current664-open-PR search pages and targeted searches. No dedicated Point/Spot/multiple-Directional GPU implementation claim was identified by titles/bodies and targeted terms. Relevant overlapping PR metadata and #6850 shader patch were read. This is a dated census, not reservation or permission; refresh before source implementation.",
+    "limits": "Only relevant PR changed paths were inspected, not every diff of all664 PRs; an unrelated titled/undocumented change can still overlap. No claim/absence certainty beyond that evidence.",
+    "licence": "Original analytic values and tests only. Read local clean-room/ground-rules and existing project source; no external lighting implementation, GPL-family code, measured assets/datasets, added dependency, or changed attribution/licence. No third-party media created.",
+    "authority": "Engineer coordinates author questions and public action; this packet publishes nothing and grants no build/GPU/source-writing authority."
+  },
+  "next_action": "Engineer reviews pending light/Sun/count/diagnostic decisions with owners; retain this as a private unimplemented contract. Optional current pure tests can be reviewed and applied only by the integrator, then built by the sole authorized builder. GPU source/runtime remains gated by actual owner integration and fresh authorization."
+}

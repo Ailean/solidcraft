@@ -784,7 +784,7 @@ fn bend_note(b: &solidcraft_doc::sheet::BendInfo, height: f64, display: sheet::A
 /// per pocket depth and PERFORATION. Inner contours are written before the outline, so a program
 /// that follows the file's order cuts inside-out. Free-form curves as `o.curves` says.
 pub fn flat_dxf(sh: &SheetBody, o: &DxfOptions) -> Result<String> {
-    use solidcraft_io::{DxfEntity, DxfShape};
+    use solidcraft_io::{DxfEntity, DxfFile, DxfShape};
     let regions = sh.flat_regions()?;
     let pockets = sh.machining()?;
     let letters = sh.letters();
@@ -884,18 +884,28 @@ pub fn flat_dxf(sh: &SheetBody, o: &DxfOptions) -> Result<String> {
     for (c, r) in perforation {
         entities.push(DxfEntity { layer: "PERFORATION".into(), shape: DxfShape::Circle { c, r } });
     }
-    // One layer: every entity on layer 0, which every drawing has.
-    if o.one_layer {
-        for e in &mut entities {
-            e.layer = "0".into();
+    let mut file = DxfFile::new()?;
+    let mut layers = std::collections::BTreeMap::new();
+    if !o.one_layer {
+        // Preserve the four baseline layers and the existing sorted declaration
+        // order: it determines the serialized tables and subsequent handles.
+        let mut names: std::collections::BTreeSet<String> = ["OUTLINE", "CUT", "BEND_UP", "BEND_DOWN"].map(String::from).into();
+        names.extend(entities.iter().map(|e| e.layer.clone()));
+        for name in names {
+            let style = dxf_layer(&name);
+            let layer = file.declare_layer(&style.name, style.color, style.linetype, None)?;
+            layers.insert(name, layer);
         }
-        return Ok(solidcraft_io::write_dxf_drawing(&[], &entities)?);
     }
-    // The four layers of every flat pattern, and those the rest is on.
-    let mut names: std::collections::BTreeSet<String> = ["OUTLINE", "CUT", "BEND_UP", "BEND_DOWN"].map(String::from).into();
-    names.extend(entities.iter().map(|e| e.layer.clone()));
-    let layers: Vec<_> = names.iter().map(|name| dxf_layer(name)).collect();
-    Ok(solidcraft_io::write_dxf_drawing(&layers, &entities)?)
+    for entity in entities {
+        let layer = if o.one_layer {
+            file.default_layer()
+        } else {
+            layers.get(&entity.layer).copied().ok_or_else(|| EngineError::Other("flat-pattern entity layer was not declared".into()))?
+        };
+        file.push(layer, entity.shape, None)?;
+    }
+    Ok(solidcraft_io::write_dxf_file(&file)?)
 }
 
 /// What a `sheet.export_dxf` call asks for; a value it cannot use is refused.

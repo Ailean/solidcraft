@@ -12,7 +12,7 @@ pub(super) mod sketch;
 
 use serde_json::{Value, json};
 use solidcraft_geom::Vec2;
-use solidcraft_io::{DxfEntity, DxfLayer, DxfLinetype, DxfShape};
+use solidcraft_io::{DxfFile, DxfLayerId, DxfLinetype, DxfShape};
 use solidcraft_render::Camera;
 
 use super::CommandSpec;
@@ -82,22 +82,23 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     // Join hidden geometry before constructing any DXF entities. Preserve the
     // existing output order: visible lines, connected hidden runs, then sketches.
     let hidden_paths = projection::connect(hidden_lines);
-    let mut entities = Vec::new();
+    let mut file = DxfFile::new()?;
+    let visible_layer = file.declare_layer("VISIBLE", 7, DxfLinetype::Continuous, None)?;
+    let hidden_layer = if dashed { Some(file.declare_layer("HIDDEN", 8, DxfLinetype::Hidden, None)?) } else { None };
+    let sketch_layer = if drawing.sketch.iter().any(|path| !path.hidden) {
+        Some(file.declare_layer("SKETCH", 5, DxfLinetype::Continuous, None)?)
+    } else {
+        None
+    };
     for (a, b) in visible_lines {
-        entities.push(DxfEntity { layer: "VISIBLE".into(), shape: DxfShape::Line(a, b) });
+        file.push(visible_layer, DxfShape::Line(a, b), None)?;
     }
     for path in hidden_paths {
-        entities.push(DxfEntity { layer: "HIDDEN".into(), shape: DxfShape::Polyline { points: path.points } });
+        let layer = hidden_layer.ok_or_else(|| bad(CMD, "missing hidden DXF layer"))?;
+        file.push(layer, DxfShape::Polyline { points: path.points }, None)?;
     }
-    let sketch = sketch_entities(drawing.sketch, dashed, &mut entities);
-    let mut layers = vec![DxfLayer::new("VISIBLE", 7)];
-    if dashed {
-        layers.push(DxfLayer { linetype: DxfLinetype::Hidden, ..DxfLayer::new("HIDDEN", 8) });
-    }
-    if sketch > 0 {
-        layers.push(DxfLayer::new("SKETCH", 5));
-    }
-    let text = solidcraft_io::write_dxf_drawing(&layers, &entities)?;
+    let sketch = sketch_entities(drawing.sketch, dashed, &mut file, hidden_layer, sketch_layer)?;
+    let text = solidcraft_io::write_dxf_file(&file)?;
     writing.check().map_err(|e| bad(CMD, e))?;
     let mut result = json!({"visible":visible,"hidden":hidden,"sketch":sketch,"units":"mm","tolerance":tolerance,"projection":if cam.fov > 0.0 {"perspective"} else {"orthographic"}});
     result["stats"] = json!({"bodies":meshes.placements.len(),"shared_meshes":meshes.meshes.len(),"triangles":meshes.triangles,
@@ -115,18 +116,24 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Sketch runs as entities: visible ones on SKETCH, hidden ones dashed on HIDDEN or omitted.
 /// Returns the number of SKETCH entities.
-fn sketch_entities(paths: Vec<projection::Path>, dashed: bool, entities: &mut Vec<DxfEntity>) -> usize {
+fn sketch_entities(
+    paths: Vec<projection::Path>,
+    dashed: bool,
+    file: &mut DxfFile<DxfShape>,
+    hidden_layer: Option<DxfLayerId>,
+    sketch_layer: Option<DxfLayerId>,
+) -> Result<usize> {
     let mut count = 0;
     for path in paths.into_iter().filter(|p| dashed || !p.hidden) {
-        let layer = if path.hidden { "HIDDEN" } else { "SKETCH" };
+        let layer = (if path.hidden { hidden_layer } else { sketch_layer }).ok_or_else(|| bad(CMD, "missing sketch DXF layer"))?;
         count += usize::from(!path.hidden);
         let shape = match <[Vec2; 2]>::try_from(path.points) {
             Ok([a, b]) => DxfShape::Line(a, b),
             Err(points) => DxfShape::Polyline { points },
         };
-        entities.push(DxfEntity { layer: layer.into(), shape });
+        file.push(layer, shape, None)?;
     }
-    count
+    Ok(count)
 }
 
 #[cfg(test)]

@@ -1,0 +1,93 @@
+diff --git a/crates/io/src/paper/png_tests.rs b/crates/io/src/paper/png_tests.rs
+--- a/crates/io/src/paper/png_tests.rs
++++ b/crates/io/src/paper/png_tests.rs
+@@ -426,3 +426,89 @@
+     pictured(&scene(p(20.0, 10.0), vec![picture(1, p(30.0, 30.0), p(40.0, 40.0), 1.0)]), RGB_254, &provider);
+     assert!(provider.asked.borrow().is_empty());
+ }
++
++/// One authored 100 mm length is already placed on paper at 1:2 and 1:4.
++/// These are consumer fixtures, not a model-view transform or a new view kind.
++fn mixed_scale_paper_pair() -> Scene {
++    Scene {
++        size_mm: p(100.0, 80.0),
++        groups: [(101, p(10.0, 20.0), p(60.0, 20.0)), (202, p(10.0, 40.0), p(35.0, 40.0))]
++            .into_iter()
++            .map(|(object, a, b)| Group {
++                object,
++                kind: ObjectKind::DrawingBorder,
++                items: vec![Item::Stroke { path: vec![line(a, b)], closed: false, width_mm: 0.2 }],
++            })
++            .collect(),
++    }
++}
++
++/// Both real writers consume this same checked scene; no picture source is needed.
++fn svg_png_pair(scene: &Scene) -> (String, Image, PngReport) {
++    let prepared = scene.prepare().unwrap();
++    let (svg, svg_report) = crate::paper::paper_svg(&prepared, &NoPictures, 300.0).unwrap();
++    let mut png = Vec::new();
++    let png_report = paper_png(&prepared, AT_254, &NoPictures, &mut png).unwrap();
++    assert_eq!(svg_report, png_report.grid, "both consumers use the same number-grid rules");
++    let image = read(&png);
++    assert_eq!((image.info.color_type, image.info.bit_depth), (png::ColorType::Grayscale, png::BitDepth::Eight));
++    (String::from_utf8(svg).unwrap(), image, png_report)
++}
++
++/// 254 dpi is 10 px/mm: 50/25 mm occupy 500/250 px while both 0.2 mm widths stay 2 px.
++/// All coordinates are hand-derived from the preplaced fixture, not recorded output.
++#[test]
++fn svg_and_png_keep_mixed_scale_paper_lengths_and_fixed_width() {
++    let (svg, image, report) = svg_png_pair(&mixed_scale_paper_pair());
++    assert!(svg.contains("width=\"100mm\" height=\"80mm\" viewBox=\"0 0 100 80\""));
++    assert_eq!(svg.matches("<g data-object=").count(), 2);
++    assert_eq!(svg.matches("<path ").count(), 2);
++    for path in [
++        "<path stroke-width=\"0.2\" d=\"M10 60L60 60\"/>",
++        "<path stroke-width=\"0.2\" d=\"M10 40L35 40\"/>",
++    ] {
++        assert_eq!(svg.matches(path).count(), 1, "{path}");
++    }
++    let first = svg.find("<g data-object=\"101\" data-kind=\"drawing_border\">").unwrap();
++    let second = svg.find("<g data-object=\"202\" data-kind=\"drawing_border\">").unwrap();
++    assert!(first < second, "group order is retained");
++    assert_eq!(report.pixels, [1000, 800]);
++    assert_eq!((image.info.width, image.info.height), (1000, 800));
++    // Butt ends are [100,600) and [100,350). After the y flip, their two complete
++    // black rows are 599/600 and 399/400. Every other pixel is white.
++    for y in 0..800 {
++        for x in 0..1000 {
++            let ink = ((599..601).contains(&y) && (100..600).contains(&x)) || ((399..401).contains(&y) && (100..350).contains(&x));
++            assert_eq!(image.at(x, y), if ink { &[0][..] } else { &[255][..] }, "pixel ({x},{y})");
++        }
++    }
++}
++
++/// The vector sheet is exactly 100.08 by 80.08 mm. At 254 dpi its 1000.8 by
++/// 800.8 pixel extent needs an outward 1001 by 801 image. Ink reaches both last
++/// partial pixels; rounding away that row/column or moving the origin loses it.
++#[test]
++fn svg_and_png_keep_fractional_sheet_edges_on_the_outward_grid() {
++    let sheet = scene(
++        p(100.08, 80.08),
++        vec![Item::Fill { region: Region2 { outer: rectangle(p(99.0, 0.0), p(100.08, 1.0)), holes: vec![] } }],
++    );
++    let (svg, image, report) = svg_png_pair(&sheet);
++    assert!(svg.contains("width=\"100.08mm\" height=\"80.08mm\" viewBox=\"0 0 100.08 80.08\""));
++    assert_eq!(svg.matches("<path ").count(), 1);
++    assert!(svg.contains("<path fill=\"#000\" stroke=\"none\" fill-rule=\"evenodd\" d=\"M99 80.08L100.08 80.08L100.08 79.08L99 79.08Z\"/>"));
++    assert_eq!(report.pixels, [1001, 801]);
++    assert_eq!((image.info.width, image.info.height), (1001, 801));
++    assert_eq!(image.at(995, 795), [0], "inside the fill");
++    assert_eq!(image.at(989, 795), [255], "left of the fill");
++    assert_eq!(image.at(995, 789), [255], "above the fill");
++    // The last column/row have 0.8 coverage and the corner 0.64. They are
++    // partial dark pixels, not fully black and not white; no exact AA byte is
++    // assumed. The existing PNG tests use the same mid-grey ink distinction.
++    for (x, y) in [(1000, 795), (995, 800), (1000, 800)] {
++        let grey = image.at(x, y)[0];
++        assert!(grey > 0 && grey < 128, "ink in the last partial pixel ({x},{y}): {grey}");
++    }
++    let top = image.at(995, 790)[0];
++    assert!(top > 128 && top < 255, "the first partial row has only 0.2 coverage: {top}");
++}

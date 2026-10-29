@@ -1,0 +1,198 @@
+--- a/crates/io/src/paper/png_tests.rs
++++ b/crates/io/src/paper/png_tests.rs
+@@ -512,3 +512,195 @@
+     let top = image.at(995, 790)[0];
+     assert!(top > 128 && top < 255, "the first partial row has only 0.2 coverage: {top}");
+ }
++
++const PICTURE_ACCEPTANCE_DPI: f64 = 25.4;
++
++/// Original pixels, top row first: each atlas corner and its middle differ.
++const PAPER_ATLAS_RGBA: [[u8; 4]; 6] = [
++    [255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255],
++    [0, 255, 255, 255], [255, 0, 255, 255], [255, 255, 0, 255],
++];
++const PAPER_ALPHA_RGBA: [[u8; 4]; 4] = [
++    [255, 0, 0, 255], [0, 255, 0, 128],
++    [0, 0, 255, 0], [255, 255, 255, 255],
++];
++const PAPER_BLUE_RGBA: [[u8; 4]; 4] = [[0, 0, 255, 255]; 4];
++
++/// At 25.4 dpi one pixel is exactly one millimetre. No image resampling oracle.
++fn paper_picture_pixels(source: u64) -> (Aabb2, [usize; 2], &'static [[u8; 4]]) {
++    let (min, max, size, rgba) = match source {
++        901 => (p(3.0, 3.0), p(6.0, 5.0), [3, 2], &PAPER_ATLAS_RGBA[..]),
++        902 => (p(-1.0, 7.0), p(2.0, 9.0), [3, 2], &PAPER_ATLAS_RGBA[..]),
++        903 => (p(6.0, 2.0), p(8.0, 4.0), [2, 2], &PAPER_ALPHA_RGBA[..]),
++        904 => (p(6.0, 2.0), p(8.0, 4.0), [2, 2], &PAPER_BLUE_RGBA[..]),
++        _ => panic!("unknown original acceptance picture {source}"),
++    };
++    (Aabb2 { min, max }, size, rgba)
++}
++
++fn paper_picture_item(source: u64, opacity: f64) -> Item {
++    let (rect, _, _) = paper_picture_pixels(source);
++    Item::Picture(Picture { source, rect, opacity })
++}
++
++#[derive(Default)]
++struct PaperPicturePixels {
++    asked: RefCell<Vec<(u64, PixelGrid, GridWindow)>>,
++}
++
++impl Pictures for PaperPicturePixels {
++    fn rows(&self, source: u64, grid: &PixelGrid, window: GridWindow) -> std::result::Result<Vec<u8>, String> {
++        self.asked.borrow_mut().push((source, *grid, window));
++        let (rect, size, rgba) = paper_picture_pixels(source);
++        let mut out = Vec::new();
++        // A provider reads the requested world grid: PNG asks on the sheet's
++        // grid, SVG on the picture's own. Both sample the same original pixels.
++        for y in window.y0..window.y1 {
++            let (low, high) = grid.row(y);
++            let row = (rect.max.y - (low + high) * 0.5).floor() as usize;
++            for x in window.x0..window.x1 {
++                let (low, high) = grid.column(x);
++                let col = ((low + high) * 0.5 - rect.min.x).floor() as usize;
++                if col >= size[0] || row >= size[1] {
++                    return Err(format!("outside original {source} at ({col},{row})"));
++                }
++                out.extend_from_slice(&rgba[row * size[0] + col]);
++            }
++        }
++        Ok(out)
++    }
++}
++
++/// Both exports consume one Prepared, with the actual Pictures interface.
++fn paper_picture_exports(sheet: &Scene, pixels: &PaperPicturePixels, colour: PngColour) -> (String, Image) {
++    let prepared = sheet.prepare().unwrap();
++    let (svg, svg_report) = crate::paper::paper_svg(&prepared, pixels, PICTURE_ACCEPTANCE_DPI).unwrap();
++    let mut png = Vec::new();
++    let report = paper_png(&prepared, PngOptions { dpi: PICTURE_ACCEPTANCE_DPI, colour }, pixels, &mut png).unwrap();
++    assert_eq!(svg_report, report.grid);
++    assert_eq!(report.pixels, [10, 8]);
++    (String::from_utf8(svg).unwrap(), read(&png))
++}
++
++/// Decode the actual embedded PNG, not a separately generated reference file.
++fn paper_embedded_images(svg: &str) -> Vec<(&str, Image)> {
++    svg.split("<image ").skip(1).map(|rest| {
++        let tag = rest.split_once("/>").unwrap().0;
++        let encoded = tag.split_once("href=\"data:image/png;base64,").unwrap().1.split('"').next().unwrap();
++        let bytes = solidcraft_doc::canvas::base64_decode(encoded).unwrap();
++        (tag, read(&bytes))
++    }).collect()
++}
++
++/// A non-square, asymmetric colour atlas distinguishes y reversal, reflection,
++/// transposition and placement. PNG starts at (3,3); SVG embeds exactly 3 by 2.
++#[test]
++fn svg_and_png_place_the_same_asymmetric_original_picture() {
++    let sheet = scene(p(10.0, 8.0), vec![paper_picture_item(901, 1.0)]);
++    let pixels = PaperPicturePixels::default();
++    let (svg, png) = paper_picture_exports(&sheet, &pixels, PngColour::Rgb);
++    let embedded = paper_embedded_images(&svg);
++    assert_eq!(embedded.len(), 1);
++    let (tag, image) = &embedded[0];
++    assert!(tag.starts_with("x=\"3\" y=\"3\" width=\"3\" height=\"2\" preserveAspectRatio=\"none\""));
++    assert_eq!((image.info.width, image.info.height, image.info.color_type), (3, 2, png::ColorType::Rgba));
++    for y in 0..8 {
++        for x in 0..10 {
++            let expected = if (3..6).contains(&x) && (3..5).contains(&y) {
++                &PAPER_ATLAS_RGBA[(y - 3) * 3 + x - 3][..3]
++            } else { &[255, 255, 255][..] };
++            assert_eq!(png.at(x, y), expected, "sheet ({x},{y})");
++        }
++    }
++    for y in 0..2 {
++        for x in 0..3 {
++            assert_eq!(image.at(x, y), PAPER_ATLAS_RGBA[y * 3 + x]);
++        }
++    }
++    let asked = pixels.asked.borrow();
++    assert_eq!(asked.len(), 2, "one small image request per export");
++    assert_eq!((asked[0].2.x0, asked[0].2.y0, asked[0].2.x1, asked[0].2.y1), (0, 0, 3, 2));
++    assert_eq!((asked[1].2.x0, asked[1].2.y0, asked[1].2.x1, asked[1].2.y1), (3, 3, 6, 5));
++}
++
++/// Cropping left and above the sheet retains the atlas's bottom middle/right
++/// pixels (magenta/yellow), not its top-left pixels or a stretched whole image.
++#[test]
++fn svg_and_png_crop_an_original_picture_without_resetting_its_pixel_origin() {
++    let sheet = scene(p(10.0, 8.0), vec![paper_picture_item(902, 1.0)]);
++    let pixels = PaperPicturePixels::default();
++    let (svg, png) = paper_picture_exports(&sheet, &pixels, PngColour::Rgb);
++    let embedded = paper_embedded_images(&svg);
++    assert_eq!(embedded.len(), 1);
++    let (tag, image) = &embedded[0];
++    assert!(tag.starts_with("x=\"0\" y=\"0\" width=\"2\" height=\"1\" preserveAspectRatio=\"none\""));
++    assert_eq!((image.info.width, image.info.height), (2, 1));
++    assert_eq!(image.at(0, 0), PAPER_ATLAS_RGBA[4]);
++    assert_eq!(image.at(1, 0), PAPER_ATLAS_RGBA[5]);
++    for y in 0..8 {
++        for x in 0..10 {
++            let expected = match (x, y) {
++                (0, 0) => &[255, 0, 255][..],
++                (1, 0) => &[255, 255, 0][..],
++                _ => &[255, 255, 255][..],
++            };
++            assert_eq!(png.at(x, y), expected, "cropped sheet ({x},{y})");
++        }
++    }
++    let asked = pixels.asked.borrow();
++    assert_eq!(asked.len(), 2);
++    assert_eq!((asked[0].2.x0, asked[0].2.y0, asked[0].2.x1, asked[0].2.y1), (1, 1, 3, 2));
++    assert_eq!((asked[1].2.x0, asked[1].2.y0, asked[1].2.x1, asked[1].2.y1), (0, 0, 2, 1));
++}
++
++/// Straight source alpha and item opacity multiply. Two Pictures in different
++/// groups use source-over in group order, independently of image colour order.
++#[test]
++fn original_picture_alpha_and_opacity_compose_across_groups_in_paint_order() {
++    let alpha = paper_picture_item(903, 0.5);
++    let (svg, clear) = paper_picture_exports(&scene(p(10.0, 8.0), vec![alpha.clone()]), &PaperPicturePixels::default(), PngColour::Transparent);
++    let embedded = paper_embedded_images(&svg);
++    assert_eq!(embedded.len(), 1);
++    assert!(embedded[0].0.contains(" opacity=\"0.5\""));
++    let expected_clear = [[255, 0, 0, 128], [0, 255, 0, 64], [0, 0, 0, 0], [255, 255, 255, 128]];
++    for y in 0..2 {
++        for x in 0..2 {
++            assert_eq!(clear.at(6 + x, 4 + y), expected_clear[y * 2 + x]);
++            assert_eq!(embedded[0].1.at(x, y), PAPER_ALPHA_RGBA[y * 2 + x], "SVG keeps straight pixels; opacity stays on the image");
++        }
++    }
++    assert_eq!(clear.at(0, 0), [0, 0, 0, 0]);
++    let expected_over_blue = [[128, 0, 128], [0, 64, 191], [0, 0, 255], [128, 128, 255]];
++    for reverse in [false, true] {
++        let mut groups = vec![
++            Group { object: 401, kind: ObjectKind::DrawingBorder, items: vec![paper_picture_item(904, 1.0)] },
++            Group { object: 402, kind: ObjectKind::DrawingBorder, items: vec![alpha.clone()] },
++        ];
++        if reverse { groups.reverse(); }
++        let (svg, png) = paper_picture_exports(&Scene { size_mm: p(10.0, 8.0), groups }, &PaperPicturePixels::default(), PngColour::Rgb);
++        let first = svg.find(if reverse { "<g data-object=\"402\"" } else { "<g data-object=\"401\"" }).unwrap();
++        let last = svg.find(if reverse { "<g data-object=\"401\"" } else { "<g data-object=\"402\"" }).unwrap();
++        assert!(first < last);
++        let embedded = paper_embedded_images(&svg);
++        assert_eq!(embedded.len(), 2);
++        for (index, (_, image)) in embedded.iter().enumerate() {
++            let expected = match (reverse, index) {
++                (true, 0) | (false, 1) => &PAPER_ALPHA_RGBA,
++                _ => &PAPER_BLUE_RGBA,
++            };
++            assert_eq!((image.info.width, image.info.height), (2, 2));
++            for y in 0..2 {
++                for x in 0..2 {
++                    assert_eq!(image.at(x, y), expected[y * 2 + x], "embedded order, reverse={reverse}, image={index}");
++                }
++            }
++        }
++        for y in 0..2 {
++            for x in 0..2 {
++                let expected = if reverse { [0, 0, 255] } else { expected_over_blue[y * 2 + x] };
++                assert_eq!(png.at(6 + x, 4 + y), expected, "reverse={reverse}, ({x},{y})");
++            }
++        }
++        assert_eq!(png.at(0, 0), [255, 255, 255]);
++    }
++}

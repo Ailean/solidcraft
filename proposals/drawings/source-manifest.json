@@ -1,0 +1,160 @@
+{
+  "files": [
+    {
+      "path": "proposals/drawings/W10/DERIVATION.md",
+      "sha256": "5467c74a8162642dce5198c94467c5f8e870c02e6504cabd852c3d7ed31c695a",
+      "bytes": 8617
+    },
+    {
+      "path": "proposals/drawings/W10/cubics.rs",
+      "sha256": "22e634fd8380f80fcdec09cccba52d45d309c44ab2f614bceab79f557da4e0e7",
+      "bytes": 10047
+    },
+    {
+      "path": "proposals/drawings/W10/grid-acceptance-source.patch",
+      "sha256": "98fadea32952067d8bf0d9a61555b5fd081e266f5878ad685a55ba2b4547e808",
+      "bytes": 7874
+    },
+    {
+      "path": "proposals/drawings/W10/grid_endpoint_acceptance.rs",
+      "sha256": "fa53fc03327c97a3e57a8447f9a5baf5dd52e9950a291f9c8a039eaec29ad582",
+      "bytes": 7479
+    },
+    {
+      "path": "proposals/drawings/W10/helper-and-11-tests.patch",
+      "sha256": "ad6912aa3f89ed778737828d9a60d2d1cdb0054d7a59c1af0400c4ba7699b100",
+      "bytes": 21615
+    },
+    {
+      "path": "proposals/drawings/W10/pending-grid-test-include.patch",
+      "sha256": "17b590f66f37a3b0f0ae39845f53e7e27d242c9190d8ebd177bbb1d084f554e4",
+      "bytes": 251
+    },
+    {
+      "path": "proposals/drawings/W10/pending-module-declaration.patch",
+      "sha256": "fd3224e86279c83de88a0dd86883c04e614c665ac0ea0469e8633e992f0b1465",
+      "bytes": 248
+    },
+    {
+      "path": "proposals/drawings/W10/pending-segments-parent-hook.patch",
+      "sha256": "714ddcaca5cc1fe7e31df882973908c547317d9049fdce1141e093be6b3859e5",
+      "bytes": 411
+    },
+    {
+      "path": "proposals/drawings/W10/segments-source.patch",
+      "sha256": "6eba4e41eab68be344cf3e19c0dd8ad49c7ab309ed1f886aa34cde905fb1ded6",
+      "bytes": 12332
+    },
+    {
+      "path": "proposals/drawings/W10/segments.rs",
+      "sha256": "895bc5af8b8eb907e27516e9516d20b3f2477bfdf26b4e130238e8285277f66d",
+      "bytes": 11885
+    },
+    {
+      "path": "proposals/drawings/W21/picture-five-tests.patch",
+      "sha256": "39b999a824703f9907286c0d4f8b2203432e4718e07b9e0b915a16facb44d0cc",
+      "bytes": 14250
+    },
+    {
+      "path": "proposals/drawings/W21/picture-three-tests-increment.patch",
+      "sha256": "7f6905378ecbd9b0a5d2ac7a2d85dd3e50c5c46466f563863fe9447505c10059",
+      "bytes": 9615
+    },
+    {
+      "path": "proposals/drawings/W21/png_tests-with-five-proposals.rs",
+      "sha256": "f08f8f299cae24646c6046ac12387c7a362026cfbf16d23ed26ca2eb4fac9490",
+      "bytes": 35407
+    },
+    {
+      "path": "proposals/drawings/W21/w21-parity-tests.patch",
+      "sha256": "10edeaee0b1ab40c5ad2ff77d2ab6958971c556540b2aff9ec722007ce43abbf",
+      "bytes": 4948
+    },
+    {
+      "path": "proposals/drawings/X4/decoder-new-module.patch",
+      "sha256": "45a8bb6e7d4b343f2f87d8b339952da53743a37784506b8b00c32a505f080ba3",
+      "bytes": 10533
+    },
+    {
+      "path": "proposals/drawings/X4/decoder_text.rs",
+      "sha256": "14003e07e96e0c74a5c71b0907bdfcf7f9971dfbfa98e172f2a3196ed7b16476",
+      "bytes": 10161
+    },
+    {
+      "path": "proposals/drawings/X4/encoder-new-module.patch",
+      "sha256": "9c01d4cc7828f18cc80e22f4d82e0393871000ee192f57e9a09e1657a9327641",
+      "bytes": 9897
+    },
+    {
+      "path": "proposals/drawings/X4/encoder_text.rs",
+      "sha256": "f437cb7b1c11e463fbd62328267114d77a95117e88b71cb5ad823073a0e626bd",
+      "bytes": 9511
+    },
+    {
+      "path": "proposals/drawings/X4/length_decimal.rs",
+      "sha256": "05671bbed70376f91e522db786bdb6a0ce449d779aeba978605ac374c4c13409",
+      "bytes": 8599
+    },
+    {
+      "path": "proposals/drawings/X4/test-only-bridge-registration.patch",
+      "sha256": "a9a7e11b4a35e4b72c9b9bb45bc80841c28f19f7b29f97189f2cc70396219413",
+      "bytes": 235
+    },
+    {
+      "path": "proposals/drawings/X4/test-only-bridge-source.patch",
+      "sha256": "d4504fa54ac8940aaad05e9053c2d18a5bdf8d402de1d2f67450a09c469938c9",
+      "bytes": 6108
+    },
+    {
+      "path": "proposals/drawings/X4/test_only_text_bridge.rs",
+      "sha256": "55ed9e266c45fb496c23eb5910bf9b0f3346cae5a2413040d0ed144b1a2345fb",
+      "bytes": 5801
+    },
+    {
+      "path": "proposals/drawings/W38a/source.patch",
+      "sha256": "cb1041d896e635d1df12adb87b656abea6b64004f39a0cb98e9dd3483545b1b8",
+      "bytes": 34236
+    },
+    {
+      "path": "proposals/drawings/W38d/whole-boundary-acceptance-proposal.md",
+      "sha256": "514dc67633abaeb46a7f11d50a4757501f782d528377ebd871556561b7208750",
+      "bytes": 10853
+    },
+    {
+      "path": "proposals/drawings/W38d/paper-unit-fixture-proposal.json",
+      "sha256": "b5b36e4621d4453ba0f7819f9098c13f373804edfc7145c7499717db2e91f78b",
+      "bytes": 4130
+    },
+    {
+      "path": "proposals/drawings/W10/README.md",
+      "sha256": "3150256a1eb79195b985a7ced64b4ec38b0c331d6e68137a1cce3ddf3a0cd89c",
+      "bytes": 869
+    },
+    {
+      "path": "proposals/drawings/W21/README.md",
+      "sha256": "be96ea9bd550eadc557e4efd1dbf43b76f5f100cb27c1c59b7b1e2d6d8bd0ed9",
+      "bytes": 758
+    },
+    {
+      "path": "proposals/drawings/X4/README.md",
+      "sha256": "3210205ad34ad97532ac92686a3d96ec64b08f0bd80f6001da410c5a5d0e581f",
+      "bytes": 1164
+    },
+    {
+      "path": "proposals/drawings/W38a/README.md",
+      "sha256": "20b503c4bddcf1cc6837b251460f46735d9349b3f78c4bb97ab85e7ceef5ef60",
+      "bytes": 1010
+    },
+    {
+      "path": "proposals/drawings/W38d/README.md",
+      "sha256": "758a8fc27b418224b89f71dac3f49b9677d4be2e4e43e7e2b43e64bf189881e6",
+      "bytes": 908
+    },
+    {
+      "path": "proposals/drawings/README.md",
+      "sha256": "7a196825a47a38a484c4be11dd2fb3f33c181aa1c5fd50105ee47395d0e9581d",
+      "bytes": 529
+    }
+  ],
+  "qualification": "SOURCE_PRESERVATION_ONLY_NO_RUNTIME"
+}

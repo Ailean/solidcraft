@@ -1,0 +1,10 @@
+diff --git a/crates/io/src/dxf_out.rs b/crates/io/src/dxf_out.rs
+--- a/crates/io/src/dxf_out.rs
++++ b/crates/io/src/dxf_out.rs
+@@ -18,1 +18,6 @@
+ use crate::{IoError, Result};
++
++#[cfg(test)]
++mod text;
++#[cfg(test)]
++mod text_bridge;

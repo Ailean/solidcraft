@@ -1,0 +1,7 @@
+diff --git a/crates/geom/src/paper_tests.rs b/crates/geom/src/paper_tests.rs
+--- a/crates/geom/src/paper_tests.rs
++++ b/crates/geom/src/paper_tests.rs
+@@ -693,0 +694,3 @@
++
++#[path = "paper/grid_endpoint_acceptance.rs"]
++mod grid_endpoint_acceptance;

@@ -1,0 +1,12 @@
+diff --git a/crates/geom/src/paper/cubics.rs b/crates/geom/src/paper/cubics.rs
+--- a/crates/geom/src/paper/cubics.rs
++++ b/crates/geom/src/paper/cubics.rs
+@@ -20,6 +20,8 @@
+ //!
+ //! This bound excludes later writer-grid snapping and endpoint replacement.
+ //! A consumer must reserve and qualify those separately. No adapter is supplied.
++
++pub(crate) mod segments;
+ 
+ use std::f64::consts::{FRAC_PI_2, PI};
+ 

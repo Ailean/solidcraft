@@ -1,0 +1,176 @@
+diff --git a/crates/geom/src/paper/grid_endpoint_acceptance.rs b/crates/geom/src/paper/grid_endpoint_acceptance.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/geom/src/paper/grid_endpoint_acceptance.rs
+@@ -0,0 +1,171 @@
++//! PRIVATE TEST-ONLY proposal for PDF506d, not a production adapter.
++//! Include as a sibling of circular_arc_candidate in paper_tests.rs.
++//! Explicit source arcs are mandatory: Piece::Arc alone loses their provenance.
++
++use super::circular_arc_candidate;
++use crate::paper::{Grid, GridPath, GridPoint, Invalid, Piece};
++use crate::{Seg2, Vec2};
++use std::f64::consts::{FRAC_PI_2, PI};
++
++type Result<T> = std::result::Result<T, Invalid>;
++const MAX_ARCS: usize = 4;
++const MAX_INTEGER: i64 = 1_i64 << 40;
++
++#[derive(Debug)]
++struct Accepted {
++    path: GridPath,
++    bound_mm: f64,
++}
++
++// Integer cast is exact in this deliberately small domain. Division by the
++// actual PDF grid scale is enclosed by neighbouring f64s; it is not assumed exact.
++fn displacement(point: GridPoint, source: Vec2) -> Result<f64> {
++    fn coordinate(n: i64, value: f64) -> Result<f64> {
++        if !(-MAX_INTEGER..=MAX_INTEGER).contains(&n) || !value.is_finite() {
++            return Err(Invalid("private acceptance: uncertified coordinate conversion"));
++        }
++        let q = n as f64 / Grid::TEN_NANOMETRES.per_mm();
++        let lo = (q.next_down() - value).abs().next_up();
++        let hi = (q.next_up() - value).abs().next_up();
++        Ok(lo.max(hi))
++    }
++    let bound = (coordinate(point.x, source.x)? + coordinate(point.y, source.y)?).next_up();
++    if !bound.is_finite() {
++        return Err(Invalid("private acceptance: nonfinite displacement"));
++    }
++    Ok(bound)
++}
++
++fn rounded(point: Vec2) -> Result<GridPoint> {
++    // Bounds keep the grid multiplication/round/cast far from saturation.
++    // Its actual emitted result is then charged by displacement, without
++    // assuming that the multiplication or the rounding was exact.
++    if !point.is_finite() || point.x.abs() > 1e6 || point.y.abs() > 1e6 {
++        return Err(Invalid("private acceptance: control outside bounded fixture"));
++    }
++    Grid::TEN_NANOMETRES.point(point)
++}
++
++fn controls(piece: &Seg2) -> Result<[Vec2; 4]> {
++    match *piece {
++        Seg2::Cubic { p0, p1, p2, p3 } => Ok([p0, p1, p2, p3]),
++        _ => Err(Invalid("private acceptance: helper returned a noncubic")),
++    }
++}
++
++// This accepts a bounded test recipe, not an arbitrary post-walk arc.
++// It proves error against explicit source arcs only, not Piece::seg geometry
++// or the unavailable original scene recovered from Piece metadata.
++fn accept(source: &[Seg2], walked: &GridPath, allowance_mm: f64) -> Result<Accepted> {
++    if source.is_empty() || source.len() > MAX_ARCS || source.len() != walked.pieces.len()
++        || !allowance_mm.is_finite() || allowance_mm <= 0.0
++    {
++        return Err(Invalid("private acceptance: explicit bounded arc provenance required"));
++    }
++    let mut pieces = Vec::new();
++    pieces.try_reserve_exact(MAX_ARCS * 64)
++        .map_err(|_| Invalid("private acceptance: allocation refused"))?;
++    let mut at = walked.start;
++    let mut bound_mm: f64 = 0.0;
++    for (arc, walked_piece) in source.iter().zip(&walked.pieces) {
++        let Piece::Arc { radius, to, .. } = *walked_piece else {
++            return Err(Invalid("private acceptance: only explicit arc recipes"));
++        };
++        if radius <= 0 {
++            return Err(Invalid("private acceptance: nonpositive walked radius"));
++        }
++        let converted = circular_arc_candidate::circular_arc(arc, allowance_mm / 2.0, 64)?;
++        if converted.pieces.is_empty() || converted.pieces.len() > 64 {
++            return Err(Invalid("private acceptance: invalid helper output size"));
++        }
++        for (i, cubic) in converted.pieces.iter().enumerate() {
++            let [p0, p1, p2, p3] = controls(cubic)?;
++            let c1 = rounded(p1)?;
++            let c2 = rounded(p2)?;
++            let end = if i + 1 == converted.pieces.len() { to } else { rounded(p3)? };
++            let change = displacement(at, p0)?
++                .max(displacement(c1, p1)?)
++                .max(displacement(c2, p2)?)
++                .max(displacement(end, p3)?);
++            let total = (converted.error_bound_mm + change).next_up();
++            if !total.is_finite() || total > allowance_mm {
++                return Err(Invalid("private acceptance: endpoint/rounding debit exceeds allowance"));
++            }
++            if at == end {
++                return Err(Invalid("private acceptance: collapsed gridded cubic"));
++            }
++            bound_mm = bound_mm.max(total);
++            pieces.push(Piece::Cubic { c1, c2, to: end });
++            at = end;
++        }
++    }
++    if walked.closed && at != walked.start {
++        return Err(Invalid("private acceptance: walked closure absent"));
++    }
++    Ok(Accepted { path: GridPath { start: walked.start, pieces, closed: walked.closed }, bound_mm })
++}
++
++fn fixture() -> ([Seg2; 4], GridPath) {
++    let center = Vec2::new(10.0, 10.0);
++    let source = [0.0, FRAC_PI_2, PI, -FRAC_PI_2]
++        .map(|start| Seg2::Arc { center, radius: 1.0, start, sweep: FRAC_PI_2 });
++    // Literal, already-walked endpoints: no trigonometric oracle is reused.
++    let start = GridPoint { x: 1_100_000, y: 1_000_000 };
++    let pieces = [
++        GridPoint { x: 1_000_000, y: 1_100_000 },
++        GridPoint { x: 900_000, y: 1_000_000 },
++        GridPoint { x: 1_000_000, y: 900_000 },
++        start,
++    ].map(|to| Piece::Arc { radius: 100_000, clockwise: false, to }).to_vec();
++    (source, GridPath { start, pieces, closed: true })
++}
++
++#[test]
++fn private_closed_arc_recipe_keeps_walked_joints_and_debits_all_controls() {
++    let (source, walked) = fixture();
++    let before = walked.clone();
++    // Existing PDF tolerance, not a new production tolerance.
++    let accepted = accept(&source, &walked, 1e-4).unwrap();
++    assert!(accepted.bound_mm.is_finite() && accepted.bound_mm > 0.0 && accepted.bound_mm <= 1e-4);
++    assert_eq!(walked, before);
++    assert_eq!(accepted.path.start, walked.start);
++    assert!(accepted.path.closed);
++    assert_eq!(accepted.path.pieces.last().unwrap().to(), walked.start);
++    let mut ends = accepted.path.pieces.iter().map(Piece::to);
++    for original in &walked.pieces {
++        assert!(ends.by_ref().any(|end| end == original.to()));
++    }
++    assert!(accepted.path.pieces.len() <= MAX_ARCS * 64);
++    assert!(accepted.path.pieces.iter().all(|piece| matches!(piece, Piece::Cubic { .. })));
++}
++
++#[test]
++fn private_endpoint_change_is_charged_or_refused_without_partial_output() {
++    let (source, mut walked) = fixture();
++    if let Some(Piece::Arc { to, .. }) = walked.pieces.first_mut() {
++        to.x += 1;
++    }
++    let accepted = accept(&source, &walked, 1e-4).unwrap();
++    assert!(accepted.bound_mm >= 1e-5 && accepted.bound_mm <= 1e-4);
++    assert!(accepted.path.pieces.iter().any(|piece| piece.to() == walked.pieces[0].to()));
++    if let Some(Piece::Arc { to, .. }) = walked.pieces.first_mut() {
++        to.x += 100;
++    }
++    assert!(accept(&source, &walked, 1e-4).is_err());
++}
++
++#[test]
++fn private_unproven_input_conversion_and_missing_provenance_are_refused() {
++    let (source, mut walked) = fixture();
++    walked.start.x = i64::MAX;
++    assert!(accept(&source, &walked, 1e-4).is_err());
++    let (_, walked) = fixture();
++    assert!(accept(&[], &walked, 1e-4).is_err());
++    assert!(accept(&source, &walked, f64::from_bits(1)).is_err());
++    assert!(accept(&source, &walked, f64::INFINITY).is_err());
++    let mut open_end = walked.clone();
++    if let Some(Piece::Arc { to, .. }) = open_end.pieces.last_mut() {
++        to.x += 1;
++    }
++    assert!(accept(&source, &open_end, 1e-4).is_err());
++}

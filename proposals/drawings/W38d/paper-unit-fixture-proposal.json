@@ -1,0 +1,73 @@
+{
+  "schema": "solidcraft.private.acceptance-proposal.v1",
+  "fixture": "W38d-D7-fixture5-paper-units-composed-seam",
+  "status": "PROPOSED_NOT_RUN",
+  "execution_performed": false,
+  "dependency": "Agreed integration and actual sheet whole-boundary-to-region-to-hatch receiver; reuse doc/profile_refs.rs strict matcher, with no second matcher.",
+  "scope": "Future composed acceptance; no assertion that the receiver or saved-fill records currently exist.",
+  "owner": { "drawing": 100, "sheet": 110, "sketch": 120, "source": 140 },
+  "units": {
+    "source_document_display": "in",
+    "drawing_display": "in",
+    "sheet_coordinates": "mm",
+    "hatch_lengths": "paper mm",
+    "source_width_expression_unit": "mm",
+    "bare_sheet_coordinate_strings_default": "mm"
+  },
+  "creation_variants": [
+    { "name": "numeric", "coordinate_encoding": "JSON numbers in paper mm" },
+    { "name": "bare_strings", "coordinate_encoding": "Bare decimal strings in paper mm; e.g. 40 and string 40 both mean 40 mm on the sheet" }
+  ],
+  "geometry": {
+    "outer_vertices": [[0, 0], ["Width", 0], ["Width", 20], [0, 20]],
+    "hole1_vertices": [[8, 4], [12, 4], [12, 8], [8, 8]],
+    "hole2_vertices": [[24, 10], [30, 10], [30, 14], [24, 14]],
+    "curve_identity": {
+      "outer": ["oa", "ob", "oc", "od"],
+      "holes": [["h1a", "h1b", "h1c", "h1d"], ["h2a", "h2b", "h2c", "h2d"]]
+    },
+    "authored_right_vertex_x": "Retain the Width expression using the existing W38a expression representation; do not bake resolved values or invent a new payload field."
+  },
+  "pattern_family": {
+    "angle_rad": 0,
+    "origin_mm": [0, 0.5],
+    "delta_x_mm": 0,
+    "delta_y_mm": 2,
+    "dashes_mm": []
+  },
+  "states": [
+    {
+      "source_width_expression": "40 mm",
+      "resolved_width_mm": 40,
+      "expected": { "identity": "unique_complete_outer_and_all_holes", "area_mm2": 760, "stroke_count": 14, "total_stroke_length_mm": 380 }
+    },
+    {
+      "source_width_expression": "60 mm",
+      "resolved_width_mm": 60,
+      "expected": { "identity": "same_unique_complete_boundary", "area_mm2": 1160, "stroke_count": 14, "total_stroke_length_mm": 580 }
+    }
+  ],
+  "analytic_derivation": {
+    "area_mm2": "20*Width - 4*4 - 6*4",
+    "member_y_mm": [0.5, 2.5, 4.5, 6.5, 8.5, 10.5, 12.5, 14.5, 16.5, 18.5],
+    "hole1_split_y_mm": [4.5, 6.5],
+    "hole2_split_y_mm": [10.5, 12.5],
+    "stroke_count": "10 base members + 2 hole1 splits + 2 hole2 splits = 14",
+    "total_length_mm": "10*Width - 2*4 - 2*6",
+    "endpoint_rule": "At each member y, begin with [0,Width]; remove [8,12] for 4<y<8 and [24,30] for 10<y<14. Compare every resulting endpoint and stroke, not just totals.",
+    "oracle_origin": "Independent rectangle arithmetic; no implementation output or generated golden."
+  },
+  "read_only_resolution_checks": {
+    "snapshot_timing": "For each creation variant and each width state, snapshot immediately after the intentional source edit and before resolving; compare immediately after resolution.",
+    "source_document": "unchanged by resolution, including parameter expressions, units and model features",
+    "source_history": "unchanged by resolution; the intentional Width edit is outside this comparison",
+    "drawing_history": "unchanged by resolution",
+    "authored_sheet_record": "unchanged by resolution, including point/curve IDs and Width expressions",
+    "requested_boundary": "same canonical outer and all hole identities in both states",
+    "owner_identity": "resolved drawing=100, sheet=110, sketch=120",
+    "variant_equivalence": "Both creation variants produce the same analytic region and hatch in each state."
+  },
+  "unit_control": "Do not interpret explicitly authored Width=40 in as40 mm; this fixture deliberately uses40 mm and60 mm while display units are inches.",
+  "excluded_claims": ["Executed acceptance", "Existing saved-fill API", "Persistence or undo qualification for future fill records", "Full CI or merge readiness"],
+  "next_actor": "Engineer decides when the composed receiver is integrated and grants implementation/validation; Kernel Specialist remains quiet and available."
+}

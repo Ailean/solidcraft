@@ -1,0 +1,11 @@
+diff --git a/crates/geom/src/paper.rs b/crates/geom/src/paper.rs
+--- a/crates/geom/src/paper.rs
++++ b/crates/geom/src/paper.rs
+@@ -46,6 +46,7 @@
+ 
+ use crate::{EPS, Region2, Seg2, Vec2};
+ 
++pub(crate) mod cubics;
+ pub mod flatten;
+ pub mod grid;
+ 

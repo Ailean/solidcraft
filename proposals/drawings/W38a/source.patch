@@ -1,0 +1,633 @@
+diff --git a/crates/engine/src/cmd/drawing_tests.rs b/crates/engine/src/cmd/drawing_tests.rs
+index df64e34c..622a96c6 100644
+--- a/crates/engine/src/cmd/drawing_tests.rs
++++ b/crates/engine/src/cmd/drawing_tests.rs
+@@ -2419,3 +2419,281 @@ fn sheet_batch_command_capability_matrix_refuses_unsafe_record_families() {
+         assert!(find_command(id).unwrap().allowed(&s).is_err(), "{id} is not admitted on a sheet");
+     }
+ }
++
++
++/// Each newly admitted point parser keeps paper-mm literals under inch source units,
++/// while its model path still interprets bare strings in the model's design unit.
++#[test]
++fn sheet_batch_typed_creator_points_use_paper_units_without_changing_model_units() {
++    use solidcraft_geom::Vec2;
++
++    fn typed(value: &mut Value, source: bool) {
++        match value {
++            Value::Array(values) => {
++                for value in values {
++                    typed(value, source);
++                }
++            }
++            Value::Number(number) => {
++                let number = number.as_f64().unwrap();
++                *value = json!(if source { format!("Inset + {} mm", number - 25.4) } else { number.to_string() });
++            }
++            _ => {}
++        }
++    }
++
++    for (command, numeric, keys, points) in [
++        ("sketch.line.midpoint", json!({"mid":[40,40],"end":[60,40]}), vec!["mid"], vec![[40.0,40.0],[20.0,40.0],[60.0,40.0]]),
++        ("sketch.conic", json!({"start":[40,40],"end":[90,40],"apex":[65,65],"rho":0.5,"connect":false}),
++            vec!["start","end","apex"], vec![[40.0,40.0],[90.0,40.0],[65.0,65.0]]),
++        ("sketch.spline.fit_point", json!({"points":[[40,40],[50,60],[70,55],[85,40]],"connect":false}),
++            vec!["points"], vec![[40.0,40.0],[50.0,60.0],[70.0,55.0],[85.0,40.0]]),
++        ("sketch.spline.control_point", json!({"points":[[40,40],[50,60],[70,55],[85,40]],"connect":false}),
++            vec!["points"], vec![[40.0,40.0],[50.0,60.0],[70.0,55.0],[85.0,40.0]]),
++        ("sketch.spline.control_point_5", json!({"points":[[40,40],[50,60],[55,65],[70,65],[80,55],[85,40]],"connect":false}),
++            vec!["points"], vec![[40.0,40.0],[50.0,60.0],[55.0,65.0],[70.0,65.0],[80.0,55.0],[85.0,40.0]]),
++    ] {
++        for mode in 0..3 {
++            let (mut s, drawing, sketch, _) = sheet_editor();
++            s.doc_mut().set_param("Inset", "1", Some("in"), None).unwrap();
++            let source = s.doc.clone();
++            let model = s.model.state();
++            let history = s.undo.len();
++            let evaluations = s.evaluations;
++            let mut params = numeric.clone();
++            if mode != 0 {
++                for key in &keys {
++                    typed(params.get_mut(*key).unwrap(), mode == 2);
++                }
++            }
++            run(&mut s, command, params);
++            let record = s.doc.drawing(drawing).unwrap().sheet_sketch(sketch).unwrap().sketch.clone();
++            for point in &points {
++                assert!(record.points.iter().any(|p| p.pos.dist(Vec2::new(point[0], point[1])) < 1e-6), "{command} mode {mode}: {point:?}");
++            }
++            assert_eq!((&s.doc.features, &s.doc.params, &s.doc.units), (&source.features, &source.params, &source.units), "{command}");
++            assert_eq!((s.undo.len(), s.undo.last().unwrap().part), (history + 1, Some(drawing)), "{command}");
++            assert_eq!(s.evaluations, evaluations);
++            assert!(Arc::ptr_eq(&s.model.state(), &model), "{command}");
++            let reopened = solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap();
++            assert_eq!(reopened.drawing(drawing).unwrap().sheet_sketch(sketch).unwrap().sketch, record, "{command}");
++            if mode == 2 {
++                assert!(record.points.iter().any(|p| p.exprs.is_some()), "{command}: authored source expressions survive");
++                s.doc_mut().set_param("Inset", "2", Some("in"), None).unwrap();
++                let before_solve = s.doc.clone();
++                let solved = s.doc.solve_sheet_sketch(drawing, sketch).unwrap();
++                assert!(solved.sketch.points.iter().any(|p| p.pos.dist(Vec2::new(65.4, 65.4)) < 1e-6), "{command}: fresh source position");
++                assert!(Arc::ptr_eq(&s.doc, &before_solve), "{command}: read-only resolution");
++                assert_eq!(s.doc.drawing(drawing).unwrap().sheet_sketch(sketch).unwrap().sketch, record, "{command}: stored expression not baked");
++            }
++        }
++        for as_text in [false, true] {
++            let mut s = Session::default();
++            s.doc_mut().units = "in".into();
++            run(&mut s, "sketch.create", json!({"plane":"XY"}));
++            let mut params = numeric.clone();
++            if as_text {
++                for key in &keys {
++                    typed(params.get_mut(*key).unwrap(), false);
++                }
++            }
++            run(&mut s, command, params);
++            let sketch = s.doc.sketch(s.active_sketch.unwrap()).unwrap();
++            let expected = if as_text { 1016.0 } else { 40.0 };
++            assert!(sketch.points.iter().any(|p| p.pos.dist(Vec2::new(expected, expected)) < 1e-6), "{command}: original model units, text={as_text}");
++        }
++    }
++}
++
++/// A successful compound paper edit ends only its own redo branch. Failed compounds
++/// retain every owner, including a dimension failure after its creator has run.
++#[test]
++fn sheet_batch_compound_edits_preserve_foreign_redo_and_refuse_atomically() {
++    fn same_redo(s: &Session, before: &[crate::Snapshot]) {
++        assert_eq!(s.redo.len(), before.len());
++        for (after, before) in s.redo.iter().zip(before) {
++            assert_eq!((&after.label, after.part), (&before.label, before.part));
++            assert!(Arc::ptr_eq(&after.doc, &before.doc));
++        }
++    }
++
++    for (command, params) in [
++        ("sketch.rectangle.rounded", json!({"p0":[100,100],"p1":[160,140],"radius":5})),
++        ("sketch.draw.dimensioned", json!({"command":"sketch.line","params":{"points":[[100,100],[150,100]],"connect":false},"dimensions":{"length":40}})),
++    ] {
++        let (mut s, drawing, sketch, made) = sheet_editor();
++        run(&mut s, "sketch.finish", json!({}));
++        run(&mut s, "drawing.close", json!({}));
++        let b = run(&mut s, "drawing.create", json!({"name":"Other"}));
++        let other = ids::decode(b["id"].as_str().unwrap()).unwrap();
++        run(&mut s, "drawing.set", json!({"name":"Other future"}));
++        run(&mut s, "edit.undo", json!({}));
++        run(&mut s, "drawing.close", json!({}));
++        run(&mut s, "parameters.add", json!({"name":"ModelFuture","expression":"7 mm"}));
++        run(&mut s, "edit.undo", json!({}));
++        run(&mut s, "drawing.open", the(drawing));
++        run(&mut s, "drawing.sketch.edit", json!({"sketch":made["sketch"]}));
++        run(&mut s, "sketch.point", json!({"point":[40,0],"id":"anchor"}));
++        run(&mut s, "sketch.constraint.fix", json!({"entities":["anchor"]}));
++        run(&mut s, "drawing.set", json!({"name":"Paper future"}));
++        run(&mut s, "edit.undo", json!({}));
++        assert_eq!(s.redo.iter().map(|step| step.part).collect::<Vec<_>>(), vec![Some(other), None, Some(drawing)]);
++        let redos = s.redo.clone();
++        let before = s.doc.clone();
++        let entry = s.active_sheet_sketch.clone();
++        let model = s.model.state();
++        let history = s.undo.len();
++        let evaluations = s.evaluations;
++        let failed = if command == "sketch.rectangle.rounded" {
++            json!({"p0":[100,100],"p1":[160,140],"radius":25})
++        } else {
++            // Both endpoints are fixed. The nested line creator succeeds, but the
++            // requested 5 mm driving dimension conflicts with their 40 mm distance.
++            json!({"command":"sketch.line","params":{"points":["origin","anchor"],"connect":false,"infer":false},"dimensions":{"length":5}})
++        };
++        // Failure on a scratch must roll back its private owner provenance too:
++        // adopting the unchanged failed attempt must preserve every old redo branch.
++        let mut failed_attempt = s.scratch();
++        refused(&mut failed_attempt, command, failed);
++        s.accept_computed(failed_attempt);
++        assert!(Arc::ptr_eq(&s.doc, &before), "{command}");
++        assert!(Arc::ptr_eq(&s.model.state(), &model), "{command}");
++        assert_eq!(s.active_sheet_sketch, entry, "{command}");
++        assert_eq!((s.undo.len(), s.evaluations), (history, evaluations), "{command}");
++        same_redo(&s, &redos);
++
++        run(&mut s, command, params);
++        assert_eq!((s.undo.len(), s.undo.last().unwrap().part), (history + 1, Some(drawing)), "{command}: one own undo");
++        same_redo(&s, &redos[..2]);
++        assert_eq!(s.evaluations, evaluations);
++        assert_eq!((&s.doc.features, &s.doc.params), (&before.features, &before.params), "{command}");
++        assert!(Arc::ptr_eq(&s.model.state(), &model));
++        let edited = s.doc.drawing(drawing).unwrap().sheet_sketch(sketch).unwrap().clone();
++        run(&mut s, "edit.undo", json!({}));
++        assert_eq!(s.doc.drawing(drawing).unwrap().sheet_sketch(sketch).unwrap().sketch.curves.len(), 0);
++        run(&mut s, "edit.redo", json!({}));
++        assert_eq!(s.doc.drawing(drawing).unwrap().sheet_sketch(sketch).unwrap().sketch, edited.sketch);
++        same_redo(&s, &redos[..2]);
++        run(&mut s, "sketch.finish", json!({}));
++        run(&mut s, "drawing.open", the(other));
++        run(&mut s, "edit.redo", json!({}));
++        assert_eq!(s.doc.drawing(other).unwrap().name, "Other future");
++        assert_eq!(s.doc.drawing(drawing).unwrap().sheet_sketch(sketch).unwrap().sketch, edited.sketch);
++        run(&mut s, "drawing.close", json!({}));
++        run(&mut s, "edit.redo", json!({}));
++        assert!(s.doc.params.iter().any(|p| p.name == "ModelFuture"));
++        assert_eq!(s.doc.drawing(other).unwrap().name, "Other future");
++        assert_eq!(s.doc.drawing(drawing).unwrap().sheet_sketch(sketch).unwrap().sketch, edited.sketch);
++    }
++}
++
++
++/// Provenance must outlive MAX_UNDO eviction, nested compound history clearing and
++/// tab switches, while a checkpoint restores the matching branch provenance.
++#[test]
++fn sheet_batch_computed_history_replaces_each_touched_owner_only() {
++    fn same_redo(s: &Session, redos: &[crate::Snapshot]) {
++        assert_eq!(s.redo.len(), redos.len());
++        for (after, before) in s.redo.iter().zip(redos) {
++            assert_eq!((&after.label, after.part), (&before.label, before.part));
++            assert!(Arc::ptr_eq(&after.doc, &before.doc));
++        }
++    }
++
++    let mut s = design();
++    let a = run(&mut s, "drawing.create", json!({"name":"A"}));
++    let aid = ids::decode(a["id"].as_str().unwrap()).unwrap();
++    run(&mut s, "drawing.set", json!({"name":"A old future"}));
++    run(&mut s, "edit.undo", json!({}));
++    run(&mut s, "drawing.close", json!({}));
++    let b = run(&mut s, "drawing.create", json!({"name":"B"}));
++    let bid = ids::decode(b["id"].as_str().unwrap()).unwrap();
++    run(&mut s, "drawing.set", json!({"name":"B old future"}));
++    run(&mut s, "edit.undo", json!({}));
++    run(&mut s, "drawing.close", json!({}));
++    let c = run(&mut s, "drawing.create", json!({"name":"C"}));
++    let cid = ids::decode(c["id"].as_str().unwrap()).unwrap();
++    let made = run(&mut s, "drawing.sketch.create", json!({"owner":c["sheets"][0]["id"]}));
++    let sketch = ids::decode(made["sketch"].as_str().unwrap()).unwrap();
++    run(&mut s, "sketch.finish", json!({}));
++    run(&mut s, "drawing.set", json!({"name":"C old future"}));
++    run(&mut s, "edit.undo", json!({}));
++    run(&mut s, "drawing.close", json!({}));
++    run(&mut s, "parameters.add", json!({"name":"ModelFuture","expression":"7 mm"}));
++    run(&mut s, "edit.undo", json!({}));
++    let model_redo = s.redo.iter().find(|step| step.part.is_none()).unwrap().clone();
++    let redos = s.redo.clone();
++    run(&mut s, "drawing.open", the(aid));
++    let before_read = s.doc.clone();
++    let mut read_only = s.scratch();
++    run(&mut read_only, "drawing.open", the(bid));
++    run(&mut read_only, "drawing.inspect", json!({}));
++    s.accept_computed(read_only);
++    assert_eq!(s.open_drawing, Some(bid));
++    assert!(Arc::ptr_eq(&s.doc, &before_read));
++    same_redo(&s, &redos);
++
++    // A complete rollback, even across file.new, restores the old provenance just
++    // as it restores the old document and undo/redo. The rolled-back edits must
++    // not end the parent's legitimate redo branches at later adoption.
++    run(&mut s, "drawing.open", the(aid));
++    let mut rolled_back = s.scratch();
++    let checkpoint = run(&mut rolled_back, "edit.checkpoint", json!({}))["checkpoint"].clone();
++    run(&mut rolled_back, "drawing.set", json!({"name":"A discarded"}));
++    run(&mut rolled_back, "drawing.open", the(bid));
++    run(&mut rolled_back, "drawing.set", json!({"name":"B discarded"}));
++    run(&mut rolled_back, "file.new", json!({}));
++    assert!(rolled_back.doc.drawings.is_empty());
++    run(&mut rolled_back, "edit.restore_checkpoint", json!({"checkpoint":checkpoint}));
++    assert!(Arc::ptr_eq(&rolled_back.doc, &s.doc));
++    s.accept_computed(rolled_back);
++    same_redo(&s, &redos);
++
++    let mut computed = s.scratch();
++    run(&mut computed, "drawing.set", json!({"name":"A new"}));
++    run(&mut computed, "drawing.open", the(bid));
++    for i in 0..=crate::MAX_UNDO {
++        run(&mut computed, "drawing.set", json!({"name":format!("B new{i}")}));
++    }
++    assert_eq!(computed.undo.len(), crate::MAX_UNDO);
++    assert!(computed.undo.iter().all(|step| step.part == Some(bid)), "A's edit really was evicted");
++
++    // The only edit of C happens in a nested scratch and a rounded compound.
++    // Erasing its intermediate history and finishing on untouched B must not
++    // erase C's owner evidence or mistake B for the compound's actual owner.
++    let mut nested = computed.scratch();
++    run(&mut nested, "drawing.open", the(cid));
++    run(&mut nested, "drawing.sketch.edit", json!({"sketch":made["sketch"]}));
++    run(&mut nested, "sketch.rectangle.rounded", json!({"p0":[20,20],"p1":[60,40],"radius":3}));
++    nested.undo.clear();
++    run(&mut nested, "sketch.finish", json!({}));
++    run(&mut nested, "drawing.open", the(bid));
++    assert!(nested.undo.is_empty() && nested.redo.is_empty());
++    computed.accept_computed(nested);
++    assert!(computed.undo.iter().all(|step| step.part == Some(bid)), "neither A nor C survives in retained history");
++    s.accept_computed(computed);
++    assert_eq!(s.open_drawing, Some(bid));
++    assert_eq!(s.doc.drawing(aid).unwrap().name, "A new");
++    assert_eq!(s.doc.drawing(bid).unwrap().name, format!("B new{}", crate::MAX_UNDO));
++    assert_eq!(s.doc.drawing(cid).unwrap().sheet_sketch(sketch).unwrap().sketch.curves.len(), 8);
++    assert_eq!(s.redo.len(), 1);
++    assert!(s.redo[0].part.is_none());
++    assert!(Arc::ptr_eq(&s.redo[0].doc, &model_redo.doc));
++    run(&mut s, "drawing.open", the(aid));
++    refused(&mut s, "edit.redo", json!({}));
++    assert_eq!(s.doc.drawing(aid).unwrap().name, "A new", "old A future cannot overwrite the new edit");
++    run(&mut s, "drawing.open", the(cid));
++    refused(&mut s, "edit.redo", json!({}));
++    assert_eq!(s.doc.drawing(cid).unwrap().sheet_sketch(sketch).unwrap().sketch.curves.len(), 8);
++    run(&mut s, "drawing.open", the(bid));
++    run(&mut s, "edit.undo", json!({}));
++    assert_eq!(s.doc.drawing(bid).unwrap().name, format!("B new{}", crate::MAX_UNDO - 1));
++    run(&mut s, "edit.redo", json!({}));
++    assert_eq!(s.doc.drawing(bid).unwrap().name, format!("B new{}", crate::MAX_UNDO));
++    run(&mut s, "drawing.close", json!({}));
++    run(&mut s, "edit.redo", json!({}));
++    assert!(s.doc.params.iter().any(|p| p.name == "ModelFuture"));
++    assert_eq!(s.doc.drawing(aid).unwrap().name, "A new");
++    assert_eq!(s.doc.drawing(bid).unwrap().name, format!("B new{}", crate::MAX_UNDO));
++    assert_eq!(s.doc.drawing(cid).unwrap().sheet_sketch(sketch).unwrap().sketch.curves.len(), 8);
++}
+diff --git a/crates/engine/src/cmd/sketch.rs b/crates/engine/src/cmd/sketch.rs
+index a7f2a09e..d8391830 100644
+--- a/crates/engine/src/cmd/sketch.rs
++++ b/crates/engine/src/cmd/sketch.rs
+@@ -458,11 +458,7 @@ impl PArg {
+     }
+ }
+ 
+-pub(super) fn parg(sk: &mut Sketch, doc: &solidcraft_doc::Document, v: &Value, cmd: &str) -> Result<PArg> {
+-    parg_in(sk, doc, v, cmd, false)
+-}
+-
+-fn parg_in(sk: &mut Sketch, doc: &solidcraft_doc::Document, v: &Value, cmd: &str, paper: bool) -> Result<PArg> {
++pub(super) fn parg_in(sk: &mut Sketch, doc: &solidcraft_doc::Document, v: &Value, cmd: &str, paper: bool) -> Result<PArg> {
+     if let Some(p) = vec2(v) {
+         return Ok(PArg::At(p));
+     }
+@@ -487,11 +483,7 @@ fn parg_in(sk: &mut Sketch, doc: &solidcraft_doc::Document, v: &Value, cmd: &str
+     Err(bad(cmd, "a point must be [x, y], a point id like \"l1.end\", or {at, ref}"))
+ }
+ 
+-pub(super) fn req_parg(sk: &mut Sketch, doc: &solidcraft_doc::Document, p: &Value, k: &str, cmd: &str) -> Result<PArg> {
+-    req_parg_in(sk, doc, p, k, cmd, false)
+-}
+-
+-fn req_parg_in(sk: &mut Sketch, doc: &solidcraft_doc::Document, p: &Value, k: &str, cmd: &str, paper: bool) -> Result<PArg> {
++pub(super) fn req_parg_in(sk: &mut Sketch, doc: &solidcraft_doc::Document, p: &Value, k: &str, cmd: &str, paper: bool) -> Result<PArg> {
+     parg_in(sk, doc, p.get(k).ok_or_else(|| bad(cmd, format!("missing `{k}`")))?, cmd, paper)
+ }
+ 
+diff --git a/crates/engine/src/cmd/sketch_create.rs b/crates/engine/src/cmd/sketch_create.rs
+index 4e94b3ed..b6fe305d 100644
+--- a/crates/engine/src/cmd/sketch_create.rs
++++ b/crates/engine/src/cmd/sketch_create.rs
+@@ -12,7 +12,7 @@ macro_rules! text_style_doc {
+     };
+ }
+ 
+-use super::sketch::{add_c, circumcircle, edit, ids_of, mark_construction, req_parg, result, slot};
++use super::sketch::{add_c, circumcircle, edit, ids_of, mark_construction, req_parg_in, result, slot};
+ use super::sketch_store;
+ use super::{CommandSpec, in_sketch};
+ use crate::params::{bad, num, req_vec2, str_, string_list};
+@@ -498,12 +498,13 @@ fn joint_derivatives(sk: &Sketch, ci: usize, pi: usize, order: usize, leaving: b
+ fn blend(s: &mut Session, p: &Value) -> Result<Value> {
+     let cmd = "sketch.blend_curve";
+     let order = blend_order(p, cmd)?;
+-    if s.open_drawing.is_some() && order > 2 {
++    let on_sheet = s.open_drawing.is_some();
++    if on_sheet && order > 2 {
+         return Err(bad(cmd, "sheet sketches support G1/G2 blends; higher-order splines need their own bounded record contract"));
+     }
+     let (out, info) = edit(s, p, cmd, false, |sk, doc| {
+-        let pa = req_parg(sk, doc, p, "a", cmd)?.idx().ok_or_else(|| bad(cmd, "`a` must be the end point of a curve"))?;
+-        let pb = req_parg(sk, doc, p, "b", cmd)?.idx().ok_or_else(|| bad(cmd, "`b` must be the end point of a curve"))?;
++        let pa = req_parg_in(sk, doc, p, "a", cmd, on_sheet)?.idx().ok_or_else(|| bad(cmd, "`a` must be the end point of a curve"))?;
++        let pb = req_parg_in(sk, doc, p, "b", cmd, on_sheet)?.idx().ok_or_else(|| bad(cmd, "`b` must be the end point of a curve"))?;
+         let (ca, ta) = end_of(sk, pa).ok_or_else(|| bad(cmd, "no curve ends at `a`"))?;
+         let (cb, tb) = end_of(sk, pb).ok_or_else(|| bad(cmd, "no curve ends at `b`"))?;
+         let (qa, qb) = (sk.point(pa).unwrap_or_default(), sk.point(pb).unwrap_or_default());
+@@ -627,14 +628,14 @@ fn ellipse(s: &mut Session, p: &Value) -> Result<Value> {
+     Ok(result(out, info))
+ }
+ 
+-fn point_list(sk: &mut Sketch, doc: &solidcraft_doc::Document, p: &Value, cmd: &str) -> Result<Vec<usize>> {
++fn point_list(sk: &mut Sketch, doc: &solidcraft_doc::Document, p: &Value, cmd: &str, paper: bool) -> Result<Vec<usize>> {
+     let list = p.get("points").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`points` must be a list"))?;
+     if list.len() < 2 || list.len() > solidcraft_sketch::MAX_SPLINE_POINTS {
+         return Err(bad(cmd, "a spline needs 2 to 500 points"));
+     }
+     let mut out = Vec::new();
+     for v in list {
+-        let a = super::sketch::parg(sk, doc, v, cmd)?;
++        let a = super::sketch::parg_in(sk, doc, v, cmd, paper)?;
+         let i = match a.idx() {
+             Some(i) => i,
+             None => sk.add_point(a.pos(), None)?,
+@@ -648,6 +649,7 @@ fn point_list(sk: &mut Sketch, doc: &solidcraft_doc::Document, p: &Value, cmd: &
+ }
+ 
+ fn spline(s: &mut Session, p: &Value, cmd: &str, control: bool, degree: u8) -> Result<Value> {
++    let on_sheet = s.open_drawing.is_some();
+     let periodic = match p.get("periodic") {
+         None => false,
+         Some(Value::Bool(v)) => *v,
+@@ -658,7 +660,7 @@ fn spline(s: &mut Session, p: &Value, cmd: &str, control: bool, degree: u8) -> R
+     }
+     let p = &super::sketch_project::snap_points(s, p, cmd)?;
+     let (out, info) = edit(s, p, cmd, false, |sk, doc| {
+-        let mut pts = point_list(sk, doc, p, cmd)?;
++        let mut pts = point_list(sk, doc, p, cmd, on_sheet)?;
+         if periodic
+             && sk.point(*pts.first().ok_or_else(|| bad(cmd, "missing first point"))?)
+                 != sk.point(*pts.last().ok_or_else(|| bad(cmd, "missing last point"))?)
+@@ -684,6 +686,7 @@ fn spline_cv5(s: &mut Session, p: &Value) -> Result<Value> {
+ 
+ fn conic(s: &mut Session, p: &Value) -> Result<Value> {
+     let cmd = "sketch.conic";
++    let on_sheet = s.open_drawing.is_some();
+     let rho = num(p, "rho").unwrap_or(0.5);
+     if !(rho > 1e-6 && rho < 1.0 - 1e-6) {
+         return Err(bad(cmd, "`rho` must be between 0 and 1"));
+@@ -692,7 +695,7 @@ fn conic(s: &mut Session, p: &Value) -> Result<Value> {
+     let (out, info) = edit(s, p, cmd, false, |sk, doc| {
+         let mut idx = Vec::new();
+         for k in ["start", "end", "apex"] {
+-            let a = req_parg(sk, doc, p, k, cmd)?;
++            let a = req_parg_in(sk, doc, p, k, cmd, on_sheet)?;
+             idx.push(match a.idx() {
+                 Some(i) => i,
+                 None => sk.add_point(a.pos(), None)?,
+@@ -711,9 +714,10 @@ fn conic(s: &mut Session, p: &Value) -> Result<Value> {
+ 
+ fn midpoint_line(s: &mut Session, p: &Value) -> Result<Value> {
+     let cmd = "sketch.line.midpoint";
++    let on_sheet = s.open_drawing.is_some();
+     let end = req_vec2(cmd, p, "end")?;
+     let (out, info) = edit(s, p, cmd, false, |sk, doc| {
+-        let m = req_parg(sk, doc, p, "mid", cmd)?;
++        let m = req_parg_in(sk, doc, p, "mid", cmd, on_sheet)?;
+         let start = m.pos() * 2.0 - end;
+         if start.dist(end) < 1e-9 {
+             return Err(bad(cmd, "the end must differ from the midpoint"));
+@@ -780,9 +784,10 @@ fn leaving_dir(sk: &Sketch, ci: usize, pi: usize) -> Option<Vec2> {
+ 
+ fn arc_tangent(s: &mut Session, p: &Value) -> Result<Value> {
+     let cmd = "sketch.arc.tangent";
++    let on_sheet = s.open_drawing.is_some();
+     let end = req_vec2(cmd, p, "end")?;
+     let (out, info) = edit(s, p, cmd, false, |sk, doc| {
+-        let st = req_parg(sk, doc, p, "start", cmd)?;
++        let st = req_parg_in(sk, doc, p, "start", cmd, on_sheet)?;
+         let picked = st.idx().ok_or_else(|| bad(cmd, "`start` must be the end point of a line or arc"))?;
+         // The picked point, then any other point at the same place: a trimmed arc's end is its own
+         // point, lying on the end of the curve that trimmed it, which is the one a click picks (#1485).
+diff --git a/crates/engine/src/lib.rs b/crates/engine/src/lib.rs
+index d640dc38..589b869b 100644
+--- a/crates/engine/src/lib.rs
++++ b/crates/engine/src/lib.rs
+@@ -265,12 +265,19 @@ impl WorldCache {
+     }
+ }
+ 
++/// Only redo owners relevant to a scratch's parent. Keys are fixed when the scratch
++/// is made; they do not grow as unrelated drawings are edited or history is evicted.
++type RedoWatch = std::collections::BTreeMap<Option<u64>, bool>;
++
+ /// An editing session on one design.
+ pub struct Session {
+     pub doc: Arc<Document>,
+     pub model: Model,
+     pub undo: Vec<Snapshot>,
+     pub redo: Vec<Snapshot>,
++    /// Scratch-only owner provenance, independent of the bounded undo vector.
++    /// Ordinary sessions keep None; adoption never installs a child's watch map.
++    redo_watch: Option<RedoWatch>,
+     /// Sketch feature being edited (sketch mode).
+     pub active_sketch: Option<u64>,
+     /// Explicitly owned sheet edit, independent of the model sketch being edited.
+@@ -368,6 +375,7 @@ pub(crate) struct Checkpoint {
+     pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
+     pub undo: Vec<Snapshot>,
+     pub redo: Vec<Snapshot>,
++    redo_watch: Option<RedoWatch>,
+ }
+ 
+ /// A way of shading the model's faces to judge their shape (view state, not part of the design).
+@@ -452,6 +460,7 @@ impl Session {
+             model,
+             undo: Vec::new(),
+             redo: Vec::new(),
++            redo_watch: None,
+             active_sketch: None,
+             active_sheet_sketch: None,
+             open_drawing: None,
+@@ -502,6 +511,8 @@ impl Session {
+         let render_jobs = self.render_jobs.scratch();
+         let checkpoints = std::mem::take(&mut self.checkpoints);
+         let next_checkpoint = self.next_checkpoint;
++        let previous_doc = self.doc.clone();
++        let redo_watch = self.redo_watch.take();
+         *self = fresh;
+         self.auto_project = auto_project;
+         self.param_check = param_check;
+@@ -509,6 +520,8 @@ impl Session {
+         self.render_jobs = render_jobs;
+         self.checkpoints = checkpoints;
+         self.next_checkpoint = next_checkpoint;
++        self.redo_watch = redo_watch;
++        self.note_redo_changes(&previous_doc);
+     }
+ 
+     /// The design has changes not in its file: in the document, or in what is hidden.
+@@ -877,6 +890,7 @@ impl Session {
+         }
+         spec.allowed(self).map_err(|why| EngineError::Disabled(spec.id.to_string(), why))?;
+         let open_drawing = self.open_drawing;
++        let redo_watch_before = self.redo_watch.clone();
+         let before =
+             Snapshot { part: open_drawing.filter(|_| matches!(spec.part, cmd::Part::Drawing | cmd::Part::Sketch)), ..Snapshot::of(self, spec.label) };
+         let null = Value::Object(Default::default());
+@@ -944,10 +958,16 @@ impl Session {
+                         None if render_only => self.refresh_render(&previous_doc),
+                         None => self.refresh_from(&previous_doc),
+                     }
++                    // Checkpoint restoration restores matching provenance with history;
++                    // its rollback delta must not re-mark the reverted owners.
++                    if spec.id != "edit.restore_checkpoint" {
++                        self.note_redo_changes(&previous_doc);
++                    }
+                 }
+                 Ok(v)
+             }
+             Err(e) => {
++                self.redo_watch = redo_watch_before;
+                 self.open_drawing = open_drawing;
+                 self.active_sheet_sketch = before.active_sheet_sketch.clone();
+                 if changed || self.pending_moves != before.pending_moves {
+@@ -1009,6 +1029,7 @@ impl Session {
+             undo: self.undo.clone(),
+             pending_moves: self.pending_moves.clone(),
+             redo: self.redo.clone(),
++            redo_watch: self.redo_watch.clone(),
+         });
+         if self.checkpoints.len() > MAX_CHECKPOINTS {
+             self.checkpoints.remove(0);
+@@ -1029,6 +1050,7 @@ impl Session {
+         self.pending_moves = c.pending_moves;
+         self.undo = c.undo;
+         self.redo = c.redo;
++        self.redo_watch = c.redo_watch;
+         self.selection.clear();
+         self.prune_sheet_sketch_edit();
+         if self.render_only_change(&before) {
+@@ -1049,11 +1071,16 @@ impl Session {
+     /// A scratch copy of the session (same design and model, no history or log) to try
+     /// commands on without touching this one.
+     pub fn scratch(&self) -> Session {
++        let mut redo_watch: RedoWatch = self.redo_watch.as_ref().map(|watch| watch.keys().map(|part| (*part, false)).collect()).unwrap_or_default();
++        for step in &self.redo {
++            redo_watch.entry(step.part).or_insert(false);
++        }
+         Session {
+             doc: self.doc.clone(),
+             model: self.model.clone(),
+             undo: Vec::new(),
+             redo: Vec::new(),
++            redo_watch: Some(redo_watch),
+             active_sketch: self.active_sketch,
+             active_sheet_sketch: self.active_sheet_sketch.clone(),
+             open_drawing: self.open_drawing,
+@@ -1112,18 +1139,59 @@ impl Session {
+         self.model.unprime();
+     }
+ 
++    /// Retain scratch provenance for relevant owners even after MAX_UNDO eviction.
++    /// Drawing undo/redo and lifecycle commands cannot be classified by their
++    /// generic CommandSpec part, so inspect the actual drawing/model delta.
++    fn note_redo_changes(&mut self, previous: &Document) {
++        let Some(watch) = &mut self.redo_watch else { return };
++        let model_changed = watch.get(&None) == Some(&false)
++            && (self.doc.drawings.len() != previous.drawings.len()
++                || previous.drawings.iter().any(|drawing| self.doc.drawing(drawing.id).is_none())
++                || (!self.doc.differs_only_in_drawings(previous) && *self.doc != *previous));
++        for (part, touched) in watch {
++            if !*touched {
++                *touched = match part {
++                    None => model_changed,
++                    Some(id) => match (self.doc.drawing(*id), previous.drawing(*id)) {
++                        (Some(after), Some(before)) => !Arc::ptr_eq(after, before),
++                        (None, None) => false,
++                        _ => true,
++                    },
++                };
++            }
++        }
++    }
++
+     /// Commit commands evaluated on a scratch copy without losing this session's file,
+     /// saved state, view state, checkpoints or earlier undo steps.
+     pub fn accept_computed(&mut self, mut computed: Session) {
+         let previous_revision = self.revision;
++        // Audited direct-mutation callers edit one current owner without commands.
++        // Command provenance takes precedence if nested tools erased their history.
++        let tracked = computed.redo_watch.as_ref().is_some_and(|watch| watch.values().any(|touched| *touched));
++        let implicit_part = (computed.undo.is_empty() && computed.redo.is_empty() && !tracked && !Arc::ptr_eq(&self.doc, &computed.doc))
++            .then_some(computed.open_drawing);
+         self.doc = computed.doc;
+         self.model = computed.model;
+         self.world_cache = computed.world_cache;
++        let replaces = |part| {
++            Some(part) == implicit_part
++                || computed.redo_watch.as_ref().and_then(|watch| watch.get(&part)).copied().unwrap_or(false)
++                || computed.undo.iter().chain(&computed.redo).any(|edit| edit.part == part)
++        };
++        self.redo.retain(|step| !replaces(step.part));
++        if let Some(watch) = &mut self.redo_watch {
++            // Propagate only this parent's already-watched keys. Child-local redo
++            // owners do not turn this into a growing, lifetime edit log.
++            for (part, touched) in watch {
++                *touched |= replaces(*part);
++            }
++        }
++        self.redo.append(&mut computed.redo);
+         self.undo.append(&mut computed.undo);
+         if self.undo.len() > MAX_UNDO {
+             self.undo.drain(..self.undo.len() - MAX_UNDO);
+         }
+-        self.redo = computed.redo;
+         self.active_sketch = computed.active_sketch;
+         self.active_sheet_sketch = computed.active_sheet_sketch;
+         self.open_drawing = computed.open_drawing;
+diff --git a/docs/drawing-sheet-sketches.md b/docs/drawing-sheet-sketches.md
+index fe8e1630..de46e02f 100644
+--- a/docs/drawing-sheet-sketches.md
++++ b/docs/drawing-sheet-sketches.md
+@@ -583,3 +583,30 @@ W19 view-attached annotation dimensions, W38b view sketches, W38c
+ projection, W38d saved fills and W38e images retain their separate owners.
+ This slice does **not** certify complete W38a, native/browser editing,
+ canonical model+sheet Cancel composition, K/store imports or full CI.
++
++
++R17 review corrections keep the shared point parser's unit context explicit for
++midpoint lines, conics and all three spline creators, as well as endpoint
++references used by tangent arcs and blends. Numeric paper positions and bare
++coordinate strings therefore use the same paper-mm frame even when the source
++design displays inches. Named source expressions retain their authored units
++and resolve again without baking values into the stored drawing. The model
++route still supplies its original design-unit context.
++
++Rounded rectangles and dimensioned creators use a scratch Session for atomic
++publication. Adopting that changed, history-free scratch replaces only its
++current owner's redo branch, leaving the model and other drawings' redo steps
++available. Scratch-only owner provenance watches only redo owners relevant to
++its parent, with fixed keys rather than an edit log that grows with each new
++drawing. It survives bounded undo eviction and nested compound history clearing;
++adoption replaces every touched owner's branch even if another tab is open.
++An ordinary Session has no such watch map. A checkpoint restores matching
++provenance with its document and history, including across file.new. Failed
++commands restore precommand provenance; read-only resolution or tab switching
++leaves every redo branch available. A new compound edit ends the current
++drawing's redo branch, and failed creation or
++driving constraints publish no geometry or history. Original regression cases
++in the existing Drawing test module cover literal/expression unit context,
++foreign redo branches, one-step compound history and refusal after a nested
++line creator. Their execution status belongs to the exact-source validation
++receipt; these cases alone do not establish the full CI or editor acceptance.

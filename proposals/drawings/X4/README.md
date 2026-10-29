@@ -1,0 +1,5 @@
+# X4 remaining text/number proposals — preservation only
+
+Standalone full TEXT/MTEXT encoder f437cb7b1c11e463fbd62328267114d77a95117e88b71cb5ad823073a0e626bd (8 tests), raw-value decoder14003e07e96e0c74a5c71b0907bdfcf7f9971dfbfa98e172f2a3196ed7b16476 (11 tests), exact length decimal helper05671bbed70376f91e522db786bdb6a0ce449d779aeba978605ac374c4c13409 (5 tests), and historical cfg(test)-only Out bridge55ed9e266c45fb496c23eb5910bf9b0f3346cae5a2413040d0ed144b1a2345fb (6 tests). These are proposals, NOT wired or run.
+
+The narrower nine-alignment TEXT adapter and text_value module are already included in D8 d8e7a8690a30e44a58255e5dd345881ef092a93a and are deliberately not duplicated here. Do not overlay this full codec onto D8 or assume its MTEXT contract is integrated. Full codec callers must supply untrimmed ordered values, once-only concatenation/decode and cumulative budgets. Source/new-file patches are alternatives; bridge registration is test-only, not production. Exact mathematical length-grid quantization versus current binary64 formatting remains an owner decision at issue5321 comment6479102559; no byte pins or default formatting change.

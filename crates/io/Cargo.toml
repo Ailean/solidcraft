@@ -39,3 +39,7 @@ rustix = { version = "1", default-features = false, features = ["std", "fs"] }
 cadmpeg-core = { workspace = true }
 cadmpeg-ir = { workspace = true }
 cadmpeg-registry = { workspace = true }
+
+[dev-dependencies]
+# P2 PDF prototype tests only; the reviewed pure-Rust subsetter, no variable-font stack.
+subsetter = { version = "=0.2.6", default-features = false }

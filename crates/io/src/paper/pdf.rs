@@ -26,6 +26,19 @@
 //!   buffer, including inside a path/arc and the final graphics-state restore. Allocation
 //!   failure is an error. The limit is for uncompressed content, not total export memory.
 
+// P2 prototypes are registered only for their unit/acceptance tests. They do not
+// participate in paper_pdf or provide B1, page text or production font resources.
+#[cfg(test)]
+mod font_admission;
+#[cfg(test)]
+mod font_objects;
+#[cfg(test)]
+mod glyph_closure;
+#[cfg(test)]
+mod subset_font;
+#[cfg(test)]
+mod to_unicode;
+
 use std::f64::consts::FRAC_PI_2;
 use std::io::Write as _;
 

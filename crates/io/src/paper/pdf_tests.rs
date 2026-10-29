@@ -786,3 +786,140 @@ fn merged_pdf_run_limits_charge_transitions_and_the_final_close() {
         assert!(super::content_with_limit(&grid.groups, prefix + tail.len() - 1).is_err());
     }
 }
+
+// Independent acceptance of the coordinated PRIVATE ToUnicode helper proposal.
+// Pending module hook; no font/CID/GID assignment or PDF extraction claim.
+// Byte layout/name below is a proposed project contract, not a universal PDF layout.
+const P2_ORACLE_PREFIX: &str = concat!(
+    "/CIDInit /ProcSet findresource begin\n",
+    "12 dict begin\nbegincmap\n",
+    "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n",
+    "/CMapName /SolidCraft-ToUnicode16 def\n/CMapType 2 def\n",
+    "1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n",
+);
+const P2_ORACLE_SUFFIX: &str = "endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n";
+
+// Constructs only expected fixture text from literal grammar/data. Never calls
+// the writer, its constants, hex16, encode_utf16 or a serializer under test.
+fn p2_oracle_cmap(body: &str) -> Vec<u8> {
+    [P2_ORACLE_PREFIX.as_bytes(), body.as_bytes(), P2_ORACLE_SUFFIX.as_bytes()].concat()
+}
+
+#[test]
+fn p2_tounicode_literal_utf16be_covers_ascii_bmp_supplementary_and_clusters() {
+    let entries = [
+        (0x0000, "\0"),
+        (0x0001, "A"),
+        (0x00ff, "\u{00c5}"),
+        (0x0100, "\u{4e2d}"),
+        (0x1234, "\u{1f600}"),
+        (0x7ffe, "e\u{301}\u{327}"),
+        (0x8000, "ffi"),
+        (0x8001, "\u{feff}\0"),
+        (0xffff, "\u{10ffff}"),
+    ];
+    let before = entries;
+    // U+1F600 - 0x10000 = 0xF600 -> high0x3D/low0x200 -> D83D DE00.
+    // Combining sequence remains 0065 0301 0327: no NFC or mark reordering.
+    let expected = p2_oracle_cmap(concat!(
+        "9 beginbfchar\n",
+        "<0000> <0000>\n<0001> <0041>\n<00FF> <00C5>\n<0100> <4E2D>\n",
+        "<1234> <D83DDE00>\n<7FFE> <006503010327>\n<8000> <006600660069>\n",
+        "<8001> <FEFF0000>\n<FFFF> <DBFFDFFF>\nendbfchar\n",
+    ));
+    let actual = super::to_unicode::write_to_unicode(&entries, expected.len()).unwrap();
+    assert_eq!(actual, expected);
+    assert!(actual.is_ascii());
+    assert_eq!(entries, before);
+    assert_eq!(super::to_unicode::write_to_unicode(&entries, expected.len()).unwrap(), expected);
+}
+
+#[test]
+fn p2_tounicode_one_hundred_and_one_mapping_blocks_have_exact_independent_bytes() {
+    for count in [100_u16, 101_u16] {
+        let entries: Vec<_> = (0..count).map(|code| (code, "A")).collect();
+        let before = entries.clone();
+        let mut body = String::from("100 beginbfchar\n");
+        // These integer labels are the source data, not a Unicode encoding oracle.
+        for code in 0..100_u16 {
+            body.push_str(&format!("<{code:04X}> <0041>\n"));
+        }
+        body.push_str("endbfchar\n");
+        if count == 101 {
+            body.push_str("1 beginbfchar\n<0064> <0041>\nendbfchar\n");
+        }
+        let expected = p2_oracle_cmap(&body);
+        assert_eq!(super::to_unicode::write_to_unicode(&entries, expected.len()).unwrap(), expected);
+        assert!(super::to_unicode::write_to_unicode(&entries, expected.len() - 1).is_err());
+        assert_eq!(entries, before);
+    }
+}
+
+#[test]
+fn p2_tounicode_destination_boundary_is_512_decoded_bytes_not_utf8_or_hex_length() {
+    for (cluster, literal_hex) in [
+        ("A".repeat(256), "0041".repeat(256)),
+        ("\u{0800}".repeat(256), "0800".repeat(256)),
+        ("\u{1f600}".repeat(128), "D83DDE00".repeat(128)),
+    ] {
+        // Every expected destination has1024 hex characters, representing512 bytes.
+        // UTF-8 input lengths are256,768,512 respectively, not the encoded limit.
+        assert_eq!(literal_hex.len(), 1024);
+        let body = format!("1 beginbfchar\n<0042> <{literal_hex}>\nendbfchar\n");
+        let expected = p2_oracle_cmap(&body);
+        assert_eq!(
+            super::to_unicode::write_to_unicode(&[(0x42, cluster.as_str())], expected.len()).unwrap(),
+            expected,
+        );
+    }
+    //257 BMP units ->514 bytes;129 supplementary scalars ->516 bytes.
+    // Both inputs fit the separate768-byte UTF-8 per-cluster ceiling.
+    for cluster in ["A".repeat(257), "\u{1f600}".repeat(129)] {
+        assert!(super::to_unicode::write_to_unicode(&[(0x42, cluster.as_str())], 4096).is_err());
+    }
+}
+
+#[test]
+fn p2_tounicode_u16_extremes_repeated_destinations_and_strict_source_order() {
+    let entries = [(0x0000, "A"), (0x00ff, "A"), (0x0100, "A"), (0xffff, "A")];
+    let expected = p2_oracle_cmap(concat!(
+        "4 beginbfchar\n<0000> <0041>\n<00FF> <0041>\n",
+        "<0100> <0041>\n<FFFF> <0041>\nendbfchar\n",
+    ));
+    assert_eq!(super::to_unicode::write_to_unicode(&entries, expected.len()).unwrap(), expected);
+    for invalid in [
+        vec![(1, "A"), (1, "A")],
+        vec![(1, "A"), (1, "B")],
+        vec![(2, "A"), (1, "B")],
+        vec![(0xffff, "A"), (0x0000, "B")],
+        vec![(0x0000, "")],
+        vec![(0x0000, "A"), (0x0001, "")],
+    ] {
+        let before = invalid.clone();
+        assert!(super::to_unicode::write_to_unicode(&invalid, 4096).is_err());
+        assert_eq!(invalid, before);
+    }
+}
+
+#[test]
+fn p2_tounicode_cumulative_output_budget_is_based_on_literal_bytes_including_tail() {
+    let entries = [(0x42, "A"), (0x43, "\u{1f600}")];
+    let expected = p2_oracle_cmap("2 beginbfchar\n<0042> <0041>\n<0043> <D83DDE00>\nendbfchar\n");
+    let complete_length = expected.len();
+    assert_eq!(super::to_unicode::write_to_unicode(&entries, complete_length).unwrap(), expected);
+    assert_eq!(super::to_unicode::write_to_unicode(&entries, complete_length + 1).unwrap(), expected);
+    for allowance in [0, 1, P2_ORACLE_PREFIX.len(), complete_length - P2_ORACLE_SUFFIX.len(), complete_length - 1] {
+        assert!(super::to_unicode::write_to_unicode(&entries, allowance).is_err(), "budget{allowance}");
+    }
+    // A legal U+0000 is payload, not a C-string terminator or an empty cluster.
+    let null_expected = p2_oracle_cmap("1 beginbfchar\n<0042> <0000>\nendbfchar\n");
+    assert_eq!(super::to_unicode::write_to_unicode(&[(0x42, "\0")], null_expected.len()).unwrap(), null_expected);
+}
+
+#[test]
+fn p2_tounicode_empty_table_has_complete_codespace_and_no_zero_mapping_block() {
+    let expected = p2_oracle_cmap("");
+    assert_eq!(super::to_unicode::write_to_unicode(&[], expected.len()).unwrap(), expected);
+    assert!(super::to_unicode::write_to_unicode(&[], expected.len() - 1).is_err());
+    assert!(super::to_unicode::write_to_unicode(&[], 0).is_err());
+}

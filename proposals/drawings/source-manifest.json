@@ -152,9 +152,10 @@
     },
     {
       "path": "proposals/drawings/README.md",
-      "sha256": "7a196825a47a38a484c4be11dd2fb3f33c181aa1c5fd50105ee47395d0e9581d",
-      "bytes": 529
+      "sha256": "1f1232aae73f640339a03dd61c6186378d5dcef6e05cd6af15608f13e19d3f94",
+      "bytes": 4401
     }
   ],
-  "qualification": "SOURCE_PRESERVATION_ONLY_NO_RUNTIME"
+  "qualification": "SOURCE_PRESERVATION_ONLY_NO_RUNTIME",
+  "sha256_scope": "Original UTF-8 payload bytes before repository Git line-ending normalization. README hash refers to the actual published canonical index."
 }

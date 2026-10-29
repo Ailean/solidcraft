@@ -1,0 +1,132 @@
+--- a/crates/render/src/job/image_tests.rs
++++ b/crates/render/src/job/image_tests.rs
+@@ -275,3 +275,129 @@
+     let image = image::load_from_memory(&muted).unwrap().to_rgba8();
+     assert!(image.pixels().any(|pixel| pixel.0 == [0, 0, 0, 255]));
+ }
++
++// Original analytic reciprocal-w oracle: the expected surface point is found
++// by intersecting a closed-form camera ray with a plane, not by asking either
++// raster shading branch to interpolate world coordinates for the other.
++#[test]
++fn weighted_scalar_perspective_uses_closed_form_ray_plane_world_with_unequal_clip_w() {
++    let vertices = [
++        Vec3::new(-7.0 / 4.0, -8.0, 7.0 / 4.0),
++        Vec3::new(1.0 / 2.0, -6.0, 7.0 / 2.0),
++        Vec3::new(-3.0, -2.0, -1.0),
++    ];
++    // The reversed winding faces the eye. This smooth normal is in the
++    // geometric hemisphere and deliberately separates the three view oracles.
++    let normal = Vec3::new(3.0, 1.0, 0.0) / 10.0_f64.sqrt();
++    let part = ProductMesh {
++        name: "analytic reciprocal-w matte".into(),
++        mesh: Arc::new(Mesh {
++            positions: vertices.to_vec(),
++            normals: vec![normal; 3],
++            triangles: vec![[0, 2, 1]],
++            tri_face: vec![0],
++            ..Default::default()
++        }),
++        color: [0; 3],
++        opacity: 1.0,
++        surface: None,
++        transmission: None,
++        faces: Vec::new(),
++    };
++    let mut input = request();
++    input.width = 4;
++    input.height = 4;
++    input.camera = Camera {
++        target: Vec3::ZERO,
++        yaw: 0.0,
++        pitch: 0.0,
++        roll: 0.0,
++        distance: 10.0,
++        fov: std::f64::consts::FRAC_PI_2,
++        up: crate::UpAxis::Z,
++    };
++    input.transparent_background = false;
++    let light_weights = [1.0, 0.35, 0.8];
++    input.studio_weights = Some(light_weights);
++    let mut task = ImageTask::new(scene(vec![part]), input, CancelToken::default()).unwrap();
++    assert_eq!((task.sw, task.sh), (8, 8));
++    let eye = Vec3::new(0.0, -10.0, 0.0);
++    let back = Vec3::new(0.0, -1.0, 0.0);
++    assert_eq!(task.request.camera.eye(), eye);
++    assert_eq!(task.back, back);
++
++    // Actual production projection of [A,C,B], not a hand-filled Triangle.
++    // With tan(fov/2)=1, clip w is depth from the eye: [2,8,4].
++    let projected = task.project(Draw::default()).unwrap().unwrap();
++    assert!(projected.surface.is_none());
++    let expected_points = [[0.5, 0.5], [2.5, 4.5], [4.5, 0.5]];
++    for ((actual, expected), (actual_inv_w, expected_inv_w)) in
++        projected.points.iter().zip(expected_points).zip(projected.inv_w.iter().zip([0.5, 0.125, 0.25]))
++    {
++        assert!((actual[0] - expected[0]).abs() < 1e-12);
++        assert!((actual[1] - expected[1]).abs() < 1e-12);
++        assert!((*actual_inv_w - expected_inv_w).abs() < 1e-12);
++    }
++    assert_eq!(projected.world, [vertices[0], vertices[2], vertices[1]]);
++
++    // Pixel sample (2.5,2.5) gives the analytic forward ray
++    // E + t*(-3/8,1,3/8). The triangle plane is 4x-y-4z=-6:
++    // plane(E)=10 and plane(ray)=-4, hence t=4 exactly.
++    let plane = Vec3::new(4.0, -1.0, -4.0);
++    assert_eq!((vertices[2] - vertices[0]).cross(vertices[1] - vertices[0]), plane * 4.0);
++    assert!(normal.dot(plane) > 0.0);
++    for vertex in vertices {
++        assert_eq!(plane.dot(vertex), -6.0);
++    }
++    let ray = Vec3::new(-3.0 / 8.0, 1.0, 3.0 / 8.0);
++    assert_eq!(plane.dot(eye), 10.0);
++    assert_eq!(plane.dot(ray), -4.0);
++    let expected_world = Vec3::new(-3.0 / 2.0, -6.0, 3.0 / 2.0);
++    assert_eq!(eye + ray * 4.0, expected_world);
++    let expected_view = Vec3::new(3.0 / 2.0, -4.0, -3.0 / 2.0);
++    assert_eq!(eye - expected_world, expected_view);
++    // Screen barycentrics [1/4,1/2,1/4] and clip w [2,8,4]
++    // imply world barycentrics [1/2,1/4,1/4]. An AFFINE world
++    // would instead be (-29/16,-9/2,13/16), a different camera ray.
++    let affine_world = Vec3::new(-29.0 / 16.0, -9.0 / 2.0, 13.0 / 16.0);
++    let affine_view = eye - affine_world;
++    assert!((normal.dot(expected_view) - 1.0 / (2.0 * 10.0_f64.sqrt())).abs() < 1e-14);
++    assert!((normal.dot(affine_view) + 1.0 / (16.0 * 10.0_f64.sqrt())).abs() < 1e-14);
++    assert!(normal.dot(back) < 0.0);
++
++    // Black base removes diffuse but retains dielectric Fresnel. Only the
++    // key light is above this normal. For roughness=1, D=1/pi and Smith
++    // visibility reduces to 1/((1+nv)*(1+nl)). F0=(1/5)^2.
++    let nv = 1.0 / 820.0_f64.sqrt();
++    let nl = 9.0 / (5.0 * 10.0_f64.sqrt());
++    let vh = ((1.0 - 3.0 / (5.0 * 82.0_f64.sqrt())) / 2.0).sqrt();
++    let fresnel = 1.0 / 25.0 + (24.0 / 25.0) * (1.0 - vh).powi(5);
++    let expected_radiance = 3.0 * nl * fresnel / (std::f64::consts::PI * (1.0 + nv) * (1.0 + nl));
++    let matte = crate::surface::OpaqueSurface::new(Vec3::ZERO, 0.0, 1.0, 1.5).unwrap();
++    let reference = crate::studio::shade_weighted(matte, normal, expected_view, light_weights).unwrap();
++    assert!((reference - Vec3::new(expected_radiance, expected_radiance, expected_radiance)).len() < 1e-14);
++    assert_eq!(crate::studio::shade_weighted(matte, normal, affine_view, light_weights).unwrap(), Vec3::ZERO);
++    assert_eq!(crate::studio::shade_weighted(matte, normal, back, light_weights).unwrap(), Vec3::ZERO);
++
++    // The original radical expression gives radiance0.0144120124528...
++    // Reinhard then sRGB yields31.6843707068... on the8-bit scale, hence32.
++    // Inspect the real production supersample before downsampling; no fake
++    // renderer, injected pixel, shared-branch PNG equality or golden is used.
++    for _ in 0..2048 {
++        if task.stage == Stage::Downsample {
++            break;
++        }
++        assert!(matches!(task.step(1).unwrap(), TaskPoll::Pending(_)));
++    }
++    assert!(task.stage == Stage::Downsample);
++    let sample = 2 * task.sw + 2;
++    assert!(task.depth[sample].is_finite(), "the analytic sample must be covered");
++    assert_eq!(task.pixels[sample], [32, 32, 32, 255]);
++    // Finish through the ordinary encoder as well; the unoccupied corner
++    // remains the original opaque background.
++    let png = finish(task);
++    let image = image::load_from_memory(&png).unwrap().to_rgba8();
++    assert_eq!((image.width(), image.height()), (4, 4));
++    assert_eq!(image.get_pixel(3, 3).0, [20, 40, 60, 255]);
++}
++

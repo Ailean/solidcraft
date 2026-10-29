@@ -1,0 +1,69 @@
+--- a/crates/ui-egui/src/render_workspace_interactive.rs
++++ b/crates/ui-egui/src/render_workspace_interactive.rs
+@@ -584,8 +584,9 @@
+ // Read-only private observations for original UI acceptance tests. No production
+ // command/API, host factory, renderer injection, worker gate or timing hook.
+ #[cfg(all(test, not(target_arch = "wasm32")))]
+-pub(super) fn test_current(app: &SolveApp) -> Option<solidcraft_engine::render::job::JobHandle> {
+-    app.render_workspace.interactive.context.as_ref()?.current().unwrap()
++pub(super) fn test_current(app: &SolveApp) -> solidcraft_engine::Result<Option<solidcraft_engine::render::job::JobHandle>> {
++    let Some(context) = app.render_workspace.interactive.context.as_ref() else { return Ok(None) };
++    context.current()
+ }
+ #[cfg(all(test, not(target_arch = "wasm32")))]
+ pub(super) fn test_cache(app: &SolveApp) -> Option<(FrameInfo, u32, bool, egui::TextureId)> {
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -6911,7 +6911,7 @@
+     let mut pending = h.app.render_workspace.interactive.pending.take().expect("production tick must start a capture");
+     let reply = pending.receiver.recv_timeout(Duration::from_secs(60)).expect("real snapshot worker did not return");
+     assert!(matches!(&reply, Ok(true)), "real snapshot must be adopted: {reply:?}");
+-    let job = interactive::test_current(&h.app).expect("Snapshot.run must attach the real CPU job");
++    let job = interactive::test_current(&h.app).expect("Interactive controller access must succeed").expect("Snapshot.run must attach the real CPU job");
+     assert_eq!(job.id(), pending.ticket.job_id());
+     assert_eq!(pending.uid, h.app.session.uid);
+     let status = job.wait_timeout(Duration::from_secs(60)).expect("real CPU job did not finish");
+@@ -7034,14 +7034,14 @@
+     interactive_clear_acceptance_frame(&mut h, epoch + 1.0, true);
+     let pending = h.app.render_workspace.interactive.pending.as_ref().unwrap();
+     assert_eq!(pending.ticket.job_id(), held.job.id(), "reactivation cannot replace an undrained capture");
+-    assert!(interactive::test_current(&h.app).is_none());
++    assert!(interactive::test_current(&h.app).expect("Interactive controller access must succeed").is_none());
+     held.sender.send(held.reply).unwrap();
+     let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 1.1, false, true);
+     assert!(!painted);
+     output.textures_delta.clear();
+     assert!(!h.app.render_workspace.interactive.pending());
+     assert!(interactive::test_cache(&h.app).is_none());
+-    assert!(interactive::test_current(&h.app).is_none());
++    assert!(interactive::test_current(&h.app).expect("Interactive controller access must succeed").is_none());
+     assert_eq!(interactive::inspect(&h.app)["phase"], "Updating");
+     assert!(interactive::inspect(&h.app)["error"].is_null());
+     interactive_assert_final_export_isolation(&mut h, &held.job);
+@@ -7093,7 +7093,7 @@
+     interactive_clear_acceptance_frame(&mut h, epoch + 0.3, false);
+     assert!(interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap() > visual);
+     assert_eq!(h.app.session.revision, revision);
+-    assert!(interactive::test_current(&h.app).is_none());
++    assert!(interactive::test_current(&h.app).expect("Interactive controller access must succeed").is_none());
+     held.sender.send(held.reply).unwrap();
+     let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.4, false, true);
+     assert!(!painted);
+@@ -7154,7 +7154,7 @@
+     assert_eq!(status["phase"], "Error");
+     assert!(status["error"].as_str().is_some_and(|error| !error.is_empty()));
+     assert!(!h.app.render_workspace.interactive.pending());
+-    assert!(interactive::test_current(&h.app).is_none());
++    assert!(interactive::test_current(&h.app).expect("Interactive controller access must succeed").is_none());
+     assert!(interactive::test_cache(&h.app).is_none());
+     assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
+     status["error"].clone()
+@@ -7215,7 +7215,7 @@
+         interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
+         let failed = interactive_recovery_hold_reply(&mut h);
+         assert!(failed.reply.as_ref().is_err_and(|error| !error.is_empty()), "missing HDR must fail actual preparation: {:?}", failed.reply);
+-        assert!(interactive::test_current(&h.app).is_none(), "preparation failure is not an admitted job-status failure");
++        assert!(interactive::test_current(&h.app).expect("Interactive controller access must succeed").is_none(), "preparation failure is not an admitted job-status failure");
+         let failed_id = failed.id;
+         failed.sender.send(failed.reply).unwrap();
+         let error = interactive_recovery_require_error(&mut h, epoch + 0.3);

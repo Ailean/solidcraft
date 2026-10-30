@@ -1,0 +1,206 @@
+diff --git a/crates/ui-egui/src/render_workspace_output.rs b/crates/ui-egui/src/render_workspace_output.rs
+--- a/crates/ui-egui/src/render_workspace_output.rs
++++ b/crates/ui-egui/src/render_workspace_output.rs
+@@ -652,8 +652,13 @@
+ }
+ 
+ pub(super) fn quality_choices(app: &mut SolveApp, ui: &mut egui::Ui) {
++    // Both GUI callers need a numerical draft for their existing persistence
++    // transaction. A missing draft must not let a preset mutate without saving.
++    let draft_error = setups::draft(app).err();
+     let reasons: [Option<String>; 4] = std::array::from_fn(|index| {
+-        SamplingPreset::ALL.get(index).and_then(|preset| validate_sampling_preset(app, *preset).err())
++        SamplingPreset::ALL.get(index).and_then(|preset| {
++            validate_sampling_preset(app, *preset).err().or_else(|| draft_error.clone())
++        })
+     });
+     let disabled = reasons.each_ref().map(|reason| reason.as_deref());
+     let labels = ["render.quality_draft", "render.quality_balanced", "render.quality_high", "render.quality_custom"].map(|key| app.tr(key));
+@@ -788,6 +793,21 @@
+         })
+     });
+ }
++// The stage bar is outside the inspector panel's persistence transaction.
++// Wrap only this control here; the Sampling inspector already owns its one
++// persist_editor call and rollback. Size/format keep their existing ownership.
++fn stage_quality_choices(app: &mut SolveApp, ui: &mut egui::Ui) {
++    let before = setups::draft(app).ok();
++    let rollback = app.render_workspace.view.clone();
++    quality_choices(app, ui);
++    if let Some(before) = before
++        && let Err(error) = setups::persist_editor(app, &before)
++    {
++        app.render_workspace.view = rollback;
++        app.set_status(error, true);
++    }
++}
++
+ pub(super) fn stage_tools(app: &mut SolveApp, ui: &mut egui::Ui) {
+     let (size, _) = super::output_summary(app);
+     let dropdown = ui_kit::compact_dropdown_menu(ui, "render_stage_size", &size, |ui| {
+@@ -805,7 +825,7 @@
+     });
+     crate::scenario::publish_target("render:stage:size", dropdown.rect);
+     studio::format_choices(app, ui);
+-    quality_choices(app, ui);
++    stage_quality_choices(app, ui);
+     let summary = check_summary(app);
+     let response = ui_kit::button(ui, &summary, ui_kit::Button::Normal).on_hover_text(app.tr("render.output_check_help"));
+     crate::scenario::publish_target("render:stage:check", response.rect);
+diff --git a/crates/ui-egui/src/render_workspace_output_tests.rs b/crates/ui-egui/src/render_workspace_output_tests.rs
+--- a/crates/ui-egui/src/render_workspace_output_tests.rs
++++ b/crates/ui-egui/src/render_workspace_output_tests.rs
+@@ -2337,3 +2337,153 @@
+     apply_sampling_preset(&mut h.app, SamplingPreset::High).unwrap();
+     assert!(h.app.render_workspace.view.inspector.quality_review.is_none());
+ }
++
++
++// Original persistence regressions. These feed egui events through the real
++// stage-bar or inspector-panel call chain, not a replacement persistence shim.
++// No native window, renderer, capture or runtime qualification is implied.
++#[derive(Clone, Copy, Debug)]
++enum SamplingGuiRoute {
++    StageBar,
++    Inspector,
++}
++
++fn sampling_gui_frame(h: &mut Harness, route: SamplingGuiRoute, events: Vec<egui::Event>) {
++    crate::scenario::clear_handles();
++    let mut output = h.ctx.run_ui(
++        egui::RawInput {
++            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1440.0, 1600.0))),
++            focused: true,
++            events,
++            ..Default::default()
++        },
++        |ui| match route {
++            SamplingGuiRoute::StageBar => {
++                let card = egui::Rect::from_min_size(egui::pos2(8.0, 8.0), egui::vec2(1400.0, ui_kit::StageBar::HEIGHT));
++                crate::render_ui::stage_bar(&mut h.app, ui, card);
++            }
++            SamplingGuiRoute::Inspector => super::super::panel(&mut h.app, ui),
++        },
++    );
++    output.textures_delta.clear();
++}
++
++fn sampling_gui_click(h: &mut Harness, route: SamplingGuiRoute, target: &str) {
++    sampling_gui_frame(h, route, vec![]);
++    let at = crate::scenario::rect_of(target).unwrap().center();
++    for pressed in [true, false] {
++        sampling_gui_frame(h, route, vec![egui::Event::PointerMoved(at), egui::Event::PointerButton {
++            pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE,
++        }]);
++    }
++    sampling_gui_frame(h, route, vec![]);
++}
++
++fn sampling_gui_fixture(method: ImageMethod, progressive: bool) -> Harness {
++    use solidcraft_engine::render::job::{CpuBudget, CpuProgressiveOptions};
++    let mut h = fixture();
++    h.app.render_workspace.view.method = method;
++    h.app.render_workspace.view.draft.width = 320;
++    h.app.render_workspace.view.draft.height = 200;
++    h.app.render_workspace.view.samples = 80; // Custom; High must be an actual change.
++    h.app.render_workspace.view.max_depth = 12;
++    h.app.render_workspace.view.seed = 817;
++    h.app.render_workspace.view.raytrace.budget = CpuBudget::Studio;
++    h.app.render_workspace.view.raytrace.progressive = progressive.then_some(CpuProgressiveOptions { samples_per_pixel: 7, seed: 491 });
++    setups::save(&mut h.app).unwrap();
++    let current = h.app.render_workspace.view.name.clone();
++    let other = h.app.session.doc.render.setups[&current].clone();
++    h.app.run("render.settings.set", json!({"name":"Other sampling shot","set":other})).unwrap();
++    setups::load(&mut h.app);
++    h.app.run("view.render_select", json!({"kind":"sampling"})).unwrap();
++    h.app.run("view.render_inspector", json!({"visible":true})).unwrap();
++    h
++}
++
++#[test]
++fn both_sampling_gui_routes_persist_one_undo_preserve_other_fields_and_survive_shot_switch() {
++    for route in [SamplingGuiRoute::StageBar, SamplingGuiRoute::Inspector] {
++        for (method, progressive) in [(ImageMethod::CpuRaytrace, false), (ImageMethod::CpuRaytrace, true), (ImageMethod::GpuRaytrace, false)] {
++            let mut h = sampling_gui_fixture(method, progressive);
++            sampling_gui_frame(&mut h, route, vec![]);
++            let name = h.app.render_workspace.view.name.clone();
++            let document = h.app.session.doc.to_json();
++            let original = h.app.session.doc.render.setups[&name].clone();
++            let other = h.app.session.doc.render.setups["Other sampling shot"].clone();
++            let camera = h.app.cam;
++            let undo = h.app.session.undo.len();
++            h.app.render_workspace.view.inspector.quality_review = Some(json!({"original":"advisory to clear only on commit"}));
++            sampling_gui_click(&mut h, route, "render:quality:high");
++            let mut expected = json!(original);
++            let samples = if method == ImageMethod::GpuRaytrace { 256 } else if progressive { 64 } else { 16 };
++            if method == ImageMethod::GpuRaytrace {
++                expected["job"]["options"]["samples"] = json!(samples);
++            } else if progressive {
++                expected["job"]["options"]["progressive"]["samples_per_pixel"] = json!(samples);
++            } else {
++                expected["job"]["options"]["primary_samples"] = json!(samples);
++            }
++            assert_eq!(json!(h.app.session.doc.render.setups[&name]), expected, "{route:?} {method:?} progressive={progressive}");
++            assert_eq!(h.app.session.undo.len(), undo + 1, "one command, including Inspector's existing wrapper");
++            assert_eq!(h.app.session.doc.render.setups["Other sampling shot"], other);
++            assert_eq!(h.app.cam, camera);
++            assert!(h.app.render_workspace.view.inspector.quality_review.is_none());
++            assert!(!h.app.render_workspace.view.dirty);
++            assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
++            switch_shot(&mut h.app, "Other sampling shot".into());
++            switch_shot(&mut h.app, name.clone());
++            assert_eq!(selected_sampling_preset(&h.app), Some(2));
++            assert_eq!(json!(h.app.session.doc.render.setups[&name]), expected);
++            assert_eq!(h.app.session.undo.len(), undo + 1, "switching shots must not hide a second persistence command");
++            h.app.run("edit.undo", json!({})).unwrap();
++            assert_eq!(h.app.session.doc.to_json(), document, "one Undo restores the complete saved document");
++            setups::load(&mut h.app);
++            assert_eq!(setups::draft(&h.app).unwrap(), original);
++        }
++    }
++}
++
++#[test]
++fn both_sampling_gui_routes_rollback_failed_persistence_including_advisory_and_dirty_state() {
++    for route in [SamplingGuiRoute::StageBar, SamplingGuiRoute::Inspector] {
++        let mut h = sampling_gui_fixture(ImageMethod::GpuRaytrace, false);
++        sampling_gui_frame(&mut h, route, vec![]);
++        // Affected sampling validation succeeds, but existing full setup
++        // validation must refuse depth zero. Do not make the oracle fit it.
++        h.app.render_workspace.view.max_depth = 0;
++        h.app.render_workspace.view.dirty = true;
++        h.app.render_workspace.view.inspector.quality_review = Some(json!({"original":"keep failed advisory"}));
++        assert!(validate_sampling_preset(&h.app, SamplingPreset::High).is_ok());
++        assert!(setups::draft(&h.app).unwrap().validate().is_err());
++        let view = format!("{:?}", h.app.render_workspace.view);
++        let document = h.app.session.doc.clone();
++        let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
++        let revision = h.app.render_workspace.revision;
++        sampling_gui_click(&mut h, route, "render:quality:high");
++        assert_eq!(format!("{:?}", h.app.render_workspace.view), view, "rollback must retain all fields/report for {route:?}");
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        assert_eq!(history, (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()));
++        assert_eq!(h.app.render_workspace.revision, revision);
++        assert!(h.app.status.is_some(), "the actual caller must report the persistence failure");
++    }
++}
++
++#[test]
++fn both_sampling_gui_routes_refuse_a_missing_numerical_draft_without_mutation_or_command() {
++    for route in [SamplingGuiRoute::StageBar, SamplingGuiRoute::Inspector] {
++        let mut h = sampling_gui_fixture(ImageMethod::GpuRaytrace, false);
++        sampling_gui_frame(&mut h, route, vec![]);
++        h.app.render_workspace.view.studio.environment = studio::Environment::Hdr;
++        h.app.render_workspace.view.dirty = true;
++        h.app.render_workspace.view.inspector.quality_review = Some(json!({"original":"uninspected HDR advisory"}));
++        assert!(setups::draft(&h.app).is_err());
++        assert!(validate_sampling_preset(&h.app, SamplingPreset::High).is_ok());
++        let view = format!("{:?}", h.app.render_workspace.view);
++        let document = h.app.session.doc.clone();
++        let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
++        sampling_gui_click(&mut h, route, "render:quality:high");
++        assert_eq!(format!("{:?}", h.app.render_workspace.view), view, "missing before draft must disable the actual preset for {route:?}");
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        assert_eq!(history, (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()));
++    }
++}

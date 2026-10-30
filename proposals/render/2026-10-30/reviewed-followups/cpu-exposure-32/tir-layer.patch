@@ -1,0 +1,307 @@
+--- a/crates/render/src/job/mod.rs
++++ b/crates/render/src/job/mod.rs
+@@ -1052,8 +1052,8 @@
+         if self.preset.is_some() && self.lights.is_some() {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "choose either a lighting preset or custom lights"));
+         }
+-        if !self.exposure_ev.is_finite() || !(-16.0..=16.0).contains(&self.exposure_ev) {
+-            return Err(JobError::new(ErrorCode::InvalidRequest, "raytrace exposure_ev must be finite and within -16..16"));
++        if !self.exposure_ev.is_finite() || !(-32.0..=32.0).contains(&self.exposure_ev) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "raytrace exposure_ev must be finite and within -32..32"));
+         }
+         if let Some(lights) = &self.lights {
+             if lights.len() > 8 || lights.capacity() > 8 {
+--- a/crates/render/src/raytrace/lighting.rs
++++ b/crates/render/src/raytrace/lighting.rs
+@@ -12,7 +12,9 @@
+ pub const MAX_LIGHT_INTENSITY: f64 = 64.0;
+ /// Refuse unrepresentable or excessive output rather than silently clip the transport.
+ pub const MAX_LINEAR_RADIANCE: f64 = 1.0e12;
+-pub const MAX_EXPOSURE_EV: f64 = 16.0;
++// With admitted radiance <=1e12, exposure <=2^32 remains below2^73 in f64.
++// This output-only range does not change the transport or film bounds.
++pub const MAX_EXPOSURE_EV: f64 = 32.0;
+ 
+ #[derive(Clone, Copy, Debug, PartialEq)]
+ pub struct DirectionalLight {
+@@ -154,7 +156,7 @@
+ pub fn map_to_display(radiance: Vec3, exposure_ev: f64) -> Result<Vec3> {
+     validate_radiance(radiance)?;
+     if !exposure_ev.is_finite() || !(-MAX_EXPOSURE_EV..=MAX_EXPOSURE_EV).contains(&exposure_ev) {
+-        return Err(TraceError::InvalidInput("RT2 exposure must be finite and in [-16, 16] EV"));
++        return Err(TraceError::InvalidInput("RT2 exposure must be finite and in [-32, 32] EV"));
+     }
+     crate::studio::tone_map(radiance * exposure_ev.exp2()).map_err(|_| TraceError::InvalidInput("invalid exposed radiance"))
+ }
+--- a/crates/render/src/job/rt2_tests.rs
++++ b/crates/render/src/job/rt2_tests.rs
+@@ -52,11 +52,14 @@
+ 
+ #[test]
+ fn exposure_refuses_nonfinite_and_out_of_range_values() {
+-    for exposure_ev in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -16.01, 16.01] {
++    for exposure_ev in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -33.0, 33.0, -32.01, 32.01] {
+         let options = RaytraceOptions { exposure_ev, ..Default::default() };
+         assert_eq!(options.validate().unwrap_err().code, ErrorCode::InvalidRequest);
+     }
+-    for exposure_ev in [-16.0, 16.0] {
++    // CPU exposure now shares the saved/UI range; the old +/-16 refusal
++    // is superseded, not a reason to change any transport oracle.
++    assert_eq!(RaytraceOptions::default().exposure_ev, 0.0);
++    for exposure_ev in [-32.0, -17.0, -16.0, 0.0, 16.0, 17.0, 32.0] {
+         assert!(RaytraceOptions { exposure_ev, ..Default::default() }.validate().is_ok());
+     }
+ }
+--- a/crates/render/src/raytrace/lighting_tests.rs
++++ b/crates/render/src/raytrace/lighting_tests.rs
+@@ -108,7 +108,7 @@
+     let excess_capacity = Vec::<DirectionalLight>::with_capacity(MAX_LIGHTS + 1);
+     assert_eq!(excess_capacity.len(), 0);
+     assert!(Lighting::new(excess_capacity).is_err(), "empty vectors cannot retain an unbounded light allocation");
+-    for bad in [f64::NAN, f64::INFINITY, -16.01, 16.01] {
++    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -33.0, 33.0, -32.01, 32.01] {
+         assert!(map_to_display(Vec3::ZERO, bad).is_err());
+     }
+     for bad in [f64::NAN, f64::INFINITY, -1.0, MAX_LINEAR_RADIANCE * 2.0] {
+@@ -132,3 +132,24 @@
+         warm.shade_linear(lambert(), Vec3::Z, Vec3::Z, |_, _| Ok(true)).unwrap()
+     );
+ }
++
++
++#[test]
++fn exposure_full_saved_range_has_finite_binary_scaled_rational_outputs() {
++    // Independent powers of two make the exposed channels exactly 1, 1/2, 0.
++    // Do not obtain expected values from another renderer or the display mapper.
++    for (ev, unit) in [(17.0, 1.0 / 131_072.0), (32.0, 1.0 / 4_294_967_296.0),
++        (-17.0, 131_072.0), (-32.0, 4_294_967_296.0)]
++    {
++        let actual = map_to_display(Vec3::new(unit, unit * 0.5, 0.0), ev).unwrap();
++        assert!((actual - Vec3::new(0.5, 1.0 / 3.0, 0.0)).len() < 1e-14);
++    }
++    for ev in [-32.0, -17.0, 0.0, 17.0, 32.0] {
++        assert_eq!(map_to_display(Vec3::ZERO, ev).unwrap(), Vec3::ZERO);
++        let high = map_to_display(Vec3::new(MAX_LINEAR_RADIANCE, MAX_LINEAR_RADIANCE, MAX_LINEAR_RADIANCE), ev).unwrap();
++        assert!(high.is_finite());
++        assert!([high.x, high.y, high.z].into_iter().all(|v| (0.0..=1.0).contains(&v)));
++    }
++    // Expanding exposure never expands the admitted LINEAR transport bound.
++    assert!(map_to_display(Vec3::new(MAX_LINEAR_RADIANCE * 2.0, 0.0, 0.0), -32.0).is_err());
++}
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -2899,3 +2899,64 @@
+     // No immediate zero-pool claim: native terminal publication alone does not
+     // prove concurrent task/lease destruction has finished.
+ }
++
++
++#[test]
++fn exposure_full_range_fixed_spatial_and_progressive_keep_linear_film_and_one_display_gain() {
++    // For +17/+32, reciprocal binary source radiance exposes to [1,1/2,1/4].
++    // Reinhard gives [1/2,1/3,1/5]; IEC sRGB8 rounds to [188,156,124].
++    // These are preselected mathematical values, not captures from the renderer.
++    for (ev, unit, expected) in [
++        (-32.0, 1.0, [0, 0, 0, 255]),
++        (-17.0, 1.0, [0, 0, 0, 255]),
++        (0.0, 1.0, [188, 156, 124, 255]),
++        (17.0, 1.0 / 131_072.0, [188, 156, 124, 255]),
++        (32.0, 1.0 / 4_294_967_296.0, [188, 156, 124, 255]),
++    ] {
++        let color = [unit, unit * 0.5, unit * 0.25];
++        for (progressive, primary_samples) in [(false, 1), (false, 4), (true, 1)] {
++            let (scene, mut request, mut options) = emission_fixture(false);
++            // Orthographic footprint x[-16,16],y[-8,8] fits inside both patches
++            // x[-20,0]/[0,20],y[-10,10] for every real pixel jitter.
++            request.camera.distance = 20.0;
++            options.exposure_ev = ev;
++            options.primary_samples = primary_samples;
++            options.progressive = progressive.then_some(job::CpuProgressiveOptions { samples_per_pixel: 3, seed: 919 });
++            options.emissions.as_mut().unwrap()[0].color = color;
++            request.raytrace = Some(options.clone());
++            let mut task = ImageTask::new(scene, request, CancelToken::default(), options).unwrap();
++            let mut observed_linear = false;
++            let mut completed = false;
++            for _ in 0..200_000 {
++                if let Some(state) = &task.progressive && state.film.ready() && state.film.samples() == 3 {
++                    let (rgb, covered, count) = state.film.pixel(0).unwrap();
++                    assert_eq!((covered, count), (3, 3));
++                    assert_eq!(rgb, color, "EV must not enter the accumulated linear film");
++                    let (dark, covered, count) = state.film.pixel(1).unwrap();
++                    assert_eq!((covered, count), (3, 3));
++                    assert_eq!(dark, [0.0; 3]);
++                    observed_linear = true;
++                }
++                let poll = if progressive {
++                    task.step_with_previews(1).unwrap()
++                } else {
++                    match task.step(1).unwrap() {
++                        TaskPoll::Pending(progress) => ImagePoll::Pending(progress),
++                        TaskPoll::Complete(png) => ImagePoll::Complete(png),
++                    }
++                };
++                let (png, final_frame) = match poll {
++                    ImagePoll::Pending(_) => continue,
++                    ImagePoll::Preview { png, .. } => { assert!(progressive); (png, false) },
++                    ImagePoll::Complete(png) => (png, true),
++                };
++                let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
++                assert_eq!(image.get_pixel(0, 0).0, expected, "EV={ev}, progressive={progressive}, spatial={primary_samples}");
++                assert_eq!(image.get_pixel(1, 0).0, [0, 0, 0, 255]);
++                if final_frame { completed = true; break; }
++            }
++            assert!(completed, "real public producer must finish its bounded fixture");
++            assert!(!progressive || observed_linear);
++        }
++    }
++}
+--- a/crates/doc/src/render_settings.rs
++++ b/crates/doc/src/render_settings.rs
+@@ -642,7 +642,8 @@
+         for setup in [
+             json!({"job":{}}),
+             json!({"job":{"method":"cpu_raytrace","options":{"primary_samples":2}}}),
+-            json!({"exposure_ev":17,"job":{"method":"cpu_raytrace"}}),
++            // CPU17 is now valid within the shared saved range;33 remains invalid.
++            json!({"exposure_ev":33,"job":{"method":"cpu_raytrace"}}),
+             json!({"exposure_ev":1,"job":{"method":"raster"}}),
+             json!({"environment_rotation":0.5,"job":{"method":"gpu_path"}}),
+             json!({"environment_intensity":0,"job":{"method":"cpu_raytrace"}}),
+@@ -783,4 +784,45 @@
+         let legacy_large = RenderSetup { width: 3840, height: 2160, ..Default::default() };
+         assert!(legacy_large.validate().is_err(), "large intent must name an explicit CPU job profile");
+     }
+-}
++
++    #[test]
++    fn cpu_exposure_expanded_range_roundtrips_offline_with_one_saved_authority() {
++        use serde_json::json;
++        assert_eq!(RenderSetup::default().exposure_ev, 0.0);
++        for ev in [-32.0, -17.0, 17.0, 32.0] {
++            for progressive in [false, true] {
++                let mut options = json!({"lights":[],"shadows":false});
++                if progressive { options["progressive"] = json!({"samples_per_pixel":3,"seed":31}); }
++                let saved = json!({"setups":{"EV":{"width":2,"height":1,"exposure_ev":ev,
++                    "job":{"method":"cpu_raytrace","options":options}}}});
++                let settings: RenderSettings = serde_json::from_value(saved).unwrap();
++                let document = Document { render: Arc::new(settings), ..Default::default() };
++                let text = document.to_json();
++                let wire: serde_json::Value = serde_json::from_str(&text).unwrap();
++                let pending = crate::format::pending_names();
++                if !pending.is_empty() { assert_eq!(wire["format_pending"], json!(pending)); }
++                let reopened = Document::from_json(&text).unwrap();
++                assert_eq!(document, reopened);
++                let setup = &reopened.render.setups["EV"];
++                assert_eq!(setup.exposure_ev, ev);
++                let RenderJob::CpuRaytrace { options } = setup.job.as_ref().unwrap() else { panic!("CPU method changed") };
++                let runtime = options.to_runtime(setup.exposure_ev).unwrap();
++                assert_eq!(runtime.exposure_ev, ev);
++                assert_eq!(runtime.budget, solidcraft_render::job::CpuBudget::Compact);
++                assert_eq!(runtime.progressive.is_some(), progressive);
++                assert!(serde_json::to_value(options).unwrap().get("exposure_ev").is_none());
++            }
++        }
++    }
++
++    #[test]
++    fn cpu_exposure_expansion_keeps_nonfinite_and_outside_saved_values_invalid() {
++        for ev in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -33.0, 33.0, -32.01, 32.01] {
++            let options = CpuJob::default();
++            assert!(options.to_runtime(ev).is_err());
++            let setup = RenderSetup { exposure_ev: ev, job: Some(RenderJob::CpuRaytrace { options }), ..Default::default() };
++            assert!(setup.validate().is_err());
++        }
++    }
++
++}
+--- a/crates/engine/src/cmd/render/job_tests.rs
++++ b/crates/engine/src/cmd/render/job_tests.rs
+@@ -1216,3 +1216,68 @@
+     assert!(Arc::ptr_eq(&document, &s.doc));
+     assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), host.admitted_bytes()));
+ }
++
++
++#[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++#[test]
++fn cpu_exposure_full_saved_range_check_start_preserves_fixed_and_progressive_capture() {
++    let host = CpuHost::for_platform().unwrap();
++    assert_eq!(host.kind(), solidcraft_render::job::HostKind::NativeWorker);
++    host.validate_integrator(solidcraft_render::job::Integrator::Raytrace).unwrap();
++    eprintln!("CPU_EXPOSURE_RANGE_BRANCH cpu_supported=true");
++    for ev in [-32.0, -17.0, 17.0, 32.0] {
++        for progressive in [false, true] {
++            let mut s = Session::default();
++            s.execute("solid.box", &json!({"length":20,"width":20,"height":10})).unwrap();
++            let mut options = json!({"lights":[],"shadows":false,"primary_samples":1});
++            if progressive { options["progressive"] = json!({"samples_per_pixel":3,"seed":31}); }
++            s.execute("render.settings.set", &json!({"name":"EV","set":{"width":4,"height":4,"exposure_ev":ev,
++                "job":{"method":"cpu_raytrace","options":options}}})).unwrap();
++            let saved = s.doc.render.setups["EV"].clone();
++            s = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
++            s.set_render_job_host(Some(host.clone())).unwrap();
++            s.execute("render.scene", &json!({})).unwrap();
++            let doc = s.doc.clone();
++            let before = (s.revision, s.evaluations, s.undo.len(), s.redo.len(), s.is_dirty());
++            let named = json!({"setup":"EV"});
++            let checked = s.execute("render.preflight", &named).unwrap();
++            assert_eq!(checked, s.execute("render.preflight", &json!({"settings":saved})).unwrap());
++            assert_eq!(checked["resolved"]["executor"], "cpu-raytrace");
++            assert_eq!(checked["request"]["raytrace"]["exposure_ev"], ev);
++            let started = s.execute("render.start", &named).unwrap();
++            let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++            let handle = s.render_job_handle(id).unwrap();
++            let status = handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap();
++            assert_eq!(status.progress.phase, solidcraft_render::job::Phase::Completed, "{:?}", status.error);
++            assert_eq!(json!(status.request), checked["request"]);
++            let captured = status.request.raytrace.as_ref().unwrap();
++            assert_eq!(captured.exposure_ev, ev);
++            assert_eq!(captured.progressive.is_some(), progressive);
++            assert_eq!(captured.budget, solidcraft_render::job::CpuBudget::Compact);
++            assert_eq!(status.options.exposure_ev, 0.0, "no second GPU exposure authority");
++            assert!(handle.frame().unwrap().is_some());
++            assert_eq!(s.doc.render.setups["EV"], saved);
++            assert!(Arc::ptr_eq(&doc, &s.doc));
++            assert_eq!(before, (s.revision, s.evaluations, s.undo.len(), s.redo.len(), s.is_dirty()));
++        }
++    }
++}
++
++#[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++#[test]
++fn cpu_exposure_outside_expanded_range_fails_check_and_start_before_missing_hdr_input() {
++    let mut s = Session::default();
++    s.set_render_job_host(Some(CpuHost::for_platform().unwrap())).unwrap();
++    for ev in [-33.0, 33.0, -32.01, 32.01] {
++        let params = json!({"integrator":"raytrace","settings":{"width":1,"height":1},
++            "raytrace":{"exposure_ev":ev},"environment":{"path":"never-read-exposure-boundary.hdr"}});
++        let doc = s.doc.clone();
++        let before = (s.revision, s.evaluations, s.undo.len(), s.redo.len(), s.is_dirty());
++        for command in ["render.preflight", "render.start"] {
++            let error = s.execute(command, &params).unwrap_err().to_string();
++            assert!(error.contains("raytrace exposure_ev must be finite and within -32..32"), "{error}");
++        }
++        assert!(Arc::ptr_eq(&doc, &s.doc));
++        assert_eq!(before, (s.revision, s.evaluations, s.undo.len(), s.redo.len(), s.is_dirty()));
++    }
++}
+--- a/docs/render-raytrace-image.md
++++ b/docs/render-raytrace-image.md
+@@ -127,7 +127,7 @@
+ Each light has a world-space `direction: [x,y,z]` pointing **towards the light**,
+ linear-sRGB `color: [r,g,b]` and relative `intensity`. Directions are normalized;
+ all numbers must be finite. At most eight lights and eight retained slots are
+-accepted, colors are in [0,1], intensity in [0,64], exposure in [-16,16] EV.
++accepted, colors are in [0,1], intensity in [0,64], exposure in [-32,32] EV.
+ Omitting lights uses the existing three-light studio. An empty list is darkness.
+ These are relative radiances, not measured lux or watts. Background color remains
+ independent of illumination and exposure.
+--- /dev/null
++++ b/crates/doc/src/format/pending/cpu-exposure-range.rs
+@@ -0,0 +1,6 @@
++//! Saved CPU render setups accept finite exposure from -32 through32 EV, matching the
++//! existing RenderSetup/UI range. Exposure is still saved only on RenderSetup, applied
++//! once after linear accumulation, with default0 unchanged. Existing valid designs keep
++//! their numerical intent; no migration/clamping or second exposure field is introduced.
++//! The last release refuses this newer design format and requests an update instead of
++//! accepting a CPU setup whose wider exposure it cannot execute.

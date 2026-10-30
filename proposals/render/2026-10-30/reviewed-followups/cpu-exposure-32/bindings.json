@@ -1,0 +1,407 @@
+{
+  "status": "SOURCE_REVIEWED_UNADOPTED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "source_index_sha256": "20451e6f3565a2238dd8a6663d5d2537496b8ec658bacbd887f02728c3912e42",
+  "source_manifest_sha256": "f5c099d3e326025f2d644c390440ccaa23ee3b802f17c71a4b6c80be8f888112",
+  "independent_source_review_sha256": "090c0d5769eabcfd1e87507b6157ede000149be6a10938c2aee95cf4028d289a",
+  "independent_byte_source_audit_sha256": "bbc34ebb8c4c4a0a65b56840afdadd457f14a3594fbedfc300759d8cf59f2322",
+  "variants_are_mutually_exclusive": true,
+  "variants": {
+    "standalone": {
+      "patch": "standalone.patch",
+      "sha256": "02cea7ff9d1758198cdadfb82890bc860968e4415637a8344382b1126b7fba86",
+      "files": [
+        {
+          "path": "crates/render/src/job/mod.rs",
+          "before": {
+            "sha256": "10b26a76921445cce0029a19e2c9e591663dc5b8876c055b2f07618a4ddeab74",
+            "bytes": 62100,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF_only": 1474,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "f9887e45044436924ba495fbbab606d7817fb42e68dd193fce57949832992179",
+            "bytes": 62100,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF_only": 1474,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/render/src/raytrace/lighting.rs",
+          "before": {
+            "sha256": "d7543bd1d083e8513d0fec0a30a62046dc7dc8a798ede8c63b3f801ce597f7a3",
+            "bytes": 6470,
+            "EOL": "CRLF",
+            "CRLF": 164,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "d4bc7940af35ced7a727106b371f67b53ec68615cbd3013de6ddcf5d42708486",
+            "bytes": 6620,
+            "EOL": "CRLF",
+            "CRLF": 166,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/render/src/job/rt2_tests.rs",
+          "before": {
+            "sha256": "48385581616ef4d5dd3f8a4695fbd491064d1ff2eb99d071bd51b61b8a928fd9",
+            "bytes": 8507,
+            "EOL": "CRLF",
+            "CRLF": 175,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "cf2dc29335b98a888dae0bc13a582cdef638a798d51475ea33c019bc09d8668a",
+            "bytes": 8755,
+            "EOL": "CRLF",
+            "CRLF": 178,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/render/src/raytrace/lighting_tests.rs",
+          "before": {
+            "sha256": "3fd8a1cd335141a26a45775d5fa91a5c9bc06d73d9f4be413a989877349cfde5",
+            "bytes": 7223,
+            "EOL": "CRLF",
+            "CRLF": 134,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "4ceadcafb4aebc60459b47c28015d3e8b88d32f5df0ad46ef0619e57990d871c",
+            "bytes": 8369,
+            "EOL": "CRLF",
+            "CRLF": 155,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/render/src/raytrace/image_tests.rs",
+          "before": {
+            "sha256": "4a4f46bc26e560fe4087a4fbf4439ea768d05fec2a414af7ad371f5a6897f62d",
+            "bytes": 115864,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF_only": 2455,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "226de2ad99df4248a9f6ad348673f077ec0c67914764b6a7545d577793c5aa30",
+            "bytes": 119196,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF_only": 2516,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/doc/src/render_settings.rs",
+          "before": {
+            "sha256": "3abf6fef9af5019d6823306d1fd17729dc9288c872956c57d7d5e6cddc2bd784",
+            "bytes": 42073,
+            "EOL": "CRLF",
+            "CRLF": 786,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "aee06fdc89e8fe542366e46eb318ad837c14cb21596f538e8235aecb29c5b9fe",
+            "bytes": 44532,
+            "EOL": "CRLF",
+            "CRLF": 828,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/engine/src/cmd/render/job_tests.rs",
+          "before": {
+            "sha256": "545f7e6043aa8fa1d24787021e199f25e2aebadeb4150641b1b77649ef38292a",
+            "bytes": 68734,
+            "EOL": "CRLF",
+            "CRLF": 1218,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "138dbb393a68dc282e739dc39f2702bf1e35a7a6047f4eff061a1af064bd953e",
+            "bytes": 72730,
+            "EOL": "MIXED",
+            "CRLF": 1218,
+            "LF_only": 65,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "docs/render-raytrace-image.md",
+          "before": {
+            "sha256": "f5bdec81117ce9026dfe6565dea0c274afb11a2bf5bb62be73df3d863d907f55",
+            "bytes": 13509,
+            "EOL": "CRLF",
+            "CRLF": 208,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "24ae57d817c66b341b802fbdd0b343607cf0e3c042b68bdcc92a3a2eb52bf3a3",
+            "bytes": 13509,
+            "EOL": "CRLF",
+            "CRLF": 208,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/doc/src/format/pending/cpu-exposure-range.rs",
+          "before": null,
+          "candidate": {
+            "sha256": "a2606f05004ed316b073e6316000a0cdc0f9e45eea074c048a3e4bfa18ba8a96",
+            "bytes": 508,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF_only": 6,
+            "UTF8_BOM": false
+          }
+        }
+      ],
+      "new_tests_uncompiled_unrun": 6
+    },
+    "tir-layer": {
+      "patch": "tir-layer.patch",
+      "sha256": "1d8b4f9e42853eb2dd2b1f90afac9a77f671ee156dc028f29af35befadf67be2",
+      "files": [
+        {
+          "path": "crates/render/src/job/mod.rs",
+          "before": {
+            "sha256": "d593f7ee7b612ba7bfd2b50ae058c90ce939690adf32ab95c387a11991dd4d2b",
+            "bytes": 65024,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF_only": 1530,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "409fe6b183c6258e2266f436f27956dff5aa0d51c9cb0dcf255ca944290df7db",
+            "bytes": 65024,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF_only": 1530,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/render/src/raytrace/lighting.rs",
+          "before": {
+            "sha256": "d7543bd1d083e8513d0fec0a30a62046dc7dc8a798ede8c63b3f801ce597f7a3",
+            "bytes": 6470,
+            "EOL": "CRLF",
+            "CRLF": 164,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "d4bc7940af35ced7a727106b371f67b53ec68615cbd3013de6ddcf5d42708486",
+            "bytes": 6620,
+            "EOL": "CRLF",
+            "CRLF": 166,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/render/src/job/rt2_tests.rs",
+          "before": {
+            "sha256": "48385581616ef4d5dd3f8a4695fbd491064d1ff2eb99d071bd51b61b8a928fd9",
+            "bytes": 8507,
+            "EOL": "CRLF",
+            "CRLF": 175,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "cf2dc29335b98a888dae0bc13a582cdef638a798d51475ea33c019bc09d8668a",
+            "bytes": 8755,
+            "EOL": "CRLF",
+            "CRLF": 178,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/render/src/raytrace/lighting_tests.rs",
+          "before": {
+            "sha256": "3fd8a1cd335141a26a45775d5fa91a5c9bc06d73d9f4be413a989877349cfde5",
+            "bytes": 7223,
+            "EOL": "CRLF",
+            "CRLF": 134,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "4ceadcafb4aebc60459b47c28015d3e8b88d32f5df0ad46ef0619e57990d871c",
+            "bytes": 8369,
+            "EOL": "CRLF",
+            "CRLF": 155,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/render/src/raytrace/image_tests.rs",
+          "before": {
+            "sha256": "dc80aea6476f20607d1137660c7f820745c795fd80cb0c3e884c7b8a6716abf7",
+            "bytes": 138409,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF_only": 2901,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "07d893be5a70572c67521ea498ca681385377fc74b8d3cd115e597e12aacac76",
+            "bytes": 141741,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF_only": 2962,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/doc/src/render_settings.rs",
+          "before": {
+            "sha256": "3abf6fef9af5019d6823306d1fd17729dc9288c872956c57d7d5e6cddc2bd784",
+            "bytes": 42073,
+            "EOL": "CRLF",
+            "CRLF": 786,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "aee06fdc89e8fe542366e46eb318ad837c14cb21596f538e8235aecb29c5b9fe",
+            "bytes": 44532,
+            "EOL": "CRLF",
+            "CRLF": 828,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/engine/src/cmd/render/job_tests.rs",
+          "before": {
+            "sha256": "545f7e6043aa8fa1d24787021e199f25e2aebadeb4150641b1b77649ef38292a",
+            "bytes": 68734,
+            "EOL": "CRLF",
+            "CRLF": 1218,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "138dbb393a68dc282e739dc39f2702bf1e35a7a6047f4eff061a1af064bd953e",
+            "bytes": 72730,
+            "EOL": "MIXED",
+            "CRLF": 1218,
+            "LF_only": 65,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "docs/render-raytrace-image.md",
+          "before": {
+            "sha256": "f5bdec81117ce9026dfe6565dea0c274afb11a2bf5bb62be73df3d863d907f55",
+            "bytes": 13509,
+            "EOL": "CRLF",
+            "CRLF": 208,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "24ae57d817c66b341b802fbdd0b343607cf0e3c042b68bdcc92a3a2eb52bf3a3",
+            "bytes": 13509,
+            "EOL": "CRLF",
+            "CRLF": 208,
+            "LF_only": 0,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/doc/src/format/pending/cpu-exposure-range.rs",
+          "before": null,
+          "candidate": {
+            "sha256": "a2606f05004ed316b073e6316000a0cdc0f9e45eea074c048a3e4bfa18ba8a96",
+            "bytes": 508,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF_only": 6,
+            "UTF8_BOM": false
+          }
+        }
+      ],
+      "new_tests_uncompiled_unrun": 6
+    }
+  },
+  "tir_prerequisites": {
+    "included_in_this_archive_unit": false,
+    "installed_in_current_development_source": false,
+    "complete_TIR_code_archive_claim": false,
+    "required_order_before_tir_layer_delta": [
+      {
+        "order": 1,
+        "unit": "deterministic TIR rebind",
+        "index_sha256": "81faffc262e3218c6c130f24f2f2b21c15181ed776e9f4971e49b27ef240c7ef",
+        "patch_sha256": "22b2adb537fa4546e7ea1213e6c9e82fed32ee280e0552e06d3f22ec22704f9e"
+      },
+      {
+        "order": 2,
+        "unit": "Strict TIR product policy",
+        "index_sha256": "ee17a4bb9843184fd98195b05b99a4a201a9c394159c4478cf0cb3fb1c0d9223",
+        "patch_sha256": "6ae58388630a1005e8d609c5c4591cfe1bd7e9f20a550236047b699745d98ebe"
+      },
+      {
+        "order": 3,
+        "unit": "TIR acceptance layer",
+        "index_sha256": "2dd94657f3efa4f775153595ed54ced5c00432e04f2b7145f34796767a4fa913",
+        "patch_sha256": "466a48335052e22928b364e246815157ff588690165ad19eec4fbeccada1762c"
+      }
+    ],
+    "unchanged_production_image_dependency": {
+      "path": "crates/render/src/raytrace/image.rs",
+      "sha256": "928115ae0c8cb460438da47a1b73c94f37e4a8dbf2c48c301957a40eadfb4ccf"
+    },
+    "do_not_apply_mechanical_default_initializer_twice": "Already contained in the referenced policy; it is not a separate required layer."
+  },
+  "original_negative_contract_source_bodies": [
+    {
+      "source_path": "crates/render/src/job/rt2_tests.rs",
+      "function": "exposure_refuses_nonfinite_and_out_of_range_values",
+      "archived_path": "history/exposure_refuses_nonfinite_and_out_of_range_values.before.rs.txt",
+      "sha256": "a17b68ceb7465d3ffd96d62c079e191866e40d51595f0b5ab20e0792172524de",
+      "qualification": "Superseded original source, not a test execution result"
+    },
+    {
+      "source_path": "crates/render/src/raytrace/lighting_tests.rs",
+      "function": "invalid_inputs_are_refused_and_extreme_direction_scales_normalize",
+      "archived_path": "history/invalid_inputs_are_refused_and_extreme_direction_scales_normalize.before.rs.txt",
+      "sha256": "a2d30fd36b1307f580d13a3b75f50d90f10dc36b4ce2228a2c4c737e367f8a77",
+      "qualification": "Superseded original source, not a test execution result"
+    },
+    {
+      "source_path": "crates/doc/src/render_settings.rs",
+      "function": "portable_jobs_reject_unbounded_invalid_and_nonportable_inputs",
+      "archived_path": "history/portable_jobs_reject_unbounded_invalid_and_nonportable_inputs.before.rs.txt",
+      "sha256": "41d8d74484f777a40c2a689fab8fa57154ea941470b5ede69c8d5ae7bfce7307",
+      "qualification": "Superseded original source, not a test execution result"
+    }
+  ],
+  "format_numbers_modified": false,
+  "EOL_policy": "Preserve original patch bytes. Engine job_tests keeps CRLF prefix and LF append; mixed RAW endpoint is explicit, not silently normalized."
+}

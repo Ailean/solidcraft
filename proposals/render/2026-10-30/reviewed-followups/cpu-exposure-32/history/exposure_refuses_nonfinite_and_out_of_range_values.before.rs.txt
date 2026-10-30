@@ -1,0 +1,9 @@
+fn exposure_refuses_nonfinite_and_out_of_range_values() {
+    for exposure_ev in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -16.01, 16.01] {
+        let options = RaytraceOptions { exposure_ev, ..Default::default() };
+        assert_eq!(options.validate().unwrap_err().code, ErrorCode::InvalidRequest);
+    }
+    for exposure_ev in [-16.0, 16.0] {
+        assert!(RaytraceOptions { exposure_ev, ..Default::default() }.validate().is_ok());
+    }
+}

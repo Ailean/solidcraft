@@ -1,0 +1,33 @@
+{
+  "status": "SOURCE_REVIEWED_APPLIED_TO_C18_DEVELOPMENT_SOURCE_EXECUTION_RESULTS_SEPARATE",
+  "path": "crates/ui-egui/src/render_workspace_tests.rs",
+  "base_source_manifest_sha256": "a97b34e0f7445c5f1b98f05522b8e0b97621e6b34a1c9100510af13b1ec515bf",
+  "applied_source_manifest_sha256": "662aede57b9a8ee009326ecfeccd2330cfe5303db3a8575c7a9e536727881814",
+  "source_packet_manifest_sha256": "06d9c9701bdfdd08c2b5f28b4018edb5988b1eb3368e55c6b8f1d92f24b315e0",
+  "source_review_sha256": "d2017348d3c20b3fc20bb56280677691bca379bbcdfe08dfc9f556e08b5b0fec",
+  "before": {
+    "sha256": "b075355952a4a55eb123cc8aa330a78f3db904b8b8addce77ef5148b95518b25",
+    "bytes": 552354,
+    "EOL": "LF",
+    "CRLF": 0,
+    "LF_only": 10168,
+    "UTF8_BOM": false
+  },
+  "candidate": {
+    "sha256": "29bb602f3f5e02aecb2d3f2caad2cf38c703370d32920cbb3fa24123fee40771",
+    "bytes": 553223,
+    "EOL": "LF",
+    "CRLF": 0,
+    "LF_only": 10179,
+    "UTF8_BOM": false
+  },
+  "patch": {
+    "path": "fix.patch",
+    "sha256": "bcfc4c50969d893dfdd51d2401285731b8044f6d71d9982ee92fefb13d38e7f7"
+  },
+  "production_files_changed": 0,
+  "test_declarations_added": 0,
+  "original_assertion_change": "Compare equivalent strict32-byte digests rather than unlike JSON array and hex-string values; independently verify SHA256(original immutable fixture bytes). All other assertions/thresholds unchanged.",
+  "tests_executed_by_source_review": 0,
+  "current_execution_tracking_url": "https://github.com/tangency-labs/solidcraft/issues/6201"
+}

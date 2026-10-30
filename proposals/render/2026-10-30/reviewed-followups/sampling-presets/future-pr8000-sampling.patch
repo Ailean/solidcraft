@@ -1,0 +1,401 @@
+--- a/crates/ui-egui/src/render_workspace_output.rs
++++ b/crates/ui-egui/src/render_workspace_output.rs
+@@ -352,7 +352,12 @@
+ pub(super) fn sampling_editor(app: &mut SolveApp, ui: &mut egui::Ui) {
+     editor_section(app, ui, "render_sampling_quality", "render.output_quality", |app, ui| {
+         quality_choices(app, ui);
+-        ui_kit::text(ui, app.tr("render.output_quality_waiting"), ui_kit::Text::Note("render.output_quality_waiting"));
++        let key = if app.render_workspace.view.method == ImageMethod::Raster {
++            "render.sampling_preset_raster"
++        } else {
++            "render.sampling_presets_help"
++        };
++        ui_kit::text(ui, app.tr(key), ui_kit::Text::Note(key));
+         browse_button(app, ui, "quality", "render.children.review_quality");
+         library::inspect_kinds(app, ui, &["quality"]);
+     });
+@@ -553,10 +558,106 @@
+     let draft = &app.render_workspace.view.draft;
+     limits.fit(u64::from(draft.width).checked_mul(limits.max_dimension)?, u64::from(draft.height).checked_mul(limits.max_dimension)?, None)
+ }
++// Sampling-only choices. These do not select a renderer or a resource envelope.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum SamplingPreset {
++    Draft,
++    Balanced,
++    High,
++}
++impl SamplingPreset {
++    const ALL: [Self; 3] = [Self::Draft, Self::Balanced, Self::High];
++
++    fn fixed_cpu_samples(self) -> u8 {
++        match self {
++            Self::Draft => 1,
++            Self::Balanced => 4,
++            Self::High => 16,
++        }
++    }
++    fn progressive_cpu_samples(self) -> u32 {
++        match self {
++            Self::Draft => 4,
++            Self::Balanced => 16,
++            Self::High => 64,
++        }
++    }
++    fn gpu_samples(self) -> u32 {
++        match self {
++            Self::Draft => 16,
++            Self::Balanced => 64,
++            Self::High => 256,
++        }
++    }
++}
++
++/// Pure affected-field validation. Full capture, capability, work and memory
++/// admission still belong to the existing Check/Start path, never to a preset.
++fn validate_sampling_preset(app: &SolveApp, preset: SamplingPreset) -> Result<(), String> {
++    let view = &app.render_workspace.view;
++    match view.method {
++        ImageMethod::Raster => Err(app.tr("render.sampling_preset_raster").to_owned()),
++        ImageMethod::CpuRaytrace => {
++            let mut options = view.raytrace.clone();
++            if let Some(progressive) = &mut options.progressive {
++                progressive.samples_per_pixel = preset.progressive_cpu_samples();
++            } else {
++                options.primary_samples = preset.fixed_cpu_samples();
++            }
++            options.validate().map_err(|error| error.to_string())?;
++            options.budget.validate_image(view.draft.width, view.draft.height, options.progressive)
++                .map_err(|error| error.to_string())
++        }
++        ImageMethod::GpuRaytrace => {
++            // These three bounded values satisfy JobOptions' samples range.
++            // Adaptive minimum/pilot/error intent is retained, not adjusted to
++            // force a smaller maximum to fit. No resource or scene is captured.
++            if let Some(adaptive) = view.studio.adaptive {
++                adaptive.validate(preset.gpu_samples()).map_err(|error| error.to_string())?;
++            }
++            Ok(())
++        }
++    }
++}
++
++fn apply_sampling_preset(app: &mut SolveApp, preset: SamplingPreset) -> Result<(), String> {
++    validate_sampling_preset(app, preset)?;
++    match app.render_workspace.view.method {
++        ImageMethod::Raster => return Err(app.tr("render.sampling_preset_raster").to_owned()),
++        ImageMethod::CpuRaytrace => {
++            let options = &mut app.render_workspace.view.raytrace;
++            if let Some(progressive) = &mut options.progressive {
++                progressive.samples_per_pixel = preset.progressive_cpu_samples();
++            } else {
++                options.primary_samples = preset.fixed_cpu_samples();
++            }
++        }
++        ImageMethod::GpuRaytrace => app.render_workspace.view.samples = preset.gpu_samples(),
++    }
++    app.render_workspace.view.inspector.quality_review = None;
++    app.render_workspace.view.dirty = true;
++    Ok(())
++}
++
++fn selected_sampling_preset(app: &SolveApp) -> Option<usize> {
++    let view = &app.render_workspace.view;
++    SamplingPreset::ALL.into_iter().position(|preset| match view.method {
++        ImageMethod::Raster => false,
++        ImageMethod::CpuRaytrace => view.raytrace.progressive.map_or_else(
++            || view.raytrace.primary_samples == preset.fixed_cpu_samples(),
++            |options| options.samples_per_pixel == preset.progressive_cpu_samples(),
++        ),
++        ImageMethod::GpuRaytrace => view.samples == preset.gpu_samples(),
++    })
++}
++
+ pub(super) fn quality_choices(app: &mut SolveApp, ui: &mut egui::Ui) {
+-    let reason = app.tr("render.output_quality_waiting");
++    let reasons: [Option<String>; 4] = std::array::from_fn(|index| {
++        SamplingPreset::ALL.get(index).and_then(|preset| validate_sampling_preset(app, *preset).err())
++    });
++    let disabled = reasons.each_ref().map(|reason| reason.as_deref());
+     let labels = ["render.quality_draft", "render.quality_balanced", "render.quality_high", "render.quality_custom"].map(|key| app.tr(key));
+-    let mut quality = 3;
++    let mut quality = selected_sampling_preset(app).unwrap_or(3);
+     if ui_kit::segmented(
+         ui,
+         &mut quality,
+@@ -566,13 +667,20 @@
+             intrinsic: true,
+             compact: true,
+             targets: &["render:quality:draft", "render:quality:balanced", "render:quality:high", "render:quality:custom"],
+-            disabled: &[Some(reason), Some(reason), Some(reason), None],
++            disabled: &disabled,
+             ..Default::default()
+         },
+     ) {
+-        let _ = app.run("view.render_select", json!({"kind":"sampling"}));
+-    }
+-}
++        if let Some(preset) = SamplingPreset::ALL.get(quality) {
++            if let Err(error) = apply_sampling_preset(app, *preset) {
++                app.set_status(error, true);
++            }
++        } else {
++            let _ = app.run("view.render_select", json!({"kind":"sampling"}));
++        }
++    }
++}
++
+ pub(super) fn check_summary(app: &SolveApp) -> String {
+     let state = match &app.render_workspace.view.inspector.checked {
+         Some(check) if check.current(app) && super::image_params(app).as_ref().ok() == Some(&check.request) => {
+--- a/crates/ui-egui/src/render_workspace_output_tests.rs
++++ b/crates/ui-egui/src/render_workspace_output_tests.rs
+@@ -2133,3 +2133,207 @@
+     assert!(h.app.render_workspace.view.job.is_none());
+     assert!(Arc::ptr_eq(&before, &h.app.session.doc));
+ }
++
++// Original sampling-only contract cases. No renderer, device, preflight or job
++// is fabricated or executed by these draft/egui-control tests.
++fn sampling_preset_fixture(method: ImageMethod) -> Harness {
++    let mut h = Harness::new();
++    h.app.ui.tab = "RENDER".into();
++    h.app.render_workspace.view.method = method;
++    h.app.render_workspace.view.draft.width = 320;
++    h.app.render_workspace.view.draft.height = 200;
++    h
++}
++
++#[test]
++fn fixed_cpu_sampling_presets_change_only_primary_aa_and_preserve_optical_and_hdr_intent() {
++    use solidcraft_engine::render::job::{CpuBudget, DielectricBoundary, DielectricOptions, ReflectionBody, ReflectionMode, ReflectionOptions};
++    let mut h = sampling_preset_fixture(ImageMethod::CpuRaytrace);
++    h.app.render_workspace.view.raytrace.budget = CpuBudget::Studio;
++    h.app.render_workspace.view.raytrace.dielectrics.push(DielectricOptions {
++        body_index: 0, body_name: "Original optics".into(), boundary: DielectricBoundary::ClosedBox,
++        ior: 1.5, absorption_per_mm: [0.01, 0.02, 0.03], thickness_mm: 0.0,
++    });
++    h.app.render_workspace.view.raytrace.reflections = Some(ReflectionOptions {
++        bodies: vec![ReflectionBody { body: "Separate reflector".into(), mode: ReflectionMode::RoughSpecular }],
++        samples: 8, max_bounces: 3,
++    });
++    h.app.render_workspace.view.cpu.environment = cpu::Environment::Hdr;
++    h.app.render_workspace.view.cpu.rotation_rad = 0.75;
++    h.app.render_workspace.view.cpu.intensity = 2.0;
++    h.app.render_workspace.view.cpu.samples = 64;
++    // HDR deliberately remains uninspected: a sampling choice neither reads
++    // the file nor claims the whole optical/HDR request has been admitted.
++    let before_cpu = format!("{:?}", h.app.render_workspace.view.cpu);
++    let before_settings = json!(h.app.render_workspace.view.draft);
++    let camera = h.app.cam;
++    let document = h.app.session.doc.clone();
++    let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty());
++    let original = json!(h.app.render_workspace.view.raytrace);
++    for (preset, samples) in [(SamplingPreset::Draft, 1), (SamplingPreset::Balanced, 4), (SamplingPreset::High, 16)] {
++        apply_sampling_preset(&mut h.app, preset).unwrap();
++        let mut expected = original.clone();
++        expected["primary_samples"] = json!(samples);
++        assert_eq!(json!(h.app.render_workspace.view.raytrace), expected);
++        assert!(h.app.render_workspace.view.raytrace.progressive.is_none());
++        assert_eq!(format!("{:?}", h.app.render_workspace.view.cpu), before_cpu);
++        assert_eq!(json!(h.app.render_workspace.view.draft), before_settings);
++        assert_eq!(h.app.render_workspace.view.method, ImageMethod::CpuRaytrace);
++        assert_eq!(h.app.cam, camera);
++    }
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!(history, (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty()));
++    assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
++}
++
++#[test]
++fn progressive_cpu_presets_keep_mode_seed_secondary_attempts_and_the_selected_resource_profile() {
++    use solidcraft_engine::render::job::{CpuBudget, CpuProgressiveOptions, DielectricBoundary, DielectricOptions, ReflectionBody, ReflectionMode, ReflectionOptions};
++    let mut h = sampling_preset_fixture(ImageMethod::CpuRaytrace);
++    h.app.render_workspace.view.raytrace.budget = CpuBudget::Studio;
++    h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel: 7, seed: 491 });
++    h.app.render_workspace.view.raytrace.reflections = Some(ReflectionOptions {
++        bodies: vec![ReflectionBody { body: "Separate reflector".into(), mode: ReflectionMode::RoughSpecular }],
++        samples: 1, max_bounces: 3,
++    });
++    h.app.render_workspace.view.raytrace.dielectrics.push(DielectricOptions {
++        body_index: 0, body_name: "Original glass".into(), boundary: DielectricBoundary::ClosedBox,
++        ior: 1.7, absorption_per_mm: [0.02, 0.01, 0.0], thickness_mm: 0.0,
++    });
++    let original = json!(h.app.render_workspace.view.raytrace);
++    for (preset, samples) in [(SamplingPreset::Draft, 4), (SamplingPreset::Balanced, 16), (SamplingPreset::High, 64)] {
++        apply_sampling_preset(&mut h.app, preset).unwrap();
++        let mut expected = original.clone();
++        expected["progressive"]["samples_per_pixel"] = json!(samples);
++        assert_eq!(json!(h.app.render_workspace.view.raytrace), expected);
++        assert_eq!(h.app.render_workspace.view.raytrace.budget, CpuBudget::Studio);
++        assert_eq!((h.app.render_workspace.view.draft.width, h.app.render_workspace.view.draft.height), (320, 200));
++    }
++}
++
++#[test]
++fn gpu_presets_only_change_sample_cap_and_keep_adaptive_effects_lights_hdr_and_depth() {
++    use solidcraft_engine::render::job::{JobOptions, adaptive::AdaptiveSampling};
++    let mut h = sampling_preset_fixture(ImageMethod::GpuRaytrace);
++    h.app.render_workspace.view.max_depth = 12;
++    h.app.render_workspace.view.seed = 817;
++    h.app.render_workspace.view.draft.exposure_ev = 1.25;
++    h.app.render_workspace.view.studio.adaptive = Some(AdaptiveSampling { min_samples: 16, relative_error: 0.03, ..Default::default() });
++    h.app.render_workspace.view.studio.denoise = true;
++    h.app.render_workspace.view.studio.linear_exr = true;
++    h.app.render_workspace.view.studio.transmission_samples = 4;
++    h.app.render_workspace.view.studio.environment = studio::Environment::Hdr;
++    h.app.render_workspace.view.studio.rotation_rad = 0.8;
++    let studio_before = format!("{:?}", h.app.render_workspace.view.studio);
++    let settings = json!(h.app.render_workspace.view.draft);
++    let camera = h.app.cam;
++    for (preset, samples) in [(SamplingPreset::Draft, 16), (SamplingPreset::Balanced, 64), (SamplingPreset::High, 256)] {
++        // Independent API bound: each proposed cap is a real supported sample
++        // value, not an alias for a profile, dimension or denoiser change.
++        JobOptions { samples, ..Default::default() }.validate().unwrap();
++        apply_sampling_preset(&mut h.app, preset).unwrap();
++        assert_eq!(h.app.render_workspace.view.samples, samples);
++        assert_eq!((h.app.render_workspace.view.max_depth, h.app.render_workspace.view.seed), (12, 817));
++        assert_eq!(format!("{:?}", h.app.render_workspace.view.studio), studio_before);
++        assert_eq!(json!(h.app.render_workspace.view.draft), settings);
++        assert_eq!(h.app.render_workspace.view.method, ImageMethod::GpuRaytrace);
++        assert_eq!(h.app.cam, camera);
++    }
++}
++
++#[test]
++fn sampling_preset_refusal_is_atomic_for_existing_cpu_envelopes_and_adaptive_minimum() {
++    use solidcraft_engine::render::job::{CpuBudget, CpuProgressiveOptions, adaptive::AdaptiveSampling};
++    let mut h = sampling_preset_fixture(ImageMethod::CpuRaytrace);
++    h.app.render_workspace.view.raytrace.budget = CpuBudget::Compact;
++    h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel: 4, seed: 77 });
++    h.app.render_workspace.view.draft.width = 1024;
++    h.app.render_workspace.view.draft.height = 1024;
++    h.app.render_workspace.view.dirty = false;
++    let original = json!(h.app.render_workspace.view.raytrace);
++    assert!(apply_sampling_preset(&mut h.app, SamplingPreset::High).is_err());
++    assert_eq!(json!(h.app.render_workspace.view.raytrace), original);
++    assert!(!h.app.render_workspace.view.dirty);
++    assert_eq!((h.app.render_workspace.view.draft.width, h.app.render_workspace.view.draft.height), (1024, 1024));
++    h.app.render_workspace.view.method = ImageMethod::GpuRaytrace;
++    h.app.render_workspace.view.samples = 256;
++    h.app.render_workspace.view.studio.adaptive = Some(AdaptiveSampling { min_samples: 128, ..Default::default() });
++    let adaptive = h.app.render_workspace.view.studio.adaptive;
++    assert!(apply_sampling_preset(&mut h.app, SamplingPreset::Draft).is_err());
++    assert_eq!(h.app.render_workspace.view.samples, 256);
++    assert_eq!(h.app.render_workspace.view.studio.adaptive, adaptive);
++    assert!(!h.app.render_workspace.view.dirty);
++}
++
++#[test]
++fn sampling_preset_selection_is_derived_and_raster_does_not_invent_quality_parameters() {
++    let mut h = sampling_preset_fixture(ImageMethod::GpuRaytrace);
++    h.app.render_workspace.view.samples = 64;
++    assert_eq!(selected_sampling_preset(&h.app), Some(1));
++    h.app.render_workspace.view.samples = 80;
++    assert_eq!(selected_sampling_preset(&h.app), None);
++    h.app.render_workspace.view.method = ImageMethod::Raster;
++    let original = json!(h.app.render_workspace.view.draft);
++    for preset in SamplingPreset::ALL {
++        assert!(apply_sampling_preset(&mut h.app, preset).is_err());
++        assert_eq!(json!(h.app.render_workspace.view.draft), original);
++        assert_eq!(h.app.render_workspace.view.method, ImageMethod::Raster);
++        assert_eq!(h.app.render_workspace.view.samples, 80);
++    }
++}
++
++fn sampling_preset_frame(h: &mut Harness, events: Vec<egui::Event>) {
++    let mut output = h.ctx.run_ui(
++        egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 200.0))), events, ..Default::default() },
++        |ui| quality_choices(&mut h.app, ui),
++    );
++    output.textures_delta.clear();
++}
++
++fn sampling_preset_click(h: &mut Harness, target: &str) {
++    let at = crate::scenario::rect_of(target).unwrap().center();
++    for pressed in [true, false] {
++        sampling_preset_frame(h, vec![egui::Event::PointerMoved(at), egui::Event::PointerButton {
++            pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE,
++        }]);
++    }
++    sampling_preset_frame(h, vec![]);
++}
++
++#[test]
++fn original_quality_segments_apply_sampling_and_custom_keeps_its_existing_navigation_action() {
++    let mut h = sampling_preset_fixture(ImageMethod::CpuRaytrace);
++    sampling_preset_frame(&mut h, vec![]);
++    sampling_preset_click(&mut h, "render:quality:balanced");
++    assert_eq!(h.app.render_workspace.view.raytrace.primary_samples, 4);
++    sampling_preset_click(&mut h, "render:quality:high");
++    assert_eq!(h.app.render_workspace.view.raytrace.primary_samples, 16);
++    sampling_preset_click(&mut h, "render:quality:custom");
++    assert_eq!(h.app.render_workspace.view.selection, super::super::RenderSelection::Sampling);
++    assert_eq!(h.app.render_workspace.view.raytrace.primary_samples, 16);
++    assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
++}
++
++#[test]
++fn sampling_preset_help_is_present_in_nine_locales_without_a_quality_guarantee() {
++    for language in ["ar", "de", "en", "es", "he", "ja", "ko", "vi", "zh"] {
++        let locale = crate::i18n::Locale::for_language(language);
++        for key in ["render.sampling_preset_raster", "render.sampling_presets_help"] {
++            assert_ne!(locale.text(key), key);
++            assert!(!locale.text(key).is_empty());
++        }
++    }
++}
++
++#[test]
++fn sampling_preset_clears_library_advisory_only_after_successful_validation() {
++    use solidcraft_engine::render::job::adaptive::AdaptiveSampling;
++    let mut h = sampling_preset_fixture(ImageMethod::GpuRaytrace);
++    let advisory = json!({"source":"original explicit library projection", "gpu_options":{"samples":256}});
++    h.app.render_workspace.view.inspector.quality_review = Some(advisory.clone());
++    h.app.render_workspace.view.studio.adaptive = Some(AdaptiveSampling { min_samples:128, ..Default::default() });
++    assert!(apply_sampling_preset(&mut h.app, SamplingPreset::Draft).is_err());
++    assert_eq!(h.app.render_workspace.view.inspector.quality_review, Some(advisory));
++    apply_sampling_preset(&mut h.app, SamplingPreset::High).unwrap();
++    assert!(h.app.render_workspace.view.inspector.quality_review.is_none());
++}
+--- /dev/null
++++ b/assets/locales/pending/render-sampling-presets.json
+@@ -0,0 +1,38 @@
++{
++  "ar": {
++    "render.sampling_preset_raster": "يستخدم التصيير النقطي تنعيم حواف ثابتًا؛ لا يمكن تغيير أخذ عينات الكاميرا هنا.",
++    "render.sampling_presets_help": "تغيّر الإعدادات المسبقة أخذ عينات الكاميرا فقط. تظل الطريقة وملف الموارد والدقة والمواد والتأثيرات كما حُددت. يظل الفحص يتحقق من الطلب الكامل."
++  },
++  "de": {
++    "render.sampling_preset_raster": "Raster verwendet festes Antialiasing; die Kameraabtastung lässt sich hier nicht ändern.",
++    "render.sampling_presets_help": "Vorgaben ändern nur die Kameraabtastung. Methode, Ressourcenprofil, Auflösung, Materialien und Effekte bleiben erhalten. Prüfen validiert weiterhin die gesamte Anforderung."
++  },
++  "en": {
++    "render.sampling_preset_raster": "Raster uses fixed antialiasing; camera sampling cannot be changed here.",
++    "render.sampling_presets_help": "Presets change camera sampling only. The method, resource profile, resolution, materials and effects stay as authored. Check still validates the full request."
++  },
++  "es": {
++    "render.sampling_preset_raster": "Raster utiliza antialiasing fijo; aquí no se puede cambiar el muestreo de cámara.",
++    "render.sampling_presets_help": "Los presets solo cambian el muestreo de cámara. Se conservan el método, el perfil de recursos, la resolución, los materiales y los efectos. Comprobar sigue validando la solicitud completa."
++  },
++  "he": {
++    "render.sampling_preset_raster": "רינדור רסטר משתמש בהחלקת קצוות קבועה; לא ניתן לשנות כאן את דגימת המצלמה.",
++    "render.sampling_presets_help": "הקביעות משנות רק את דגימת המצלמה. השיטה, פרופיל המשאבים, הרזולוציה, החומרים והאפקטים נשמרים. בדיקה ממשיכה לאמת את הבקשה המלאה."
++  },
++  "ja": {
++    "render.sampling_preset_raster": "ラスタは固定アンチエイリアシングを使用します。ここではカメラのサンプリングを変更できません。",
++    "render.sampling_presets_help": "プリセットはカメラのサンプリングだけを変更します。方式、リソースプロファイル、解像度、マテリアル、効果は保持されます。確認では引き続きリクエスト全体を検証します。"
++  },
++  "ko": {
++    "render.sampling_preset_raster": "래스터는 고정 안티앨리어싱을 사용하므로 여기서 카메라 샘플링을 변경할 수 없습니다.",
++    "render.sampling_presets_help": "프리셋은 카메라 샘플링만 변경합니다. 방법, 리소스 프로필, 해상도, 재질 및 효과는 그대로 유지됩니다. 확인은 계속 전체 요청을 검증합니다."
++  },
++  "vi": {
++    "render.sampling_preset_raster": "Raster dùng khử răng cưa cố định; không thể thay đổi lấy mẫu camera tại đây.",
++    "render.sampling_presets_help": "Các thiết lập sẵn chỉ thay đổi lấy mẫu camera. Phương pháp, hồ sơ tài nguyên, độ phân giải, vật liệu và hiệu ứng được giữ nguyên. Kiểm tra vẫn xác thực toàn bộ yêu cầu."
++  },
++  "zh": {
++    "render.sampling_preset_raster": "光栅使用固定抗锯齿；此处无法更改相机采样。",
++    "render.sampling_presets_help": "预设仅更改相机采样。方法、资源配置、分辨率、材质和效果保持原样。检查仍会验证完整请求。"
++  }
++}

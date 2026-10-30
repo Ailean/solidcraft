@@ -1,0 +1,60 @@
+fn portable_jobs_reject_unbounded_invalid_and_nonportable_inputs() {
+        use serde_json::json;
+        for setup in [
+            json!({"job":{}}),
+            json!({"job":{"method":"cpu_raytrace","options":{"primary_samples":2}}}),
+            json!({"exposure_ev":17,"job":{"method":"cpu_raytrace"}}),
+            json!({"exposure_ev":1,"job":{"method":"raster"}}),
+            json!({"environment_rotation":0.5,"job":{"method":"gpu_path"}}),
+            json!({"environment_intensity":0,"job":{"method":"cpu_raytrace"}}),
+            json!({"job":{"method":"cpu_raytrace","options":{"seed":-1}}}),
+            json!({"job":{"method":"cpu_raytrace","options":{"preset":"neutral","lights":[]}}}),
+            json!({"job":{"method":"cpu_raytrace","options":{"environment":{"path":"not-portable.hdr"}}}}),
+            json!({"job":{"method":"gpu_path","options":{"environment":{"kind":"hdr","path":"not-portable.hdr"}}}}),
+            json!({"job":{"method":"gpu_path","options":{"exposure_ev":0}}}),
+            json!({"job":{"method":"gpu_path","options":{"samples":0}}}),
+            json!({"job":{"method":"gpu_path","options":{"max_depth":17}}}),
+            json!({"job":{"method":"gpu_path","options":{"environment":{"kind":"sky","intensity":101}}}}),
+            json!({"job":{"method":"gpu_path","options":{"lighting":{"environment":[-1,0,0]}}}}),
+            json!({"camera":Camera { fov: 0.0, ..Default::default() },"job":{"method":"gpu_path","options":{"lens":{"aperture_radius_mm":1,"focus_distance_mm":10}}}}),
+        ] {
+            let saved = json!({"setups":{"Bad":setup}});
+            assert!(serde_json::from_value::<RenderSettings>(saved.clone()).is_err(), "{saved}");
+        }
+        for (method, fields) in [
+            ("cpu_raytrace", &["reflections", "anisotropic_faces", "surface_effects", "emissions", "dielectrics"][..]),
+            ("gpu_path", &["textures", "clear_coats", "dielectrics"][..]),
+        ] {
+            for field in fields {
+                let mut options = json!({});
+                options[*field] = json!([]);
+                let saved = json!({"setups":{"Bad":{"job":{"method":method,"options":options}}}});
+                assert!(serde_json::from_value::<RenderSettings>(saved).is_err(), "{method}.{field}");
+            }
+        }
+        for (field, light, maximum) in [
+            ("lights", json!({"direction":[0,0,-1],"color":[1,1,1],"intensity":1}), 8),
+            (
+                "punctual_lights",
+                json!({"position_mm":[0,0,10],"color":[1,1,1],"intensity":1,"reference_distance_mm":10,"minimum_distance_mm":0.1}),
+                8,
+            ),
+            ("area_lights", json!({"center_mm":[0,0,10],"edge_u_mm":[1,0,0],"edge_v_mm":[0,-1,0],"color":[1,1,1],"intensity":1}), 4),
+        ] {
+            let mut options = json!({});
+            options[field] = json!(vec![light; maximum + 1]);
+            let error = serde_json::from_value::<CpuJob>(options).unwrap_err().to_string();
+            assert!(error.contains(&format!("at most {maximum} saved lights")), "{error}");
+        }
+        let area = json!({"center":[0,0,10],"u":[1,0,0],"v":[0,-1,0],"radiance":[1,1,1]});
+        assert!(serde_json::from_value::<GpuJob>(json!({"lighting":{"area_lights":vec![area;5]}})).is_err());
+        let mut cpu = CpuJob { lights: Some(Vec::with_capacity(9)), ..Default::default() };
+        assert!(cpu.to_runtime(0.0).is_err());
+        cpu.lights = None;
+        assert!(cpu.to_runtime(f64::NAN).is_err());
+        let gpu = GpuJob {
+            environment: Some(SkyEnvironment::Sky { gradient: Default::default(), rotation_rad: f64::INFINITY, intensity: 1.0 }),
+            ..Default::default()
+        };
+        assert!(gpu.to_runtime(0.0).is_err());
+    }

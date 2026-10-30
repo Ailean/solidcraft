@@ -1,0 +1,250 @@
+{
+  "status": "SOURCE_REVIEWED_UNADOPTED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "mutually_exclusive_alternatives": true,
+  "source_packet_manifest_sha256": "44f83878e1c5da31e2d39fc2fcee0d49d4b3dc518059ae048e644881a4578e88",
+  "future_correction_manifest_sha256": "37b3f269c8bb4ee806751e71fa0f05239bbb8140c7b51f2eb075638a1df52476",
+  "future_correction_review_sha256": "f6fbac00d13d9fa60723f6fbf368838793109014cc9d65d460a8c46483faf0bf",
+  "legacy": {
+    "base_source_manifest_sha256": "7a30db715b0f342b37e4f5c53f7297cef1d56e22cf65a55278d6e14fd46cc852",
+    "patch_order": [
+      "legacy.patch"
+    ],
+    "files": [
+      {
+        "path": "crates/ui-egui/src/render_workspace_inspector.rs",
+        "before": {
+          "sha256": "0e495457caa81463c12b4cfaa98a2adf7ee28bee3b0e08d6980250b06e91c8e8",
+          "bytes": 82254,
+          "EOL": "CRLF",
+          "CRLF": 1689,
+          "LF_only": 0,
+          "UTF8_BOM": false
+        },
+        "candidate": {
+          "sha256": "b538817bd12a72399144632ee982c805bb494da58fed7213f2f868a839a22393",
+          "bytes": 86524,
+          "EOL": "CRLF",
+          "CRLF": 1796,
+          "LF_only": 0,
+          "UTF8_BOM": false
+        }
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_inspector_tests.rs",
+        "before": {
+          "sha256": "04d56080e6706879e70c5f65731c1f3d2e375dc9fa5acbf9e2c6b2d1a6585b64",
+          "bytes": 145423,
+          "EOL": "CRLF",
+          "CRLF": 2605,
+          "LF_only": 0,
+          "UTF8_BOM": false
+        },
+        "candidate": {
+          "sha256": "d75761d9eeedb81e536006d0d3d12d7e75ff9b3086a6f30c8c88c1fd041cab64",
+          "bytes": 156622,
+          "EOL": "CRLF",
+          "CRLF": 2796,
+          "LF_only": 0,
+          "UTF8_BOM": false
+        }
+      },
+      {
+        "path": "assets/locales/pending/render-sampling-presets.json",
+        "before": null,
+        "candidate": {
+          "sha256": "6766d06b4be81d138135e7cff668376fd8bc7792626796fd36ded1e8d5ff4198",
+          "bytes": 3595,
+          "EOL": "LF",
+          "CRLF": 0,
+          "LF_only": 38,
+          "UTF8_BOM": false
+        }
+      }
+    ],
+    "test_counts": [
+      74,
+      81
+    ],
+    "new_tests_unrun": 7
+  },
+  "future_pr8000": {
+    "frontend_head": "4ccbb633121628e5d0f3222bd2ab5d1d0e07c6ea",
+    "requires_separately_bound_parity_backend": true,
+    "patch_order": [
+      "future-pr8000-sampling.patch",
+      "future-pr8000-persistence.patch"
+    ],
+    "original_files": [
+      {
+        "path": "crates/ui-egui/src/render_workspace_output.rs",
+        "before": {
+          "sha256": "0590af96dc9b2eb5fc25365b36d5c05301834e26ad7a9b78494c7f551ff5ace3",
+          "bytes": 46373,
+          "EOL": "LF",
+          "CRLF": 0,
+          "LF_only": 967,
+          "UTF8_BOM": false
+        },
+        "candidate": {
+          "sha256": "a33780946cb6a13adbcc96513d7bfbb67b828b6265e4bc434beaf69339855bd9",
+          "bytes": 50599,
+          "EOL": "LF",
+          "CRLF": 0,
+          "LF_only": 1075,
+          "UTF8_BOM": false
+        }
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_output_tests.rs",
+        "before": {
+          "sha256": "6c4a4f419c0168df2a88211c6c903c30428cc968da4151ec26c9f75ecedc0197",
+          "bytes": 115728,
+          "EOL": "LF",
+          "CRLF": 0,
+          "LF_only": 2135,
+          "UTF8_BOM": false
+        },
+        "candidate": {
+          "sha256": "72d154c50b0ff688743247a58243c27820abf69aaa2cbf7221483091b084037b",
+          "bytes": 127582,
+          "EOL": "LF",
+          "CRLF": 0,
+          "LF_only": 2339,
+          "UTF8_BOM": false
+        }
+      },
+      {
+        "path": "assets/locales/pending/render-sampling-presets.json",
+        "before": null,
+        "candidate": {
+          "sha256": "6766d06b4be81d138135e7cff668376fd8bc7792626796fd36ded1e8d5ff4198",
+          "bytes": 3595,
+          "EOL": "LF",
+          "CRLF": 0,
+          "LF_only": 38,
+          "UTF8_BOM": false
+        }
+      }
+    ],
+    "correction_files": [
+      {
+        "path": "crates/ui-egui/src/render_workspace_output.rs",
+        "before": {
+          "sha256": "a33780946cb6a13adbcc96513d7bfbb67b828b6265e4bc434beaf69339855bd9",
+          "bytes": 50599,
+          "EOL": "LF",
+          "CRLF": 0,
+          "LF_only": 1075,
+          "UTF8_BOM": false
+        },
+        "candidate": {
+          "sha256": "7c5f06512f0bd48dcc1db1d97e125946a037808517d02894f3e9ccd4d998a3b8",
+          "bytes": 51487,
+          "EOL": "LF",
+          "CRLF": 0,
+          "LF_only": 1095,
+          "UTF8_BOM": false
+        }
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_output_tests.rs",
+        "before": {
+          "sha256": "72d154c50b0ff688743247a58243c27820abf69aaa2cbf7221483091b084037b",
+          "bytes": 127582,
+          "EOL": "LF",
+          "CRLF": 0,
+          "LF_only": 2339,
+          "UTF8_BOM": false
+        },
+        "candidate": {
+          "sha256": "b4e26623703ec932a3fcbae30b21e51cbb9c0cda2bef1896526778685853bef5",
+          "bytes": 136225,
+          "EOL": "LF",
+          "CRLF": 0,
+          "LF_only": 2489,
+          "UTF8_BOM": false
+        }
+      }
+    ],
+    "test_counts": [
+      66,
+      74,
+      77
+    ],
+    "new_tests_unrun": 11,
+    "unchanged_caller_dependencies": [
+      {
+        "path": "crates/ui-egui/src/render_workspace.rs",
+        "sha256": "9c88c4e14e8d25fbb71327f29d52f7d6e89d238ea0011cc218bd3aa159581339"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_setups.rs",
+        "sha256": "37a8a2d1e2eefdc56329b4ddbe9ecd3d686197abbdbd8953e2d8a06c7aabf14c"
+      },
+      {
+        "path": "crates/ui-egui/src/render_ui/inspector.rs",
+        "sha256": "1893dfce35f5a2730031dd550cd55a495cd402fc8ac6fe95f9b7be185514b6a7"
+      },
+      {
+        "path": "crates/ui-egui/src/render_ui/mod.rs",
+        "sha256": "14e0ffa7497f19e14ba4992d88a511d720e46413a1a2d64c5eccbb1dac87400a"
+      }
+    ]
+  },
+  "backend_dependencies": [
+    {
+      "path": "crates/render/src/job/mod.rs",
+      "sha256": "10b26a76921445cce0029a19e2c9e591663dc5b8876c055b2f07618a4ddeab74"
+    },
+    {
+      "path": "crates/render/src/job/cpu_budget.rs",
+      "sha256": "7756fedf76658a1eedd0c0194aa98141d33464c0f7df85fe86f9e255fd8b8ce2"
+    },
+    {
+      "path": "crates/render/src/job/adaptive.rs",
+      "sha256": "e5de91c1ffa65a70244cfdfc9e4c4730929777e6e37cede4812ea0906507e793"
+    },
+    {
+      "path": "crates/render/src/job/image.rs",
+      "sha256": "0e6fa062eba9d5c0f4899fc92d7e7e667bbad295b35ff6bc8addbc9db7fd6285"
+    },
+    {
+      "path": "crates/doc/src/render_job.rs",
+      "sha256": "c13c81340dbba9d92b8dd14186a5be1a7e4e5b129f46aa34b88a83d015815a18"
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_setups.rs",
+      "sha256": "eec93ffeb8206b558c7b76980435c0b1b21130160fb0fc58de17c51ccc833d7a"
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_studio.rs",
+      "sha256": "cdfc530fcf80ad557073fa3754e842d1161144f45aad77bad3482f082c4bea03"
+    },
+    {
+      "path": "crates/ui-egui/src/ui_kit/choice.rs",
+      "sha256": "c33114592a35b7819f0b4e1e450935088014ea3d6fafcad89e19a213bbb4759b"
+    }
+  ],
+  "shared_pending_locale": {
+    "path": "assets/locales/pending/render-sampling-presets.json",
+    "sha256": "6766d06b4be81d138135e7cff668376fd8bc7792626796fd36ded1e8d5ff4198",
+    "included_once_in_the_first_patch_of_either_alternative": true
+  },
+  "patches": [
+    {
+      "path": "future-pr8000-persistence.patch",
+      "sha256": "ab4e4eafb3c31e4c301b9a5a193dec76ef9035566bbaf0b000f2d7921d3bef1e",
+      "bytes": 11614
+    },
+    {
+      "path": "future-pr8000-sampling.patch",
+      "sha256": "3acfdd9a15d2ab7ef52b0273647c492a8224c353f29a69b1a0fa1f20c8170b37",
+      "bytes": 22565
+    },
+    {
+      "path": "legacy.patch",
+      "sha256": "1c4ef70f874d62445b38872947087a93497788a594dcc2179c5e9ebf4b9a6935",
+      "bytes": 21619
+    }
+  ]
+}

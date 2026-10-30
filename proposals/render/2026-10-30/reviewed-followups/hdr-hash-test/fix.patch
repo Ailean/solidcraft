@@ -1,0 +1,29 @@
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -9434,6 +9434,7 @@
+     #[cfg(not(target_arch = "wasm32"))]
+     #[test]
+     fn native_original_library_ior_and_hdr_survive_check_start_and_captured_file_change() {
++        use sha2::{Digest, Sha256};
+         use solidcraft_engine::render::job::{JobId, Phase};
+         let mut h = fixture();
+         if !native_host(&mut h, "library_ior_hdr") {
+@@ -9459,7 +9460,17 @@
+         let status = handle.wait_timeout(std::time::Duration::from_secs(30)).unwrap();
+         assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
+         assert_eq!(json!(status.request.raytrace), request["raytrace"]);
+-        assert_eq!(json!(status.environment)["source_sha256"], request["environment"]["expected_sha256"]);
++        // CPU status carries exactly 32 byte values; the captured request uses
++        // the canonical lowercase hex HdrId wire form. Normalize independently
++        // of HdrId's production serializer/parser and keep absent/type failures.
++        let captured_sha256: [u8; 32] = serde_json::from_value(json!(status.environment).get("source_sha256").unwrap().clone()).unwrap();
++        let expected_hex = request["environment"]["expected_sha256"].as_str().unwrap();
++        assert_eq!(expected_hex.len(), 64);
++        assert!(expected_hex.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
++        let expected_sha256: [u8; 32] = std::array::from_fn(|index| u8::from_str_radix(&expected_hex[index * 2..index * 2 + 2], 16).unwrap());
++        let original_sha256: [u8; 32] = Sha256::digest(&bytes).into();
++        assert_eq!(captured_sha256, expected_sha256);
++        assert_eq!(captured_sha256, original_sha256);
+         let frame = handle.frame().unwrap().unwrap();
+         let pixels = image::load_from_memory(frame.png()).unwrap().to_rgba8();
+         assert_eq!(pixels.dimensions(), (1, 1));

@@ -89,3 +89,13 @@ The original 516-case core result remains bound to its exact unchanged core sour
 ## Separate reviewed source units
 
 [Camera/framing and Raster directional source units](next-source-units/README.md) preserve reviewed, unrun code without adopting or combining it. Camera/framing has3 original UI cases on C16 and leaves geometry/placement/visibility identity open. Raster preserves its33-file C15 archival base plus mandatory DTO-path, empty-capacity and borrowed-JSON fixes,14 new tests and explicit current UI/W2 rebind obligations. No source review or historical C15/C16 outcome is a runtime PASS; the later W2 core-policy packet is excluded until delivered/reviewed.
+
+## Reviewed HDR, sampling and CPU exposure follow-ups (30 October)
+
+Additive source proposals; prior checkpoint sections remain unchanged. This append was prepared against observed archive head 9001a87ea4b6c4473055dd690b31435a77a79a33 on codex/render-all-code-checkpoint-20261029. Recheck the actual branch head/index before integrating it.
+
+- [HDR digest test representation correction](reviewed-followups/hdr-hash-test/README.md): exact test-only patch adopted in C18 development source, execution tracked separately in #6201; no C17 failure is relabeled.
+- [Sampling presets and future persistence correction](reviewed-followups/sampling-presets/README.md): choose legacy OR the ordered PR8000 sampling/persistence alternative, never both; unadopted and unrun.
+- [CPU display exposure±32 alternatives](reviewed-followups/cpu-exposure-32/README.md): exact standalone OR TIR-layer EV delta, six unrun new tests and retained original negative-contract source bodies. The TIR prerequisite chain is referenced, unprovided here and not installed; this is not a complete TIR code archive.
+
+See the [unit index](reviewed-followups/README.md) and each portable bindings file. These source archives do not establish full CI, native GUI/GPU acceptance or readiness.

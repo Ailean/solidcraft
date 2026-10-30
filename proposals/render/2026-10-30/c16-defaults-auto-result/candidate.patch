@@ -1,0 +1,273 @@
+diff --git a/crates/ui-egui/src/prefs.rs b/crates/ui-egui/src/prefs.rs
+--- a/crates/ui-egui/src/prefs.rs
++++ b/crates/ui-egui/src/prefs.rs
+@@ -940,6 +940,8 @@
+     vertex_markers: bool = false => check("Vertex markers", "Show a small dot at every vertex wherever edges are drawn");
+     /// Restore the previous platform-specific fixed Render preview geometry budget.
+     render_previous_geometry_budget: bool = false, PAGE_GRAPHICS => check_id("prefs.render_previous_geometry_budget");
++    /// Open Result once after a successful GUI Start; false preserves the selected view.
++    render_open_result_on_start: bool = true, PAGE_GRAPHICS => check_id("prefs.render_open_result_on_start");
+     /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
+     /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
+     display_quality: String = "normal".into(), PAGE_GRAPHICS;
+@@ -3331,6 +3333,24 @@
+ 
+ #[cfg(test)]
+ mod tests {
++    #[test]
++    fn render_open_result_on_start_defaults_persists_validates_and_resets() {
++        assert!(Prefs::default().render_open_result_on_start);
++        assert!(serde_json::from_value::<Prefs>(json!({})).unwrap().render_open_result_on_start);
++        let mut app = SolveApp::new(Default::default(), Default::default());
++        let reply = super::set(&mut app, &json!({"render_open_result_on_start":false})).unwrap();
++        assert_eq!(reply["render_open_result_on_start"], false);
++        for invalid in [json!("false"), json!(0), json!(null)] {
++            assert!(super::set(&mut app, &json!({"render_open_result_on_start":invalid})).is_err());
++            assert!(!app.preferences.render_open_result_on_start);
++        }
++        let mut restored = SolveApp::new(Default::default(), Default::default());
++        restored.load_prefs(&app.prefs());
++        assert!(!restored.preferences.render_open_result_on_start);
++        super::defaults(&mut restored, super::PAGE_GRAPHICS);
++        assert!(restored.preferences.render_open_result_on_start);
++    }
++
+     #[test]
+     fn trackpad_zoom_modifier_roundtrips_and_validates_control_values() {
+         assert_eq!(Prefs::default().trackpad_zoom_modifier, TrackpadZoomModifier::Off);
+diff --git a/crates/ui-egui/src/prefs/graphics.rs b/crates/ui-egui/src/prefs/graphics.rs
+--- a/crates/ui-egui/src/prefs/graphics.rs
++++ b/crates/ui-egui/src/prefs/graphics.rs
+@@ -189,6 +189,7 @@
+     #[cfg(target_os = "linux")]
+     ui_kit::settings_section(ui, "window_system", app.tr("ui.window_system"), |ui| window_system_row(app, ui));
+     setting::render_previous_geometry_budget(app, ui).on_hover_text(app.tr("prefs.render_previous_geometry_budget_help"));
++    setting::render_open_result_on_start(app, ui).on_hover_text(app.tr("prefs.render_open_result_on_start_help"));
+     ui.horizontal(|ui| {
+         ui_kit::text(ui, app.tr_label("Renderer"), ui_kit::Text::Inline);
+         let renderer = match (&app.viewport.gpu, &app.help.gpu) {
+diff --git a/crates/ui-egui/src/render_workspace_ribbon.rs b/crates/ui-egui/src/render_workspace_ribbon.rs
+--- a/crates/ui-egui/src/render_workspace_ribbon.rs
++++ b/crates/ui-egui/src/render_workspace_ribbon.rs
+@@ -150,6 +150,9 @@
+                 .map_err(|e| crate::i18n::format("render.error_job_identity", &[("error", &e.to_string())]))?;
+             app.render_workspace.view.job = Some(job);
+             app.render_workspace.view.job_shot = Some(app.render_workspace.view.name.clone());
++            if app.preferences.render_open_result_on_start {
++                app.run("render.result.view", json!({"view":"image"}))?;
++            }
+         }
+         "render.result.copy" => {
+             let job = app.render_workspace.view.completed.ok_or_else(|| app.tr("render.ribbon_no_result").to_string())?;
+diff --git a/crates/ui-egui/src/render_workspace_tests.rs b/crates/ui-egui/src/render_workspace_tests.rs
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -9643,8 +9643,10 @@
+         view.draft.width = width;
+         view.draft.height = height;
+         view.draft.background = background;
+-        view.draft.stage.clear();
+-        view.draft.surfaces.clear();
++        view.draft.stage = Default::default();
++        view.draft.surfaces = Default::default();
++        assert!(view.draft.stage.is_empty());
++        assert!(view.draft.surfaces.is_empty());
+         view.draft.exposure_ev = 0.0;
+         view.transparent = false;
+         view.raytrace = RaytraceOptions {
+@@ -9855,8 +9857,10 @@
+         view.draft.width = 1;
+         view.draft.height = 1;
+         view.draft.background = [255; 3];
+-        view.draft.stage.clear();
+-        view.draft.surfaces.clear();
++        view.draft.stage = Default::default();
++        view.draft.surfaces = Default::default();
++        assert!(view.draft.stage.is_empty());
++        assert!(view.draft.surfaces.is_empty());
+         view.transparent = false;
+         view.draft.exposure_ev = 0.0;
+         view.raytrace.primary_samples = 1;
+@@ -10026,5 +10030,140 @@
+         assert_eq!(before, (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty()));
+         // Actual CPU capture/completion + nonblack optical smoke, not a full
+         // Fresnel/TIR oracle or a partial-optical-tree while-running receipt.
++    }
++}
++
++
++// These exercise GUI navigation against the real cooperative Raster host.
++// They do not qualify CPU raytracing, progressive cadence or GPU rendering.
++fn auto_result_raster_fixture() -> Harness {
++    let mut h = Harness::new();
++    h.app.run("solid.box", json!({"length":3,"width":4,"height":5})).unwrap();
++    enter(&mut h.app, true).unwrap();
++    let host = solidcraft_engine::render::job::CpuHost::cooperative();
++    h.app.session.set_render_job_host(Some(host.clone())).unwrap();
++    h.app.render_workspace.image_host = Some(host);
++    h.app.render_workspace.view.method = ImageMethod::Raster;
++    h.app.render_workspace.view.draft.width = 13;
++    h.app.render_workspace.view.draft.height = 7;
++    h.app.run("render.result.view", json!({"view":"model"})).unwrap();
++    h
++}
++
++#[test]
++fn auto_result_success_opens_once_and_explicit_model_survives_real_completion() {
++    use solidcraft_engine::render::job::Phase;
++    let mut h = auto_result_raster_fixture();
++    assert!(h.app.preferences.render_open_result_on_start);
++    assert!(!h.app.render_workspace.view.result);
++    let document = h.app.session.doc.clone();
++    let undo = h.app.session.undo.len();
++    let camera = h.app.cam;
++    ribbon::perform_job(&mut h.app, "render.start").unwrap();
++    let job = h.app.render_workspace.view.job.unwrap();
++    let handle = h.app.session.render_job_handle(job).unwrap();
++    assert!(h.app.render_workspace.view.result);
++    assert_eq!(handle.status().unwrap().progress.phase, Phase::Queued);
++    assert!(handle.frame().unwrap().is_none());
++    assert!(h.app.render_workspace.view.completed.is_none());
++    assert!(ribbon::action_ready(&h.app, "render.export").is_err());
++    let request = handle.status().unwrap().request;
++    assert_eq!((request.width, request.height, request.integrator), (13, 7, Integrator::Raster));
++    cache_render_images(&mut h.app, &h.ctx);
++    assert!(h.app.render_workspace.view.result);
++    h.app.run("render.result.view", json!({"view":"model"})).unwrap();
++    assert!(!h.app.render_workspace.view.result);
++    let host = h.app.session.render_job_host().unwrap().clone();
++    for _ in 0..128 {
++        host.pump(16_384).unwrap();
++        cache_render_images(&mut h.app, &h.ctx);
++        assert!(!h.app.render_workspace.view.result, "publication/repaint must respect an explicit Model selection");
++        if handle.frame().unwrap().is_some() {
++            break;
++        }
++    }
++    let frame = handle.frame().unwrap().expect("bounded cooperative Raster work must complete");
++    assert_eq!((frame.info.width, frame.info.height), (13, 7));
++    assert_eq!(h.app.render_workspace.view.completed, Some(job));
++    assert!(ribbon::action_ready(&h.app, "render.export").is_ok());
++    for _ in 0..3 {
++        cache_render_images(&mut h.app, &h.ctx);
++        assert!(!h.app.render_workspace.view.result);
++    }
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!(h.app.session.undo.len(), undo);
++    assert_eq!(h.app.cam, camera);
++}
++
++#[test]
++fn auto_result_disabled_keeps_both_selected_views_through_start_and_completion() {
++    for selected in [false, true] {
++        let mut h = auto_result_raster_fixture();
++        crate::prefs::set(&mut h.app, &json!({"render_open_result_on_start":false})).unwrap();
++        h.app.run("render.result.view", json!({"view":if selected {"image"} else {"model"}})).unwrap();
++        ribbon::perform_job(&mut h.app, "render.start").unwrap();
++        assert_eq!(h.app.render_workspace.view.result, selected);
++        let job = h.app.render_workspace.view.job.unwrap();
++        let handle = h.app.session.render_job_handle(job).unwrap();
++        assert!(handle.frame().unwrap().is_none());
++        let host = h.app.session.render_job_host().unwrap().clone();
++        for _ in 0..128 {
++            host.pump(16_384).unwrap();
++            cache_render_images(&mut h.app, &h.ctx);
++            assert_eq!(h.app.render_workspace.view.result, selected);
++            if handle.frame().unwrap().is_some() {
++                break;
++            }
++        }
++        assert!(handle.frame().unwrap().is_some(), "bounded cooperative Raster work must complete");
++        assert_eq!(h.app.render_workspace.view.completed, Some(job));
++        cache_render_images(&mut h.app, &h.ctx);
++        assert_eq!(h.app.render_workspace.view.result, selected);
++    }
++}
++
++#[test]
++fn auto_result_check_invalid_start_and_real_queue_full_preserve_selected_view() {
++    use solidcraft_engine::render::job::Phase;
++    for selected in [false, true] {
++        let mut h = auto_result_raster_fixture();
++        assert!(h.app.preferences.render_open_result_on_start);
++        h.app.run("render.result.view", json!({"view":if selected {"image"} else {"model"}})).unwrap();
++        let document = h.app.session.doc.clone();
++        let undo = h.app.session.undo.len();
++        ribbon::perform_job(&mut h.app, "render.preflight").unwrap();
++        assert_eq!(h.app.render_workspace.view.result, selected);
++        assert!(h.app.render_workspace.view.job.is_none());
++        h.app.render_workspace.view.draft.width = 0;
++        assert!(ribbon::perform_job(&mut h.app, "render.preflight").is_err());
++        assert_eq!(h.app.render_workspace.view.result, selected);
++        assert!(ribbon::perform_job(&mut h.app, "render.start").is_err());
++        assert_eq!(h.app.render_workspace.view.result, selected);
++        h.app.render_workspace.view.draft.width = 13;
++        let request = image_params(&h.app).unwrap();
++        let mut jobs = Vec::new();
++        // Queue two real jobs without registering a GUI job.
++        // No pump or worker thread runs between admission and the third Start.
++        for _ in 0..2 {
++            let reply = h.app.session.execute("render.start", &request).unwrap();
++            let job = serde_json::from_value(reply["job"].clone()).unwrap();
++            let handle = h.app.session.render_job_handle(job).unwrap();
++            assert_eq!(handle.status().unwrap().progress.phase, Phase::Queued);
++            jobs.push(handle);
++        }
++        ribbon::action_ready(&h.app, "render.start").unwrap();
++        let error = ribbon::perform_job(&mut h.app, "render.start").unwrap_err();
++        assert!(error.contains("this document already has an active and pending render"), "expected real document QueueFull: {error}");
++        assert_eq!(h.app.render_workspace.view.result, selected);
++        assert!(h.app.render_workspace.view.job.is_none());
++        assert!(h.app.render_workspace.view.completed.is_none());
++        cache_render_images(&mut h.app, &h.ctx);
++        assert_eq!(h.app.render_workspace.view.result, selected);
++        for handle in jobs {
++            assert_eq!(handle.status().unwrap().progress.phase, Phase::Queued);
++            assert!(handle.frame().unwrap().is_none());
++        }
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        assert_eq!(h.app.session.undo.len(), undo);
+     }
+ }
+diff --git a/assets/locales/pending/render-result-on-start.json b/assets/locales/pending/render-result-on-start.json
+--- /dev/null
++++ b/assets/locales/pending/render-result-on-start.json
+@@ -1,0 +1,38 @@
++{
++  "ar": {
++    "prefs.render_open_result_on_start": "فتح النتيجة عند بدء التصيير",
++    "prefs.render_open_result_on_start_help": "افتح النتيجة مرة واحدة بعد بدء التصيير بنجاح. عطّل هذا الخيار للاحتفاظ بالعرض المحدد. يمكنك العودة إلى النموذج أثناء التصيير."
++  },
++  "de": {
++    "prefs.render_open_result_on_start": "Ergebnis beim Renderstart öffnen",
++    "prefs.render_open_result_on_start_help": "Nach erfolgreichem Renderstart einmal das Ergebnis öffnen. Deaktivieren, um die gewählte Ansicht beizubehalten. Während des Renderns können Sie zum Modell zurückkehren."
++  },
++  "en": {
++    "prefs.render_open_result_on_start": "Open Result when rendering starts",
++    "prefs.render_open_result_on_start_help": "After starting a render successfully, open Result once. Turn off to keep your selected view. You can return to Model while rendering."
++  },
++  "es": {
++    "prefs.render_open_result_on_start": "Abrir Resultado al iniciar el renderizado",
++    "prefs.render_open_result_on_start_help": "Abre Resultado una vez tras iniciar correctamente el renderizado. Desactiva esta opción para conservar la vista seleccionada. Puedes volver a Modelo durante el renderizado."
++  },
++  "he": {
++    "prefs.render_open_result_on_start": "פתיחת התוצאה עם תחילת הרינדור",
++    "prefs.render_open_result_on_start_help": "פתיחת התוצאה פעם אחת לאחר התחלת רינדור בהצלחה. יש לבטל אפשרות זו כדי לשמור על התצוגה שנבחרה. אפשר לחזור למודל בזמן הרינדור."
++  },
++  "ja": {
++    "prefs.render_open_result_on_start": "レンダリング開始時に結果を開く",
++    "prefs.render_open_result_on_start_help": "レンダリングの開始に成功したら、結果を一度だけ開きます。無効にすると、選択中の表示を維持します。レンダリング中でもモデルに戻れます。"
++  },
++  "ko": {
++    "prefs.render_open_result_on_start": "렌더링 시작 시 결과 열기",
++    "prefs.render_open_result_on_start_help": "렌더링이 성공적으로 시작되면 결과를 한 번 엽니다. 끄면 선택한 보기가 유지됩니다. 렌더링 중에도 모델로 돌아갈 수 있습니다."
++  },
++  "vi": {
++    "prefs.render_open_result_on_start": "Mở Kết quả khi bắt đầu kết xuất",
++    "prefs.render_open_result_on_start_help": "Mở Kết quả một lần sau khi bắt đầu kết xuất thành công. Tắt để giữ chế độ xem đã chọn. Bạn có thể quay lại Mô hình trong khi kết xuất."
++  },
++  "zh": {
++    "prefs.render_open_result_on_start": "开始渲染时打开结果",
++    "prefs.render_open_result_on_start_help": "成功开始渲染后打开结果一次。关闭此选项可保留当前选中的视图。渲染期间也可以返回模型视图。"
++  }
++}

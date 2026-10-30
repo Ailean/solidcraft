@@ -1,0 +1,166 @@
+{
+  "schema": 1,
+  "status": "ACTUALLY_ADOPTED_SOURCE_ONLY_UNFORMATTED_UNCOMPILED_UNRUN_AT_ADOPTION",
+  "base": {
+    "description": "Exact actual C15 post-format source, after the adjacent formatter-only bridge",
+    "manifest_sha256": "2fe4f37371e7376e02ae89a080e51fad82e6f6c564bfe8b8a8075c2951fe1f31",
+    "formatter_bridge": "c15-postformat-manifest.json"
+  },
+  "files": [
+    {
+      "path": "crates/ui-egui/src/prefs.rs",
+      "before_sha256": "c13838afa66969ab40de6825a252efd0436399a30d331f28724be4e1bfe11264",
+      "candidate_sha256": "b90ea63d6238bf41cb467a41efcd2b3888196e3be60f2453c635078d0933c97d",
+      "new_file": false,
+      "delta_sha256": "552aa58c46f5c737e7dc216822d64a442ad3450e667050509a631dc1a8ea7da0"
+    },
+    {
+      "path": "crates/ui-egui/src/prefs/graphics.rs",
+      "before_sha256": "6168eff4e462477f57ab1ef496ff5917de0e21531f0acf9793c4798dcbcb9caf",
+      "candidate_sha256": "e48ddcdf0fb9e203133d1d67c7cbba249ee0082b37d07585e9e54146324a2f64",
+      "new_file": false,
+      "delta_sha256": "e9732cb7ea2b1c1a684aadc14402be0bc4f14b87732cafb1063f231a0d938d20"
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_ribbon.rs",
+      "before_sha256": "27fc255da6da75976edb4b37928b78ea034c6c579f258b3155f15d43e3237ffb",
+      "candidate_sha256": "1f69c036f5b7327eb19b2495c7f3f3a30d2cb90a7f37f6b44980efbb37f06cf3",
+      "new_file": false,
+      "delta_sha256": "793d1970a5924e745448a280186d2fea265467a1cd4ac59e9f3014aa71aa5efb"
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before_sha256": "5eeb9bb333cad6936dae8bade8c3be0eece2cea7f52d274c6bd59b28c42625d9",
+      "candidate_sha256": "2acd261a36f2baa0acedad44eed6cf67ad7d6ee895e2197539735a266c36ed3e",
+      "new_file": false,
+      "delta_sha256": "d06f36553129868fcca5fb00e40cf1e14035e31d0d43b99c78ceeadcd2229d6c"
+    },
+    {
+      "path": "assets/locales/pending/render-result-on-start.json",
+      "before_sha256": null,
+      "candidate_sha256": "5ec777e3517710910dbdff067fcf55739961e2023290a2d673744a96505aa5e5",
+      "new_file": true,
+      "delta_sha256": "f69b7c1acebfdd623752a5dc01d7503b642eb6ea96d678d7815e120f0a73409c"
+    }
+  ],
+  "raw_endpoints": [
+    {
+      "path": "crates/ui-egui/src/prefs.rs",
+      "before": {
+        "sha256": "c13838afa66969ab40de6825a252efd0436399a30d331f28724be4e1bfe11264",
+        "bytes": 377352,
+        "eol": "CRLF",
+        "crlf": 6770,
+        "lf": 6770,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "b90ea63d6238bf41cb467a41efcd2b3888196e3be60f2453c635078d0933c97d",
+        "bytes": 378635,
+        "eol": "CRLF",
+        "crlf": 6790,
+        "lf": 6790,
+        "utf8_bom": false
+      }
+    },
+    {
+      "path": "crates/ui-egui/src/prefs/graphics.rs",
+      "before": {
+        "sha256": "6168eff4e462477f57ab1ef496ff5917de0e21531f0acf9793c4798dcbcb9caf",
+        "bytes": 11761,
+        "eol": "CRLF",
+        "crlf": 204,
+        "lf": 204,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "e48ddcdf0fb9e203133d1d67c7cbba249ee0082b37d07585e9e54146324a2f64",
+        "bytes": 11877,
+        "eol": "CRLF",
+        "crlf": 205,
+        "lf": 205,
+        "utf8_bom": false
+      }
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_ribbon.rs",
+      "before": {
+        "sha256": "27fc255da6da75976edb4b37928b78ea034c6c579f258b3155f15d43e3237ffb",
+        "bytes": 13010,
+        "eol": "CRLF",
+        "crlf": 285,
+        "lf": 285,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "1f69c036f5b7327eb19b2495c7f3f3a30d2cb90a7f37f6b44980efbb37f06cf3",
+        "bytes": 13161,
+        "eol": "CRLF",
+        "crlf": 288,
+        "lf": 288,
+        "utf8_bom": false
+      }
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before": {
+        "sha256": "5eeb9bb333cad6936dae8bade8c3be0eece2cea7f52d274c6bd59b28c42625d9",
+        "bytes": 545234,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 10030,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "2acd261a36f2baa0acedad44eed6cf67ad7d6ee895e2197539735a266c36ed3e",
+        "bytes": 552355,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 10169,
+        "utf8_bom": false
+      }
+    },
+    {
+      "path": "assets/locales/pending/render-result-on-start.json",
+      "before": null,
+      "candidate": {
+        "sha256": "5ec777e3517710910dbdff067fcf55739961e2023290a2d673744a96505aa5e5",
+        "bytes": 2962,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 38,
+        "utf8_bom": false
+      }
+    }
+  ],
+  "ui_tests_before": 252,
+  "ui_tests_candidate": 255,
+  "prefs_tests_before": 116,
+  "prefs_tests_candidate": 117,
+  "added_test_declarations": 4,
+  "change_default_line": "Changes a default: yes - successful GUI Start opens Result once, old behaviour kept behind preference render_open_result_on_start=false",
+  "composition": {
+    "original_autov2_ui_before_sha256": "5eeb9bb333cad6936dae8bade8c3be0eece2cea7f52d274c6bd59b28c42625d9",
+    "original_autov2_ui_candidate_sha256": "d4338085adb86d040926d7df6e1b3b6188adffd22b0272a428732bc5a1320221",
+    "corrected_ui252_sha256": "afb3daa7b2663d5b9372fdea7ff83ea0ceb5c35da43af10177a5ea6a0abeaaab",
+    "auto_result_suffix_bytes": 6879,
+    "expected_ui255_sha256": "2acd261a36f2baa0acedad44eed6cf67ad7d6ee895e2197539735a266c36ed3e",
+    "other_candidates_identical": 4,
+    "default_true_and_opt_off_unchanged": true
+  },
+  "predecessor_hashes": {
+    "defaults252": {
+      "manifest_sha256": "3c0d8e8d60276a054c48024badfa84ff78619f00ca70f0cb5753b97ff0d68d91",
+      "proposal_sha256": "68b1fe88bebcb64c72dbe5f1b357de10784db2361fa2add2b0c2ea8a2b9fd642",
+      "bindings_sha256": "0c8153845adb02dbf9f32d943631bc6e4efaee7960da95902c52d689ea515ad4"
+    },
+    "autoResultV2": {
+      "manifest_sha256": "f993c9fb678565381838c96c54b1cf0a46989baebaaff32b36ddaced8867bb58",
+      "proposal_sha256": "e71efa5b57deb5869b549b2c2eae69f0b50f79c88b52ba3b351115ef2d5eac3d",
+      "bindings_sha256": "28bcd0455862a5eb321d1b713cd90fb6002cbe7b2ee2098a26908af5a2878615"
+    }
+  },
+  "composition_policy": "Cumulative five-file successor after C15 formatting, not an additional application of the overlapping defaults252 or autoResultV2 patches. UI255 is corrected UI252 plus the same original6879-byte AutoResult appendix. Other four payloads are unchanged from their reviewed AutoResult predecessors.",
+  "patch_EOLayout": "candidate.patch contains LF-normalized hunks. prefs.rs, prefs/graphics.rs and render_workspace_ribbon.rs must end in CRLF; UI tests and new pending JSON in LF. Raw hashes/sizes/EOL/BOM metadata are authoritative. No universal literal RAW diff replay claim.",
+  "runtime_PASS_claimed": false
+}

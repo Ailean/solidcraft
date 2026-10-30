@@ -1,0 +1,876 @@
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -8913,7 +8913,10 @@
+ 
+     #[test]
+     fn explicit_cpu_recipe_builds_typed_optics_with_independent_linear_units_and_no_design_edit() {
+-        use solidcraft_engine::render::{job::{DielectricBoundary, RaytraceOptions}, transmission::Transmission};
++        use solidcraft_engine::render::{
++            job::{DielectricBoundary, RaytraceOptions},
++            transmission::Transmission,
++        };
+         let h = fixture();
+         let document = h.app.session.doc.clone();
+         let before = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
+@@ -8985,10 +8988,19 @@
+             let binding = &mut h.app.render_workspace.view.materials.bindings[0];
+             match case {
+                 "coat" => binding.coat_enabled = true,
+-                "maps" => { binding.maps_enabled = true; binding.maps.normal = "authored-normal.png".into(); }
++                "maps" => {
++                    binding.maps_enabled = true;
++                    binding.maps.normal = "authored-normal.png".into();
++                }
+                 "shadows" => binding.glass.shadows = true,
+-                "subsurface" => binding.glass.subsurface = Some(solidcraft_engine::render::transmission::subsurface::Subsurface { scattering_per_mm: 0.1, anisotropy: 0.0 }),
+-                _ => { binding.glass_enabled = false; binding.coat_enabled = true; }
++                "subsurface" => {
++                    binding.glass.subsurface =
++                        Some(solidcraft_engine::render::transmission::subsurface::Subsurface { scattering_per_mm: 0.1, anisotropy: 0.0 })
++                }
++                _ => {
++                    binding.glass_enabled = false;
++                    binding.coat_enabled = true;
++                }
+             }
+             let intent = format!("{:?}", h.app.render_workspace.view.materials);
+             let mut request = json!({"settings":{"exposure_ev":0},"sentinel":"retain"});
+@@ -9094,96 +9106,110 @@
+     fn progressive_optics_preserves_identity_and_saved_gpu_conflicts_without_mutation() {
+         let mut h = fixture();
+         let document = h.app.session.doc.clone();
+-        let history = (h.app.session.revision,h.app.session.undo.len(),h.app.session.is_dirty());
+-        let authored = format!("{:?}",h.app.render_workspace.view.materials.bindings[0]);
++        let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty());
++        let authored = format!("{:?}", h.app.render_workspace.view.materials.bindings[0]);
+         h.app.render_workspace.view.raytrace.progressive = Some(Default::default());
+-        let progressive_final = runtime_image_request(&h.app,false).unwrap();
++        let progressive_final = runtime_image_request(&h.app, false).unwrap();
+         let final_options: RaytraceOptions = serde_json::from_value(progressive_final["raytrace"].clone()).unwrap();
+         final_options.validate().unwrap();
+-        assert_eq!(final_options.primary_samples,1);
+-        assert_eq!(final_options.progressive.unwrap().samples_per_pixel,16);
+-        assert_eq!(final_options.progressive.unwrap().seed,0);
++        assert_eq!(final_options.primary_samples, 1);
++        assert_eq!(final_options.progressive.unwrap().samples_per_pixel, 16);
++        assert_eq!(final_options.progressive.unwrap().seed, 0);
+         let optics = progressive_final["raytrace"]["dielectrics"].clone();
+-        assert_eq!(optics.as_array().unwrap().len(),1);
+-        assert_eq!(optics[0]["body_name"],"Optics");
+-        assert_eq!(optics[0]["boundary"],"closed_box");
+-        assert_eq!(optics[0]["ior"],1.5);
++        assert_eq!(optics.as_array().unwrap().len(), 1);
++        assert_eq!(optics[0]["body_name"], "Optics");
++        assert_eq!(optics[0]["boundary"], "closed_box");
++        assert_eq!(optics[0]["ior"], 1.5);
+         assert!(h.app.render_workspace.view.materials.bindings[0].cpu_optics);
+         let from_progressive = interactive_request(&h.app).unwrap();
+-        assert_eq!(from_progressive["raytrace"]["dielectrics"],optics,"preview conversion cannot erase or replace the authored optical material");
++        assert_eq!(from_progressive["raytrace"]["dielectrics"], optics, "preview conversion cannot erase or replace the authored optical material");
+         assert!(h.app.render_workspace.view.materials.bindings[0].glass_enabled);
+         h.app.render_workspace.view.raytrace.progressive = None;
+         let from_fixed = interactive_request(&h.app).unwrap();
+-        assert_eq!(from_fixed["raytrace"]["dielectrics"],optics,"Fixed editor preview still carries certified optics");
++        assert_eq!(from_fixed["raytrace"]["dielectrics"], optics, "Fixed editor preview still carries certified optics");
+         let progressive_input: RaytraceOptions = serde_json::from_value(from_progressive["raytrace"].clone()).unwrap();
+         progressive_input.validate().unwrap();
+-        assert_eq!(progressive_input.primary_samples,1);
+-        assert_eq!(progressive_input.progressive.unwrap().samples_per_pixel,16);
+-        assert_eq!(progressive_input.progressive.unwrap().seed,0);
++        assert_eq!(progressive_input.primary_samples, 1);
++        assert_eq!(progressive_input.progressive.unwrap().samples_per_pixel, 16);
++        assert_eq!(progressive_input.progressive.unwrap().seed, 0);
+         let fixed_input: RaytraceOptions = serde_json::from_value(from_fixed["raytrace"].clone()).unwrap();
+         fixed_input.validate().unwrap();
+-        assert_eq!(fixed_input.primary_samples,1);
+-        assert!(fixed_input.progressive.is_none(),"the UI Fixed DTO stays Fixed until the engine preview conversion");
+-        assert!(h.app.render_workspace.view.raytrace.progressive.is_none(),"constructing preview intent cannot change the manual-final editor");
++        assert_eq!(fixed_input.primary_samples, 1);
++        assert!(fixed_input.progressive.is_none(), "the UI Fixed DTO stays Fixed until the engine preview conversion");
++        assert!(h.app.render_workspace.view.raytrace.progressive.is_none(), "constructing preview intent cannot change the manual-final editor");
+         #[cfg(not(target_arch = "wasm32"))]
+-        if native_host(&mut h,"progressive_bridge_obsolete_guard_adaptation") {
+-            use solidcraft_engine::render::job::{JobId,Phase,interactive::VisualRevision};
++        if native_host(&mut h, "progressive_bridge_obsolete_guard_adaptation") {
++            use solidcraft_engine::render::job::{JobId, Phase, interactive::VisualRevision};
+             use std::time::Duration;
+             // Same original20x20/one-pixel/50-distance inputs: this is actual
+             // capture/admission/completion, not a Beer pixel oracle (jitter may miss).
+             let mut final_params = progressive_final.clone();
+             final_params["progressive_feedback"] = json!(true);
+-            let checked = h.app.run("render.preflight",final_params.clone()).unwrap();
+-            let started = h.app.run("render.start",final_params).unwrap();
++            let checked = h.app.run("render.preflight", final_params.clone()).unwrap();
++            let started = h.app.run("render.start", final_params).unwrap();
+             let final_id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
+             let final_job = h.app.session.render_job_handle(final_id).unwrap();
+             let final_status = final_job.wait_timeout(Duration::from_secs(60)).unwrap();
+-            assert_eq!(final_status.progress.phase,Phase::Completed,"{:?}",final_status.error);
+-            assert_eq!(serde_json::to_value(&final_status.request).unwrap(),checked["request"]);
+-            assert_eq!(json!(final_status.request.raytrace),progressive_final["raytrace"]);
++            assert_eq!(final_status.progress.phase, Phase::Completed, "{:?}", final_status.error);
++            assert_eq!(serde_json::to_value(&final_status.request).unwrap(), checked["request"]);
++            assert_eq!(json!(final_status.request.raytrace), progressive_final["raytrace"]);
+             assert!(!final_status.options.nested_media);
+             assert!(final_job.protected_preview_report().unwrap().is_some());
+             let final_bytes = final_job.frame().unwrap().unwrap().png().to_vec();
+-            for (index,params) in [&from_progressive,&from_fixed].into_iter().enumerate() {
++            for (index, params) in [&from_progressive, &from_fixed].into_iter().enumerate() {
+                 let context = h.app.session.interactive_render().unwrap();
+-                context.enable(VisualRevision {
+-                    scene_generation:h.app.session.revision,visual_revision:index as u64+1,
+-                },Duration::ZERO).unwrap();
++                context
++                    .enable(VisualRevision { scene_generation: h.app.session.revision, visual_revision: index as u64 + 1 }, Duration::ZERO)
++                    .unwrap();
+                 let ticket = context.capture(Duration::from_millis(200)).unwrap().unwrap();
+-                let snapshot = context.snapshot(&h.app.session,ticket,params).unwrap();
+-                assert!(snapshot.run().unwrap(),"real optical snapshot must be admitted/adopted");
++                let snapshot = context.snapshot(&h.app.session, ticket, params).unwrap();
++                assert!(snapshot.run().unwrap(), "real optical snapshot must be admitted/adopted");
+                 let job = context.current().unwrap().unwrap();
+                 let status = job.wait_timeout(Duration::from_secs(60)).unwrap();
+-                assert_eq!(status.progress.phase,Phase::Completed,"{:?}",status.error);
+-                assert_eq!(status.resolved.executor.as_str(),"cpu-raytrace");
++                assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
++                assert_eq!(status.resolved.executor.as_str(), "cpu-raytrace");
+                 let options = status.request.raytrace.as_ref().unwrap();
+-                assert_eq!(serde_json::to_value(&options.dielectrics).unwrap(),optics);
+-                assert_eq!(options.primary_samples,1);
+-                assert_eq!(options.progressive.unwrap().samples_per_pixel,16);
+-                assert_eq!(options.progressive.unwrap().seed,0);
+-                assert_eq!((status.request.width,status.request.height),(1,1));
++                assert_eq!(serde_json::to_value(&options.dielectrics).unwrap(), optics);
++                assert_eq!(options.primary_samples, 1);
++                assert_eq!(options.progressive.unwrap().samples_per_pixel, 16);
++                assert_eq!(options.progressive.unwrap().seed, 0);
++                assert_eq!((status.request.width, status.request.height), (1, 1));
+                 assert!(!status.options.nested_media);
+-                assert_eq!(job.id(),ticket.job_id());
++                assert_eq!(job.id(), ticket.job_id());
+                 assert!(job.frame().unwrap().is_some());
+-                assert!(h.app.session.render_job_handle(job.id()).is_err(),"Interactive keeps a separate non-export owner");
++                assert!(h.app.session.render_job_handle(job.id()).is_err(), "Interactive keeps a separate non-export owner");
+                 context.disable().unwrap();
+-                assert_eq!(h.app.session.render_job_handle(final_id).unwrap().frame().unwrap().unwrap().png(),final_bytes.as_slice());
++                assert_eq!(h.app.session.render_job_handle(final_id).unwrap().frame().unwrap().unwrap().png(), final_bytes.as_slice());
+             }
+         }
+-        assert!(Arc::ptr_eq(&document,&h.app.session.doc));
+-        assert_eq!(history,(h.app.session.revision,h.app.session.undo.len(),h.app.session.is_dirty()));
+-        assert_eq!(format!("{:?}",h.app.render_workspace.view.materials.bindings[0]),authored);
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        assert_eq!(history, (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty()));
++        assert_eq!(format!("{:?}", h.app.render_workspace.view.materials.bindings[0]), authored);
+         let mut request = wire(&h);
+         let before = request.clone();
+         assert!(materials::params(&h.app, &mut request).unwrap_err().contains(h.app.tr("render.cpu_optics_conflict")));
+         assert_eq!(request, before);
+         let target = h.app.render_workspace.view.materials.bindings[0].target.stable_target.clone().unwrap();
+-        h.app.render_workspace.view.draft.optics.set(solidcraft_engine::doc::render_optics::SavedOptics {
+-            target, optics: solidcraft_engine::doc::render_optics::OpticalMaterial {
+-                ior: 1.5, absorption_per_mm: [0.0; 3], boundary: solidcraft_engine::doc::render_optics::OpticalBoundary::ClosedMesh,
+-                thickness_mm: 0.0, shadow_transmission: false, subsurface: None,
+-            },
+-        }, false).unwrap();
++        h.app
++            .render_workspace
++            .view
++            .draft
++            .optics
++            .set(
++                solidcraft_engine::doc::render_optics::SavedOptics {
++                    target,
++                    optics: solidcraft_engine::doc::render_optics::OpticalMaterial {
++                        ior: 1.5,
++                        absorption_per_mm: [0.0; 3],
++                        boundary: solidcraft_engine::doc::render_optics::OpticalBoundary::ClosedMesh,
++                        thickness_mm: 0.0,
++                        shadow_transmission: false,
++                        subsurface: None,
++                    },
++                },
++                false,
++            )
++            .unwrap();
+         assert!(runtime_image_request(&h.app, false).is_err());
+         assert_eq!(h.app.render_workspace.view.draft.optics.len(), 1);
+     }
+@@ -9206,7 +9232,8 @@
+         use solidcraft_engine::render::job::CpuHost;
+         let host = CpuHost::for_platform().unwrap();
+         let available = host.kind() == solidcraft_engine::render::job::HostKind::NativeWorker
+-            && host.is_available() && host.validate_integrator(Integrator::Raytrace).is_ok();
++            && host.is_available()
++            && host.validate_integrator(Integrator::Raytrace).is_ok();
+         h.app.session.set_render_job_host(Some(host.clone())).unwrap();
+         h.app.render_workspace.image_host = Some(host);
+         if !available {
+@@ -9250,7 +9277,9 @@
+     #[test]
+     fn native_library_box_reaches_same_cpu_check_start_and_real_beer_pixels() {
+         let mut h = fixture();
+-        if !native_host(&mut h, "library_box") { return; }
++        if !native_host(&mut h, "library_box") {
++            return;
++        }
+         // Explicit author edit isolates Beer: index-matched boundaries have zero
+         // Fresnel reflection, 4 mm actual distance yields [.98,.99,1].
+         let glass = &mut h.app.render_workspace.view.materials.bindings[0].glass;
+@@ -9263,7 +9292,9 @@
+     #[test]
+     fn native_cpu_optics_admission_preserves_opacity_and_refuses_false_thin_certificate() {
+         let mut h = fixture();
+-        if !native_host(&mut h, "opacity_and_certificate") { return; }
++        if !native_host(&mut h, "opacity_and_certificate") {
++            return;
++        }
+         h.app.render_workspace.view.materials.bindings[0].glass.boundary = materials::Boundary::Thin;
+         let request = image_params(&h.app).unwrap();
+         for command in ["render.preflight", "render.start"] {
+@@ -9288,7 +9319,9 @@
+     #[test]
+     fn native_thin_library_recipe_uses_actual_imported_planar_certificate_and_virtual_distance() {
+         let mut h = fixture();
+-        if !native_host(&mut h, "library_thin") { return; }
++        if !native_host(&mut h, "library_thin") {
++            return;
++        }
+         let path = h.dir.join("original-optical-sheet.stl");
+         // Original one-triangle geometry, not a box proxy or commercial fixture.
+         std::fs::write(&path, b"solid OriginalSheet\nfacet normal 0 0 1\nouter loop\nvertex -20 -20 2\nvertex 20 -20 2\nvertex 0 20 2\nendloop\nendfacet\nendsolid OriginalSheet\n").unwrap();
+@@ -9313,7 +9346,9 @@
+     #[test]
+     fn native_library_nested_opt_in_preserves_real_child_medium_and_default_refusal() {
+         let mut h = fixture();
+-        if !native_host(&mut h, "library_nested") { return; }
++        if !native_host(&mut h, "library_nested") {
++            return;
++        }
+         h.app.run("solid.box", json!({"length":10,"width":10,"height":2,"center":[0,0,2],"operation":"new","body_name":"Inner"})).unwrap();
+         h.app.render_workspace.view.materials.bindings.clear();
+         bind_recipe(&mut h, "Optics", "starter.glass.low-iron-clear", materials::Boundary::Box);
+@@ -9340,7 +9375,9 @@
+     #[test]
+     fn native_cpu_optics_refuses_face_alpha_and_general_closed_geometry_without_repairs() {
+         let mut h = fixture();
+-        if !native_host(&mut h, "face_alpha_and_sphere") { return; }
++        if !native_host(&mut h, "face_alpha_and_sphere") {
++            return;
++        }
+         h.app.run("appearance.assign", json!({"body":"Optics","faces":[[0,0,4]],"color":"#abcdef","opacity":0.5})).unwrap();
+         let mut binding = h.app.render_workspace.view.materials.bindings[0].clone();
+         materials::revalidate(&mut h.app, &mut binding).unwrap();
+@@ -9399,7 +9436,9 @@
+     fn native_original_library_ior_and_hdr_survive_check_start_and_captured_file_change() {
+         use solidcraft_engine::render::job::{JobId, Phase};
+         let mut h = fixture();
+-        if !native_host(&mut h, "library_ior_hdr") { return; }
++        if !native_host(&mut h, "library_ior_hdr") {
++            return;
++        }
+         let path = h.dir.join("original-optical-white.hdr");
+         let bytes = original_hdr_bytes(128, true);
+         std::fs::write(&path, &bytes).unwrap();
+@@ -9432,9 +9471,16 @@
+     #[test]
+     fn native_eight_optical_library_targets_admit_without_raising_the_ninth_target_limit() {
+         let mut h = fixture();
+-        if !native_host(&mut h, "eight_library_targets") { return; }
++        if !native_host(&mut h, "eight_library_targets") {
++            return;
++        }
+         for index in 1..=8 {
+-            h.app.run("solid.box", json!({"length":2,"width":2,"height":2,"corner":[30*index,0,0],"body_name":format!("Optics{index}"),"operation":"new"})).unwrap();
++            h.app
++                .run(
++                    "solid.box",
++                    json!({"length":2,"width":2,"height":2,"corner":[30*index,0,0],"body_name":format!("Optics{index}"),"operation":"new"}),
++                )
++                .unwrap();
+         }
+         h.app.render_workspace.view.materials.bindings.clear();
+         bind_recipe(&mut h, "Optics", "starter.glass.low-iron-clear", materials::Boundary::Box);
+@@ -9482,9 +9528,16 @@
+         for language in ["en", "es", "de", "ko", "ar", "he", "ja", "vi", "zh"] {
+             let locale = crate::i18n::Locale::for_language(language);
+             for key in [
+-                "render.cpu_optics_boundary", "render.cpu_optics_conflict", "render.cpu_optics_enable",
+-                "render.cpu_optics_explicit", "render.cpu_optics_fixed", "render.cpu_optics_help",
+-                "render.cpu_optics_limit", "render.cpu_optics_request", "render.cpu_optics_saved", "render.cpu_optics_unsupported",
++                "render.cpu_optics_boundary",
++                "render.cpu_optics_conflict",
++                "render.cpu_optics_enable",
++                "render.cpu_optics_explicit",
++                "render.cpu_optics_fixed",
++                "render.cpu_optics_help",
++                "render.cpu_optics_limit",
++                "render.cpu_optics_request",
++                "render.cpu_optics_saved",
++                "render.cpu_optics_unsupported",
+             ] {
+                 assert_ne!(locale.text(key), key, "{language}: {key}");
+                 assert!(!locale.text(key).is_empty(), "{language}: {key}");
+@@ -9494,7 +9547,11 @@
+ 
+     fn editor_frame(h: &mut Harness, events: Vec<egui::Event>) {
+         let mut output = h.ctx.run_ui(
+-            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480.0, 2400.0))), events, ..Default::default() },
++            egui::RawInput {
++                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480.0, 2400.0))),
++                events,
++                ..Default::default()
++            },
+             |ui| {
+                 ui.set_width(420.0);
+                 materials::selection_controls(&mut h.app, ui, Some("Optics"));
+@@ -9506,9 +9563,13 @@
+     fn editor_click(h: &mut Harness, id: &str) {
+         let at = crate::scenario::rect_of(id).unwrap().center();
+         for pressed in [true, false] {
+-            editor_frame(h, vec![egui::Event::PointerMoved(at), egui::Event::PointerButton {
+-                pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE,
+-            }]);
++            editor_frame(
++                h,
++                vec![
++                    egui::Event::PointerMoved(at),
++                    egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE },
++                ],
++            );
+         }
+         editor_frame(h, vec![]);
+     }
+@@ -9568,16 +9629,12 @@
+ #[cfg(not(target_arch = "wasm32"))]
+ mod manual_final_cpu_feedback_tests {
+     use super::*;
+-    use solidcraft_engine::render::job::{
+-        CpuHost, CpuProgressiveOptions, HostKind, JobHandle, PartialPreviewPlan,
+-        PartialPreviewProjection, Phase,
+-    };
++    use solidcraft_engine::render::job::{CpuHost, CpuProgressiveOptions, HostKind, JobHandle, PartialPreviewPlan, PartialPreviewProjection, Phase};
+ 
+     fn fixture(width: u32, height: u32, samples: u32, background: [u8; 3], case: &str) -> Option<Harness> {
+         let mut h = Harness::new();
+         let host = CpuHost::for_platform().unwrap();
+-        let available = host.kind() == HostKind::NativeWorker && host.is_available()
+-            && host.validate_integrator(Integrator::Raytrace).is_ok();
++        let available = host.kind() == HostKind::NativeWorker && host.is_available() && host.validate_integrator(Integrator::Raytrace).is_ok();
+         h.app.session.set_render_job_host(Some(host.clone())).unwrap();
+         h.app.render_workspace.image_host = Some(host);
+         h.app.ui.tab = "RENDER".into();
+@@ -9591,7 +9648,9 @@
+         view.draft.exposure_ev = 0.0;
+         view.transparent = false;
+         view.raytrace = RaytraceOptions {
+-            primary_samples: 1, lights: Some(Vec::new()), shadows: false,
++            primary_samples: 1,
++            lights: Some(Vec::new()),
++            shadows: false,
+             progressive: Some(CpuProgressiveOptions { samples_per_pixel: samples, seed: 83 }),
+             ..Default::default()
+         };
+@@ -9602,8 +9661,8 @@
+                 "raytrace":{"primary_samples":1,"lights":[],"shadows":false,
+                     "progressive":{"samples_per_pixel":samples,"seed":83}}});
+             assert!(image_params(&h.app).is_err());
+-            assert!(h.app.run("render.preflight",wire.clone()).is_err());
+-            assert!(h.app.run("render.start",wire).is_err());
++            assert!(h.app.run("render.preflight", wire.clone()).is_err());
++            assert!(h.app.run("render.start", wire).is_err());
+             assert!(h.app.render_workspace.view.job.is_none());
+             assert!(h.app.render_workspace.final_partial.is_none());
+             eprintln!("MANUAL_FINAL_CPU_BRANCH case={case} cpu_supported=false unsupported_refusal_asserted=true");
+@@ -9614,12 +9673,12 @@
+     }
+ 
+     fn actual_final(h: &mut Harness) -> JobHandle {
+-        ribbon::perform_job(&mut h.app,"render.start").unwrap();
++        ribbon::perform_job(&mut h.app, "render.start").unwrap();
+         let job = h.app.render_workspace.view.job.unwrap();
+         let handle = h.app.session.render_job_handle(job).unwrap();
+         let status = handle.wait_timeout(Duration::from_secs(60)).unwrap();
+-        assert_eq!(status.progress.phase,Phase::Completed,"{:?}",status.error);
+-        assert_eq!(status.resolved.executor.as_str(),"cpu-raytrace");
++        assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
++        assert_eq!(status.resolved.executor.as_str(), "cpu-raytrace");
+         assert!(handle.frame().unwrap().is_some());
+         assert!(handle.protected_preview_report().unwrap().is_some());
+         handle
+@@ -9629,170 +9688,173 @@
+     // Derive bounded display pixels from an actual completed native final, then
+     // author an explicit source-frontier descriptor to exercise the UI policy.
+     // No JobHandle, host status, PreviewInfo or GPU executor is fabricated.
+-    fn install_policy_partial(
+-        h: &mut Harness, handle: &JobHandle, passes: u32, prefix: u64, sequence: u64,
+-    ) -> interactive::PartialSampling {
+-        use sha2::{Digest,Sha256};
++    fn install_policy_partial(h: &mut Harness, handle: &JobHandle, passes: u32, prefix: u64, sequence: u64) -> interactive::PartialSampling {
++        use sha2::{Digest, Sha256};
+         let status = handle.status().unwrap();
+-        assert_eq!(status.progress.phase,Phase::Completed);
++        assert_eq!(status.progress.phase, Phase::Completed);
+         let frame = handle.frame().unwrap().unwrap();
+         let source = image::load_from_memory(frame.png()).unwrap().to_rgba8();
+-        let plan = PartialPreviewPlan::new(status.request.width,status.request.height).unwrap();
++        let plan = PartialPreviewPlan::new(status.request.width, status.request.height).unwrap();
+         let mut pixels = Vec::new();
+         for index in 0..usize::try_from(plan.pixels()).unwrap() {
+             let source_index = plan.source_index(index).unwrap();
+             let count = passes + u32::from((source_index as u64) < prefix);
+             if count == 0 {
+-                pixels.extend_from_slice(&[0,0,0,0]);
++                pixels.extend_from_slice(&[0, 0, 0, 0]);
+             } else {
+                 let x = source_index % status.request.width as usize;
+                 let y = source_index / status.request.width as usize;
+-                pixels.extend_from_slice(&source.get_pixel(x as u32,y as u32).0);
++                pixels.extend_from_slice(&source.get_pixel(x as u32, y as u32).0);
+             }
+         }
+-        let png = super::partial_png_contract_encode(plan.width(),plan.height(),pixels);
++        let png = super::partial_png_contract_encode(plan.width(), plan.height(), pixels);
+         let mut frame_info = frame.info.clone();
+         frame_info.width = plan.width();
+         frame_info.height = plan.height();
+         frame_info.png_bytes = png.len() as u64;
+-        frame_info.png_sha256 = format!("{:x}",Sha256::digest(&png));
++        frame_info.png_sha256 = format!("{:x}", Sha256::digest(&png));
+         let info = PartialPreviewInfo {
+-            frame:frame_info,sequence,source_width:status.request.width,source_height:status.request.height,
+-            completed_passes:passes,updated_prefix:prefix,
+-            projection:PartialPreviewProjection::TopLeftRepresentativeV1,
++            frame: frame_info,
++            sequence,
++            source_width: status.request.width,
++            source_height: status.request.height,
++            completed_passes: passes,
++            updated_prefix: prefix,
++            projection: PartialPreviewProjection::TopLeftRepresentativeV1,
+         };
+-        let covered = vec![0;usize::try_from(plan.pixels()).unwrap()]; // committed misses have zero hit coverage
++        let covered = vec![0; usize::try_from(plan.pixels()).unwrap()]; // committed misses have zero hit coverage
+         let expected = interactive::PartialExpectation {
+-            job:handle.id(),scene_generation:status.scene_generation,request:&status.request,
+-            final_dimensions:[status.request.width,status.request.height],
++            job: handle.id(),
++            scene_generation: status.scene_generation,
++            request: &status.request,
++            final_dimensions: [status.request.width, status.request.height],
+         };
+-        let sampling = interactive::validate_partial_metadata(&expected,&info,png.len(),covered.len(),None).unwrap().unwrap();
+-        let image = interactive::decode_partial_image(
+-            &status.request,&info,&png,&covered,sampling,h.ctx.input(|input|input.max_texture_side),
+-        ).unwrap();
+-        let texture = h.ctx.load_texture("manual_final_policy_partial",image,egui::TextureOptions::NEAREST);
+-        h.app.render_workspace.final_partial = Some(FinalPartialImage { info,sampling,image:Ok(texture) });
++        let sampling = interactive::validate_partial_metadata(&expected, &info, png.len(), covered.len(), None).unwrap().unwrap();
++        let image =
++            interactive::decode_partial_image(&status.request, &info, &png, &covered, sampling, h.ctx.input(|input| input.max_texture_side)).unwrap();
++        let texture = h.ctx.load_texture("manual_final_policy_partial", image, egui::TextureOptions::NEAREST);
++        h.app.render_workspace.final_partial = Some(FinalPartialImage { info, sampling, image: Ok(texture) });
+         sampling
+     }
+ 
+     #[test]
+     fn native_manual_final_gui_opt_in_preserves_request_and_promotes_only_real_final() {
+-        let Some(mut h) = fixture(13,7,9,[17,89,203],"gui_opt_in") else { return };
++        let Some(mut h) = fixture(13, 7, 9, [17, 89, 203], "gui_opt_in") else { return };
+         let document = h.app.session.doc.clone();
+-        let before = (h.app.session.revision,h.app.session.undo.len(),h.app.session.is_dirty());
++        let before = (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty());
+         let stored = setups::snapshot(&h.app).unwrap();
+         assert!(serde_json::to_value(&stored).unwrap().get("progressive_feedback").is_none());
+         let offline = image_request(&h.app).unwrap();
+         assert!(offline.get("progressive_feedback").is_none());
+         let request = image_params(&h.app).unwrap();
+-        assert_eq!(request["progressive_feedback"],true);
++        assert_eq!(request["progressive_feedback"], true);
+         h.app.render_workspace.view.raytrace.progressive = None;
+         assert!(image_params(&h.app).unwrap().get("progressive_feedback").is_none());
+-        h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel:9,seed:83 });
+-        let checked = h.app.session.execute("render.preflight",&request).unwrap();
+-        ribbon::perform_job(&mut h.app,"render.preflight").unwrap();
+-        assert_eq!(h.app.render_workspace.view.cpu.checked.as_ref().unwrap().request,request);
++        h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel: 9, seed: 83 });
++        let checked = h.app.session.execute("render.preflight", &request).unwrap();
++        ribbon::perform_job(&mut h.app, "render.preflight").unwrap();
++        assert_eq!(h.app.render_workspace.view.cpu.checked.as_ref().unwrap().request, request);
+         let handle = actual_final(&mut h);
+         let status = handle.status().unwrap();
+-        assert_eq!(serde_json::to_value(&status.request).unwrap(),checked["request"]);
+-        assert_eq!((status.request.width,status.request.height),(13,7));
++        assert_eq!(serde_json::to_value(&status.request).unwrap(), checked["request"]);
++        assert_eq!((status.request.width, status.request.height), (13, 7));
+         let progressive = status.request.raytrace.as_ref().unwrap().progressive.unwrap();
+-        assert_eq!((progressive.samples_per_pixel,progressive.seed),(9,83));
++        assert_eq!((progressive.samples_per_pixel, progressive.seed), (9, 83));
+         let image = image::load_from_memory(handle.frame().unwrap().unwrap().png()).unwrap().to_rgba8();
+-        assert!(image.pixels().all(|pixel|pixel.0 == [17,89,203,255]));
++        assert!(image.pixels().all(|pixel| pixel.0 == [17, 89, 203, 255]));
+         let ctx = h.ctx.clone();
+-        cache_render_images(&mut h.app,&ctx);
+-        assert_eq!(h.app.render_workspace.view.completed,Some(handle.id()));
++        cache_render_images(&mut h.app, &ctx);
++        assert_eq!(h.app.render_workspace.view.completed, Some(handle.id()));
+         assert!(h.app.render_workspace.final_partial.is_none());
+         let display = displayed_image(&h.app).unwrap();
+         assert!(!display.provisional());
+         assert!(display.preview.is_none() && display.partial.is_none());
+-        assert_eq!(display.logical_size,[13,7]);
+-        assert_eq!(display.info.job,handle.id());
+-        assert_eq!(setups::snapshot(&h.app).unwrap(),stored);
+-        assert!(Arc::ptr_eq(&document,&h.app.session.doc));
+-        assert_eq!(before,(h.app.session.revision,h.app.session.undo.len(),h.app.session.is_dirty()));
++        assert_eq!(display.logical_size, [13, 7]);
++        assert_eq!(display.info.job, handle.id());
++        assert_eq!(setups::snapshot(&h.app).unwrap(), stored);
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        assert_eq!(before, (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty()));
+     }
+ 
+     #[test]
+     fn native_final_partial_policy_keeps_global_unknown_full_framing_and_real_final_priority() {
+-        let Some(mut h) = fixture(1025,1,3,[17,89,203],"partial_policy") else { return };
++        let Some(mut h) = fixture(1025, 1, 3, [17, 89, 203], "partial_policy") else { return };
+         let handle = actual_final(&mut h);
+         assert!(h.app.render_workspace.view.completed.is_none());
+         // The top-left 1024 representatives are known, but source pixel1024 is not.
+-        let sampling = install_policy_partial(&mut h,&handle,0,1024,1);
++        let sampling = install_policy_partial(&mut h, &handle, 0, 1024, 1);
+         assert!(sampling.source_unknown());
+-        assert_eq!(sampling.sample_range(),(0,1));
+-        assert_eq!(sampling.sampled_source_pixels(),1024);
++        assert_eq!(sampling.sample_range(), (0, 1));
++        assert_eq!(sampling.sampled_source_pixels(), 1024);
+         let display = displayed_image(&h.app).unwrap();
+         assert!(display.provisional() && display.partial.is_some() && display.preview.is_none());
+-        assert_eq!(display.logical_size,[1025,1]);
+-        assert_eq!((display.info.width,display.info.height),(1024,1));
+-        assert_eq!(display.image.as_ref().unwrap().size(),[1024,1]);
++        assert_eq!(display.logical_size, [1025, 1]);
++        assert_eq!((display.info.width, display.info.height), (1024, 1));
++        assert_eq!(display.image.as_ref().unwrap().size(), [1024, 1]);
+         assert!(reduced_display(&h.app));
+-        let camera = Camera { distance:37.0,..Default::default() };
++        let camera = Camera { distance: 37.0, ..Default::default() };
+         h.app.render_workspace.view.result_camera = camera;
+         h.app.render_workspace.view.result_scale = ResultScale::Free;
+         h.app.render_workspace.view.result_job = Some(handle.id());
+         let report = handle.protected_preview_report().unwrap();
+         let ctx = h.ctx.clone();
+-        cache_render_images(&mut h.app,&ctx);
+-        assert_eq!(h.app.render_workspace.view.completed,Some(handle.id()));
++        cache_render_images(&mut h.app, &ctx);
++        assert_eq!(h.app.render_workspace.view.completed, Some(handle.id()));
+         assert!(h.app.render_workspace.final_partial.is_none());
+         let display = displayed_image(&h.app).unwrap();
+         assert!(!display.provisional());
+-        assert_eq!(display.logical_size,[1025,1]);
++        assert_eq!(display.logical_size, [1025, 1]);
+         assert!(!reduced_display(&h.app));
+-        assert_eq!(h.app.render_workspace.view.result_camera,camera);
+-        assert_eq!(h.app.render_workspace.view.result_scale,ResultScale::Free);
++        assert_eq!(h.app.render_workspace.view.result_camera, camera);
++        assert_eq!(h.app.render_workspace.view.result_scale, ResultScale::Free);
+         invalidate_images(&mut h.app);
+         assert!(h.app.render_workspace.final_partial.is_none());
+-        assert_eq!(handle.protected_preview_report().unwrap(),report,"presentation invalidation cannot reset the actual ledger");
++        assert_eq!(handle.protected_preview_report().unwrap(), report, "presentation invalidation cannot reset the actual ledger");
+     }
+ 
+     #[test]
+     fn native_late_complete_policy_preserves_retained_export_then_reconciles_actual_frame() {
+-        let Some(mut h) = fixture(13,7,9,[17,89,203],"late_complete") else { return };
++        let Some(mut h) = fixture(13, 7, 9, [17, 89, 203], "late_complete") else { return };
+         let first = actual_final(&mut h);
+         let ctx = h.ctx.clone();
+-        cache_render_images(&mut h.app,&ctx);
++        cache_render_images(&mut h.app, &ctx);
+         let first_bytes = first.frame().unwrap().unwrap().png().to_vec();
+-        h.app.render_workspace.view.draft.background = [91,33,187];
++        h.app.render_workspace.view.draft.background = [91, 33, 187];
+         let second = actual_final(&mut h);
+-        assert_eq!(h.app.render_workspace.view.completed,Some(first.id()));
+-        install_policy_partial(&mut h,&second,0,5,1);
++        assert_eq!(h.app.render_workspace.view.completed, Some(first.id()));
++        install_policy_partial(&mut h, &second, 0, 5, 1);
+         assert!(displayed_image(&h.app).unwrap().provisional());
+         let old_path = h.dir.join("manual-final-retained.png");
+         let export_job = h.app.render_workspace.view.completed.unwrap();
+-        h.app.run("render.export",json!({"job":export_job,"path":old_path})).unwrap();
+-        assert_eq!(std::fs::read(&old_path).unwrap(),first_bytes);
++        h.app.run("render.export", json!({"job":export_job,"path":old_path})).unwrap();
++        assert_eq!(std::fs::read(&old_path).unwrap(), first_bytes);
+         // Regression oracle for the observed event order:
+         // frame read absent -> later real status Completed -> real frame promoted
+         // BEFORE provisional clear/fallback. This calls the production policy on
+         // an actual completed native handle; it does not fake the earlier read.
+-        assert!(!final_job_still_running(&mut h.app,&second));
+-        assert_eq!(h.app.render_workspace.view.completed,Some(second.id()));
+-        cache_render_images(&mut h.app,&ctx);
++        assert!(!final_job_still_running(&mut h.app, &second));
++        assert_eq!(h.app.render_workspace.view.completed, Some(second.id()));
++        cache_render_images(&mut h.app, &ctx);
+         assert!(!displayed_image(&h.app).unwrap().provisional());
+         assert!(h.app.render_workspace.final_partial.is_none());
+         let new_path = h.dir.join("manual-final-current.png");
+         let export_job = h.app.render_workspace.view.completed.unwrap();
+-        h.app.run("render.export",json!({"job":export_job,"path":new_path})).unwrap();
+-        assert_eq!(std::fs::read(&new_path).unwrap(),second.frame().unwrap().unwrap().png());
++        h.app.run("render.export", json!({"job":export_job,"path":new_path})).unwrap();
++        assert_eq!(std::fs::read(&new_path).unwrap(), second.frame().unwrap().unwrap().png());
+         let final_pixels = image::load_from_memory(&std::fs::read(&new_path).unwrap()).unwrap().to_rgba8();
+-        assert!(final_pixels.pixels().all(|pixel|pixel.0 == [91,33,187,255]));
+-        assert!(!final_job_still_running(&mut h.app,&first),"a different selected final cannot be reconciled through an old handle");
+-        assert_eq!(h.app.render_workspace.view.completed,Some(second.id()));
++        assert!(final_pixels.pixels().all(|pixel| pixel.0 == [91, 33, 187, 255]));
++        assert!(!final_job_still_running(&mut h.app, &first), "a different selected final cannot be reconciled through an old handle");
++        assert_eq!(h.app.render_workspace.view.completed, Some(second.id()));
+     }
+     fn author_box_optics(h: &mut Harness) {
+-        h.app.run("solid.box",json!({"length":200,"width":200,"height":4,"center":[0,0,2],"body_name":"ManualOptics"})).unwrap();
+-        h.app.run("render.scene",json!({})).unwrap();
++        h.app.run("solid.box", json!({"length":200,"width":200,"height":4,"center":[0,0,2],"body_name":"ManualOptics"})).unwrap();
++        h.app.run("render.scene", json!({})).unwrap();
+         h.app.ui.tab = "RENDER".into();
+         let view = &mut h.app.render_workspace.view;
+         view.method = ImageMethod::CpuRaytrace;
+         view.draft.width = 1;
+         view.draft.height = 1;
+-        view.draft.background = [255;3];
++        view.draft.background = [255; 3];
+         view.draft.stage.clear();
+         view.draft.surfaces.clear();
+         view.transparent = false;
+@@ -9801,13 +9863,13 @@
+         view.raytrace.lights = Some(Vec::new());
+         view.raytrace.shadows = false;
+         view.cpu.environment = cpu::Environment::Constant;
+-        view.cpu.color = [1.0;3];
++        view.cpu.color = [1.0; 3];
+         view.cpu.intensity = 1.0;
+-        h.app.cam = Camera { distance:10.0,fov:0.0,..Default::default() };
++        h.app.cam = Camera { distance: 10.0, fov: 0.0, ..Default::default() };
+         h.app.cam.set_view(StandardView::Top);
+-        h.app.cam.target = solidcraft_engine::geom::Vec3::new(0.0,0.0,2.0);
+-        let target = materials::read_targets(&mut h.app).unwrap().into_iter().find(|target|target.name == "ManualOptics").unwrap();
+-        let mut binding = materials::Binding::new(target,&h.app);
++        h.app.cam.target = solidcraft_engine::geom::Vec3::new(0.0, 0.0, 2.0);
++        let target = materials::read_targets(&mut h.app).unwrap().into_iter().find(|target| target.name == "ManualOptics").unwrap();
++        let mut binding = materials::Binding::new(target, &h.app);
+         binding.glass_enabled = true;
+         binding.cpu_optics = true;
+         binding.glass = materials::Glass::recipe("starter.glass.low-iron-clear").unwrap();
+@@ -9820,32 +9882,45 @@
+     fn editor_text(h: &mut Harness, events: Vec<egui::Event>) -> String {
+         fn collect(shape: &egui::Shape, text: &mut String) {
+             match shape {
+-                egui::Shape::Text(shape) => { text.push_str(shape.galley.text()); text.push('\n'); }
+-                egui::Shape::Vec(shapes) => for shape in shapes { collect(shape,text); },
++                egui::Shape::Text(shape) => {
++                    text.push_str(shape.galley.text());
++                    text.push('\n');
++                }
++                egui::Shape::Vec(shapes) => {
++                    for shape in shapes {
++                        collect(shape, text);
++                    }
++                }
+                 _ => {}
+             }
+         }
+         let mut output = h.ctx.run_ui(
+-            egui::RawInput { screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(480.0,3200.0))),events,..Default::default() },
++            egui::RawInput {
++                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480.0, 3200.0))),
++                events,
++                ..Default::default()
++            },
+             |ui| {
+                 ui.set_width(420.0);
+-                materials::selection_controls(&mut h.app,ui,Some("ManualOptics"));
++                materials::selection_controls(&mut h.app, ui, Some("ManualOptics"));
+             },
+         );
+         let mut text = String::new();
+-        for clipped in &output.shapes { collect(&clipped.shape,&mut text); }
++        for clipped in &output.shapes {
++            collect(&clipped.shape, &mut text);
++        }
+         output.textures_delta.clear();
+         text
+     }
+ 
+     #[test]
+     fn certification_note_draws_cpu_check_guidance_in_both_sampling_modes_and_legacy_gpu_note() {
+-        let pending: Value = serde_json::from_str(include_str!(concat!(
+-            env!("CARGO_MANIFEST_DIR"),"/../../assets/locales/pending/cpu-optical-certification.json"
+-        ))).unwrap();
++        let pending: Value =
++            serde_json::from_str(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/pending/cpu-optical-certification.json")))
++                .unwrap();
+         let key = "render.cpu_optics_certification";
+-        for locale in ["ar","de","en","es","he","ja","ko","vi","zh"] {
+-            assert_eq!(pending[locale].as_object().unwrap().len(),1);
++        for locale in ["ar", "de", "en", "es", "he", "ja", "ko", "vi", "zh"] {
++            assert_eq!(pending[locale].as_object().unwrap().len(), 1);
+             assert!(!pending[locale][key].as_str().unwrap().trim().is_empty());
+         }
+         let mut h = Harness::new();
+@@ -9854,86 +9929,102 @@
+         h.app.render_workspace.view.raytrace.progressive = None;
+         let cpu_note = h.app.tr(key).to_string();
+         let gpu_note = h.app.tr("render.material_certification").to_string();
+-        assert_ne!(cpu_note,key,"a missing catalog fallback is not a translated note");
+-        assert_ne!(gpu_note,"render.material_certification");
++        assert_ne!(cpu_note, key, "a missing catalog fallback is not a translated note");
++        assert_ne!(gpu_note, "render.material_certification");
+         let document = h.app.session.doc.clone();
+-        let before = (h.app.session.revision,h.app.session.undo.len(),h.app.session.is_dirty(),
+-            h.app.render_workspace.view.job,h.app.render_workspace.view.completed);
+-        let binding_before = format!("{:?}",h.app.render_workspace.view.materials.bindings[0]);
+-        let initial = editor_text(&mut h,Vec::new());
++        let before = (
++            h.app.session.revision,
++            h.app.session.undo.len(),
++            h.app.session.is_dirty(),
++            h.app.render_workspace.view.job,
++            h.app.render_workspace.view.completed,
++        );
++        let binding_before = format!("{:?}", h.app.render_workspace.view.materials.bindings[0]);
++        let initial = editor_text(&mut h, Vec::new());
+         if !initial.contains(&cpu_note) {
+-            let heading = format!("dialog:section:{}",h.app.tr("render.appearance_editor.glass"));
++            let heading = format!("dialog:section:{}", h.app.tr("render.appearance_editor.glass"));
+             let at = crate::scenario::rect_of(&heading).unwrap().center();
+-            for pressed in [true,false] {
+-                editor_text(&mut h,vec![egui::Event::PointerMoved(at),egui::Event::PointerButton {
+-                    pos:at,button:egui::PointerButton::Primary,pressed,modifiers:egui::Modifiers::NONE,
+-                }]);
++            for pressed in [true, false] {
++                editor_text(
++                    &mut h,
++                    vec![
++                        egui::Event::PointerMoved(at),
++                        egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE },
++                    ],
++                );
+             }
+         }
+-        for progressive in [None,Some(CpuProgressiveOptions { samples_per_pixel:5,seed:13 })] {
++        for progressive in [None, Some(CpuProgressiveOptions { samples_per_pixel: 5, seed: 13 })] {
+             h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
+             h.app.render_workspace.view.raytrace.progressive = progressive;
+-            let text = editor_text(&mut h,Vec::new());
+-            assert!(text.contains(&cpu_note),"{text}");
+-            assert!(!text.contains(&gpu_note),"{text}");
++            let text = editor_text(&mut h, Vec::new());
++            assert!(text.contains(&cpu_note), "{text}");
++            assert!(!text.contains(&gpu_note), "{text}");
+         }
+         h.app.render_workspace.view.method = ImageMethod::GpuRaytrace;
+-        let text = editor_text(&mut h,Vec::new());
+-        assert!(text.contains(&gpu_note),"{text}");
+-        assert!(!text.contains(&cpu_note),"{text}");
+-        assert_eq!(format!("{:?}",h.app.render_workspace.view.materials.bindings[0]),binding_before);
+-        assert!(Arc::ptr_eq(&document,&h.app.session.doc));
+-        assert_eq!(before,(h.app.session.revision,h.app.session.undo.len(),h.app.session.is_dirty(),
+-            h.app.render_workspace.view.job,h.app.render_workspace.view.completed));
++        let text = editor_text(&mut h, Vec::new());
++        assert!(text.contains(&gpu_note), "{text}");
++        assert!(!text.contains(&cpu_note), "{text}");
++        assert_eq!(format!("{:?}", h.app.render_workspace.view.materials.bindings[0]), binding_before);
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        assert_eq!(
++            before,
++            (
++                h.app.session.revision,
++                h.app.session.undo.len(),
++                h.app.session.is_dirty(),
++                h.app.render_workspace.view.job,
++                h.app.render_workspace.view.completed
++            )
++        );
+         // Text/layout evidence only: selecting a note never certifies a CPU/GPU render.
+     }
+ 
+     #[test]
+     fn native_progressive_optical_recipe_keeps_authored_ior_certificate_and_final_capture() {
+-        let Some(mut h) = fixture(1,1,5,[255;3],"progressive_optics") else { return };
++        let Some(mut h) = fixture(1, 1, 5, [255; 3], "progressive_optics") else { return };
+         author_box_optics(&mut h);
+-        h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel:5,seed:13 });
++        h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel: 5, seed: 13 });
+         // The orthographic pixel's entire jitter support lies in +/-4mm,
+         // strictly inside the independently authored +/-100mm box footprint.
+-        assert_eq!(h.app.cam.half_height(),4.0);
+-        for (x,y) in [(0.0,0.0),(1.0,0.0),(0.0,1.0),(1.0,1.0)] {
+-            let (origin,direction) = h.app.cam.ray(x,y,1.0,1.0);
++        assert_eq!(h.app.cam.half_height(), 4.0);
++        for (x, y) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
++            let (origin, direction) = h.app.cam.ray(x, y, 1.0, 1.0);
+             assert!(direction.x.abs() < 1e-12 && direction.y.abs() < 1e-12);
+-            assert!((direction.z.abs()-1.0).abs() < 1e-12);
+-            let point = origin + direction * ((4.0-origin.z)/direction.z);
+-            assert!(point.x.abs() <= 4.0+1e-9 && point.y.abs() <= 4.0+1e-9);
++            assert!((direction.z.abs() - 1.0).abs() < 1e-12);
++            let point = origin + direction * ((4.0 - origin.z) / direction.z);
++            assert!(point.x.abs() <= 4.0 + 1e-9 && point.y.abs() <= 4.0 + 1e-9);
+             assert!(point.x.abs() < 100.0 && point.y.abs() < 100.0);
+         }
+         let document = h.app.session.doc.clone();
+-        let before = (h.app.session.revision,h.app.session.undo.len(),h.app.session.is_dirty());
+-        let binding_before = format!("{:?}",h.app.render_workspace.view.materials.bindings[0]);
++        let before = (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty());
++        let binding_before = format!("{:?}", h.app.render_workspace.view.materials.bindings[0]);
+         let request = image_params(&h.app).unwrap();
+-        assert_eq!(request["progressive_feedback"],true);
++        assert_eq!(request["progressive_feedback"], true);
+         let optics = &request["raytrace"]["dielectrics"][0];
+-        assert_eq!(optics["body_name"],"ManualOptics");
+-        assert_eq!(optics["boundary"],"closed_box");
+-        assert_eq!(optics["ior"],1.5,"the production recipe IOR is not reduced for this case");
+-        for (index,transmission) in [0.98_f64,0.99,1.0].into_iter().enumerate() {
+-            let expected = -transmission.ln()/4.0;
+-            assert!((optics["absorption_per_mm"][index].as_f64().unwrap()-expected).abs() < 1e-15);
+-        }
+-        let checked = h.app.session.execute("render.preflight",&request).unwrap();
++        assert_eq!(optics["body_name"], "ManualOptics");
++        assert_eq!(optics["boundary"], "closed_box");
++        assert_eq!(optics["ior"], 1.5, "the production recipe IOR is not reduced for this case");
++        for (index, transmission) in [0.98_f64, 0.99, 1.0].into_iter().enumerate() {
++            let expected = -transmission.ln() / 4.0;
++            assert!((optics["absorption_per_mm"][index].as_f64().unwrap() - expected).abs() < 1e-15);
++        }
++        let checked = h.app.session.execute("render.preflight", &request).unwrap();
+         let handle = actual_final(&mut h);
+         let status = handle.status().unwrap();
+-        assert_eq!(serde_json::to_value(&status.request).unwrap(),checked["request"]);
+-        assert_eq!(json!(status.request.raytrace),request["raytrace"]);
++        assert_eq!(serde_json::to_value(&status.request).unwrap(), checked["request"]);
++        assert_eq!(json!(status.request.raytrace), request["raytrace"]);
+         assert!(!status.options.nested_media);
+         let frame = handle.frame().unwrap().unwrap();
+         let pixels = image::load_from_memory(frame.png()).unwrap().to_rgba8();
+-        assert_eq!(pixels.dimensions(),(1,1));
+-        let pixel = pixels.get_pixel(0,0).0;
+-        assert_eq!(pixel[3],255);
+-        assert!(pixel[..3].iter().any(|value|*value > 0));
+-        assert_eq!(format!("{:?}",h.app.render_workspace.view.materials.bindings[0]),binding_before);
+-        assert!(Arc::ptr_eq(&document,&h.app.session.doc));
+-        assert_eq!(before,(h.app.session.revision,h.app.session.undo.len(),h.app.session.is_dirty()));
++        assert_eq!(pixels.dimensions(), (1, 1));
++        let pixel = pixels.get_pixel(0, 0).0;
++        assert_eq!(pixel[3], 255);
++        assert!(pixel[..3].iter().any(|value| *value > 0));
++        assert_eq!(format!("{:?}", h.app.render_workspace.view.materials.bindings[0]), binding_before);
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        assert_eq!(before, (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty()));
+         // Actual CPU capture/completion + nonblack optical smoke, not a full
+         // Fresnel/TIR oracle or a partial-optical-tree while-running receipt.
+     }
+-
+-}
++}

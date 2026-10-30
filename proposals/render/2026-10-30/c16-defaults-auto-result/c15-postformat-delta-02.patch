@@ -1,0 +1,1444 @@
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -1671,7 +1671,6 @@
+     }
+ }
+ 
+-
+ // Progressive smooth-optics unit: original tests WRITTEN, NOT COMPILED OR RUN.
+ pub(super) fn progressive_optics_source(
+     boundary: job::DielectricBoundary,
+@@ -1718,10 +1717,14 @@
+     let target = task.options.progressive.unwrap().samples_per_pixel;
+     for _ in 0..2_000_000 {
+         if let Some(progressive) = &task.progressive
+-            && progressive.film.ready() && progressive.film.samples() == target
++            && progressive.film.ready()
++            && progressive.film.samples() == target
+         {
+-            film.get_or_insert_with(|| (0..task.request.width as usize * task.request.height as usize)
+-                .map(|pixel| progressive.film.pixel(pixel).unwrap().0.map(f64::to_bits)).collect());
++            film.get_or_insert_with(|| {
++                (0..task.request.width as usize * task.request.height as usize)
++                    .map(|pixel| progressive.film.pixel(pixel).unwrap().0.map(f64::to_bits))
++                    .collect()
++            });
+         }
+         let poll = task.step_with_previews(quantum).unwrap();
+         if let Some(state) = task.optical.first().and_then(|o| o.pending.as_ref()) {
+@@ -1734,8 +1737,11 @@
+                 assert_eq!(state.path.boundaries, 0);
+                 let origin = state.path.ray.origin();
+                 let direction = state.path.ray.direction();
+-                primaries.push((identity.0, identity.1, [origin.x.to_bits(), origin.y.to_bits(), origin.z.to_bits(),
+-                    direction.x.to_bits(), direction.y.to_bits(), direction.z.to_bits()]));
++                primaries.push((
++                    identity.0,
++                    identity.1,
++                    [origin.x.to_bits(), origin.y.to_bits(), origin.z.to_bits(), direction.x.to_bits(), direction.y.to_bits(), direction.z.to_bits()],
++                ));
+                 previous_sample = Some(identity);
+             }
+         }
+@@ -1839,8 +1845,10 @@
+         request.camera.distance = 6.0;
+         request.camera.fov = 0.0;
+         assert!(admit(&scene, &request, &options).is_err());
+-        let run = finish_optical_progressive(ImageTask::new_with_environment_and_nested(
+-            scene, request, CancelToken::default(), options, None, true).unwrap(), 1);
++        let run = finish_optical_progressive(
++            ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap(),
++            1,
++        );
+         for (actual, exponent) in run.film[0].into_iter().zip([-0.8_f64, -1.2, 0.0]) {
+             assert!((f64::from_bits(actual) - exponent.exp()).abs() < 1e-10);
+         }
+@@ -1881,7 +1889,11 @@
+             assert!(task.work.used() - before <= 1);
+             if task.optical.first().and_then(|o| o.pending.as_ref()).is_some_and(|s| s.path.medium.is_some()) {
+                 let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
+-                if cancel { task.cancel.cancel(); } else { task.work.limit = task.work.used(); }
++                if cancel {
++                    task.cancel.cancel();
++                } else {
++                    task.work.limit = task.work.used();
++                }
+                 assert_eq!(task.step_with_previews(1).err().unwrap().code, if cancel { ErrorCode::Cancelled } else { ErrorCode::LimitExceeded });
+                 assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(), frontier);
+                 assert!(!task.done);
+@@ -1951,17 +1963,19 @@
+     for _ in 0..100_000 {
+         assert!(matches!(task.step_with_previews(1).unwrap(), ImagePoll::Pending(_)));
+         let Some(state) = task.optical.first().and_then(|o| o.pending.as_ref()) else { continue };
+-        if state.path.boundaries == 0 { incident = Some(state.path.ray.direction()); }
++        if state.path.boundaries == 0 {
++            incident = Some(state.path.ray.direction());
++        }
+         if state.path.boundaries == 1 && state.path.medium == Some(0) {
+             let d = incident.unwrap();
+             let tx = d.x / 1.5;
+             let ty = d.y / 1.5;
+-            let tz = -(1.0 - tx*tx - ty*ty).sqrt();
+-            assert!((state.path.ray.direction() - Vec3::new(tx,ty,tz)).len() < 1e-12);
+-            entry = Some((state.path.segment_start,state.path.throughput,tz));
++            let tz = -(1.0 - tx * tx - ty * ty).sqrt();
++            assert!((state.path.ray.direction() - Vec3::new(tx, ty, tz)).len() < 1e-12);
++            entry = Some((state.path.segment_start, state.path.throughput, tz));
+         }
+         if state.path.boundaries == 2 && state.path.medium.is_none() {
+-            let (point,throughput,tz) = entry.unwrap();
++            let (point, throughput, tz) = entry.unwrap();
+             let distance = 2.0 / -tz;
+             assert!((state.path.segment_start.dist(point) - distance).abs() < 1e-10);
+             assert!((state.path.ray.direction() - incident.unwrap()).len() < 1e-12);
+@@ -1978,20 +1992,22 @@
+ #[test]
+ fn progressive_nested_optics_still_refuse_contacts_and_interior_cameras() {
+     let (mut scene, mut options) = dielectric::tests::nested_fixture(false);
+-    options.progressive = Some(job::CpuProgressiveOptions { samples_per_pixel:3, seed:19 });
++    options.progressive = Some(job::CpuProgressiveOptions { samples_per_pixel: 3, seed: 19 });
+     let request = dielectric::tests::request(options.clone());
+-    for point in &mut std::sync::Arc::make_mut(&mut scene.meshes[1].mesh).positions { point.z += 1.0; }
+-    assert!(admit_with_nested(&scene,&request,&options,true).is_err(), "inner top touches outer top");
+-    let (scene, mut request, options) = progressive_optics_source(job::DielectricBoundary::ClosedBox,2.0,1.5,3);
+-    request.camera.target = Vec3::new(0.0,0.0,1.0);
++    for point in &mut std::sync::Arc::make_mut(&mut scene.meshes[1].mesh).positions {
++        point.z += 1.0;
++    }
++    assert!(admit_with_nested(&scene, &request, &options, true).is_err(), "inner top touches outer top");
++    let (scene, mut request, options) = progressive_optics_source(job::DielectricBoundary::ClosedBox, 2.0, 1.5, 3);
++    request.camera.target = Vec3::new(0.0, 0.0, 1.0);
+     request.camera.distance = 0.1;
+-    let mut task = ImageTask::new(scene,request,CancelToken::default(),options).unwrap();
++    let mut task = ImageTask::new(scene, request, CancelToken::default(), options).unwrap();
+     for _ in 0..100_000 {
+         match task.step_with_previews(1) {
+             Err(error) => {
+-                assert_eq!(error.code,ErrorCode::InvalidScene);
++                assert_eq!(error.code, ErrorCode::InvalidScene);
+                 assert!(error.message.contains("inside a dielectric"));
+-                assert_eq!(task.progressive.as_ref().unwrap().film.samples(),0);
++                assert_eq!(task.progressive.as_ref().unwrap().film.samples(), 0);
+                 assert!(!task.done);
+                 return;
+             }
+@@ -2001,216 +2017,234 @@
+     }
+     panic!("interior progressive camera not refused");
+ }
+-
+ 
+ // Original regression implementation guided by Kernel Specialist's analytic
+ // identity-shell counterexample (FINDING5282bf86 / proposal dae7f679). SOURCE
+ // ONLY, WRITTEN NOT RUN; expectations are physical, never recorded output.
+-pub(super) fn straight_identity_shells_source(count:usize,progressive:bool,absorbing:bool) -> (ProductScene,ImageRequest,RaytraceOptions) {
++pub(super) fn straight_identity_shells_source(count: usize, progressive: bool, absorbing: bool) -> (ProductScene, ImageRequest, RaytraceOptions) {
+     assert!((1..=8).contains(&count));
+-    let mut meshes=Vec::with_capacity(8);
+-    let mut dielectrics=Vec::with_capacity(8);
++    let mut meshes = Vec::with_capacity(8);
++    let mut dielectrics = Vec::with_capacity(8);
+     for index in 0..count {
+-        let h=(count-index) as f64;
+-        let mut body=dielectric::tests::box_body(2.0*h);
+-        body.name=format!("Straight identity shell {index}");
++        let h = (count - index) as f64;
++        let mut body = dielectric::tests::box_body(2.0 * h);
++        body.name = format!("Straight identity shell {index}");
+         for point in &mut std::sync::Arc::make_mut(&mut body.mesh).positions {
+-            *point=Vec3::new(if point.x<0.0 {-(16.0+h)} else {16.0+h},
+-                if point.y<0.0 {-(16.0+h)} else {16.0+h},point.z-h);
+-        }
+-        let sigma=if absorbing {0.01*(index+1) as f64} else {0.0};
+-        dielectrics.push(job::DielectricOptions {body_index:index,body_name:body.name.clone(),
+-            boundary:job::DielectricBoundary::ClosedBox,ior:1.0,
+-            absorption_per_mm:[sigma,2.0*sigma,0.0],thickness_mm:0.0});
++            *point = Vec3::new(if point.x < 0.0 { -(16.0 + h) } else { 16.0 + h }, if point.y < 0.0 { -(16.0 + h) } else { 16.0 + h }, point.z - h);
++        }
++        let sigma = if absorbing { 0.01 * (index + 1) as f64 } else { 0.0 };
++        dielectrics.push(job::DielectricOptions {
++            body_index: index,
++            body_name: body.name.clone(),
++            boundary: job::DielectricBoundary::ClosedBox,
++            ior: 1.0,
++            absorption_per_mm: [sigma, 2.0 * sigma, 0.0],
++            thickness_mm: 0.0,
++        });
+         meshes.push(body);
+     }
+-    assert!(dielectrics.capacity()<=8);
+-    let bounds=meshes.iter().fold(Aabb3::EMPTY,|a,body|a.union(&body.mesh.bounds()));
+-    let options=RaytraceOptions {
++    assert!(dielectrics.capacity() <= 8);
++    let bounds = meshes.iter().fold(Aabb3::EMPTY, |a, body| a.union(&body.mesh.bounds()));
++    let options = RaytraceOptions {
+         dielectrics,
+-        progressive:progressive.then_some(job::CpuProgressiveOptions {samples_per_pixel:3,seed:71}),
+-        lights:Some(Vec::new()),shadows:false,
+-        environment:Some(job::RaytraceEnvironmentOptions {color:[1.0;3],intensity:1.0}),
++        progressive: progressive.then_some(job::CpuProgressiveOptions { samples_per_pixel: 3, seed: 71 }),
++        lights: Some(Vec::new()),
++        shadows: false,
++        environment: Some(job::RaytraceEnvironmentOptions { color: [1.0; 3], intensity: 1.0 }),
+         ..Default::default()
+     };
+-    let mut request=dielectric::tests::request(options.clone());
+-    request.background=[188;3];
+-    request.camera.target=Vec3::ZERO;
+-    request.camera.distance=20.0;
+-    request.camera.yaw=0.0;
+-    request.camera.pitch=std::f64::consts::FRAC_PI_2;
+-    request.camera.fov=0.0;
+-    (ProductScene {meshes,bounds},request,options)
+-}
+-
+-pub(super) fn straight_shells_expected_linear(count:usize,absorbing:bool) -> [f64;3] {
++    let mut request = dielectric::tests::request(options.clone());
++    request.background = [188; 3];
++    request.camera.target = Vec3::ZERO;
++    request.camera.distance = 20.0;
++    request.camera.yaw = 0.0;
++    request.camera.pitch = std::f64::consts::FRAC_PI_2;
++    request.camera.fov = 0.0;
++    (ProductScene { meshes, bounds }, request, options)
++}
++
++pub(super) fn straight_shells_expected_linear(count: usize, absorbing: bool) -> [f64; 3] {
+     // Each shell's active parent interval totals2mm, including the innermost
+     // 2mm slab. Sum 2*.01*(1+...+N)=.01*N*(N+1); green doubles sigma.
+-    let tau=if absorbing {0.01*(count*(count+1)) as f64} else {0.0};
+-    [(-tau).exp(),(-2.0*tau).exp(),1.0]
+-}
+-
+-pub(super) fn straight_expected_pixel(linear:[f64;3]) -> [u8;4] {
++    let tau = if absorbing { 0.01 * (count * (count + 1)) as f64 } else { 0.0 };
++    [(-tau).exp(), (-2.0 * tau).exp(), 1.0]
++}
++
++pub(super) fn straight_expected_pixel(linear: [f64; 3]) -> [u8; 4] {
+     // Independent documented zero-EV Reinhard and IEC sRGB equations, not the
+     // renderer's compositor/map_to_display/encode8 or a prior output capture.
+-    let rgb=linear.map(|v| {
+-        let mapped=v/(1.0+v);
+-        let encoded=if mapped<=0.0031308 {12.92*mapped} else {1.055*mapped.powf(1.0/2.4)-0.055};
+-        (encoded*255.0+0.5).floor() as u8
++    let rgb = linear.map(|v| {
++        let mapped = v / (1.0 + v);
++        let encoded = if mapped <= 0.0031308 { 12.92 * mapped } else { 1.055 * mapped.powf(1.0 / 2.4) - 0.055 };
++        (encoded * 255.0 + 0.5).floor() as u8
+     });
+-    [rgb[0],rgb[1],rgb[2],255]
+-}
+-
+-fn complete_straight_shells(mut task:ImageTask,expected_crossings:u8,expected_linear:[f64;3]) -> Vec<u8> {
+-    let progressive=task.options.progressive;
+-    let mut final_linear=None;
+-    let mut maximum=0;
+-    let mut final_png=None;
+-    assert_eq!(task.optical.first().unwrap().straight_limit,Some(expected_crossings));
++    [rgb[0], rgb[1], rgb[2], 255]
++}
++
++fn complete_straight_shells(mut task: ImageTask, expected_crossings: u8, expected_linear: [f64; 3]) -> Vec<u8> {
++    let progressive = task.options.progressive;
++    let mut final_linear = None;
++    let mut maximum = 0;
++    let mut final_png = None;
++    assert_eq!(task.optical.first().unwrap().straight_limit, Some(expected_crossings));
+     for _ in 0..1_000_000 {
+-        if let Some(p)=&task.progressive && p.film.ready() && p.film.samples()==progressive.unwrap().samples_per_pixel {
+-            let (rgb,covered,samples)=p.film.pixel(0).unwrap();
+-            assert_eq!((covered,samples),(3,3));
+-            final_linear=Some(rgb);
+-        }
+-        let before=task.work.used();
+-        let poll=task.step_with_previews(1).unwrap();
++        if let Some(p) = &task.progressive
++            && p.film.ready()
++            && p.film.samples() == progressive.unwrap().samples_per_pixel
++        {
++            let (rgb, covered, samples) = p.film.pixel(0).unwrap();
++            assert_eq!((covered, samples), (3, 3));
++            final_linear = Some(rgb);
++        }
++        let before = task.work.used();
++        let poll = task.step_with_previews(1).unwrap();
+         // PNG row/hash charges are the unchanged resolve contract. During
+         // optical traversal/interface stages one unit cannot overspend.
+-        if let Some(state)=task.optical.first().and_then(|o|o.pending.as_ref()) {
+-            assert!(task.work.used()-before<=1);
+-            assert_eq!(state.stack_len,0,"zero Fresnel reflection creates no pending branch");
+-            assert_eq!(state.paths,u16::from(state.path.boundaries)+1);
+-            maximum=maximum.max(state.path.boundaries);
++        if let Some(state) = task.optical.first().and_then(|o| o.pending.as_ref()) {
++            assert!(task.work.used() - before <= 1);
++            assert_eq!(state.stack_len, 0, "zero Fresnel reflection creates no pending branch");
++            assert_eq!(state.paths, u16::from(state.path.boundaries) + 1);
++            maximum = maximum.max(state.path.boundaries);
+         }
+         match poll {
+-            ImagePoll::Pending(_)=>{},
+-            ImagePoll::Preview {png,..}=>{
+-                assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0,0).0,straight_expected_pixel(expected_linear));
++            ImagePoll::Pending(_) => {}
++            ImagePoll::Preview { png, .. } => {
++                assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0, 0).0, straight_expected_pixel(expected_linear));
+                 assert!(task.optical.first().unwrap().pending.is_none());
+-            },
+-            ImagePoll::Complete(png)=>{final_png=Some(png);break;}
+-        }
+-    }
+-    assert_eq!(maximum,expected_crossings,"every real geometric interface was traversed");
++            }
++            ImagePoll::Complete(png) => {
++                final_png = Some(png);
++                break;
++            }
++        }
++    }
++    assert_eq!(maximum, expected_crossings, "every real geometric interface was traversed");
+     if progressive.is_some() {
+-        for (actual,expected) in final_linear.unwrap().into_iter().zip(expected_linear) {
+-            assert!((actual-expected).abs()<1e-11,"physical parent-only Beer path length");
+-        }
+-    }
+-    let png=final_png.expect("certified finite straight path must complete");
+-    assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0,0).0,straight_expected_pixel(expected_linear));
++        for (actual, expected) in final_linear.unwrap().into_iter().zip(expected_linear) {
++            assert!((actual - expected).abs() < 1e-11, "physical parent-only Beer path length");
++        }
++    }
++    let png = final_png.expect("certified finite straight path must complete");
++    assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0, 0).0, straight_expected_pixel(expected_linear));
+     png
+ }
+ 
+ #[test]
+ fn straight_identity_shells_four_control_five_minimum_and_eight_maximum_reach_environment() {
+-    for progressive in [false,true] {
+-        for count in [4,5,8] {
+-            let (scene,request,options)=straight_identity_shells_source(count,progressive,false);
++    for progressive in [false, true] {
++        for count in [4, 5, 8] {
++            let (scene, request, options) = straight_identity_shells_source(count, progressive, false);
+             options.validate().unwrap();
+-            assert!(admit(&scene,&request,&options).is_err(),"nesting still requires explicit opt-in");
+-            admit_with_nested(&scene,&request,&options,true).unwrap();
+-            let task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),options,None,true).unwrap();
+-            let png=complete_straight_shells(task,(2*count) as u8,[1.0;3]);
+-            assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0,0).0,[188,188,188,255]);
++            assert!(admit(&scene, &request, &options).is_err(), "nesting still requires explicit opt-in");
++            admit_with_nested(&scene, &request, &options, true).unwrap();
++            let task = ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap();
++            let png = complete_straight_shells(task, (2 * count) as u8, [1.0; 3]);
++            assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0, 0).0, [188, 188, 188, 255]);
+         }
+     }
+ }
+ 
+ #[test]
+ fn straight_identity_shells_keep_actual_beer_parent_intervals_past_eight_crossings() {
+-    for progressive in [false,true] {
+-        for count in [4,5,8] {
+-            let (scene,request,options)=straight_identity_shells_source(count,progressive,true);
+-            let task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),options,None,true).unwrap();
+-            let _=complete_straight_shells(task,(2*count) as u8,straight_shells_expected_linear(count,true));
++    for progressive in [false, true] {
++        for count in [4, 5, 8] {
++            let (scene, request, options) = straight_identity_shells_source(count, progressive, true);
++            let task = ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap();
++            let _ = complete_straight_shells(task, (2 * count) as u8, straight_shells_expected_linear(count, true));
+         }
+     }
+ }
+ 
+ #[test]
+ fn straight_mixed_certificates_derive_two_per_box_and_one_per_sheet_without_extra_stack() {
+-    let (mut scene,mut request,mut options)=straight_identity_shells_source(5,true,false);
++    let (mut scene, mut request, mut options) = straight_identity_shells_source(5, true, false);
+     for index in 0..3 {
+-        let name=format!("Straight external sheet {index}");
+-        let body_index=scene.meshes.len();
+-        scene.meshes.push(optical_sheet(&name,0.0,6.0+index as f64));
+-        options.dielectrics.push(optical_input(body_index,&name,1.0));
+-    }
+-    assert_eq!(options.dielectrics.len(),8);
+-    assert!(options.dielectrics.capacity()<=8);
+-    scene.bounds=scene.meshes.iter().fold(Aabb3::EMPTY,|a,body|a.union(&body.mesh.bounds()));
+-    request.raytrace=Some(options.clone());
+-    let task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),options,None,true).unwrap();
+-    let _=complete_straight_shells(task,13,[1.0;3]);
++        let name = format!("Straight external sheet {index}");
++        let body_index = scene.meshes.len();
++        scene.meshes.push(optical_sheet(&name, 0.0, 6.0 + index as f64));
++        options.dielectrics.push(optical_input(body_index, &name, 1.0));
++    }
++    assert_eq!(options.dielectrics.len(), 8);
++    assert!(options.dielectrics.capacity() <= 8);
++    scene.bounds = scene.meshes.iter().fold(Aabb3::EMPTY, |a, body| a.union(&body.mesh.bounds()));
++    request.raytrace = Some(options.clone());
++    let task = ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap();
++    let _ = complete_straight_shells(task, 13, [1.0; 3]);
+ }
+ 
+ #[test]
+ fn straight_policy_requires_exact_unit_indices_and_no_selected_opaque_reflector() {
+-    assert_eq!(MAX_BOUNDARIES,8);
+-    assert_eq!(MAX_PATHS,511);
+-    let (scene,request,options)=straight_identity_shells_source(5,false,false);
+-    for ior in [1.0_f64.next_up(),1.5] {
+-        let mut changed=options.clone();
+-        changed.dielectrics[2].ior=ior;
+-        let request=ImageRequest {raytrace:Some(changed.clone()),..request.clone()};
+-        let task=ImageTask::new_with_environment_and_nested(scene.clone(),request,CancelToken::default(),changed,None,true).unwrap();
+-        assert_eq!(task.optical.first().unwrap().straight_limit,None,"no epsilon-index shortcut or new rejection of legacy refracting input");
+-    }
+-    let mut scene=scene;
+-    let mut changed=options;
+-    scene.meshes.push(optical_sheet("Separate opaque reflector",100.0,0.0));
+-    scene.bounds=scene.meshes.iter().fold(Aabb3::EMPTY,|a,body|a.union(&body.mesh.bounds()));
+-    changed.reflections=Some(job::ReflectionOptions {bodies:vec![job::ReflectionBody {body:"Separate opaque reflector".into(),mode:job::ReflectionMode::Mirror}],max_bounces:1,samples:1});
+-    let request=ImageRequest {raytrace:Some(changed.clone()),..request};
+-    let task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),changed,None,true).unwrap();
+-    assert_eq!(task.optical.first().unwrap().straight_limit,None);
++    assert_eq!(MAX_BOUNDARIES, 8);
++    assert_eq!(MAX_PATHS, 511);
++    let (scene, request, options) = straight_identity_shells_source(5, false, false);
++    for ior in [1.0_f64.next_up(), 1.5] {
++        let mut changed = options.clone();
++        changed.dielectrics[2].ior = ior;
++        let request = ImageRequest { raytrace: Some(changed.clone()), ..request.clone() };
++        let task = ImageTask::new_with_environment_and_nested(scene.clone(), request, CancelToken::default(), changed, None, true).unwrap();
++        assert_eq!(task.optical.first().unwrap().straight_limit, None, "no epsilon-index shortcut or new rejection of legacy refracting input");
++    }
++    let mut scene = scene;
++    let mut changed = options;
++    scene.meshes.push(optical_sheet("Separate opaque reflector", 100.0, 0.0));
++    scene.bounds = scene.meshes.iter().fold(Aabb3::EMPTY, |a, body| a.union(&body.mesh.bounds()));
++    changed.reflections = Some(job::ReflectionOptions {
++        bodies: vec![job::ReflectionBody { body: "Separate opaque reflector".into(), mode: job::ReflectionMode::Mirror }],
++        max_bounces: 1,
++        samples: 1,
++    });
++    let request = ImageRequest { raytrace: Some(changed.clone()), ..request };
++    let task = ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), changed, None, true).unwrap();
++    assert_eq!(task.optical.first().unwrap().straight_limit, None);
+     assert!(task.optical.first().unwrap().pending.is_none());
+ }
+ 
+ #[test]
+ fn straight_identity_transport_still_charges_and_can_cancel_or_exhaust_inside_deep_chain() {
+-    for cancel in [false,true] {
+-        let (scene,request,options)=straight_identity_shells_source(8,true,true);
+-        let mut task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),options,None,true).unwrap();
+-        let mut observed=false;
++    for cancel in [false, true] {
++        let (scene, request, options) = straight_identity_shells_source(8, true, true);
++        let mut task = ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap();
++        let mut observed = false;
+         for _ in 0..200_000 {
+-            let before=task.work.used();
+-            assert!(matches!(task.step_with_previews(1).unwrap(),ImagePoll::Pending(_)));
+-            assert!(task.work.used()-before<=1);
+-            if task.optical.first().and_then(|o|o.pending.as_ref()).is_some_and(|s|s.path.boundaries==9) {
+-                let frontier=task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
+-                if cancel {task.cancel.cancel();} else {task.work.limit=task.work.used();}
+-                assert_eq!(task.step_with_previews(1).err().unwrap().code,if cancel {ErrorCode::Cancelled} else {ErrorCode::LimitExceeded});
+-                assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(),frontier);
++            let before = task.work.used();
++            assert!(matches!(task.step_with_previews(1).unwrap(), ImagePoll::Pending(_)));
++            assert!(task.work.used() - before <= 1);
++            if task.optical.first().and_then(|o| o.pending.as_ref()).is_some_and(|s| s.path.boundaries == 9) {
++                let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++                if cancel {
++                    task.cancel.cancel();
++                } else {
++                    task.work.limit = task.work.used();
++                }
++                assert_eq!(task.step_with_previews(1).err().unwrap().code, if cancel { ErrorCode::Cancelled } else { ErrorCode::LimitExceeded });
++                assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(), frontier);
+                 assert!(!task.done);
+-                observed=true;
++                observed = true;
+                 break;
+             }
+         }
+-        assert!(observed,"real ninth crossing must be reached before the stop");
++        assert!(observed, "real ninth crossing must be reached before the stop");
+     }
+ }
+ 
+ #[test]
+ fn straight_crossing_bound_corruption_is_typed_error_not_a_successful_black_tail() {
+-    let (scene,request,options)=straight_identity_shells_source(5,true,false);
+-    let mut task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),options,None,true).unwrap();
++    let (scene, request, options) = straight_identity_shells_source(5, true, false);
++    let mut task = ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap();
+     // Controlled invariant unit, distinct from the unchanged valid E2E fixtures:
+     // an impossible internal policy must fail at a real subsequent interface.
+-    task.optical.first_mut().unwrap().straight_limit=Some(1);
++    task.optical.first_mut().unwrap().straight_limit = Some(1);
+     for _ in 0..200_000 {
+         match task.step_with_previews(1) {
+-            Err(error)=>{
+-                assert_eq!(error.code,ErrorCode::InvalidScene);
++            Err(error) => {
++                assert_eq!(error.code, ErrorCode::InvalidScene);
+                 assert!(error.message.contains("straight optical crossing bound exceeded"));
+-                assert_eq!(task.progressive.as_ref().unwrap().film.samples(),0);
++                assert_eq!(task.progressive.as_ref().unwrap().film.samples(), 0);
+                 assert!(!task.done);
+                 return;
+-            },
+-            Ok(ImagePoll::Pending(_))=>{},
+-            Ok(_)=>panic!("bound inconsistency cannot publish success"),
++            }
++            Ok(ImagePoll::Pending(_)) => {}
++            Ok(_) => panic!("bound inconsistency cannot publish success"),
+         }
+     }
+     panic!("unexpected extra crossing was not refused");
+@@ -2226,166 +2260,173 @@
+     let options = RaytraceOptions {
+         progressive: samples.map(|samples_per_pixel| job::CpuProgressiveOptions { samples_per_pixel, seed }),
+         dielectrics: vec![dielectric::tests::input(job::DielectricBoundary::ClosedBox)],
+-        environment: Some(job::RaytraceEnvironmentOptions {color:[1.0;3],intensity}),
+-        lights: Some(Vec::new()), shadows:false,
++        environment: Some(job::RaytraceEnvironmentOptions { color: [1.0; 3], intensity }),
++        lights: Some(Vec::new()),
++        shadows: false,
+         ..Default::default()
+     };
+     let mut request = dielectric::tests::request(options.clone());
+     request.camera = crate::Camera {
+-        target:Vec3::new(0.9,0.37,2.0), yaw:std::f64::consts::FRAC_PI_2,
+-        pitch:0.8_f64.asin(), roll:0.0, distance:10.0, fov:1e-6,
++        target: Vec3::new(0.9, 0.37, 2.0),
++        yaw: std::f64::consts::FRAC_PI_2,
++        pitch: 0.8_f64.asin(),
++        roll: 0.0,
++        distance: 10.0,
++        fov: 1e-6,
+         ..Default::default()
+     };
+-    (dielectric::tests::scene(body),request,options)
+-}
+-
+-#[derive(Clone,Default)]
++    (dielectric::tests::scene(body), request, options)
++}
++
++#[derive(Clone, Default)]
+ struct CameraTirEvidence {
+-    started:bool,
+-    first_entry:Option<(Vec3,Vec3,u16)>,
+-    tir:bool,
+-    transmitted_escape:bool,
+-    truncated_top_hit:bool,
+-    finite_scalar:f64,
+-    physical_tail_bound:f64,
++    started: bool,
++    first_entry: Option<(Vec3, Vec3, u16)>,
++    tir: bool,
++    transmitted_escape: bool,
++    truncated_top_hit: bool,
++    finite_scalar: f64,
++    physical_tail_bound: f64,
+ }
+ 
+ /// Independent public-equation oracle, conditional on the REAL camera direction.
+ /// No dielectric::interface/attenuation/thin_sheet call or renderer state mutation.
+-fn camera_tir_oracle(ray:Ray) -> (f64,f64) {
+-    let d=ray.direction();
+-    assert!((d.x-0.6).abs()<2e-6 && (d.z+0.8).abs()<2e-6 && d.y.abs()<2e-6);
+-    let enter=ray.origin()+d*((2.0-ray.origin().z)/d.z);
+-    assert!((enter.x-0.9).abs()<2e-5 && (enter.y-0.37).abs()<2e-5);
+-    let cosine=-d.z;
+-    let tx=d.x/1.5;
+-    let ct=(1.0-(1.0-cosine*cosine)/2.25).sqrt();
+-    assert!(2.25*(1.0-tx*tx)>1.0, "glass-to-air SIDE incidence is beyond critical");
++fn camera_tir_oracle(ray: Ray) -> (f64, f64) {
++    let d = ray.direction();
++    assert!((d.x - 0.6).abs() < 2e-6 && (d.z + 0.8).abs() < 2e-6 && d.y.abs() < 2e-6);
++    let enter = ray.origin() + d * ((2.0 - ray.origin().z) / d.z);
++    assert!((enter.x - 0.9).abs() < 2e-5 && (enter.y - 0.37).abs() < 2e-5);
++    let cosine = -d.z;
++    let tx = d.x / 1.5;
++    let ct = (1.0 - (1.0 - cosine * cosine) / 2.25).sqrt();
++    assert!(2.25 * (1.0 - tx * tx) > 1.0, "glass-to-air SIDE incidence is beyond critical");
+     // All possible jittered rays in this narrow public-camera cone retain one
+     // lateral TIR per horizontal crossing, with three escapes before depth8.
+-    let q=2.0*tx/ct;
+-    assert!((1.0..2.0).contains(&(enter.x+q)));
+-    let bottom1=2.0-enter.x-q;
+-    assert!((-1.0..0.0).contains(&(bottom1-q)));
+-    let top2=q-bottom1;
+-    assert!((1.0..2.0).contains(&(top2+q)));
+-    let bottom3=2.0-top2-q;
+-    assert!((-1.0..0.0).contains(&(bottom3-q)));
++    let q = 2.0 * tx / ct;
++    assert!((1.0..2.0).contains(&(enter.x + q)));
++    let bottom1 = 2.0 - enter.x - q;
++    assert!((-1.0..0.0).contains(&(bottom1 - q)));
++    let top2 = q - bottom1;
++    assert!((1.0..2.0).contains(&(top2 + q)));
++    let bottom3 = 2.0 - top2 - q;
++    assert!((-1.0..0.0).contains(&(bottom3 - q)));
+     // s/p Fresnel *power* from first principles, then the declared scalar
+     // unpolarized model's three-term geometric return series. Eta² cancels on
+     // each complete air/glass/air escape. Lossless unit exterior radiance has
+     // infinite-depth physical answer1; finite omission <=max(Rs,Rp)^3.
+-    let rs=((cosine-1.5*ct)/(cosine+1.5*ct)).powi(2);
+-    let rp=((1.5*cosine-ct)/(1.5*cosine+ct)).powi(2);
+-    let f=(rs+rp)*0.5;
+-    let finite=f+(1.0-f).powi(2)*(1.0+f+f*f);
+-    assert!((finite-(1.0-(1.0-f)*f.powi(3))).abs()<16.0*f64::EPSILON);
+-    (finite,rs.max(rp).powi(3))
+-}
+-
+-fn complete_camera_tir(scene:ProductScene,request:ImageRequest,options:RaytraceOptions) -> Vec<u8> {
+-    assert_eq!(MAX_BOUNDARIES,8,"this oracle is derived for the actual eight-event model");
+-    let count=options.progressive.map_or(1,|p|p.samples_per_pixel) as usize;
+-    let intensity=options.environment.unwrap().intensity;
+-    let progressive=options.progressive.is_some();
+-    let mut evidence=vec![CameraTirEvidence::default();count];
+-    let mut final_linear=None;
+-    let mut checkpoints=0;
+-    let mut task=ImageTask::new(scene,request,CancelToken::default(),options).unwrap();
++    let rs = ((cosine - 1.5 * ct) / (cosine + 1.5 * ct)).powi(2);
++    let rp = ((1.5 * cosine - ct) / (1.5 * cosine + ct)).powi(2);
++    let f = (rs + rp) * 0.5;
++    let finite = f + (1.0 - f).powi(2) * (1.0 + f + f * f);
++    assert!((finite - (1.0 - (1.0 - f) * f.powi(3))).abs() < 16.0 * f64::EPSILON);
++    (finite, rs.max(rp).powi(3))
++}
++
++fn complete_camera_tir(scene: ProductScene, request: ImageRequest, options: RaytraceOptions) -> Vec<u8> {
++    assert_eq!(MAX_BOUNDARIES, 8, "this oracle is derived for the actual eight-event model");
++    let count = options.progressive.map_or(1, |p| p.samples_per_pixel) as usize;
++    let intensity = options.environment.unwrap().intensity;
++    let progressive = options.progressive.is_some();
++    let mut evidence = vec![CameraTirEvidence::default(); count];
++    let mut final_linear = None;
++    let mut checkpoints = 0;
++    let mut task = ImageTask::new(scene, request, CancelToken::default(), options).unwrap();
+     // Deliberately use the public task poll to completion. The only writes to
+     // task state are its own API calls, never injected rays/paths/media/cursors.
+     for _ in 0..2_000_000 {
+-        if let Some(p)=&task.progressive
+-            && p.film.ready() && p.film.samples() as usize==count
++        if let Some(p) = &task.progressive
++            && p.film.ready()
++            && p.film.samples() as usize == count
+         {
+-            let (rgb,covered,samples)=p.film.pixel(0).unwrap();
+-            assert_eq!((covered as usize,samples as usize),(count,count));
+-            final_linear=Some(rgb);
+-        }
+-        let poll=if progressive {
++            let (rgb, covered, samples) = p.film.pixel(0).unwrap();
++            assert_eq!((covered as usize, samples as usize), (count, count));
++            final_linear = Some(rgb);
++        }
++        let poll = if progressive {
+             task.step_with_previews(1).unwrap()
+         } else {
+             match task.step(1).unwrap() {
+-                TaskPoll::Pending(p)=>ImagePoll::Pending(p),
+-                TaskPoll::Complete(png)=>ImagePoll::Complete(png),
++                TaskPoll::Pending(p) => ImagePoll::Pending(p),
++                TaskPoll::Complete(png) => ImagePoll::Complete(png),
+             }
+         };
+-        if let Some(state)=task.optical.first().and_then(|o|o.pending.as_ref()) {
+-            let ordinal=state.camera_sample.map_or(0,|identity| {
+-                assert_eq!(identity.0,0);
++        if let Some(state) = task.optical.first().and_then(|o| o.pending.as_ref()) {
++            let ordinal = state.camera_sample.map_or(0, |identity| {
++                assert_eq!(identity.0, 0);
+                 identity.1 as usize
+             });
+-            let seen=&mut evidence[ordinal];
+-            assert!(state.path.boundaries<=8);
++            let seen = &mut evidence[ordinal];
++            assert!(state.path.boundaries <= 8);
+             if !seen.started {
+-                assert_eq!(state.path.boundaries,0);
+-                let (finite,tail)=camera_tir_oracle(state.path.ray);
+-                seen.finite_scalar=finite;
+-                seen.physical_tail_bound=tail;
+-                seen.started=true;
+-            }
+-            if state.path.boundaries==1 && state.path.medium==Some(0) && seen.first_entry.is_none() {
+-                let d=state.path.ray.direction();
+-                assert!((d.x-0.4).abs()<2e-6 && (d.z+(0.84_f64).sqrt()).abs()<2e-6);
+-                assert!((state.path.segment_start.z-2.0).abs()<1e-12);
+-                seen.first_entry=Some((d,state.path.throughput,state.paths));
+-            }
+-            if state.path.boundaries==2 && state.path.medium==Some(0) {
+-                let (before,throughput,paths)=seen.first_entry.unwrap();
+-                let after=state.path.ray.direction();
+-                assert!((state.path.segment_start.x-1.0).abs()<1e-12,"real ray hit lateral face");
+-                assert!(2.25*(1.0-before.x*before.x)>1.0);
+-                assert!((after-Vec3::new(-before.x,before.y,before.z)).len()<1e-12);
+-                assert!((state.path.throughput-throughput).len()<1e-12,"TIR retains all current branch power");
+-                assert_eq!(state.paths,paths+1,"only reflected path was created at TIR");
++                assert_eq!(state.path.boundaries, 0);
++                let (finite, tail) = camera_tir_oracle(state.path.ray);
++                seen.finite_scalar = finite;
++                seen.physical_tail_bound = tail;
++                seen.started = true;
++            }
++            if state.path.boundaries == 1 && state.path.medium == Some(0) && seen.first_entry.is_none() {
++                let d = state.path.ray.direction();
++                assert!((d.x - 0.4).abs() < 2e-6 && (d.z + (0.84_f64).sqrt()).abs() < 2e-6);
++                assert!((state.path.segment_start.z - 2.0).abs() < 1e-12);
++                seen.first_entry = Some((d, state.path.throughput, state.paths));
++            }
++            if state.path.boundaries == 2 && state.path.medium == Some(0) {
++                let (before, throughput, paths) = seen.first_entry.unwrap();
++                let after = state.path.ray.direction();
++                assert!((state.path.segment_start.x - 1.0).abs() < 1e-12, "real ray hit lateral face");
++                assert!(2.25 * (1.0 - before.x * before.x) > 1.0);
++                assert!((after - Vec3::new(-before.x, before.y, before.z)).len() < 1e-12);
++                assert!((state.path.throughput - throughput).len() < 1e-12, "TIR retains all current branch power");
++                assert_eq!(state.paths, paths + 1, "only reflected path was created at TIR");
+                 // The primary reflection is still waiting; TIR itself leaves no
+                 // transmitted child in addition to this resumed internal path.
+-                assert_eq!(state.stack_len,1);
+-                seen.tir=true;
+-            }
+-            if state.path.boundaries==3 && state.path.medium.is_none() {
++                assert_eq!(state.stack_len, 1);
++                seen.tir = true;
++            }
++            if state.path.boundaries == 3 && state.path.medium.is_none() {
+                 assert!(seen.tir);
+-                assert!(state.path.segment_start.z.abs()<1e-12,"TIR branch really escaped through bottom");
+-                assert!(state.path.ray.direction().z<0.0 && state.path.ray.direction().x<0.0);
+-                seen.transmitted_escape=true;
+-            }
+-            if state.path.boundaries==8 && state.path.medium==Some(0)
+-                && let Some(hit)=task.pending.as_ref().and_then(|p|p.hit)
++                assert!(state.path.segment_start.z.abs() < 1e-12, "TIR branch really escaped through bottom");
++                assert!(state.path.ray.direction().z < 0.0 && state.path.ray.direction().x < 0.0);
++                seen.transmitted_escape = true;
++            }
++            if state.path.boundaries == 8
++                && state.path.medium == Some(0)
++                && let Some(hit) = task.pending.as_ref().and_then(|p| p.hit)
+             {
+-                let vertices=task.looks[hit.primitive_index].vertices;
+-                if vertices.iter().all(|v|v.z==2.0) {
+-                    seen.truncated_top_hit=true;
++                let vertices = task.looks[hit.primitive_index].vertices;
++                if vertices.iter().all(|v| v.z == 2.0) {
++                    seen.truncated_top_hit = true;
+                 }
+             }
+         }
+         match poll {
+-            ImagePoll::Pending(_)=>{},
+-            ImagePoll::Preview { .. }=>{
++            ImagePoll::Pending(_) => {}
++            ImagePoll::Preview { .. } => {
+                 assert!(task.optical.first().unwrap().pending.is_none());
+-                checkpoints+=1;
+-            },
+-            ImagePoll::Complete(png)=>{
+-                assert!(evidence.iter().all(|s|s.started && s.tir && s.transmitted_escape && s.truncated_top_hit));
++                checkpoints += 1;
++            }
++            ImagePoll::Complete(png) => {
++                assert!(evidence.iter().all(|s| s.started && s.tir && s.transmitted_escape && s.truncated_top_hit));
+                 if progressive {
+-                    assert!(checkpoints>0);
+-                    let expected=intensity*evidence.iter().map(|s|s.finite_scalar).sum::<f64>()/count as f64;
+-                    let omitted_bound=intensity*evidence.iter().map(|s|s.physical_tail_bound).sum::<f64>()/count as f64;
++                    assert!(checkpoints > 0);
++                    let expected = intensity * evidence.iter().map(|s| s.finite_scalar).sum::<f64>() / count as f64;
++                    let omitted_bound = intensity * evidence.iter().map(|s| s.physical_tail_bound).sum::<f64>() / count as f64;
+                     // Preselected absolute roundoff allowance, independent of
+                     // product output. This is no numerical-certification claim.
+-                    let roundoff=4096.0*f64::EPSILON;
++                    let roundoff = 4096.0 * f64::EPSILON;
+                     for actual in final_linear.unwrap() {
+-                        assert!((actual-expected).abs()<=roundoff,"independent finite scalar Fresnel series");
+-                        assert!(actual<=intensity+roundoff);
+-                        assert!(actual>=intensity-omitted_bound-roundoff,"physical lossless energy with explicit finite-depth omission bound");
++                        assert!((actual - expected).abs() <= roundoff, "independent finite scalar Fresnel series");
++                        assert!(actual <= intensity + roundoff);
++                        assert!(actual >= intensity - omitted_bound - roundoff, "physical lossless energy with explicit finite-depth omission bound");
+                     }
+-                    if intensity==1.0 {
+-                        assert!(expected<1.0,"eight-event truncation is NOT perfect conservation");
+-                        assert!(omitted_bound>1e-5 && omitted_bound<1e-3);
++                    if intensity == 1.0 {
++                        assert!(expected < 1.0, "eight-event truncation is NOT perfect conservation");
++                        assert!(omitted_bound > 1e-5 && omitted_bound < 1e-3);
+                     }
+                 }
+-                let image=::image::load_from_memory(&png).unwrap().to_rgba8();
+-                let expected=if intensity==0.0 {[0,0,0,255]} else {[188,188,188,255]};
+-                assert_eq!(image.get_pixel(0,0).0,expected,"black/white secondary environment controls, covered pixel");
++                let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
++                let expected = if intensity == 0.0 { [0, 0, 0, 255] } else { [188, 188, 188, 255] };
++                assert_eq!(image.get_pixel(0, 0).0, expected, "black/white secondary environment controls, covered pixel");
+                 return png;
+             }
+         }
+@@ -2395,20 +2436,20 @@
+ 
+ #[test]
+ fn camera_originated_tir_survives_fixed_render_to_final_png_with_environment_controls() {
+-    let mut outputs=Vec::new();
+-    for intensity in [0.0,1.0] {
+-        let (scene,request,options)=camera_tir_source(None,0,intensity);
+-        outputs.push(complete_camera_tir(scene,request,options));
+-    }
+-    assert_ne!(outputs[0],outputs[1]);
++    let mut outputs = Vec::new();
++    for intensity in [0.0, 1.0] {
++        let (scene, request, options) = camera_tir_source(None, 0, intensity);
++        outputs.push(complete_camera_tir(scene, request, options));
++    }
++    assert_ne!(outputs[0], outputs[1]);
+ }
+ 
+ #[test]
+ fn camera_originated_tir_progressive_final_obeys_physical_energy_and_explicit_depth_tail() {
+-    for seed in [0,97] {
+-        for intensity in [0.0,1.0] {
+-            let (scene,request,options)=camera_tir_source(Some(5),seed,intensity);
+-            let _=complete_camera_tir(scene,request,options);
+-        }
+-    }
+-}
++    for seed in [0, 97] {
++        for intensity in [0.0, 1.0] {
++            let (scene, request, options) = camera_tir_source(Some(5), seed, intensity);
++            let _ = complete_camera_tir(scene, request, options);
++        }
++    }
++}
+--- a/crates/render/src/raytrace/primary_aa_tests.rs
++++ b/crates/render/src/raytrace/primary_aa_tests.rs
+@@ -1580,7 +1580,6 @@
+     }
+ }
+ 
+-
+ // Original progressive optics / presentation combinations. WRITTEN, NOT RUN.
+ fn optical_partial_source(samples: u32) -> (ProductScene, ImageRequest, RaytraceOptions) {
+     let (scene, mut request, options) = super::tests::progressive_optics_source(job::DielectricBoundary::ClosedBox, 2.0, 1.5, samples);
+@@ -1593,9 +1592,18 @@
+     let (scene, request, options) = optical_partial_source(3);
+     let plan = job::ProtectedPreviewPlan::new(2, 1, 3, options.budget).unwrap();
+     let mut task = ImageTask::new_with_environment_and_nested_and_protected_partial(
+-        scene.clone(), request.clone(), CancelToken::default(), options.clone(), None, false, plan).unwrap();
+-    let mut control = ImageTask::new_with_environment_and_nested_and_partial(
+-        scene, request, CancelToken::default(), options, None, false, plan.preview_plan()).unwrap();
++        scene.clone(),
++        request.clone(),
++        CancelToken::default(),
++        options.clone(),
++        None,
++        false,
++        plan,
++    )
++    .unwrap();
++    let mut control =
++        ImageTask::new_with_environment_and_nested_and_partial(scene, request, CancelToken::default(), options, None, false, plan.preview_plan())
++            .unwrap();
+     let mut rays = Vec::new();
+     let mut control_rays = Vec::new();
+     let mut saw_interior = false;
+@@ -1635,8 +1643,8 @@
+ fn protected_optical_snapshot_cancellation_cannot_emit_or_commit_another_sample() {
+     let (scene, request, options) = optical_partial_source(3);
+     let plan = job::ProtectedPreviewPlan::new(2, 1, 3, options.budget).unwrap();
+-    let mut task = ImageTask::new_with_environment_and_nested_and_protected_partial(
+-        scene, request, CancelToken::default(), options, None, false, plan).unwrap();
++    let mut task =
++        ImageTask::new_with_environment_and_nested_and_protected_partial(scene, request, CancelToken::default(), options, None, false, plan).unwrap();
+     reach_partial_frontier(&mut task, 0, 1, &mut Vec::new());
+     assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(), PartialBegin::Started));
+     let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
+@@ -1654,36 +1662,45 @@
+     // Original two-triangle rectangle between camera and receiver. It is
+     // index-matched and lossless: the independent control has no sheet at all.
+     scene.meshes.push(ProductMesh {
+-        transmission: None, name: "Progressive optical sheet".into(),
++        transmission: None,
++        name: "Progressive optical sheet".into(),
+         mesh: Arc::new(Mesh {
+-            positions: vec![Vec3::new(-20.0,-20.0,2.0),Vec3::new(20.0,-20.0,2.0),
+-                Vec3::new(20.0,20.0,2.0),Vec3::new(-20.0,20.0,2.0)],
+-            normals: vec![Vec3::Z;4], triangles:vec![[0,1,2],[0,2,3]], ..Default::default()
++            positions: vec![Vec3::new(-20.0, -20.0, 2.0), Vec3::new(20.0, -20.0, 2.0), Vec3::new(20.0, 20.0, 2.0), Vec3::new(-20.0, 20.0, 2.0)],
++            normals: vec![Vec3::Z; 4],
++            triangles: vec![[0, 1, 2], [0, 2, 3]],
++            ..Default::default()
+         }),
+-        color:[255;3], opacity:1.0, surface:None, faces:Vec::new(),
++        color: [255; 3],
++        opacity: 1.0,
++        surface: None,
++        faces: Vec::new(),
+     });
+     options.dielectrics.push(job::DielectricOptions {
+-        body_index:scene.meshes.len()-1, body_name:"Progressive optical sheet".into(),
+-        boundary:job::DielectricBoundary::ThinSheet, ior:1.0, absorption_per_mm:[0.0;3], thickness_mm:0.0,
++        body_index: scene.meshes.len() - 1,
++        body_name: "Progressive optical sheet".into(),
++        boundary: job::DielectricBoundary::ThinSheet,
++        ior: 1.0,
++        absorption_per_mm: [0.0; 3],
++        thickness_mm: 0.0,
+     });
+     scene.bounds = scene.meshes.iter().fold(Aabb3::EMPTY, |bounds, body| bounds.union(&body.mesh.bounds()));
+-    let request = ImageRequest {raytrace:Some(options.clone()), ..source.request.clone()};
+-    (scene,request,options)
++    let request = ImageRequest { raytrace: Some(options.clone()), ..source.request.clone() };
++    (scene, request, options)
+ }
+ 
+ #[test]
+ fn progressive_unit_optics_rejoin_real_area_consumers_at_every_admitted_sample_count() {
+-    for count in [1,4,16,64] {
+-        for seed in [0,23] {
++    for count in [1, 4, 16, 64] {
++        for seed in [0, 23] {
+             // Conservative opaque shadow visibility is deliberately off. This
+             // feature does not invent transmitted illumination or caustics.
+-            let source = progressive_area_fixture(count,3,seed,false);
+-            let (scene,request,options) = with_unit_optical_sheet(&source);
+-            let optical = ImageTask::new(scene,request,CancelToken::default(),options).unwrap();
+-            let expected = progressive_complete(source,1);
+-            let actual = progressive_complete(optical,4);
+-            assert_eq!(actual.0,expected.0);
+-            assert_eq!(actual.1,expected.1, "unit transmission preserves independently lit receiver; count={count}, seed={seed}");
++            let source = progressive_area_fixture(count, 3, seed, false);
++            let (scene, request, options) = with_unit_optical_sheet(&source);
++            let optical = ImageTask::new(scene, request, CancelToken::default(), options).unwrap();
++            let expected = progressive_complete(source, 1);
++            let actual = progressive_complete(optical, 4);
++            assert_eq!(actual.0, expected.0);
++            assert_eq!(actual.1, expected.1, "unit transmission preserves independently lit receiver; count={count}, seed={seed}");
+             assert!(actual.2 > expected.2, "real optical traversal is charged, never bypassed");
+         }
+     }
+@@ -1691,72 +1708,103 @@
+ 
+ #[test]
+ fn progressive_unit_optics_rejoin_hdr_receiver_and_preserve_feedback_film_and_seed() {
+-    let mut source = progressive_area_fixture(4,3,23,false);
++    let mut source = progressive_area_fixture(4, 3, 23, false);
+     source.options.area_lights = None;
+     source.options.area_samples = None;
+     source.options.seed = None;
+     source.request.raytrace = Some(source.options.clone());
+-    let (scene,request,options) = with_unit_optical_sheet(&source);
+-    let plan = job::ProtectedPreviewPlan::new(1,1,3,options.budget).unwrap();
++    let (scene, request, options) = with_unit_optical_sheet(&source);
++    let plan = job::ProtectedPreviewPlan::new(1, 1, 3, options.budget).unwrap();
+     let mut observed = ImageTask::new_with_environment_and_nested_and_protected_partial(
+-        scene.clone(),request.clone(),CancelToken::default(),options.clone(),Some(partial_original_hdr()),false,plan).unwrap();
++        scene.clone(),
++        request.clone(),
++        CancelToken::default(),
++        options.clone(),
++        Some(partial_original_hdr()),
++        false,
++        plan,
++    )
++    .unwrap();
+     let mut control = ImageTask::new_with_environment_and_nested_and_partial(
+-        scene,request,CancelToken::default(),options,Some(partial_original_hdr()),false,plan.preview_plan()).unwrap();
++        scene,
++        request,
++        CancelToken::default(),
++        options,
++        Some(partial_original_hdr()),
++        false,
++        plan.preview_plan(),
++    )
++    .unwrap();
+     let mut rays = Vec::new();
+     let mut control_rays = Vec::new();
+-    reach_partial_frontier(&mut observed,1,0,&mut rays);
+-    assert!(matches!(observed.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
+-    let (snapshot,covered,passes,prefix) = finish_partial_snapshot(&mut observed);
+-    assert_eq!((passes,prefix),(1,0));
+-    assert_eq!(covered,[1]);
+-    let actual = finish_partial_final(&mut observed,true,&mut rays);
+-    assert_eq!(actual,finish_partial_final(&mut control,true,&mut control_rays));
+-    assert_eq!(rays,control_rays);
+-    assert_eq!(observed.protected_preview_report().unwrap().ordinary_used,control.work.used());
+-    let without_sheet = ImageTask::new_with_environment(source.scene.clone(),source.request.clone(),CancelToken::default(),source.options.clone(),Some(partial_original_hdr())).unwrap();
+-    let expected = progressive_complete(without_sheet,1);
+-    assert_eq!(snapshot,expected.0[0].1);
+-    assert_eq!(actual.0,expected.1);
+-}
+-
++    reach_partial_frontier(&mut observed, 1, 0, &mut rays);
++    assert!(matches!(observed.begin_partial_preview(plan.preview_plan()).unwrap(), PartialBegin::Started));
++    let (snapshot, covered, passes, prefix) = finish_partial_snapshot(&mut observed);
++    assert_eq!((passes, prefix), (1, 0));
++    assert_eq!(covered, [1]);
++    let actual = finish_partial_final(&mut observed, true, &mut rays);
++    assert_eq!(actual, finish_partial_final(&mut control, true, &mut control_rays));
++    assert_eq!(rays, control_rays);
++    assert_eq!(observed.protected_preview_report().unwrap().ordinary_used, control.work.used());
++    let without_sheet = ImageTask::new_with_environment(
++        source.scene.clone(),
++        source.request.clone(),
++        CancelToken::default(),
++        source.options.clone(),
++        Some(partial_original_hdr()),
++    )
++    .unwrap();
++    let expected = progressive_complete(without_sheet, 1);
++    assert_eq!(snapshot, expected.0[0].1);
++    assert_eq!(actual.0, expected.1);
++}
+ 
+ #[test]
+ fn protected_deep_identity_shells_preserve_partial_final_rays_film_and_real_work() {
+-    for absorbing in [false,true] {
+-        let (scene,mut request,options)=super::tests::straight_identity_shells_source(8,true,absorbing);
+-        request.width=2; // orthographic X range[-16,16] remains inside innermost[-17,17].
+-        let plan=job::ProtectedPreviewPlan::new(2,1,3,options.budget).unwrap();
+-        let mut task=ImageTask::new_with_environment_and_nested_and_protected_partial(
+-            scene.clone(),request.clone(),CancelToken::default(),options.clone(),None,true,plan).unwrap();
+-        let mut control=ImageTask::new_with_environment_and_nested_and_partial(
+-            scene,request,CancelToken::default(),options,None,true,plan.preview_plan()).unwrap();
+-        let mut rays=Vec::new();
+-        let mut control_rays=Vec::new();
+-        reach_partial_frontier(&mut task,0,1,&mut rays);
++    for absorbing in [false, true] {
++        let (scene, mut request, options) = super::tests::straight_identity_shells_source(8, true, absorbing);
++        request.width = 2; // orthographic X range[-16,16] remains inside innermost[-17,17].
++        let plan = job::ProtectedPreviewPlan::new(2, 1, 3, options.budget).unwrap();
++        let mut task = ImageTask::new_with_environment_and_nested_and_protected_partial(
++            scene.clone(),
++            request.clone(),
++            CancelToken::default(),
++            options.clone(),
++            None,
++            true,
++            plan,
++        )
++        .unwrap();
++        let mut control =
++            ImageTask::new_with_environment_and_nested_and_partial(scene, request, CancelToken::default(), options, None, true, plan.preview_plan())
++                .unwrap();
++        let mut rays = Vec::new();
++        let mut control_rays = Vec::new();
++        reach_partial_frontier(&mut task, 0, 1, &mut rays);
+         assert!(task.optical.first().unwrap().pending.is_none());
+-        assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
+-        let ordinary=task.protected_preview_report().unwrap().ordinary_used;
+-        let (_,covered,passes,prefix)=finish_partial_snapshot(&mut task);
+-        assert_eq!((passes,prefix),(0,1));
+-        assert_eq!(covered,[1,0]);
+-        assert_eq!(task.protected_preview_report().unwrap().ordinary_used,ordinary);
+-        let actual=finish_partial_final(&mut task,true,&mut rays);
+-        let expected=finish_partial_final(&mut control,true,&mut control_rays);
+-        assert_eq!(actual,expected,"exact final PNG and film bits with optional observation");
+-        assert_eq!(rays,control_rays);
+-        assert_eq!(rays.len(),6);
+-        let linear=super::tests::straight_shells_expected_linear(8,absorbing);
+-        let expected_pixel=super::tests::straight_expected_pixel(linear);
++        assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(), PartialBegin::Started));
++        let ordinary = task.protected_preview_report().unwrap().ordinary_used;
++        let (_, covered, passes, prefix) = finish_partial_snapshot(&mut task);
++        assert_eq!((passes, prefix), (0, 1));
++        assert_eq!(covered, [1, 0]);
++        assert_eq!(task.protected_preview_report().unwrap().ordinary_used, ordinary);
++        let actual = finish_partial_final(&mut task, true, &mut rays);
++        let expected = finish_partial_final(&mut control, true, &mut control_rays);
++        assert_eq!(actual, expected, "exact final PNG and film bits with optional observation");
++        assert_eq!(rays, control_rays);
++        assert_eq!(rays.len(), 6);
++        let linear = super::tests::straight_shells_expected_linear(8, absorbing);
++        let expected_pixel = super::tests::straight_expected_pixel(linear);
+         for rgb in &actual.1 {
+-            for (value,physical) in rgb.iter().copied().map(f64::from_bits).zip(linear) {
+-                assert!((value-physical).abs()<1e-11);
++            for (value, physical) in rgb.iter().copied().map(f64::from_bits).zip(linear) {
++                assert!((value - physical).abs() < 1e-11);
+             }
+         }
+-        let image=::image::load_from_memory(&actual.0).unwrap().to_rgba8();
+-        assert_eq!(image.get_pixel(0,0).0,expected_pixel);
+-        assert_eq!(image.get_pixel(1,0).0,expected_pixel);
+-        let report=task.protected_preview_report().unwrap();
+-        assert_eq!(report.ordinary_used,control.work.used());
+-        assert_eq!(report.presentation_used,plan.snapshot_work().unwrap());
+-    }
+-}
++        let image = ::image::load_from_memory(&actual.0).unwrap().to_rgba8();
++        assert_eq!(image.get_pixel(0, 0).0, expected_pixel);
++        assert_eq!(image.get_pixel(1, 0).0, expected_pixel);
++        let report = task.protected_preview_report().unwrap();
++        assert_eq!(report.ordinary_used, control.work.used());
++        assert_eq!(report.presentation_used, plan.snapshot_work().unwrap());
++    }
++}
+--- a/crates/render/src/studio.rs
++++ b/crates/render/src/studio.rs
+@@ -52,14 +52,13 @@
+     // Validate every authored source, even if it is dark or behind the surface.
+     // Bounds match RaytraceOptions' directional inputs; no clamping/remapping.
+     for light in lights {
+-        if !light.intensity.is_finite() || !(0.0..=64.0).contains(&light.intensity)
++        if !light.intensity.is_finite()
++            || !(0.0..=64.0).contains(&light.intensity)
+             || !light.color.iter().all(|c| c.is_finite() && (0.0..=1.0).contains(c))
+         {
+             return Err(SurfaceError::Radiance);
+         }
+-        if !light.direction.iter().all(|c| c.is_finite() && c.abs() <= 1e9)
+-            || !light.direction.iter().any(|c| *c != 0.0)
+-        {
++        if !light.direction.iter().all(|c| c.is_finite() && c.abs() <= 1e9) || !light.direction.iter().any(|c| *c != 0.0) {
+             return Err(SurfaceError::Direction);
+         }
+     }
+@@ -69,8 +68,7 @@
+         let direction = unit_direction(Vec3::new(x, y, z))?;
+         let brdf = surface.brdf(n, v, direction)?;
+         let [red, green, blue] = light.color;
+-        radiance += Vec3::new(brdf.x * red, brdf.y * green, brdf.z * blue)
+-            * (light.intensity * n.dot(direction).max(0.0));
++        radiance += Vec3::new(brdf.x * red, brdf.y * green, brdf.z * blue) * (light.intensity * n.dot(direction).max(0.0));
+     }
+     if !radiance.is_finite() || radiance.x < 0.0 || radiance.y < 0.0 || radiance.z < 0.0 {
+         return Err(SurfaceError::Radiance);
+@@ -144,8 +142,7 @@
+         let both = shade_directional(surface, Vec3::Z, Vec3::Z, &[red.clone(), blue.clone()]).unwrap();
+         let expected = Vec3::new(1.6 / PI, 0.0, 1.0 / PI);
+         assert!((both - expected).len() < 1e-14);
+-        let separate = shade_directional(surface, Vec3::Z, Vec3::Z, &[red]).unwrap()
+-            + shade_directional(surface, Vec3::Z, Vec3::Z, &[blue]).unwrap();
++        let separate = shade_directional(surface, Vec3::Z, Vec3::Z, &[red]).unwrap() + shade_directional(surface, Vec3::Z, Vec3::Z, &[blue]).unwrap();
+         assert!((both - separate).len() < 1e-14);
+     }
+ 
+@@ -167,11 +164,9 @@
+     fn schematic_directional_empty_dark_and_back_facing_sources_produce_no_ambient() {
+         let surface = OpaqueSurface::new(Vec3::new(0.8, 0.5, 0.25), 0.0, 1.0, 1.0).unwrap();
+         assert_eq!(shade_directional(surface, Vec3::Z, Vec3::Z, &[]).unwrap(), Vec3::ZERO);
+-        for light in [
+-            directional([0.0, 0.0, 1.0], [1.0; 3], 0.0),
+-            directional([0.0, 0.0, 1.0], [0.0; 3], 64.0),
+-            directional([0.0, 0.0, -1.0], [1.0; 3], 64.0),
+-        ] {
++        for light in
++            [directional([0.0, 0.0, 1.0], [1.0; 3], 0.0), directional([0.0, 0.0, 1.0], [0.0; 3], 64.0), directional([0.0, 0.0, -1.0], [1.0; 3], 64.0)]
++        {
+             assert_eq!(shade_directional(surface, Vec3::Z, Vec3::Z, &[light]).unwrap(), Vec3::ZERO);
+         }
+         let light = directional([0.0, 0.0, 1.0], [1.0; 3], 1.0);
+--- a/crates/ui-egui/src/render_workspace.rs
++++ b/crates/ui-egui/src/render_workspace.rs
+@@ -177,7 +177,9 @@
+ }
+ 
+ impl DisplayImage<'_> {
+-    fn provisional(&self) -> bool { self.preview.is_some() || self.partial.is_some() }
++    fn provisional(&self) -> bool {
++        self.preview.is_some() || self.partial.is_some()
++    }
+ }
+ 
+ /// Application-wide setup, retained across document changes. The worker owns a
+@@ -886,7 +888,9 @@
+     }
+     let mut request = image_request(app)?;
+     if view.method == ImageMethod::CpuRaytrace && view.raytrace.progressive.is_some() {
+-        request.as_object_mut().ok_or_else(|| app.tr("render.error_provisional_identity").to_string())?
++        request
++            .as_object_mut()
++            .ok_or_else(|| app.tr("render.error_provisional_identity").to_string())?
+             .insert("progressive_feedback".into(), json!(true));
+     }
+     Ok(request)
+@@ -1352,7 +1356,9 @@
+         // Equal source evidence prefers the established complete-pass image.
+         if preview.is_none_or(|image| u64::from(image.info.samples_per_pixel) * pixels < frontier) {
+             return Some(DisplayImage {
+-                info: &partial.info.frame, image: &partial.image, preview: None,
++                info: &partial.info.frame,
++                image: &partial.image,
++                preview: None,
+                 partial: Some((&partial.info, partial.sampling)),
+                 logical_size: [partial.info.source_width, partial.info.source_height],
+             });
+@@ -1360,7 +1366,10 @@
+     }
+     if let Some(preview) = preview {
+         return Some(DisplayImage {
+-            info: &preview.info.frame, image: &preview.image, preview: Some(&preview.info), partial: None,
++            info: &preview.info.frame,
++            image: &preview.image,
++            preview: Some(&preview.info),
++            partial: None,
+             logical_size: [preview.info.frame.width, preview.info.frame.height],
+         });
+     }
+@@ -1369,24 +1378,36 @@
+ }
+ 
+ fn cache_final_partial(
+-    app: &mut SolveApp, ctx: &egui::Context, handle: &solidcraft_engine::render::job::JobHandle,
++    app: &mut SolveApp,
++    ctx: &egui::Context,
++    handle: &solidcraft_engine::render::job::JobHandle,
+     status: &solidcraft_engine::render::job::JobStatus,
+     partial: &solidcraft_engine::render::job::RenderPartialPreview,
+ ) -> Result<(), String> {
+     let job = handle.id();
+-    if app.render_workspace.view.job != Some(job) { return Ok(()); }
+-    let previous = app.render_workspace.final_partial.as_ref()
+-        .filter(|cached| cached.info.frame.job == job).map(|cached| cached.sampling);
++    if app.render_workspace.view.job != Some(job) {
++        return Ok(());
++    }
++    let previous = app.render_workspace.final_partial.as_ref().filter(|cached| cached.info.frame.job == job).map(|cached| cached.sampling);
+     let expected = interactive::PartialExpectation {
+-        job, scene_generation: status.scene_generation, request: &status.request,
++        job,
++        scene_generation: status.scene_generation,
++        request: &status.request,
+         final_dimensions: [status.request.width, status.request.height],
+     };
+-    let Some(sampling) = interactive::validate_partial_metadata(
+-        &expected, &partial.info, partial.png().len(), partial.covered().len(), previous,
+-    )? else { return Ok(()); };
++    let Some(sampling) = interactive::validate_partial_metadata(&expected, &partial.info, partial.png().len(), partial.covered().len(), previous)?
++    else {
++        return Ok(());
++    };
+     let image = interactive::decode_partial_image(
+-        &status.request, &partial.info, partial.png(), partial.covered(), sampling, ctx.input(|input| input.max_texture_side),
+-    ).map(|pixels| ctx.load_texture("sc_render_final_partial", pixels, egui::TextureOptions::NEAREST));
++        &status.request,
++        &partial.info,
++        partial.png(),
++        partial.covered(),
++        sampling,
++        ctx.input(|input| input.max_texture_side),
++    )
++    .map(|pixels| ctx.load_texture("sc_render_final_partial", pixels, egui::TextureOptions::NEAREST));
+     if app.render_workspace.view.job == Some(job) {
+         app.render_workspace.final_partial = Some(FinalPartialImage { info: partial.info.clone(), sampling, image });
+     }
+@@ -1440,12 +1461,15 @@
+         }
+         let now = interactive::monotonic(app.render_workspace.final_feedback_clock, ctx.input(|input| input.time));
+         app.render_workspace.final_feedback_clock = now;
+-        if !status.progress.phase.terminal() && status.request.integrator == Integrator::Raytrace
++        if !status.progress.phase.terminal()
++            && status.request.integrator == Integrator::Raytrace
+             && status.request.raytrace.as_ref().and_then(|options| options.progressive).is_some()
+             && interactive::partial_request_due(app.render_workspace.final_partial_request, job, now)
+         {
+             app.render_workspace.final_partial_request = Some((job, now));
+-            if let Err(error) = handle.request_partial_preview() { app.set_status(error.to_string(), true); }
++            if let Err(error) = handle.request_partial_preview() {
++                app.set_status(error.to_string(), true);
++            }
+         }
+         app.render_workspace.final_feedback_report = handle.protected_preview_report().ok().flatten().map(|report| (job, report));
+         let preview = handle.preview().ok().flatten();
+@@ -1483,10 +1507,15 @@
+ /// frame again before the caller clears provisional caches or falls back.
+ fn final_job_still_running(app: &mut SolveApp, handle: &solidcraft_engine::render::job::JobHandle) -> bool {
+     let job = handle.id();
+-    if app.render_workspace.view.job != Some(job) { return false; }
++    if app.render_workspace.view.job != Some(job) {
++        return false;
++    }
+     let status = match handle.status() {
+         Ok(status) => status,
+-        Err(error) => { app.set_status(error.to_string(), true); return false; }
++        Err(error) => {
++            app.set_status(error.to_string(), true);
++            return false;
++        }
+     };
+     if status.progress.phase == solidcraft_engine::render::job::Phase::Completed {
+         match handle.frame() {
+@@ -1513,7 +1542,8 @@
+ 
+ fn cache_render_images(app: &mut SolveApp, ctx: &egui::Context) {
+     let preserve_view = displayed_image(app).is_some_and(|display| {
+-        display.provisional() && app.render_workspace.view.result_job == Some(display.info.job)
++        display.provisional()
++            && app.render_workspace.view.result_job == Some(display.info.job)
+             && app.render_workspace.view.job == Some(display.info.job)
+     });
+     cache_preview_image(app, ctx);
+@@ -1673,8 +1703,9 @@
+     }
+     let mut content = ui.new_child(egui::UiBuilder::new().max_rect(free).id_salt("render_result_content"));
+     let ui = &mut content;
+-    let Some((info, preview, partial, logical_size)) = displayed_image(app)
+-        .map(|display| (display.info.clone(), display.preview.cloned(), display.partial.map(|(info, sampling)| (info.clone(), sampling)), display.logical_size)) else {
++    let Some((info, preview, partial, logical_size)) = displayed_image(app).map(|display| {
++        (display.info.clone(), display.preview.cloned(), display.partial.map(|(info, sampling)| (info.clone(), sampling)), display.logical_size)
++    }) else {
+         let message = match &app.render_workspace.image {
+             Some((_, Err(error))) => error.clone(),
+             _ if ribbon::busy(app) => app.tr("render.state_in_progress").to_string(),
+@@ -1723,28 +1754,46 @@
+         if let Some((info, sampling)) = &partial {
+             ui.colored_label(t.warning, app.tr("render.result_provisional"));
+             let (min, max) = sampling.sample_range();
+-            ui.small(crate::i18n::format("render.interactive_partial_samples", &[
+-                ("min", &min.to_string()), ("max", &max.to_string()),
+-                ("known", &sampling.sampled_source_pixels().to_string()),
+-                ("pixels", &(u64::from(info.source_width) * u64::from(info.source_height)).to_string()),
+-            ]));
+-            ui.small(crate::i18n::format("render.interactive_partial_dimensions", &[
+-                ("display_width", &info.frame.width.to_string()), ("display_height", &info.frame.height.to_string()),
+-                ("source_width", &info.source_width.to_string()), ("source_height", &info.source_height.to_string()),
+-                ("final_width", &logical_size[0].to_string()), ("final_height", &logical_size[1].to_string()),
+-            ]));
++            ui.small(crate::i18n::format(
++                "render.interactive_partial_samples",
++                &[
++                    ("min", &min.to_string()),
++                    ("max", &max.to_string()),
++                    ("known", &sampling.sampled_source_pixels().to_string()),
++                    ("pixels", &(u64::from(info.source_width) * u64::from(info.source_height)).to_string()),
++                ],
++            ));
++            ui.small(crate::i18n::format(
++                "render.interactive_partial_dimensions",
++                &[
++                    ("display_width", &info.frame.width.to_string()),
++                    ("display_height", &info.frame.height.to_string()),
++                    ("source_width", &info.source_width.to_string()),
++                    ("source_height", &info.source_height.to_string()),
++                    ("final_width", &logical_size[0].to_string()),
++                    ("final_height", &logical_size[1].to_string()),
++                ],
++            ));
+             ui.small(app.tr("render.result_provisional_help"));
+         }
+         if let Some((job, report)) = app.render_workspace.final_feedback_report
+-            && job == info.job && (preview.is_some() || partial.is_some())
++            && job == info.job
++            && (preview.is_some() || partial.is_some())
+         {
+-            ui.small(crate::i18n::format("render.interactive_feedback_usage", &[
+-                ("started", &report.accepted_snapshots.to_string()), ("limit", &report.quota_limit.to_string()),
+-            ]));
+-            let reason = if report.quota_exhausted { Some("render.interactive_feedback_quota_exhausted") }
+-                else if report.milestones_complete { Some("render.interactive_feedback_milestones_complete") }
+-                else { None };
+-            if let Some(reason) = reason { ui.small(app.tr(reason)); }
++            ui.small(crate::i18n::format(
++                "render.interactive_feedback_usage",
++                &[("started", &report.accepted_snapshots.to_string()), ("limit", &report.quota_limit.to_string())],
++            ));
++            let reason = if report.quota_exhausted {
++                Some("render.interactive_feedback_quota_exhausted")
++            } else if report.milestones_complete {
++                Some("render.interactive_feedback_milestones_complete")
++            } else {
++                None
++            };
++            if let Some(reason) = reason {
++                ui.small(app.tr(reason));
++            }
+         }
+         if let Some(display) = displayed_image(app)
+             && let Err(error) = display.image
+--- a/crates/ui-egui/src/render_workspace_materials.rs
++++ b/crates/ui-egui/src/render_workspace_materials.rs
+@@ -336,9 +336,9 @@
+     if !view.draft.optics.is_empty() {
+         return Err(app.tr("render.cpu_optics_saved").into());
+     }
+-    let mut options: RaytraceOptions = serde_json::from_value(
+-        params.get("raytrace").cloned().ok_or_else(|| app.tr("render.cpu_optics_request").to_string())?,
+-    ).map_err(|error| error.to_string())?;
++    let mut options: RaytraceOptions =
++        serde_json::from_value(params.get("raytrace").cloned().ok_or_else(|| app.tr("render.cpu_optics_request").to_string())?)
++            .map_err(|error| error.to_string())?;
+     if !options.dielectrics.is_empty() {
+         return Err(app.tr("render.cpu_optics_conflict").into());
+     }
+@@ -365,15 +365,23 @@
+         let target = &binding.target;
+         let stable = target.stable_target.as_ref().ok_or_else(|| app.tr("render.material_target_missing").to_string())?;
+         stable.validate().map_err(|error| error.to_string())?;
+-        let mut bodies = world.bodies.iter().filter(|body| app.session.body_visible(&body.name)).enumerate()
+-            .filter(|(_, body)| body.name == target.name);
++        let mut bodies =
++            world.bodies.iter().filter(|body| app.session.body_visible(&body.name)).enumerate().filter(|(_, body)| body.name == target.name);
+         let (ordinal, body) = bodies.next().ok_or_else(|| app.tr("render.material_target_missing").to_string())?;
+-        let matching_frames = frames.iter().filter(|(name, definition, component, path, _)| {
+-            name == &target.name && definition == &stable.definition && component == &stable.component && path == &stable.occurrence_path
+-        }).count();
+-        if bodies.next().is_some() || ordinal != target.ordinal || body.feature != stable.feature
+-            || body.definition_name() != stable.definition || matching_frames != 1
+-            || target.name.is_empty() || target.name.len() > 1024 || target.name.chars().any(char::is_control)
++        let matching_frames = frames
++            .iter()
++            .filter(|(name, definition, component, path, _)| {
++                name == &target.name && definition == &stable.definition && component == &stable.component && path == &stable.occurrence_path
++            })
++            .count();
++        if bodies.next().is_some()
++            || ordinal != target.ordinal
++            || body.feature != stable.feature
++            || body.definition_name() != stable.definition
++            || matching_frames != 1
++            || target.name.is_empty()
++            || target.name.len() > 1024
++            || target.name.chars().any(char::is_control)
+         {
+             return Err(app.tr("render.material_target_missing").into());
+         }
+@@ -386,8 +394,11 @@
+             Boundary::Closed => return Err(app.tr("render.cpu_optics_boundary").into()),
+         };
+         dielectrics.push(DielectricOptions {
+-            body_index: ordinal, body_name: target.name.clone(), boundary,
+-            ior: binding.glass.ior, absorption_per_mm: binding.glass.absorption,
++            body_index: ordinal,
++            body_name: target.name.clone(),
++            boundary,
++            ior: binding.glass.ior,
++            absorption_per_mm: binding.glass.absorption,
+             thickness_mm: if boundary == DielectricBoundary::ThinSheet { binding.glass.thickness } else { 0.0 },
+         });
+     }
+@@ -552,11 +563,17 @@
+         };
+         ui_kit::row(ui, app.tr("render.appearance_editor.boundary"), |ui| {
+             let labels = ["render.appearance_editor.closed", "render.appearance_editor.thin", "render.appearance_editor.box"].map(|key| app.tr(key));
+-            if ui_kit::segmented(ui, &mut boundary, &labels, ui_kit::Segments {
+-                compact: true, small: true,
+-                targets: &["render:optics-boundary-closed", "render:optics-boundary-thin", "render:optics-boundary-box"],
+-                ..Default::default()
+-            }) {
++            if ui_kit::segmented(
++                ui,
++                &mut boundary,
++                &labels,
++                ui_kit::Segments {
++                    compact: true,
++                    small: true,
++                    targets: &["render:optics-boundary-closed", "render:optics-boundary-thin", "render:optics-boundary-box"],
++                    ..Default::default()
++                },
++            ) {
+                 glass.boundary = match boundary {
+                     1 => Boundary::Thin,
+                     2 => Boundary::Box,

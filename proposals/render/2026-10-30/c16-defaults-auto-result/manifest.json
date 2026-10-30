@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_ADOPTED_REVIEWED_NOT_RUNTIME_QUALIFIED",
+  "source_paths": 5,
+  "production_draft": 8938,
+  "production_head": "a077906234972dbbf11e80c54893f85ece97c8b7",
+  "authorship": "Worker #1, SolidCraft Render team under0xlillith; independent Designer source review and Engineer exact-source adoption retained.",
+  "original_source_manifest_sha256": "299b24a28d47411eb53ca322c5b1b01d74e0ac7ef690e9056927f06c12092727",
+  "original_private_binding_sha256": "1cef2da8c20c602e9e91c9b79105376881916594aac99d6e31a24b2e58e051d1",
+  "original_RAW_endpoint_manifest_sha256": "cfab0c69aef0731b1c4da4d39c5d967d7e8baea6a5f17052160baec5882d849c",
+  "independent_source_review_sha256": "60695ce7719bd6c8d83d732fd934c2169caf994f46b3fca9de2a37ecf61b0d5e",
+  "adopted_source_manifest_sha256": "7a30db715b0f342b37e4f5c53f7297cef1d56e22cf65a55278d6e14fd46cc852",
+  "source_members_checked_at_adoption": 3572,
+  "source_patch": {
+    "path": "candidate.patch",
+    "bytes": 15592,
+    "sha256": "254b8e72b7b4ff1f12b866501e10fa37274c8614fbb49e38ecbec2172884b201"
+  },
+  "sanitized_bindings": {
+    "path": "bindings.json",
+    "sha256": "9f024a40545b2f0c7ff5cc002523ffa2386d1ca48d7cdd993c5b02c498304c67"
+  },
+  "C15_format_bridge_manifest": {
+    "path": "c15-postformat-manifest.json",
+    "sha256": "e0a5bc8634e9f3e42d7f911b8ce740a5e4251563ab1a3ad27e7ed0361667e68f"
+  },
+  "test_declarations": {
+    "new": 4,
+    "UI": 255,
+    "preferences": 117
+  },
+  "Changes a default": "yes - successful GUI Start opens Result once, old behaviour kept behind preference render_open_result_on_start=false",
+  "C15_historical": {
+    "compiler_errors": "four E0599 in two new UI fixture setups",
+    "test_bodies_executed": 0,
+    "selected_cases_unrun": 242,
+    "PASS_transferred_to_C16": false
+  },
+  "new_source_execution_qualification": false,
+  "limits": [
+    "Static/endpoint/source review is not Rust compilation, test execution, native layout/UX or image-quality acceptance.",
+    "Cooperative Raster cases test GUI navigation policy; they do not qualify CPU final streaming or physical GPU rendering.",
+    "Current protected feedback, glass/certified transport, finishing/export and cross-backend parity limitations remain.",
+    "Additional strict TIR acceptance and the actual Raster directional consumer are not enabled by these five files."
+  ]
+}

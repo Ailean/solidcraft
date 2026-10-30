@@ -1,0 +1,289 @@
+{
+  "schema": 1,
+  "status": "EXACT_SOURCE_ONLY_FORMATTING_BRIDGE_NOT_A_TEST_PASS",
+  "base": "../actual19-reviewed-source/README.md",
+  "base_composition_sha256": "605292e1edb0ffaa2e1830cc3d277f006e6fc218f8ec6fe0dc2bc27b321ffe69",
+  "base_adopted_source_manifest_sha256": "5ec1e34bfc91f4e0dc5970191bc34199ad856d2cd998a96f605e01662bf439f8",
+  "C15_initial_source_manifest_sha256": "f9c2651977c95ee2120ae868c5ff4aeceeaae40e31f8a4cd3a6405d61299f57d",
+  "C15_post_format_source_manifest_sha256": "2fe4f37371e7376e02ae89a080e51fad82e6f6c564bfe8b8a8075c2951fe1f31",
+  "source_members": 3571,
+  "files_changed": 12,
+  "patch": {
+    "parts": [
+      {
+        "path": "c15-postformat-delta-01.patch",
+        "bytes": 64030,
+        "sha256": "1fde9b825ed95b18929f3284c89140d6340026edd5314a797079a187571f19ab"
+      },
+      {
+        "path": "c15-postformat-delta-02.patch",
+        "bytes": 78431,
+        "sha256": "d584c829f2325c9801433617366b8cc38dc4f681fecf2dd5fef2f5c105dd24ae"
+      },
+      {
+        "path": "c15-postformat-delta-03.patch",
+        "bytes": 54381,
+        "sha256": "e1c151d97dce0ffdece14bbbf02ec551abc177145b739dce267d4bb0018ddf9a"
+      }
+    ],
+    "bytes": 196842,
+    "sha256": "e545a3323c50e0e5f0e55ccbe0260b7fa2d45b3cb1999a78328c1e6fdac21508",
+    "parts_preserve_source_file_boundaries": true
+  },
+  "files": [
+    {
+      "path": "crates/engine/src/cmd/render/jobs.rs",
+      "before": {
+        "sha256": "ff82cad9aae9f57c81c0da40bd4a7ebbfc390cbbc7fe70ef498eb21a5eb07eea",
+        "bytes": 63778,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 1229,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "741caaaeb765853b6d89e0a69eaa8f425654689433a8eee48d3587d276144dd2",
+        "bytes": 64072,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 1255,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 11,
+      "text_change": true
+    },
+    {
+      "path": "crates/engine/src/render_jobs.rs",
+      "before": {
+        "sha256": "5655d5f5ae2c80560f9e067ca24424c0561cc5969260ff0343660e4d198909aa",
+        "bytes": 42740,
+        "eol": "CRLF",
+        "crlf": 835,
+        "lf": 835,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "4a2d5c1886ca029d383874f9aece71b866390fad2b6651193e218b2c302c5f48",
+        "bytes": 42310,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 856,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 5,
+      "text_change": true
+    },
+    {
+      "path": "crates/render/src/job/host.rs",
+      "before": {
+        "sha256": "577295a655ab5a8f6204da2b9d2a6a18d3d2bfeb877993a0dfffdc58462a2551",
+        "bytes": 115822,
+        "eol": "CRLF",
+        "crlf": 2406,
+        "lf": 2406,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "1884acfd018cb38683bd6ec92b171eff5a1b39eb5fd7e79bec0e31a3e76aa879",
+        "bytes": 115999,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 2587,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 31,
+      "text_change": true
+    },
+    {
+      "path": "crates/render/src/job/image_tests.rs",
+      "before": {
+        "sha256": "4878271823870137cddb4f7f96c61b7e7e17bbfe46488858fcaedd9448c505dd",
+        "bytes": 19561,
+        "eol": "CRLF",
+        "crlf": 402,
+        "lf": 402,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "98dfbb281a16aea600a6cff86652b3c92e566eb1188c2942a873df5742183368",
+        "bytes": 19074,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 390,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 3,
+      "text_change": true
+    },
+    {
+      "path": "crates/render/src/job/mod.rs",
+      "before": {
+        "sha256": "601391ecc07447e6c65cb3b790c7fe83b839374fa600fc7f79a2668cdf7b3eb0",
+        "bytes": 62159,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 1477,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "10b26a76921445cce0029a19e2c9e591663dc5b8876c055b2f07618a4ddeab74",
+        "bytes": 62100,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 1474,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 1,
+      "text_change": true
+    },
+    {
+      "path": "crates/render/src/job/photographic.rs",
+      "before": {
+        "sha256": "74756050d449a3333130e54d54b72aed9de2d54ca535d5b50803c30a9ec35c4b",
+        "bytes": 28171,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 596,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "03973c7f40398fcd32e24df61678570f827da9e41944817f72dd21ae38e56243",
+        "bytes": 28130,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 593,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 3,
+      "text_change": true
+    },
+    {
+      "path": "crates/render/src/raytrace/image_tests.rs",
+      "before": {
+        "sha256": "08bbf206da1436f39c225a14529135b47f7381fc3c278ed2c1dd9564c5c5747c",
+        "bytes": 114405,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 2414,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "4a4f46bc26e560fe4087a4fbf4439ea768d05fec2a414af7ad371f5a6897f62d",
+        "bytes": 115864,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 2455,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 10,
+      "text_change": true
+    },
+    {
+      "path": "crates/render/src/raytrace/primary_aa_tests.rs",
+      "before": {
+        "sha256": "37ac1993d703bb524d038ec061d621fe0facb44dbdd6d11861d830ae6123d916",
+        "bytes": 89108,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 1762,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "66f4d53f8f544c8eeaad8ef7879b50163bcf64528d9aafd20f2c248b1e758e50",
+        "bytes": 89705,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 1810,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 5,
+      "text_change": true
+    },
+    {
+      "path": "crates/render/src/studio.rs",
+      "before": {
+        "sha256": "cf06738ea3c14638eb43ce5c05516a6a95d69ac1658464932bd13e54fb4fedf5",
+        "bytes": 11331,
+        "eol": "CRLF",
+        "crlf": 218,
+        "lf": 218,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "39eec7cc41207f966994b980a2cec11661a89f7e7a019608616f584261764d26",
+        "bytes": 11054,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 213,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 4,
+      "text_change": true
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace.rs",
+      "before": {
+        "sha256": "dd3dc088fdc1080a493eb52f87978fbe8bd36abdfe844f7bbf47b56a986aa7ed",
+        "bytes": 109538,
+        "eol": "CRLF",
+        "crlf": 2395,
+        "lf": 2395,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "e202f6006332d21942e6bd01a4889601c77f2f1ab84039c0bc5aea2fd0cc18f0",
+        "bytes": 107739,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 2444,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 10,
+      "text_change": true
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_materials.rs",
+      "before": {
+        "sha256": "e290b9e2404d68524a6a6cb4355b3f11f8bb989e370c869b2a262b1faafa8519",
+        "bytes": 49558,
+        "eol": "CRLF",
+        "crlf": 1045,
+        "lf": 1045,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "5f9efcda8d42627eea7b05a8ccea2006a265492325824885442c76b6ec07e85a",
+        "bytes": 48776,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 1062,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 4,
+      "text_change": true
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before": {
+        "sha256": "edc06b2999b190b85495db5496d68801f77f370a7c8e2763c25d7610841a085b",
+        "bytes": 543384,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 9939,
+        "utf8_bom": false
+      },
+      "candidate": {
+        "sha256": "5eeb9bb333cad6936dae8bade8c3be0eece2cea7f52d274c6bd59b28c42625d9",
+        "bytes": 545234,
+        "eol": "LF",
+        "crlf": 0,
+        "lf": 10030,
+        "utf8_bom": false
+      },
+      "normalized_diff_hunks": 22,
+      "text_change": true
+    }
+  ],
+  "patch_policy": "LF-normalized text hunks; verify exact RAW before hashes, apply only textual/EOL reconstruction, restore declared endpoint EOL and verify exact RAW candidate SHA. No universal literal RAW replay claim. All endpoints were read from actual candidate/stage payloads, not reconstructed from hashes.",
+  "C15_outcome": "Formatter/check completed; later combined test build failed with four E0599 in new UI fixture setup. Zero tests executed;242 selected cases unrun. This formatting bridge transfers no PASS to C16."
+}

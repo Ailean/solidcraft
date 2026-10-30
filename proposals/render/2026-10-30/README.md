@@ -74,3 +74,8 @@ The original 516-case core result remains bound to its exact unchanged core sour
 ## Exact19-path adopted Render composition
 
 [Actual19 cumulative source](actual19-reviewed-source/README.md) preserves the independently source-reviewed V2 that ROOT adopted by exact RAW copy, with3571 members checked. It combines manual-final feedback, progressive certified optics and both W2 suffixes, CPU material routing/bridge/caption, UI252 with its explicit supported-feature/DTO-stage corrections, both Photographic fixes and Raster perspective/directional-core source. Reconstruct the exact previous C14 post-format base; this is an alternative to overlapping increments, never another layer on top of them. LF hunks and eight CRLF endpoints are explicitly bound. New66 declarations and planned242-case/49-marker selection are **unrun**; formatting/build/actual gates/native acceptance are still pending. Historical C14 remains36PASS/1FAIL/108unrun and no pass transfers.
+
+<!-- c16-defaults-auto-result-source-20261030 -->
+## C16 source: fixture defaults and Result navigation
+
+[C16 exact five-file source](c16-defaults-auto-result/README.md) is independently source-reviewed and adopted by RAW copy; the adjacent12-file C15 formatting bridge makes the Actual19→C15 post-format→C16 lineage explicit. It fixes the four invalid new-fixture calls and adds preference-compliant Result navigation after accepted GUI Start, retaining old behavior with `render_open_result_on_start=false`. Four new declarations remain unrun. C15 stays an actual four-E0599 build failure with0 test bodies/242 cases unrun; no build/test/native PASS transfers. Manifests record exact endpoint hashes/EOL and cumulative alternatives; no private execution files are published.

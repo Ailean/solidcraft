@@ -147,3 +147,12 @@ and is not part of C20 or its development selection.
 ## U17 test-module label correction
 
 [Source wrapper correction](explicit-product-srgb/test-module-label-correction.md) fixes `view::tests` to the actual `view::glass_tests` registration. No source, case selection or runtime result changes; the real GPU case remains unrun and excluded from C20 native development acceptance.
+
+## CPU direct-visibility foundation: separate source proposal
+
+[Two-file candidate, exact delta and original cases](cpu-direct-visibility-foundation/README.md)
+preserve a bounded incremental straight exterior-light connection through certified
+sheets/disjoint boxes. The 33 old plus 12 new declarations are all unrun on this
+candidate. There is no image consumer or C20 adoption; brute-scan cost, refusal
+domain, cumulative work/memory admission and missing real-image acceptance remain
+explicit. Source review and replay are not compilation, full CI or GPU parity.

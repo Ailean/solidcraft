@@ -1,0 +1,137 @@
+{
+  "status": "SOURCE_ONLY_WIP_UNFORMATTED_UNCOMPILED_UNRUN_UNREGISTERED_NO_IMAGE_CONSUMER",
+  "license": "MIT OR Apache-2.0; original SolidCraft contributors source and original analytic cases; existing authorship retained",
+  "base": {
+    "kind": "exact frozen C20 working-source endpoints, not a claim that the published PR HEAD alone has these bytes",
+    "source_manifest_sha256": "eb6ec43c4fe6862dcf27d9832e8724abf05b3edcdc945f6a8c3e17f35b76d116",
+    "canonical_C20_source": "../c20-reviewed-composition/README.md",
+    "observed_archive_commit": "25c9527bbc9aebf5bc7a8191ca21c2bba5722933"
+  },
+  "production_paths": [
+    "crates/render/src/raytrace/dielectric.rs",
+    "crates/render/src/raytrace/dielectric_tests.rs"
+  ],
+  "composition": "One insertion before the unchanged existing cfg(test) router; append-only additions to the existing dielectric_tests.rs. Exact patch is an increment on the two before/ endpoints, not an alternative full C20 assembly.",
+  "endpoints": [
+    {
+      "path": "crates/render/src/raytrace/dielectric.rs",
+      "before_sha256": "2063f440d7a9e495e0a0398ae9bb5084379731473f80d86ffb5be95f38dad0bc",
+      "candidate_sha256": "9f54aea0947a3e20dfc0aa398fd9372c3d924b1219eeff1f2ba5bb05162a6f85",
+      "before_bytes": 18121,
+      "candidate_bytes": 30682,
+      "eol": "LF"
+    },
+    {
+      "path": "crates/render/src/raytrace/dielectric_tests.rs",
+      "before_sha256": "129ca64d6ba5df6bcb777814688a6334ed98c32e6068d4274312f3fdff045258",
+      "candidate_sha256": "15e4280b5783fc564c4f08ccded30152815fdd0f69981efab78e2f67d9d9e1ec",
+      "before_bytes": 34116,
+      "candidate_bytes": 47987,
+      "eol": "LF"
+    }
+  ],
+  "delta": {
+    "path": "delta.patch",
+    "sha256": "fbc1def87de38d4de325035cbdacfbd7d3259a2bfb64308bdec708449c972390",
+    "exact_byte_replay": true
+  },
+  "fragments": [
+    {
+      "path": "production-addition.rs.fragment",
+      "sha256": "1b09c318f5d77e60124f2c623d9ebcf1852bc81bb12f76666e4eb3602fd5a775"
+    },
+    {
+      "path": "test-additions.rs.fragment",
+      "sha256": "ff0578248b616f3b51c5e0166bfbfcae1e4264974f992f9d4b219ac4c199305b"
+    }
+  ],
+  "actual_reference_source": [
+    {
+      "path": "crates/render/src/raytrace/mod.rs",
+      "sha256": "d7f8ed95a60384d1e8f896ec0637af39682778adf4546c646104ae22ab53fbb8",
+      "bytes": 18244,
+      "role": "reference-only, not changed"
+    },
+    {
+      "path": "crates/render/src/raytrace/bvh.rs",
+      "sha256": "b4b333e2b39e4c89714637519ab8023fc88efd341906d9a8382068388ad0985d",
+      "bytes": 18238,
+      "role": "reference-only, not changed"
+    },
+    {
+      "path": "crates/render/src/raytrace/prepared.rs",
+      "sha256": "14e258d73474ae112988cfac4000ed73e543da7b1af6e5b51ee97afa5b37a583",
+      "bytes": 4511,
+      "role": "reference-only, not changed"
+    },
+    {
+      "path": "crates/render/src/job/mod.rs",
+      "sha256": "7642c9eeb9877a695a2a2a332e941cd1ffcdf598f5aa5f77fcbcb17a663c553f",
+      "bytes": 70575,
+      "role": "reference-only, not changed"
+    },
+    {
+      "path": "crates/render/src/surface.rs",
+      "sha256": "024972ae3e069453dd40b2d881d8540fb7a203033fa7bb4aa1663ac21d6bb987",
+      "bytes": 12603,
+      "role": "reference-only, not changed"
+    },
+    {
+      "path": "crates/render/src/job/host.rs",
+      "sha256": "647c2d5d4453ee3028818f1088531b18aff17aa639168ac05c9d206028e86c78",
+      "bytes": 116953,
+      "role": "reference-only, not changed"
+    },
+    {
+      "path": "crates/render/src/job/cpu_budget.rs",
+      "sha256": "7756fedf76658a1eedd0c0194aa98141d33464c0f7df85fe86f9e255fd8b8ce2",
+      "bytes": 7771,
+      "role": "reference-only numeric caps, not changed"
+    }
+  ],
+  "component_contract": {
+    "max_selected_bodies": 8,
+    "crossing_limit_inclusive": [
+      1,
+      16
+    ],
+    "per_pass_triangle_cap": 8000000,
+    "body_cap": 262144,
+    "work": "Same caller-owned cumulative WorkBudget for construction and every step; caller must not replace/reset the ledger. No private work credit is created.",
+    "cost": "O((crossings+1)*(triangles+bodies)); incremental actual source scan, not BVH-accelerated",
+    "memory": "Fixed arrays/scalars plus borrowed references; valid setup/steps create no new containers. Existing invalid-options validator may allocate a bounded error String; compiled layout/RSS and future consumer admission are unverified.",
+    "connection": "one straight exterior-to-exterior segment, interval [min,max); existing ray origin/direction retained, lower bound next_up(hit.distance)",
+    "errors": "Existing TraceError InvalidInput/Internal/WorkLimit/Cancelled; no white/black success substituted for pending/errors; cursor terminal after success or any step error",
+    "consumer_installed": false
+  },
+  "acceptance": {
+    "old_declarations_preserved": 33,
+    "new_declarations": 12,
+    "all_45_UNRUN_on_this_candidate": true,
+    "fixed_original_channel_tolerance": 1e-13,
+    "baseline_expectations_or_tolerances_changed": false
+  },
+  "not_claimed": [
+    "Rust typechecking",
+    "formatting",
+    "compilation",
+    "executed tests",
+    "current runtime",
+    "heap/stack layout or performance",
+    "image shadows repaired",
+    "general glass",
+    "caustics",
+    "GPU parity",
+    "full CI",
+    "ready or merged"
+  ],
+  "integration_obligations": [
+    "fresh exact receiver/API binding before adoption",
+    "independent source review is not execution",
+    "real PreparedScene.source borrowing image consumer",
+    "same cumulative work/cancellation and structured error propagation",
+    "component metadata/copies/retained capacity included in current memory admission",
+    "actual progressive scheduling",
+    "original component tests plus affected/dependent gate and real image/native acceptance"
+  ]
+}

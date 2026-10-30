@@ -1,0 +1,509 @@
+--- a/crates/render/src/raytrace/dielectric.rs
++++ b/crates/render/src/raytrace/dielectric.rs
+@@ -386,6 +386,251 @@
+     Ok(ExactBoxFace { point, axis, outward, entering: direction * outward < 0.0 })
+ }
+ 
++/// Hard crossing ceiling for eight disjoint certified boxes (two faces each).
++pub const MAX_DIRECT_CROSSINGS: u8 = (MAX_OVERRIDES * 2) as u8;
++
++#[derive(Clone, Copy)]
++struct DirectHit {
++    body: usize,
++    vertices: [Vec3; 3],
++    geometry: super::TriangleHit,
++}
++
++/// Incremental RGB visibility along ONE straight exterior-to-exterior connection.
++/// This is a direct-light approximation, not refracted transport or caustics.
++/// Selected optics are revalidated and certified against the borrowed capture.
++/// Boxes must be disjoint; sheets touching/inside boxes and endpoints on/inside
++/// boxes refuse. Unselected geometry blocks. The interval is [min,max): geometry
++/// exactly at a finite light endpoint does not block that light.
++///
++/// No BVH tie API exists for this consumer yet. A pass scans the captured source,
++/// one triangle (or body transition) per step. Equal-depth different bodies refuse
++/// rather than silently skipping an opaque blocker behind a selected boundary.
++/// Cost is O((crossings+1)*(triangles+bodies)), not accelerated traversal. Every
++/// step debits the caller's cumulative work and checks cancellation. Memory is
++/// fixed, with borrowed scene/options. Valid setup/steps create no containers;
++/// invalid options may construct the existing validator's bounded error String.
++/// The future prepared-scene consumer passes its existing `PreparedScene.source`.
++pub struct DirectVisibility<'a> {
++    source: &'a ProductScene,
++    options: &'a crate::job::RaytraceOptions,
++    certificates: [Option<Certificate>; MAX_OVERRIDES],
++    ray: super::Ray,
++    body: usize,
++    triangle: usize,
++    scanned: usize,
++    nearest: Option<DirectHit>,
++    ambiguous: bool,
++    optical: bool,
++    medium: Option<(usize, Vec3)>,
++    sheets: u8,
++    transmittance: Vec3,
++    crossings: u8,
++    crossing_limit: u8,
++    terminal: bool,
++}
++
++impl<'a> DirectVisibility<'a> {
++    /// Bounded setup: at most eight small certificates and 64 overlap checks.
++    /// Setup also spends the SAME caller-owned budget; no fresh work credit.
++    pub fn new(
++        source: &'a ProductScene,
++        options: &'a crate::job::RaytraceOptions,
++        ray: super::Ray,
++        crossing_limit: u8,
++        work: &mut super::WorkBudget,
++        cancel: &crate::job::CancelToken,
++    ) -> Result<Self> {
++        work.tick(cancel)?;
++        if !(1..=MAX_DIRECT_CROSSINGS).contains(&crossing_limit) || source.meshes.len() > crate::job::MAX_CPU_BODIES {
++            return Err(TraceError::InvalidInput("direct visibility crossing or body bound"));
++        }
++        options.validate().map_err(|_| TraceError::InvalidInput("invalid direct visibility options"))?;
++        let mut certificates = [None; MAX_OVERRIDES];
++        let start = ray.at(ray.interval()[0])?;
++        let end = ray.at(ray.interval()[1])?;
++        for (slot, input) in certificates.iter_mut().zip(&options.dielectrics) {
++            work.tick(cancel)?;
++            let certificate = certify(source, input)?;
++            if let Certificate::ClosedBox(bounds) = certificate {
++                if contains(bounds, ray.origin()) || contains(bounds, start) || contains(bounds, end) {
++                    return Err(TraceError::InvalidInput("direct visibility endpoints must be outside certified boxes"));
++                }
++            }
++            *slot = Some(certificate);
++        }
++        for (i, a) in certificates.iter().take(options.dielectrics.len()).enumerate() {
++            for (j, b) in certificates.iter().take(options.dielectrics.len()).enumerate().skip(i + 1) {
++                work.tick(cancel)?;
++                let (Some(a), Some(b)) = (a, b) else { continue };
++                let bounds = |slot: usize, certificate: Certificate| -> Result<Bounds> {
++                    match certificate {
++                        Certificate::ClosedBox(bounds) => Ok(bounds),
++                        Certificate::ThinSheet => {
++                            let input = options.dielectrics.get(slot).ok_or(TraceError::Internal("direct certificate slot"))?;
++                            let body = source.meshes.get(input.body_index).ok_or(TraceError::Internal("direct certificate body"))?;
++                            let bounds = body.mesh.bounds();
++                            Bounds::new(bounds.min, bounds.max)
++                        }
++                    }
++                };
++                if (matches!(a, Certificate::ClosedBox(_)) || matches!(b, Certificate::ClosedBox(_)))
++                    && overlaps(bounds(i, *a)?, bounds(j, *b)?)
++                {
++                    return Err(TraceError::InvalidInput("direct visibility boxes must be disjoint from other selected boundaries"));
++                }
++            }
++        }
++        super::check_cancel(cancel)?;
++        Ok(Self {
++            source, options, certificates, ray, body: 0, triangle: 0, scanned: 0,
++            nearest: None, ambiguous: false, optical: false, medium: None, sheets: 0,
++            transmittance: Vec3::new(1.0, 1.0, 1.0), crossings: 0, crossing_limit, terminal: false,
++        })
++    }
++
++    /// None means real work remains. Only Some(rgb) is a completed connection.
++    /// Work/crossing exhaustion, cancellation and ambiguity are errors, never black
++    /// or white fallback values. Success OR error makes this cursor terminal.
++    pub fn step(&mut self, work: &mut super::WorkBudget, cancel: &crate::job::CancelToken) -> Result<Option<Vec3>> {
++        if self.terminal {
++            return Err(TraceError::InvalidInput("direct visibility cursor is terminal"));
++        }
++        let result = self.advance(work, cancel);
++        if !matches!(result, Ok(None)) {
++            self.terminal = true;
++        }
++        result
++    }
++
++    fn advance(&mut self, work: &mut super::WorkBudget, cancel: &crate::job::CancelToken) -> Result<Option<Vec3>> {
++        work.tick(cancel)?;
++        if !self.optical {
++            if let Some(body) = self.source.meshes.get(self.body) {
++                // A certified sheet is ONE plane. Its two triangles can round
++                // their depths differently at a shared edge; it must never be
++                // attenuated twice. Skip that entire immutable certified body
++                // after its first crossing, not a numerical distance interval.
++                if self.options.dielectrics.iter().enumerate().any(|(slot, input)| input.body_index == self.body && self.sheets & (1u8 << slot) != 0) {
++                    self.body += 1;
++                    self.triangle = 0;
++                    return Ok(None);
++                }
++                if let Some(indices) = body.mesh.triangles.get(self.triangle) {
++                    self.scanned = self.scanned.checked_add(1).filter(|n| *n <= crate::job::MAX_CPU_TRIANGLES)
++                        .ok_or(TraceError::WorkLimit)?;
++                    let mut vertices = [Vec3::ZERO; 3];
++                    for (point, index) in vertices.iter_mut().zip(indices) {
++                        *point = *body.mesh.positions.get(*index as usize).ok_or(TraceError::InvalidInput("direct visibility vertex index"))?;
++                    }
++                    self.triangle += 1;
++                    if let Some(geometry) = Triangle::new(vertices)?.intersect(&self.ray) {
++                        if geometry.distance < self.ray.interval()[1] {
++                            let hit = DirectHit { body: self.body, vertices, geometry };
++                            match self.nearest {
++                                None => self.nearest = Some(hit),
++                                Some(old) if geometry.distance < old.geometry.distance => {
++                                    self.nearest = Some(hit);
++                                    self.ambiguous = false;
++                                }
++                                Some(old) if geometry.distance == old.geometry.distance && old.body != self.body => self.ambiguous = true,
++                                _ => {}
++                            }
++                        }
++                    }
++                } else {
++                    self.body += 1;
++                    self.triangle = 0;
++                }
++                return Ok(None);
++            }
++            self.optical = true;
++            return Ok(None);
++        }
++        if self.ambiguous {
++            return Err(TraceError::InvalidInput("coincident direct visibility bodies are ambiguous"));
++        }
++        let Some(hit) = self.nearest else {
++            return if self.medium.is_some() {
++                Err(TraceError::InvalidInput("direct visibility missed its certified box exit"))
++            } else {
++                Ok(Some(self.transmittance))
++            };
++        };
++        let Some((slot, input)) = self.options.dielectrics.iter().enumerate().find(|(_, input)| input.body_index == hit.body) else {
++            return Ok(Some(Vec3::ZERO));
++        };
++        if self.crossings == self.crossing_limit {
++            return Err(TraceError::WorkLimit);
++        }
++        let outward = hit.geometry.geometric_normal;
++        let entering = outward.dot(self.ray.direction()) < 0.0;
++        let normal = if entering { outward } else { -outward };
++        match self.certificates.get(slot).copied().flatten().ok_or(TraceError::Internal("direct visibility certificate missing"))? {
++            Certificate::ThinSheet => {
++                if self.medium.is_some() {
++                    return Err(TraceError::InvalidInput("direct visibility sheet inside a box"));
++                }
++                let (_, _, transmission) = thin_sheet(self.ray.direction(), normal, input)?;
++                self.transmittance = multiply(self.transmittance, transmission);
++                self.sheets |= 1u8 << slot;
++            }
++            Certificate::ClosedBox(bounds) => {
++                let [a, b, c] = hit.vertices;
++                let [wa, wb, wc] = hit.geometry.barycentric;
++                let face = exact_box_face(bounds, hit.vertices, outward, a * wa + b * wb + c * wc, self.ray)?;
++                // External-angle Fresnel on BOTH straight connections. The ray is
++                // not bent, so an internal critical angle here would invent TIR.
++                let transmit = 1.0 - interface(self.ray.direction(), normal, 1.0, input.ior)?.reflectance;
++                self.transmittance = self.transmittance * transmit;
++                if entering {
++                    if self.medium.is_some() {
++                        return Err(TraceError::InvalidInput("direct visibility entered overlapping boxes"));
++                    }
++                    self.medium = Some((slot, face.point));
++                } else {
++                    let (active, start) = self.medium.ok_or(TraceError::InvalidInput("direct visibility exited without entry"))?;
++                    if active != slot {
++                        return Err(TraceError::InvalidInput("direct visibility box exit identity mismatch"));
++                    }
++                    let delta = face.point - start;
++                    let scale = delta.x.abs().max(delta.y.abs()).max(delta.z.abs());
++                    if scale == 0.0 || !scale.is_finite() {
++                        return Err(TraceError::InvalidInput("direct visibility box segment is degenerate"));
++                    }
++                    let distance = scale * (delta / scale).len2().sqrt();
++                    self.transmittance = multiply(self.transmittance, attenuation(input.absorption_per_mm, distance)?);
++                    self.medium = None;
++                }
++            }
++        }
++        if !self.transmittance.is_finite() || [self.transmittance.x, self.transmittance.y, self.transmittance.z].into_iter().any(|v| !(0.0..=1.0).contains(&v)) {
++            return Err(TraceError::InvalidInput("invalid direct visibility transmittance"));
++        }
++        self.crossings += 1;
++        if self.transmittance == Vec3::ZERO {
++            return Ok(Some(Vec3::ZERO));
++        }
++        // Preserve the original origin AND normalized direction. Calling Ray::new
++        // again could renormalize it and change the tie/interval calculations.
++        self.ray.min = hit.geometry.distance.next_up();
++        if self.ray.min >= self.ray.max {
++            return if self.medium.is_some() {
++                Err(TraceError::InvalidInput("direct visibility interval cannot resolve the exit"))
++            } else {
++                Ok(Some(self.transmittance))
++            };
++        }
++        self.body = 0;
++        self.triangle = 0;
++        self.scanned = 0;
++        self.nearest = None;
++        self.ambiguous = false;
++        self.optical = false;
++        Ok(None)
++    }
++}
++
+ #[cfg(test)]
+ #[path = "dielectric_tests.rs"]
+ pub(super) mod tests;
+--- a/crates/render/src/raytrace/dielectric_tests.rs
++++ b/crates/render/src/raytrace/dielectric_tests.rs
+@@ -735,3 +735,252 @@
+     assert!(face.spawn(-Vec3::Z, false).is_err());
+     assert!(face.spawn(Vec3::Z, true).is_err());
+ }
++
++fn direct_capture(bodies: Vec<ProductMesh>) -> ProductScene {
++    let mut bounds = bodies[0].mesh.bounds();
++    for body in &bodies[1..] {
++        let next = body.mesh.bounds();
++        bounds.min = bounds.min.min(next.min);
++        bounds.max = bounds.max.max(next.max);
++    }
++    ProductScene { meshes: bodies, bounds }
++}
++
++fn direct_box(name: &str, offset: f64) -> ProductMesh {
++    let mut body = box_body(1.0);
++    body.name = name.into();
++    for p in &mut Arc::make_mut(&mut body.mesh).positions { p.z += offset; }
++    body
++}
++
++fn direct_sheet(name: &str, offset: f64) -> ProductMesh {
++    let mut body = direct_box(name, offset);
++    let mesh = Arc::make_mut(&mut body.mesh);
++    mesh.triangles.truncate(2);
++    mesh.positions.truncate(4);
++    body
++}
++
++fn direct_material(body: usize, name: &str, boundary: DielectricBoundary) -> DielectricOptions {
++    DielectricOptions { body_index: body, body_name: name.into(), boundary, ior: 1.0,
++        absorption_per_mm: [2.0_f64.ln(), 4.0_f64.ln(), 0.0],
++        thickness_mm: if boundary == DielectricBoundary::ThinSheet { 1.0 } else { 0.0 } }
++}
++
++fn direct_ray(max: f64) -> super::super::Ray {
++    super::super::Ray::new(Vec3::new(0.25, 0.125, -2.0), Vec3::Z, 0.0, max).unwrap()
++}
++
++fn direct_complete(source: &ProductScene, options: &RaytraceOptions, ray: super::super::Ray) -> Vec3 {
++    let cancel = CancelToken::default();
++    let mut work = super::super::WorkBudget::new(100_000).unwrap();
++    let mut visibility = DirectVisibility::new(source, options, ray, MAX_DIRECT_CROSSINGS, &mut work, &cancel).unwrap();
++    for _ in 0..10_000 {
++        if let Some(rgb) = visibility.step(&mut work, &cancel).unwrap() {
++            assert!(visibility.step(&mut work, &cancel).is_err());
++            return rgb;
++        }
++    }
++    panic!("bounded direct connection did not complete");
++}
++
++fn direct_rgb(actual: Vec3, expected: Vec3) {
++    for (a, b) in [actual.x, actual.y, actual.z].into_iter().zip([expected.x, expected.y, expected.z]) {
++        assert!((a - b).abs() <= 1e-13, "actual={actual:?}, expected={expected:?}");
++    }
++}
++
++#[test]
++fn direct_box_beer_uses_original_endpoints_and_multiplies_disjoint_rgb() {
++    let source = direct_capture(vec![direct_box("one", 0.0), direct_box("two", 3.0)]);
++    let first = direct_material(0, "one", DielectricBoundary::ClosedBox);
++    let second = direct_material(1, "two", DielectricBoundary::ClosedBox);
++    let options = RaytraceOptions { dielectrics: vec![first, second], ..Default::default() };
++    // sigma=(ln2,ln4,0), two one-mm slabs: exp(-2*sigma)=(1/4,1/16,1).
++    direct_rgb(direct_complete(&source, &options, direct_ray(10.0)), Vec3::new(0.25, 0.0625, 1.0));
++    let one = direct_capture(vec![direct_box("one", 0.0)]);
++    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "one", DielectricBoundary::ClosedBox)], ..Default::default() };
++    direct_rgb(direct_complete(&one, &options, direct_ray(10.0)), Vec3::new(0.5, 0.25, 1.0));
++}
++
++#[test]
++fn direct_sheet_shared_diagonal_is_one_crossing_and_uses_virtual_beer_distance() {
++    let source = direct_capture(vec![direct_sheet("sheet", 0.0)]);
++    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "sheet", DielectricBoundary::ThinSheet)], ..Default::default() };
++    let ray = super::super::Ray::new(Vec3::new(0.25, 0.25, -2.0), Vec3::Z, 0.0, 10.0).unwrap();
++    direct_rgb(direct_complete(&source, &options, ray), Vec3::new(0.5, 0.25, 1.0));
++}
++
++#[test]
++fn direct_exterior_box_fresnel_is_not_a_refracted_or_infinite_bounce_slab() {
++    let source = direct_capture(vec![direct_box("glass", 0.0)]);
++    let material = DielectricOptions { ior: 1.5, absorption_per_mm: [0.0; 3], ..direct_material(0, "glass", DielectricBoundary::ClosedBox) };
++    let options = RaytraceOptions { dielectrics: vec![material], ..Default::default() };
++    // Normal external R=1/25; this straight connection has (24/25)^2, with no reflected returns.
++    direct_rgb(direct_complete(&source, &options, direct_ray(10.0)), Vec3::new(576.0/625.0, 576.0/625.0, 576.0/625.0));
++    let sheet = direct_capture(vec![direct_sheet("sheet", 0.0)]);
++    let material = DielectricOptions { ior: 1.5, absorption_per_mm: [0.0; 3], ..direct_material(0, "sheet", DielectricBoundary::ThinSheet) };
++    let options = RaytraceOptions { dielectrics: vec![material], ..Default::default() };
++    // Existing incoherent sheet closure sums its virtual internal returns: (1-R)/(1+R)=12/13.
++    direct_rgb(direct_complete(&sheet, &options, direct_ray(10.0)), Vec3::new(12.0/13.0, 12.0/13.0, 12.0/13.0));
++}
++
++#[test]
++fn direct_connection_keeps_unselected_opaque_blockers_and_half_open_light_endpoint() {
++    let options = RaytraceOptions::default();
++    for (z, expected) in [(7.0, Vec3::ZERO), (8.0, Vec3::new(1.0,1.0,1.0)), (9.0, Vec3::new(1.0,1.0,1.0))] {
++        let source = direct_capture(vec![direct_sheet("opaque", z)]);
++        direct_rgb(direct_complete(&source, &options, direct_ray(10.0)), expected);
++    }
++    let source = direct_capture(vec![direct_box("glass", 0.0), direct_sheet("blocker", 5.0)]);
++    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "glass", DielectricBoundary::ClosedBox)], ..Default::default() };
++    assert_eq!(direct_complete(&source, &options, direct_ray(10.0)), Vec3::ZERO);
++}
++
++#[test]
++fn direct_connection_refuses_coincident_different_bodies_instead_of_skipping_opaque() {
++    let source = direct_capture(vec![direct_sheet("selected", 0.0), direct_sheet("opaque", 0.0)]);
++    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "selected", DielectricBoundary::ThinSheet)], ..Default::default() };
++    let cancel = CancelToken::default();
++    let mut work = super::super::WorkBudget::new(100_000).unwrap();
++    let mut cursor = DirectVisibility::new(&source, &options, direct_ray(10.0), MAX_DIRECT_CROSSINGS, &mut work, &cancel).unwrap();
++    for _ in 0..100 {
++        match cursor.step(&mut work, &cancel) {
++            Ok(None) => {}
++            Err(super::super::TraceError::InvalidInput(_)) => {
++                assert!(cursor.step(&mut work, &cancel).is_err());
++                return;
++            }
++            other => panic!("ambiguous visibility must refuse: {other:?}"),
++        }
++    }
++    panic!("coincident boundary did not refuse");
++}
++
++#[test]
++fn direct_connection_bounds_validate_identity_endpoints_overlap_and_crossing_budget() {
++    let source = direct_capture(vec![direct_box("glass", 0.0)]);
++    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "glass", DielectricBoundary::ClosedBox)], ..Default::default() };
++    let cancel = CancelToken::default();
++    let mut work = super::super::WorkBudget::new(100_000).unwrap();
++    for limit in [0, MAX_DIRECT_CROSSINGS+1] {
++        assert!(DirectVisibility::new(&source, &options, direct_ray(10.0), limit, &mut work, &cancel).is_err());
++    }
++    // End at entry face, inside, and at exit face: all explicitly outside this foundation's domain.
++    for max in [2.0, 2.5, 3.0] {
++        assert!(DirectVisibility::new(&source, &options, direct_ray(max), 2, &mut work, &cancel).is_err());
++    }
++    let inside = super::super::Ray::new(Vec3::new(0.25, 0.125, 0.5), Vec3::Z, 0.0, 10.0).unwrap();
++    assert!(DirectVisibility::new(&source, &options, inside, 2, &mut work, &cancel).is_err());
++    let mut wrong = options.clone();wrong.dielectrics[0].body_name="wrong".into();
++    assert!(DirectVisibility::new(&source, &wrong, direct_ray(10.0), 2, &mut work, &cancel).is_err());
++    let overlap = direct_capture(vec![direct_box("a", 0.0), direct_box("b", 0.5)]);
++    let overlapping = RaytraceOptions { dielectrics: vec![direct_material(0,"a",DielectricBoundary::ClosedBox),direct_material(1,"b",DielectricBoundary::ClosedBox)], ..Default::default() };
++    assert!(DirectVisibility::new(&overlap,&overlapping,direct_ray(10.0),4,&mut work,&cancel).is_err());
++    let mut cursor = DirectVisibility::new(&source,&options,direct_ray(10.0),1,&mut work,&cancel).unwrap();
++    for _ in 0..100 {
++        match cursor.step(&mut work,&cancel) {
++            Ok(None) => {}
++            Err(super::super::TraceError::WorkLimit) => { assert!(cursor.step(&mut work,&cancel).is_err());return; }
++            other => panic!("insufficient crossing budget must refuse: {other:?}"),
++        }
++    }
++    panic!("crossing cap did not stop");
++}
++
++#[test]
++fn direct_connection_spends_caller_work_and_cancellation_is_terminal_without_result() {
++    let source = direct_capture(vec![direct_box("glass",0.0)]);
++    let options = RaytraceOptions { dielectrics: vec![direct_material(0,"glass",DielectricBoundary::ClosedBox)], ..Default::default() };
++    let cancel = CancelToken::default();
++    let mut work = super::super::WorkBudget::new(1000).unwrap();
++    let mut cursor = DirectVisibility::new(&source,&options,direct_ray(10.0),2,&mut work,&cancel).unwrap();
++    let used = work.used();
++    assert!(used>0);
++    assert_eq!(cursor.step(&mut work,&cancel).unwrap(),None);
++    assert_eq!(work.used(),used+1);
++    work.charge(work.remaining(),&cancel).unwrap();
++    assert!(matches!(cursor.step(&mut work,&cancel),Err(super::super::TraceError::WorkLimit)));
++    assert!(cursor.step(&mut work,&cancel).is_err());
++    let cancel = CancelToken::default();
++    let mut work = super::super::WorkBudget::new(1000).unwrap();
++    let mut cursor = DirectVisibility::new(&source,&options,direct_ray(10.0),2,&mut work,&cancel).unwrap();
++    let used = work.used();
++    cancel.cancel();
++    assert!(matches!(cursor.step(&mut work,&cancel),Err(super::super::TraceError::Cancelled)));
++    assert_eq!(work.used(),used);
++    assert!(cursor.step(&mut work,&cancel).is_err());
++    assert!(matches!(DirectVisibility::new(&source,&options,direct_ray(10.0),2,&mut work,&cancel),Err(super::super::TraceError::Cancelled)));
++}
++
++#[test]
++fn direct_connection_rejects_hostile_optics_before_any_dark_result() {
++    let source = direct_capture(vec![direct_box("glass",0.0)]);
++    let cancel = CancelToken::default();
++    let mut work = super::super::WorkBudget::new(10000).unwrap();
++    for value in [f64::NAN, f64::INFINITY, -1.0, 101.0] {
++        let material = DielectricOptions { absorption_per_mm:[value,0.0,0.0], ..direct_material(0,"glass",DielectricBoundary::ClosedBox) };
++        let options = RaytraceOptions { dielectrics:vec![material], ..Default::default() };
++        assert!(DirectVisibility::new(&source,&options,direct_ray(10.0),2,&mut work,&cancel).is_err());
++    }
++    let material = DielectricOptions { ior:f64::NAN, ..direct_material(0,"glass",DielectricBoundary::ClosedBox) };
++    let options = RaytraceOptions { dielectrics:vec![material], ..Default::default() };
++    assert!(DirectVisibility::new(&source,&options,direct_ray(10.0),2,&mut work,&cancel).is_err());
++}
++
++#[test]
++fn direct_connection_accepts_all_eight_disjoint_boxes_and_preserves_reverse_rgb() {
++    let bodies = (0..8).map(|i| direct_box(&format!("slab{i}"),f64::from(i)*2.0)).collect();
++    let source = direct_capture(bodies);
++    let dielectrics = (0..8).map(|i| direct_material(i,&format!("slab{i}"),DielectricBoundary::ClosedBox)).collect();
++    let options = RaytraceOptions { dielectrics, ..Default::default() };
++    let expected = Vec3::new(1.0/256.0,1.0/65536.0,1.0);
++    direct_rgb(direct_complete(&source,&options,direct_ray(20.0)),expected);
++    let reverse = super::super::Ray::new(Vec3::new(0.25,0.125,18.0),-Vec3::Z,0.0,20.0).unwrap();
++    direct_rgb(direct_complete(&source,&options,reverse),expected);
++    let mut too_many = options.clone();
++    too_many.dielectrics.push(direct_material(8,"ninth",DielectricBoundary::ClosedBox));
++    let cancel=CancelToken::default();
++    let mut work=super::super::WorkBudget::new(1000).unwrap();
++    assert!(DirectVisibility::new(&source,&too_many,direct_ray(20.0),16,&mut work,&cancel).is_err());
++}
++
++#[test]
++fn direct_connection_box_edge_is_refused_without_a_successful_fallback() {
++    let source=direct_capture(vec![direct_box("glass",0.0)]);
++    let options=RaytraceOptions {dielectrics:vec![direct_material(0,"glass",DielectricBoundary::ClosedBox)],..Default::default()};
++    let ray=super::super::Ray::new(Vec3::new(-10.0,-10.0,-2.0),Vec3::Z,0.0,10.0).unwrap();
++    let cancel=CancelToken::default();
++    let mut work=super::super::WorkBudget::new(1000).unwrap();
++    let mut cursor=DirectVisibility::new(&source,&options,ray,2,&mut work,&cancel).unwrap();
++    for _ in 0..100 {
++        match cursor.step(&mut work,&cancel) {
++            Ok(None)=>{},
++            Err(super::super::TraceError::InvalidInput(_))=>return,
++            other=>panic!("box edge must refuse: {other:?}"),
++        }
++    }
++    panic!("edge ambiguity did not stop");
++}
++
++#[test]
++fn direct_connection_setup_certification_cannot_escape_caller_work_limit() {
++    let source=direct_capture(vec![direct_box("glass",0.0)]);
++    let options=RaytraceOptions {dielectrics:vec![direct_material(0,"glass",DielectricBoundary::ClosedBox)],..Default::default()};
++    let cancel=CancelToken::default();
++    let mut work=super::super::WorkBudget::new(1).unwrap();
++    assert!(matches!(DirectVisibility::new(&source,&options,direct_ray(10.0),2,&mut work,&cancel),Err(super::super::TraceError::WorkLimit)));
++    assert_eq!(work.used(),1);
++}
++
++#[test]
++fn direct_oblique_sheet_is_one_certified_plane_with_original_beer_angle() {
++    let mut body=direct_sheet("oblique",0.0);
++    for p in &mut Arc::make_mut(&mut body.mesh).positions { p.z += 0.5*p.x; }
++    let source=direct_capture(vec![body]);
++    let options=RaytraceOptions {dielectrics:vec![direct_material(0,"oblique",DielectricBoundary::ThinSheet)],..Default::default()};
++    let ray=super::super::Ray::new(Vec3::new(0.25,0.25,-2.0),Vec3::Z,0.0,10.0).unwrap();
++    // Plane z=x/2, index matched: thickness/cos(theta)=sqrt(5)/2 mm.
++    let distance=5.0_f64.sqrt()/2.0;
++    direct_rgb(direct_complete(&source,&options,ray),Vec3::new(2.0_f64.powf(-distance),4.0_f64.powf(-distance),1.0));
++}

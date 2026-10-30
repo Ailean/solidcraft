@@ -2,8 +2,6 @@
 # rig gate (.github/workflows/fillet-rig.yml) fails on a case that fails and is not listed here,
 # and on a listed case that passes: a fix removes its line in the same pull request.
 # Baseline: develop 242bbc89f with the SMLib fixes of 2026-10-29 (integration-overnight + b78bd4a), aarch64 Linux.
-1080-chamfer-sloped-basin-0-5-mm-rim-as-wide-as-the-rim-refused builds the full-width chamfer where it should be refused, naming the largest that fits
-1080-chamfer-sloped-basin-1-mm-rim-as-wide-as-the-rim-refused builds the full-width chamfer where it should be refused, naming the largest that fits
 1080-fillet-equal-slope-basin-1-mm-rim-loop-0-5 SMLib's check refuses the round: SmSurfOfRevolution Test #7, polar curve intervals do not match the surface's domain
 1080-fillet-equal-slope-basin-1-mm-rim-loop-4 not supported yet: a convex round past its face is not yet built by subtraction
 1080-fillet-notched-block-top-outline-r8 not supported yet: a convex round past its face is not yet built by subtraction (largest that fits named 7 mm)
@@ -13,7 +11,6 @@
 1080-fillet-sloped-basin-1-mm-rim-r4 not supported yet: a convex round past its face is not yet built by subtraction (largest that fits named 2.329 mm)
 1080-fillet-sloped-basin-1-mm-rim-r4-2-edges not supported yet: a convex round past its face is not yet built by subtraction
 1080-fillet-sloped-basin-1-mm-rim-r4-4-edges not supported yet: a convex round past its face is not yet built by subtraction
-1113-chamfer-arc-top-edge-full-wall-height-refused builds the chamfer as tall as the wall where it should be refused as too large
 1207-fillet-bar-top-edge-after-boss-arc-round-r0-5 SMLib's check refuses the round: internal coincident control points in a B-spline curve (an internal pole)
 1668-fillet-outer-top-edge-of-thin-wall-r7-past-inside-corner a slit along the hollow, 0.507 mm^3 off: 38458.389 is V0 less the round's whole section along 104, so the section's part over the hollow (0.005068 mm^2 along 100), which is not material, is taken anyway
 190-fillet-disc-rim-past-its-2mm-wall SMLib status 1001: a convex round past its face is not yet built by subtraction
@@ -40,8 +37,6 @@ cov-chamfer-outer-corner-edge-of-a-shelled-box-with-a-lip SMLib's chamfer result
 cov-fillet-arc-edge-on-an-oblique-cut-of-a-bar SMLib's check refuses the round: internal coincident control points in a B-spline curve
 every-block-cylinder-crease-top-edge-after-arc-round-r1 the r1 round's contact seam with the block's side face reads 60 degrees (the cylinder wall's normal) at its end on the crease (8.660, 5, 15.284): G0 where the round is built tangent
 every-chamfer-pocket-rim-5-5-refused refused naming 5 mm as the largest distance: the full-width chamfer (legs as deep as the 5 mm walls) builds instead of being refused
-every-chamfer-pocket-rim-5-full-depth-refused the full-width chamfer (legs as deep as the 5 mm walls) builds instead of being refused
-every-hole-top-rim-chamfer-10-full-depth-refused the full-width chamfer (leg as deep as the 10 mm plate) builds instead of being refused
 every-hole-top-rim-r12-past-plate-bottom SMLib status 1001: a convex round past its face on the tangent side is not yet built by subtraction
 every-pocket-floor-and-rim-edges-r2 a corner patch where two rim rounds meet at each concave pocket corner (23 faces, not 19) instead of the mitre the rounds make running into each other
 every-pocket-rim-edges-r2 a corner patch where two rim rounds meet at each concave pocket corner (19 faces, not 15) instead of the mitre the rounds make running into each other

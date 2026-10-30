@@ -1,0 +1,30 @@
+diff --git a/acceptance/new-production-boundary-cases.rs b/acceptance/new-production-boundary-cases.rs
+--- a/acceptance/new-production-boundary-cases.rs
++++ b/acceptance/new-production-boundary-cases.rs
+@@ -52,19 +52,23 @@
+ }
+ 
+ #[test]
+-fn f0_opaque_production_input_does_not_bypass_the_unresolved_default_width_gate() {
++fn f0_opaque_production_input_emits_explicit_widths_without_a_notdef_record() {
+     use pdf_writer::Ref;
+     let font = b1_plan_font(&[(36, 1366)]);
+     let before = font.clone();
+     let run = b1_plan_run("A", &[36]);
+     let plan = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).unwrap();
+     let input = plan.font_input(*b"ABCDEF", 1 << 20);
++    assert_eq!(input.source.subset().mapping().first(), Some(&(0, 0)));
+     let refs = super::font_objects::FontObjectRefs {
+         type0: Ref::new(6), cid_font: Ref::new(7), descriptor: Ref::new(8),
+         font_file2: Ref::new(9), to_unicode: Ref::new(10), cid_to_gid: Ref::new(11),
+     };
+-    let error = super::font_objects::font_objects(refs, input).err().unwrap().to_string();
+-    assert!(error.contains("PDF default-width policy is unresolved"), "{error}");
++    let chunk = super::font_objects::font_objects(refs, input).unwrap();
++    assert_eq!(chunk.refs().map(Ref::get).collect::<Vec<_>>(), [6, 7, 8, 9, 10, 11]);
++    assert!(chunk.len() <= 1 << 20);
++    // Strict serialized W/No-DW and stream checks live in the helper's
++    // resource cases; this case exercises the opaque production entry.
+     assert_eq!(font, before);
+     assert!(!font.glyphs.contains_key(&0));
+ }

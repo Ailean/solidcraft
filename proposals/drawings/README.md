@@ -46,3 +46,12 @@ The narrow acceptance-accessor source finding is closed. Cam has resolved DW
 as full emitted-CID W coverage; this historical v3 still refuses absent GID 0
 while its separate successor, F2, parent integration and real acceptance remain pending. Earlier archives
 and contributor windows are preserved; this is not an integrated or ready head.
+
+## P2 F0 explicit-W source successor — v4
+
+[Exact helper successor and owner-policy acceptance](2026-10-30/F0-explicit-widths/README.md)
+implement Cam's resolved complete-declared-CID `/W` policy without `/DW` reliance
+or invented B1 GID0 widths. The helper is unregistered/uncompiled/unrun:
+49 ordinary declarations and four separate negative obligations remain source
+only. TextPlan, prior v3 history and Cam's parent/content/allocator stay unchanged;
+real emitted-content coverage, PDF readers and actual validation remain pending.

@@ -32,10 +32,18 @@ constraint status and **Finish Sketch** button remain visible.
 Hover over a circle or arc centre, or the midpoint of a straight sketch edge, then move
 horizontally or vertically to see a dotted alignment guide. The guide connects that reference
 to the cursor's projection on the sketch axis, within the viewport; it disappears when you
-move away from the axis. This works while editing and before a drawing tool's first click.
-It adds no geometry or constraints. Esc, leaving the viewport, or ending the sketch clears
-the reference. Preferences › Sketch › **Center and midpoint alignment guides** turns it off;
-the configured snap-suppression modifier also hides it.
+move away from the axis. SolidCraft keeps the two most recent of these references and can
+draw both guides. One guide on its own does not move the cursor, and endpoints are ordinary
+point snaps rather than remembered references. Preferences › Sketch › **Auto snap to recent
+centers and midpoints** is off until you turn it on. With it on, a drawing tool snaps the
+cursor where the horizontal through one reference meets the vertical through the other. On a
+rectangle, the top midpoint and a side midpoint then meet at the rectangle's centre, so that
+point can be placed without a construction line. Holding Shift for midpoint-only snapping
+skips the crossing. This works while editing and before a drawing tool's first click.
+Placing the point adds no geometry or constraint of its own. Esc, leaving the viewport, or
+ending the sketch clears the references. **Center and midpoint alignment guides** turns the
+guides off, which also leaves the cursor unmoved; the configured snap-suppression modifier
+does the same for that gesture.
 
 ## Geometry
 

@@ -1979,6 +1979,8 @@
   "prefs.sketch_exit_view.previous": "חזרה לתצוגה הקודמת",
   "prefs.sketch_exit_view.unless_rotated": "חזרה אלא אם התצוגה סובבה",
   "prefs.sketch_exit_view_note": "לאן התצוגה עוברת אחרי סיום סקיצה, ביטול או Esc כפול.",
+  "prefs.sketch_recent_snap": "הצמדה אוטומטית למרכזים ולנקודות אמצע אחרונים",
+  "prefs.sketch_recent_snap_note": "בזמן שרטוט, הסמן נצמד למקום שבו נחתכים קווי העזר של שני מרכזי המעגלים או נקודות האמצע של קצוות ישרים האחרונים. כבוי: קווי העזר נשארים לתצוגה בלבד והסמן אינו זז.",
   "prefs.sketch_selection": "סקיצה ובחירה",
   "prefs.sketch_selection_heading": "סקיצה ובחירה",
   "prefs.sketch_selection_note": "איך סקיצות נצמדות ואיך לחיצות בוחרות.",

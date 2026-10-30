@@ -1014,13 +1014,40 @@ fn status_bar_spans_the_window_below_history_in_both_layouts_and_is_covered() {
 }
 
 #[test]
+fn viewport_sketch_status_distinguishes_empty_and_constrained_geometry() {
+    for mode in [LayoutMode::Docked, LayoutMode::Floating] {
+        let mut h = Harness::new();
+        h.call("ui.set", json!({"layout":mode}));
+        let corner = |h: &Harness| painted_texts(h).into_iter().filter(|t| t.starts_with("Sketch1 — ")).collect::<Vec<_>>();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.settle();
+        assert_eq!(corner(&h), ["Sketch1 — No geometry yet"], "{mode:?}: an empty sketch is not fully constrained");
+        assert!(h.widget("No geometry yet").is_some(), "the palette agrees with the viewport");
+
+        let rectangle = h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[40,30]})).unwrap();
+        h.settle();
+        assert_eq!(corner(&h), ["Sketch1 — 2 degrees of freedom"], "the rectangle's width and height are free");
+        h.app.run("sketch.constraint.fix", json!({"entities":rectangle["curves"]})).unwrap();
+        h.settle();
+        assert_eq!(corner(&h), ["Sketch1 — fully constrained"], "drawn geometry can be fully constrained");
+
+        h.app.run("edit.undo", json!({})).unwrap();
+        h.settle();
+        assert_eq!(corner(&h), ["Sketch1 — 2 degrees of freedom"]);
+        h.app.run("edit.undo", json!({})).unwrap();
+        h.settle();
+        assert_eq!(corner(&h), ["Sketch1 — No geometry yet"], "undoing the geometry restores the empty status");
+    }
+}
+
+#[test]
 fn status_bar_names_what_is_edited_and_the_sketch_state_and_replaces_the_views_corner_text() {
     use crate::status_bar::SketchState;
     let mut h = Harness::new();
     let corner = |h: &Harness| painted_texts(h).into_iter().filter(|t| t.starts_with("Sketch1 — ")).collect::<Vec<_>>();
     h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
     h.settle();
-    assert_eq!(corner(&h), ["Sketch1 — fully constrained"], "without the bar the state stays in the view's corner");
+    assert_eq!(corner(&h), ["Sketch1 — No geometry yet"], "without the bar the state stays in the view's corner");
     h.call("ui.prefs", json!({"status_bar": true}));
     h.settle();
     let contents = crate::status_bar::contents(&h.app);

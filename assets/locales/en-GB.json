@@ -39,6 +39,8 @@
   "prefs.megabytes": "MB",
   "prefs.sketch_conflict_colour": "Conflicting geometry in the conflict colour",
   "prefs.sketch_conflict_colour_note": "While a sketch's constraints conflict, the curves and points a failing constraint holds are drawn in the conflict colour too, not only its glyph or dimension. Off: they keep their usual colours.",
+  "prefs.sketch_recent_snap": "Auto snap to recent centres and midpoints",
+  "prefs.sketch_recent_snap_note": "While drawing, snap the cursor where the guides of the two most recent circle centres or straight-edge midpoints cross. Off: those guides stay visual and the cursor does not move.",
   "prefs.sketch_state_icons": "Sketch icons in the colour of their state",
   "prefs.sketch_state_icons_note": "In History and the browser, a sketch's icon takes the colour of its state (under constrained, fully constrained or conflicting) and its tooltip names the state. Off: every sketch has the same icon.",
   "prefs.sketch_tracking_guides": "Centre and midpoint alignment guides",

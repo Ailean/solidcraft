@@ -5896,6 +5896,8 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     if let Some(r) = app.viewport.layout.as_ref().map(|l| l.content).filter(|_| !crate::status_bar::shown(app)) {
         let status = if !ss.report.ok() {
             crate::i18n::tr("sketch.status_conflict").to_string()
+        } else if !crate::sketch_palette::has_geometry(sk) {
+            crate::i18n::tr("ui.no_geometry_yet").to_string()
         } else if ss.report.dof == 0 {
             crate::i18n::tr("sketch.status_fully_constrained").to_string()
         } else if ss.report.dof == 1 {

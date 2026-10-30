@@ -1759,9 +1759,9 @@ fn periodic_knot_tube(first: u64, x: f64, r: f64, h: f64) -> (String, u64) {
 /// Two such tubes far apart in one body: the body's size sets a chord tolerance coarse beside
 /// the tubes, and meshing a face at it divided the surface's whole parameter box, whose
 /// corners lay outside the domain. The division never converged there (#1374's recursion),
-/// and the import grew by gigabytes without end. SMLib does not give the sheet's faces back in
-/// the file's order, so the import refuses it with that reason (it once came in as a mesh of
-/// its faces); the faces as read are meshed at the body's display tolerance, the coarse one.
+/// and the import grew by gigabytes without end. The sheet comes in as SMLib's B-rep of its two
+/// faces, each the file's face (SMLib lists the seam edges in another canonical order than the
+/// file, and keeps the file's own order), each a cylinder's side.
 #[test]
 fn periodic_knot_tube_faces_import_and_mesh() {
     let t0 = std::time::Instant::now();
@@ -1771,13 +1771,18 @@ fn periodic_knot_tube_faces_import_and_mesh() {
     let text = format!(
         "{HEAD}{a}{b}#1=OPEN_SHELL('',(#{fa},#{fb}));\n#2=SHELL_BASED_SURFACE_MODEL('Tubes',(#1));\n#3=SHAPE_REPRESENTATION('',(#2),$);\n{TAIL}"
     );
-    let why = step_import(&text).map(|imp| imp.warnings).unwrap_err().to_string();
-    assert!(why.contains("solid 'Tubes': not imported: ") && why.contains("renumbered"), "{why}");
-    let ex = p21::parse(&text).unwrap();
-    let sheet = Body::from_record(solidcraft_step::topology::read_solid(&ex, 2, Units::default()).unwrap().brep).unwrap();
-    let mesh = sheet.mesh(&crate::MeshTolerance::display_of(sheet.size())).unwrap();
+    let imp = step_import(&text).unwrap();
+    assert_eq!(imp.bodies.len(), 1, "{:?}", imp.warnings);
+    let tubes = &imp.bodies[0];
+    assert!(tubes.refused.is_none() && !tubes.body.is_mesh() && tubes.body.is_surface(), "{:?} {:?}", tubes.refused, imp.warnings);
+    assert_eq!(tubes.face_origin, vec![fa, fb], "{:?}", imp.warnings);
+    // Each face is the file's quadratic circle of radius r (corner weights √2/2 to 12 digits,
+    // a radius off by under 1e-12 of r) moved straight along its axis by h: a cylinder's side,
+    // 2π r h. SMLib integrates to 1e-8.
+    let m = measure(&tubes.body).unwrap();
     let area = 2.0 * std::f64::consts::TAU * r * h;
-    assert!(rel(mesh.measure().area, area) < 0.02, "area {} (expected {area})", mesh.measure().area);
+    assert!(rel(m.area, area) < 1e-6, "area {} (expected {area})", m.area);
+    assert_eq!(tubes.body.unmeshed_faces(), 0);
     assert!(t0.elapsed().as_secs_f64() < 60.0, "took {:?}", t0.elapsed());
 }
 

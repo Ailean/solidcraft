@@ -16,3 +16,8 @@ With eye (0,-10,0), clip w=(2,8,4) and sample (2.5,2.5), screen barycentrics (1/
 C3 built the combined native engine/UI test executables and passed 81 selected cases (33 engine,48 UI), including 17 positive CPU markers. Strict Clippy then failed on the old test-helper unwrap; wasm was not started. The test-only Result change preserved here was applied after that execution and still awaits its affected tests and strict checks. Subsequent C4/C5 attempts stopped at RAM admission BEFORE formatter/Cargo/test execution. Neither is a product failure or a pass. No GPU, native GUI acceptance or full repository CI is claimed.
 
 The original 516-case core result remains bound to its exact unchanged core sources. Native GUI acceptance and actual GPU dependencies remain separate. Pending proposals must be integrated narrowly against real current source, reviewed and validated before production publication.
+
+
+## Latest engine correction and native acceptance plan
+
+[Current validation status](STATUS.md) supersedes the earlier snapshot above. The [engine test-helper Result correction](engine-test-helper-result.patch) and exact engine sources are now preserved here. [Native mouse/keyboard acceptance](native-mouse-keyboard-acceptance.md) is planned after validation and an actual application build; it has not been executed.

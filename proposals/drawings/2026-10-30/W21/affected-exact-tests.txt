@@ -1,0 +1,3 @@
+paper::png::tests::svg_and_png_keep_mixed_scale_paper_lengths_and_fixed_width
+paper::png::tests::svg_and_png_keep_fractional_sheet_edges_on_the_outward_grid
+paper::png::tests::svg_and_png_repeat_the_same_prepared_scene_byte_for_byte

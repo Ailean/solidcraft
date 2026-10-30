@@ -1,0 +1,133 @@
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -8267,3 +8267,130 @@
+         assert!(h.app.render_workspace.view.job.is_none());
+     }
+ }
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_area_and_led_real_snapshot_pixels_reach_receiver_cache_without_final_export() {
++    use solidcraft_engine::render::job::{RectangleLightOptions, led_strip::LedStripOptions};
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_area_and_led_real_snapshot_pixels_reach_receiver_cache_without_final_export") {
++        return;
++    }
++    h.app.render_workspace.view.raytrace.area_lights = Some(vec![RectangleLightOptions {
++        center_mm: [5.0, 4.0, 20.0], edge_u_mm: [4.0, 0.0, 0.0], edge_v_mm: [0.0, -4.0, 0.0],
++        color: [1.0, 0.5, 0.25], intensity: 2.0,
++    }]);
++    h.app.render_workspace.view.raytrace.area_samples = Some(4);
++    h.app.render_workspace.view.raytrace.seed = Some(73);
++    LedStripOptions {
++        center_mm: [5.0, 4.0, 12.0], length_mm: 8.0, width_mm: 1.0,
++        length_axis: [1.0, 0.0, 0.0], width_axis: [0.0, -1.0, 0.0], color: [0.25, 0.5, 1.0], intensity: 3.0,
++    }.append_to(&mut h.app.render_workspace.view.raytrace, 4).unwrap();
++    h.app.render_workspace.view.draft.exposure_ev = 0.75;
++    let expected = h.app.render_workspace.view.raytrace.area_lights.clone().unwrap();
++    assert_eq!(expected.len(), 2);
++    let document = h.app.session.doc.clone();
++    let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    // Existing helper dispatches the real Snapshot, receives its real reply,
++    // validates real native PNG bytes/hash, drains the reply and paints the cache.
++    let id = interactive_recovery_require_success(&mut h, epoch + 0.201, epoch + 0.3);
++    let job = interactive::test_current(&h.app).unwrap().unwrap();
++    assert_eq!(job.id(), id);
++    let status = job.status().unwrap();
++    let options = status.request.raytrace.as_ref().unwrap();
++    assert_eq!(options.area_lights.as_ref(), Some(&expected));
++    assert_eq!(options.area_samples, Some(4));
++    assert_eq!(options.seed, Some(73));
++    assert_eq!(options.exposure_ev, 0.75);
++    assert_eq!(options.progressive.unwrap().samples_per_pixel, 16);
++    let (cached, samples, complete, _) = interactive::test_cache(&h.app).unwrap();
++    let frame = job.frame().unwrap().unwrap();
++    assert_eq!((cached.job, cached.png_sha256), (id, frame.info.png_sha256.clone()));
++    assert_eq!((cached.width, cached.height, samples, complete), (16, 16, 16, true));
++    assert_eq!(interactive::inspect(&h.app)["provisional"], true);
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()), history);
++    interactive_assert_final_export_isolation(&mut h, &job);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_led_light_edit_and_final_preemption_discard_real_late_replies_without_erasing_final() {
++    use solidcraft_engine::render::job::{CpuHost, JobId, Phase, led_strip::LedStripOptions};
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_led_light_edit_and_final_preemption_discard_real_late_replies_without_erasing_final") {
++        return;
++    }
++    crate::documents::open_tab(&mut h.app, Session::default()).unwrap();
++    crate::documents::switch(&mut h.app, 0);
++    h.app.ui.tab = "RENDER".into();
++    h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++    h.app.render_workspace.view.draft.width = 16;
++    h.app.render_workspace.view.draft.height = 16;
++    LedStripOptions {
++        center_mm: [5.0, 4.0, 12.0], length_mm: 8.0, width_mm: 1.0,
++        length_axis: [1.0, 0.0, 0.0], width_axis: [0.0, -1.0, 0.0], color: [1.0, 0.5, 0.25], intensity: 2.0,
++    }.append_to(&mut h.app.render_workspace.view.raytrace, 4).unwrap();
++    h.app.render_workspace.view.raytrace.seed = Some(91);
++    let document = h.app.session.doc.clone();
++    let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let first = interactive_hold_real_completed_callback(&mut h);
++    let old = first.job.id();
++    let old_options = first.job.status().unwrap().request.raytrace.unwrap();
++    assert_eq!(old_options.area_lights.as_ref().unwrap().first().unwrap().intensity, 2.0);
++    assert_eq!((old_options.area_samples, old_options.seed), (Some(4), Some(91)));
++    let visual = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    h.app.render_workspace.view.raytrace.area_lights.as_mut().unwrap().first_mut().unwrap().intensity = 1.5;
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.3, false);
++    assert!(interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap() > visual);
++    assert!(interactive::test_current(&h.app).unwrap().is_none(), "light edit must detach the old owned job");
++    first.sender.send(first.reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.4, false, true);
++    assert!(!painted);
++    output.textures_delta.clear();
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert!(interactive::inspect(&h.app)["error"].is_null());
++    interactive_assert_final_export_isolation(&mut h, &first.job);
++
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.601, true);
++    let second = interactive_hold_real_completed_callback(&mut h);
++    assert_ne!(second.job.id(), old);
++    let new_options = second.job.status().unwrap().request.raytrace.unwrap();
++    assert_eq!(new_options.area_lights.as_ref().unwrap().first().unwrap().intensity, 1.5);
++    assert_eq!((new_options.area_samples, new_options.seed), (Some(4), Some(91)));
++    let final_host = CpuHost::cooperative();
++    let final_job = {
++        let background = h.app.docs.background_mut().next().unwrap();
++        background.session.set_render_job_host(Some(final_host.clone())).unwrap();
++        let reply = background.session.execute("render.start", &json!({"settings":{"width":8,"height":8}})).unwrap();
++        let id: JobId = serde_json::from_value(reply["job"].clone()).unwrap();
++        background.session.render_job_handle(id).unwrap()
++    };
++    let retained = final_host.admitted_bytes();
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.7, false);
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Paused");
++    second.sender.send(second.reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.8, false, true);
++    assert!(!painted, "a final-suspended late LED reply cannot fill the preview cache");
++    output.textures_delta.clear();
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(interactive::test_current(&h.app).unwrap().is_none());
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert!(interactive::inspect(&h.app)["error"].is_null());
++    interactive_assert_final_export_isolation(&mut h, &second.job);
++    assert_eq!(final_job.status().unwrap().progress.phase, Phase::Queued);
++    assert_eq!(final_host.admitted_bytes(), retained);
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()), history);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++    assert_eq!(final_job.status().unwrap().progress.phase, Phase::Queued, "Off cannot cancel the unrelated final");
++    final_job.cancel().unwrap();
++}

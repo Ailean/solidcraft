@@ -1,0 +1,160 @@
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -11,6 +11,7 @@
+ #[derive(Default, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ struct Start {
++    nested_media: bool,
+     studio_weights: Option<[f64; 3]>,
+     progressive: bool,
+     denoise: bool,
+@@ -381,6 +382,119 @@
+         assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty()));
+         assert_eq!(wire["settings"]["width"], 3840);
+     }
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    fn nested_command_fixture() -> (Session, Value) {
++        let mut s = Session::default();
++        for (name, length, width, height) in [("Outer", 20, 20, 4), ("Inner", 10, 10, 2)] {
++            s.execute("solid.box", &json!({
++                "length":length,"width":width,"height":height,"center":[0,0,2],
++                "operation":"new","body_name":name,
++            })).unwrap();
++        }
++        s.execute("render.scene", &json!({})).unwrap();
++        let scene = crate::product_scene::extract(&s).unwrap();
++        assert_eq!(scene.meshes.len(), 2);
++        let dielectrics: Vec<_> = scene.meshes.iter().enumerate().map(|(index, body)| {
++            assert!(matches!(body.name.as_str(), "Outer" | "Inner"));
++            json!({
++                "body_index":index,"body_name":body.name,"boundary":"closed_box","ior":1.0,
++                "absorption_per_mm":if body.name == "Outer" { [0.1,0.2,0.0] } else { [0.3,0.4,0.0] },
++                "thickness_mm":0.0,
++            })
++        }).collect();
++        let mut camera = solidcraft_render::Camera { distance:50.0, fov:0.0, ..Default::default() };
++        camera.set_view(solidcraft_render::StandardView::Top);
++        camera.target = solidcraft_geom::Vec3::new(0.0,0.0,2.0);
++        let host = solidcraft_render::job::CpuHost::for_platform().unwrap();
++        assert_eq!(host.kind(), solidcraft_render::job::HostKind::NativeWorker);
++        assert!(host.is_available(), "this native test requires an available real CPU worker");
++        s.set_render_job_host(Some(host)).unwrap();
++        let wire = json!({
++            "integrator":"raytrace","nested_media":true,
++            "settings":{"width":1,"height":1,"camera":camera,"background":[255,255,255],"job":null},
++            "raytrace":{"dielectrics":dielectrics,"lights":[],"shadows":false,
++                "environment":{"color":[1,1,1],"intensity":1}},
++        });
++        (s, wire)
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn command_nested_opt_in_reaches_retained_job_options_and_real_beer_transport() {
++        use solidcraft_render::job::{JobId, Phase};
++        let (mut s, wire) = nested_command_fixture();
++        let before = (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty());
++        let document = s.doc.clone();
++        for value in [None, Some(false)] {
++            let mut default = wire.clone();
++            if let Some(value) = value {
++                default["nested_media"] = json!(value);
++            } else {
++                default.as_object_mut().unwrap().remove("nested_media");
++            }
++            for command in ["render.preflight", "render.start"] {
++                let error = s.execute(command, &default).unwrap_err().to_string();
++                assert!(error.contains("nested, touching or overlapping dielectric volumes are unsupported"), "{command}: {error}");
++            }
++        }
++        let checked = s.execute("render.preflight", &wire).unwrap();
++        assert_eq!(checked["resolved"]["executor"], "cpu-raytrace");
++        assert_eq!(checked["request"]["raytrace"]["dielectrics"], wire["raytrace"]["dielectrics"]);
++        let started = s.execute("render.start", &wire).unwrap();
++        let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++        let handle = s.render_job_handle(id).unwrap();
++        let status = handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap();
++        assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
++        assert_eq!(status.options, solidcraft_render::job::JobOptions { nested_media:true, ..Default::default() });
++        let retained = s.execute("render.status", &json!({"job":id})).unwrap();
++        assert_eq!(retained["options"]["nested_media"], true);
++        let frame = handle.frame().unwrap().unwrap();
++        let image = image::load_from_memory(frame.png()).unwrap().to_rgba8();
++        // Independent Beer oracle: outer2mm + inner2mm, replacing the parent
++        // interval, yields exp(-.8), exp(-1.2),1 -> Reinhard+sRGB [151,132,188].
++        assert_eq!(image.get_pixel(0,0).0, [151,132,188,255]);
++        assert!(std::sync::Arc::ptr_eq(&document, &s.doc));
++        assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty()));
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn command_nesting_keeps_default_false_and_rejects_other_gpu_controls_and_progressive_glass() {
++        use solidcraft_render::job::{JobId, JobOptions, Phase};
++        let (mut s, wire) = nested_command_fixture();
++        for (key, value) in [
++            ("samples", json!(2)), ("max_depth", json!(2)), ("seed", json!(7)),
++            ("denoise", json!(true)), ("lens", json!({})),
++        ] {
++            let mut invalid = wire.clone();
++            invalid[key] = value;
++            for command in ["render.preflight", "render.start"] {
++                assert!(s.execute(command, &invalid).is_err(), "{command} accepted unrelated control {key}");
++            }
++        }
++        let mut progressive = wire.clone();
++        progressive["raytrace"]["progressive"] = json!({"samples_per_pixel":2,"seed":0});
++        let refusal = "InvalidRequest: CPU progressive currently supports isotropic opaque surfaces and directional/point/spot lights; use fixed sampling for dielectric, anisotropic or area/LED inputs";
++        for command in ["render.preflight", "render.start"] {
++            assert_eq!(s.execute(command, &progressive).unwrap_err().to_string(), refusal);
++        }
++        assert_eq!(interactive_params(&wire).unwrap_err().to_string(), refusal);
++
++        // Ordinary CPU requests retain the exact default JobOptions; omission is
++        // not silently promoted to nesting by adding this explicit opt-in.
++        let mut opaque = wire;
++        opaque.as_object_mut().unwrap().remove("nested_media");
++        opaque["raytrace"].as_object_mut().unwrap().remove("dielectrics");
++        s.execute("render.preflight", &opaque).unwrap();
++        let started = s.execute("render.start", &opaque).unwrap();
++        let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++        let status = s.render_job_handle(id).unwrap().wait_timeout(std::time::Duration::from_secs(60)).unwrap();
++        assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
++        assert_eq!(status.options, JobOptions::default());
++        let retained = s.execute("render.status", &json!({"job":id})).unwrap();
++        assert_eq!(retained["options"]["nested_media"], false);
++    }
++
+ }
+ 
+ /// Resolve portable intent before choosing an executor. Legacy requests are left intact;
+@@ -677,7 +791,8 @@
+         background: settings.background,
+         transparent_background: input.transparent_background,
+     };
+-    let mut admission = solidcraft_render::job::admit(&scene, &request).map_err(job_error)?;
++    let options = solidcraft_render::job::JobOptions { nested_media: input.nested_media, ..Default::default() };
++    let mut admission = host.admit(&scene, &request, options).map_err(job_error)?;
+     let environment_bytes = environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| bad(command, e.to_string()))?;
+     let retained_lights = request.raytrace.as_ref().map_or(Ok(0), |o| o.retained_bytes()).map_err(job_error)?;
+     let retained_environment =
+@@ -698,7 +813,7 @@
+         Integrator::Raytrace => "opaque_only",
+     };
+     let reply = json!({"ignored_controls":ignored,"stage_panels":settings.stage.len(),"stage_transport":"CPU direct/specular only; no diffuse interreflection", "cpu_budget":budget,"cpu_limits":budget.limits(),"environment":environment_info,"retained_request_bytes":retained_request_bytes,"resolved":resolved,"admission":admission,"request":request,"scene_generation":s.revision,"host":host.kind(),"transparency":transparency,"refraction":refraction,"dielectric_boundaries":if refraction {vec!["thin_sheet","closed_box"]} else {Vec::<&str>::new()}});
+-    Ok(Prepared { replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options: Default::default() })
++    Ok(Prepared { replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options })
+ }
+ 
+ fn prepare_progressive(
+--- a/crates/engine/src/cmd/render.rs
++++ b/crates/engine/src/cmd/render.rs
+@@ -124,7 +124,7 @@
+ CommandSpec::new("render.settings.capture_hdr", "Save Render Settings with HDR", resources::capture_settings).icon("settings").doc_only()
+     .params("name, set: typed CPU/GPU setup patch with hdr/environment unset; path: scoped HDR; expected_sha256?: digest returned by render.hdr.inspect (changed sources refuse); rotation_rad?:0, intensity?:1; samples?:1/4/16/64 for CPU only (default16); assume_linear_srgb?:false for GPU only. Captures immutable bytes and saves resource plus setup atomically in one undo, without a host; returns name/setup/resource metadata, never source bytes"),
+ CommandSpec::new("render.preflight", "Check Render Request", jobs::preflight).icon("inspect").noundo().doc_only()
+-    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace and transient studio_weights may accompany it. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy and dielectrics require fixed sampling. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
++    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace and transient studio_weights may accompany it. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy and dielectrics require fixed sampling. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; dielectric progressive and Interactive requests still refuse. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
+ CommandSpec::new("render.start", "Render Image", jobs::start).key("R").noundo().doc_only().at("RENDER", "IMAGE").icon("render_image")
+     .params("Same request as render.preflight. Captures an immutable product scene and queues a bounded image job. Returns its session-scoped job identity, captured scene_generation and progress. Does not change the design. See docs/render-jobs.md"),
+ CommandSpec::new("render.status", "Render Progress", jobs::status).icon("list").noundo().doc_only()

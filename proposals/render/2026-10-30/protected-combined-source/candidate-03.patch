@@ -1,0 +1,1203 @@
+--- a/crates/render/src/raytrace/dielectric_tests.rs
++++ b/crates/render/src/raytrace/dielectric_tests.rs
+@@ -514,3 +514,212 @@
+     // maps to 98, so this also detects a consumer still using the old series.
+     assert_eq!(pixel.expect("Brewster sheet fixture must finish"), [95, 95, 95, 255]);
+ }
++
++#[test]
++fn strict_box_parent_selection_is_order_independent_and_opt_in() {
++    let bounds = |lo: f64, hi: f64| Bounds::new(Vec3::new(lo, lo, lo), Vec3::new(hi, hi, hi)).unwrap();
++    let mut certificates = [None; MAX_OVERRIDES];
++    certificates[0] = Some(Certificate::ClosedBox(bounds(2.0, 3.0)));
++    certificates[1] = Some(Certificate::ClosedBox(bounds(0.0, 5.0)));
++    certificates[2] = Some(Certificate::ClosedBox(bounds(1.0, 4.0)));
++    assert!(parents(&certificates, false).is_err());
++    assert_eq!(parents(&certificates, true).unwrap(), [Some(2), None, Some(1), None, None, None, None, None]);
++    certificates.swap(0, 1);
++    assert_eq!(parents(&certificates, true).unwrap(), [None, Some(2), Some(0), None, None, None, None, None]);
++}
++
++#[test]
++fn nesting_opt_in_still_refuses_touching_equal_and_partially_overlapping_boxes() {
++    let outer = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)).unwrap();
++    for (lo, hi) in [
++        (Vec3::new(0.0, 1.0, 1.0), Vec3::new(3.0, 3.0, 3.0)),
++        (Vec3::new(4.0, 1.0, 1.0), Vec3::new(5.0, 3.0, 3.0)),
++        (Vec3::new(4.0, 4.0, 1.0), Vec3::new(5.0, 5.0, 3.0)),
++        (Vec3::new(4.0, 4.0, 4.0), Vec3::new(5.0, 5.0, 5.0)),
++        (Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)),
++        (Vec3::new(3.0, 1.0, 1.0), Vec3::new(5.0, 3.0, 3.0)),
++    ] {
++        let mut certificates = [None; MAX_OVERRIDES];
++        certificates[0] = Some(Certificate::ClosedBox(outer));
++        certificates[1] = Some(Certificate::ClosedBox(Bounds::new(lo, hi).unwrap()));
++        assert!(parents(&certificates, true).is_err());
++    }
++}
++
++pub(in crate::raytrace) fn nested_fixture(reverse: bool) -> (ProductScene, RaytraceOptions) {
++    let mut outer = box_body(4.0);
++    outer.name = "Outer".into();
++    let mut inner = box_body(2.0);
++    inner.name = "Inner".into();
++    for p in &mut Arc::make_mut(&mut inner.mesh).positions {
++        *p = Vec3::new(p.x * 0.5, p.y * 0.5, p.z + 1.0);
++    }
++    let mut scene = scene(outer);
++    scene.meshes.push(inner);
++    if reverse {
++        scene.meshes.reverse();
++    }
++    let dielectrics = scene.meshes.iter().enumerate().map(|(body_index, body)| DielectricOptions {
++        body_index,
++        body_name: body.name.clone(),
++        boundary: DielectricBoundary::ClosedBox,
++        ior: 1.0,
++        absorption_per_mm: if body.name == "Outer" { [0.1, 0.2, 0.0] } else { [0.3, 0.4, 0.0] },
++        thickness_mm: 0.0,
++    }).collect();
++    (scene, RaytraceOptions {
++        dielectrics,
++        environment: environment(),
++        lights: Some(Vec::new()),
++        shadows: false,
++        ..Default::default()
++    })
++}
++
++#[test]
++fn actual_nested_png_uses_parent_only_outside_the_inner_interval() {
++    for reverse in [false, true] {
++        let (scene, options) = nested_fixture(reverse);
++        assert!(super::super::image::admit(&scene, &request(options.clone()), &options).is_err());
++        let mut task = super::super::image::ImageTask::new_with_environment_and_nested(
++            scene, request(options.clone()), CancelToken::default(), options, None, true,
++        ).unwrap();
++        let mut completed = false;
++        for _ in 0..100_000 {
++            if let TaskPoll::Complete(png) = task.step(16384).unwrap() {
++                let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
++                // Outer length2, inner length2; Beer radiance (exp(-.8), exp(-1.2), 1).
++                // Reinhard then IEC sRGB encoding gives these independently fixed bytes.
++                assert_eq!(image.get_pixel(0, 0).0, [151, 132, 188, 255]);
++                completed = true;
++                break;
++            }
++        }
++        assert!(completed, "nested final image did not complete");
++    }
++}
++
++#[test]
++fn nested_opt_in_does_not_enable_dielectric_progressive_or_interactive() {
++    let (_, mut options) = nested_fixture(false);
++    options.progressive = Some(Default::default());
++    assert!(options.validate().is_err());
++    let (_, options) = nested_fixture(false);
++    assert!(crate::job::interactive::cpu_request(&request(options)).is_err());
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn native_host_forwards_only_the_existing_nested_media_exception() {
++    use crate::job::{CpuHost, ErrorCode, JobId, JobOptions, Phase};
++    let host = CpuHost::for_platform().unwrap();
++    let (scene, options) = nested_fixture(false);
++    let request = request(options);
++    let nested = JobOptions { nested_media: true, ..Default::default() };
++    assert!(host.admit(&scene, &request, JobOptions::default()).is_err());
++    assert!(host.admit(&scene, &request, nested).is_ok());
++    for bad in [
++        JobOptions { samples: 2, ..nested },
++        JobOptions { max_depth: 2, ..nested },
++        JobOptions { seed: 7, ..nested },
++        JobOptions { exposure_ev: 1.0, ..nested },
++        JobOptions { transmission_samples: 2, ..nested },
++        JobOptions { denoise: true, ..nested },
++        JobOptions { linear_exr: true, ..nested },
++    ] {
++        assert_eq!(host.admit(&scene, &request, bad).unwrap_err().code, ErrorCode::InvalidRequest);
++    }
++    let mut raster = request.clone();
++    raster.integrator = Integrator::Raster;
++    raster.raytrace = None;
++    assert!(host.admit(&scene, &raster, nested).is_err());
++    let handle = host.submit_with_options(
++        JobId { session: 6302, serial: 1, generation: 1 }, 1, scene, request, nested,
++    ).unwrap();
++    assert_eq!(handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap().progress.phase, Phase::Completed);
++    assert_eq!(handle.status().unwrap().options.nested_media, true);
++    let frame = handle.frame().unwrap().unwrap();
++    let image = ::image::load_from_memory(frame.png()).unwrap().to_rgba8();
++    assert_eq!(image.get_pixel(0, 0).0, [151, 132, 188, 255]);
++}
++
++fn face_fixture(axis: usize, positive: bool) -> (Bounds, [Vec3; 3], Vec3, Vec3) {
++    let point = |a: f64, u: f64, v: f64| match axis {
++        0 => Vec3::new(a, u, v),
++        1 => Vec3::new(v, a, u),
++        2 => Vec3::new(u, v, a),
++        _ => panic!("test axis"),
++    };
++    let bounds = Bounds::new(Vec3::new(1.0, 1.0, 1.0), Vec3::new(4.0, 4.0, 4.0)).unwrap();
++    let plane = if positive { 4.0 } else { 1.0 };
++    let mut vertices = [point(plane, 1.0, 1.0), point(plane, 4.0, 1.0), point(plane, 4.0, 4.0)];
++    if !positive {
++        vertices.swap(1, 2);
++    }
++    let normal = match axis { 0 => Vec3::X, 1 => Vec3::Y, 2 => Vec3::Z, _ => panic!("test axis") } * if positive { 1.0 } else { -1.0 };
++    (bounds, vertices, normal, point(plane, 2.5, 2.5))
++}
++
++#[test]
++fn exact_face_excludes_own_zero_depth_and_retains_one_ulp_neighbour_on_every_axis_and_side() {
++    use super::super::Ray;
++    for axis in 0..3 {
++        for positive in [false, true] {
++            let (bounds, vertices, normal, position) = face_fixture(axis, positive);
++            for entering in [false, true] {
++                let direction = if entering { -normal } else { normal };
++                let incoming = Ray::new(position - direction, direction, 0.0, 10.0).unwrap();
++                let face = exact_box_face(bounds, vertices, normal, position, incoming).unwrap();
++                assert_eq!(face.point, position, "face diagonal is valid interior");
++                let optics = interface(direction, -direction, if entering { 1.0 } else { 1.5 }, if entering { 1.5 } else { 1.0 }).unwrap();
++                let reflected = face.spawn(optics.reflected, true).unwrap();
++                let transmitted = face.spawn(optics.transmitted.unwrap(), false).unwrap();
++                let triangle = Triangle::new(vertices).unwrap();
++                assert!(triangle.intersect(&reflected).is_none(), "own reflected face at t0 must be excluded");
++                assert!(triangle.intersect(&transmitted).is_none(), "own transmitted face at t0 must be excluded");
++                assert_eq!(reflected.origin(), face.point);
++                assert_eq!(transmitted.origin(), face.point);
++                assert_eq!(transmitted.interval()[0], 0.0_f64.next_up());
++                let plane = super::super::component(position, axis);
++                let next = if super::super::component(direction, axis) > 0.0 { plane.next_up() } else { plane.next_down() };
++                let neighbour = vertices.map(|v| match axis {
++                    0 => Vec3::new(next, v.y, v.z),
++                    1 => Vec3::new(v.x, next, v.z),
++                    2 => Vec3::new(v.x, v.y, next),
++                    _ => panic!("test axis"),
++                });
++                let hit = Triangle::new(neighbour).unwrap().intersect(&transmitted).expect("one-ULP positive face must remain ahead");
++                assert_eq!(hit.distance, (next - plane).abs());
++            }
++        }
++    }
++}
++
++#[test]
++fn exact_face_recovers_certified_plane_without_clamping_or_blessing_ties() {
++    use super::super::Ray;
++    let (bounds, vertices, normal, point) = face_fixture(2, false);
++    let incoming = Ray::new(point - Vec3::Z, Vec3::Z, 0.0, 10.0).unwrap();
++    let rounded = Vec3::new(point.x, point.y, point.z.next_up());
++    let face = exact_box_face(bounds, vertices, normal, rounded, incoming).unwrap();
++    assert_eq!(face.point, point);
++    for bad in [
++        Vec3::new(1.0, 2.5, 1.0), Vec3::new(1.0, 1.0, 1.0),
++        Vec3::new(1.0_f64.next_down(), 2.5, 1.0), Vec3::new(f64::NAN, 2.5, 1.0),
++    ] {
++        assert!(exact_box_face(bounds, vertices, normal, bad, incoming).is_err());
++    }
++    let tied = Ray::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0), 0.0, 10.0).unwrap();
++    // Even if rounded tangential reconstruction claims interior, independently
++    // equal actual ray/face depths cannot inherit the BVH ordinal's blessing.
++    let uncertain = Vec3::new(1.0_f64.next_up(), 1.0_f64.next_up(), 1.0);
++    assert!(exact_box_face(bounds, vertices, normal, uncertain, tied).is_err());
++    assert!(exact_box_face(bounds, vertices, -normal, point, incoming).is_err());
++    let other_bounds = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)).unwrap();
++    assert!(exact_box_face(other_bounds, vertices, normal, point, incoming).is_err());
++    let tangent = Ray::new(point - Vec3::X, Vec3::X, 0.0, 10.0).unwrap();
++    assert!(exact_box_face(bounds, vertices, normal, point, tangent).is_err());
++    assert!(face.spawn(Vec3::X, true).is_err());
++    assert!(face.spawn(-Vec3::Z, false).is_err());
++    assert!(face.spawn(Vec3::Z, true).is_err());
++}
+--- a/crates/render/src/raytrace/image.rs
++++ b/crates/render/src/raytrace/image.rs
+@@ -80,22 +80,16 @@
+ }
+ type Look = PreparedPrimitive;
+ 
+-fn certificates(scene: &ProductScene, options: &RaytraceOptions) -> job::Result<[Option<Certificate>; MAX_OVERRIDES]> {
++fn certificates(
++    scene: &ProductScene,
++    options: &RaytraceOptions,
++    nested: bool,
++) -> job::Result<([Option<Certificate>; MAX_OVERRIDES], [Option<usize>; MAX_OVERRIDES])> {
+     let mut result = [None; MAX_OVERRIDES];
+     for (slot, input) in result.iter_mut().zip(&options.dielectrics) {
+         *slot = Some(dielectric::certify(scene, input).map_err(error)?);
+     }
+-    for (i, left) in result.iter().enumerate() {
+-        if let Some(Certificate::ClosedBox(a)) = left {
+-            for right in result.iter().skip(i + 1) {
+-                if let Some(Certificate::ClosedBox(b)) = right
+-                    && dielectric::overlaps(*a, *b)
+-                {
+-                    return Err(invalid("nested, touching or overlapping dielectric volumes are unsupported"));
+-                }
+-            }
+-        }
+-    }
++    let parents = dielectric::parents(&result, nested).map_err(error)?;
+     // Sheets within volumes are unsupported. Conservatively use the admitted
+     // tiny sheet's bounds, rather than pretending to resolve medium nesting.
+     for (i, certificate) in result.iter().enumerate() {
+@@ -112,10 +106,91 @@
+             }
+         }
+     }
+-    Ok(result)
++    Ok((result, parents))
++}
++
++/// Private construction policy; protected admission is selected before allocations.
++#[derive(Clone, Copy)]
++enum PreviewPolicy {
++    Legacy,
++    Shared(job::PartialPreviewPlan),
++    Protected(job::ProtectedPreviewPlan),
++}
++impl PreviewPolicy {
++    fn partial_plan(self) -> Option<job::PartialPreviewPlan> {
++        match self {
++            Self::Legacy => None,
++            Self::Shared(plan) => Some(plan),
++            Self::Protected(plan) => Some(plan.preview_plan()),
++        }
++    }
++}
++
++fn committed_frontier(frontier: crate::film::primary::PartialFrontier) -> job::Result<u64> {
++    let pixels = u64::try_from(frontier.pixels).map_err(|_| error(TraceError::MemoryLimit))?;
++    let prefix = u64::try_from(frontier.updated_prefix).map_err(|_| error(TraceError::MemoryLimit))?;
++    u64::from(frontier.completed_passes).checked_mul(pixels).and_then(|n| n.checked_add(prefix)).ok_or_else(|| error(TraceError::WorkLimit))
+ }
+ 
+ pub fn admit(scene: &ProductScene, request: &ImageRequest, options: &RaytraceOptions) -> job::Result<Admission> {
++    admit_with_nested(scene, request, options, false)
++}
++
++pub(crate) fn admit_with_nested(
++    scene: &ProductScene,
++    request: &ImageRequest,
++    options: &RaytraceOptions,
++    nested: bool,
++) -> job::Result<Admission> {
++    admit_with_policy(scene, request, options, nested, PreviewPolicy::Legacy)
++}
++
++pub(crate) fn admit_with_partial_preview(
++    scene: &ProductScene,
++    request: &ImageRequest,
++    options: &RaytraceOptions,
++    nested: bool,
++    plan: job::PartialPreviewPlan,
++) -> job::Result<Admission> {
++    admit_with_policy(scene, request, options, nested, PreviewPolicy::Shared(plan))
++}
++
++pub(crate) fn admit_with_protected_partial_preview(
++    scene: &ProductScene,
++    request: &ImageRequest,
++    options: &RaytraceOptions,
++    nested: bool,
++    plan: job::ProtectedPreviewPlan,
++) -> job::Result<Admission> {
++    admit_with_policy(scene, request, options, nested, PreviewPolicy::Protected(plan))
++}
++
++fn admit_with_policy(
++    scene: &ProductScene,
++    request: &ImageRequest,
++    options: &RaytraceOptions,
++    nested: bool,
++    policy: PreviewPolicy,
++) -> job::Result<Admission> {
++    if let PreviewPolicy::Protected(plan) = policy {
++        plan.validate()?;
++        let progressive = options.progressive.ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "protected feedback requires progressive CPU sampling"))?;
++        if plan != job::ProtectedPreviewPlan::new(request.width, request.height, progressive.samples_per_pixel, options.budget)? {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "protected feedback plan differs from actual source sampling or budget"));
++        }
++    }
++    let partial = policy.partial_plan();
++    if let Some(plan) = partial {
++        plan.validate()?;
++        if plan != job::PartialPreviewPlan::new(request.width, request.height)?
++            || options.progressive.is_none()
++            || request.environment.is_some()
++            || request.textures.is_some()
++            || scene.has_transmission()
++        {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview requires the exact CPU progressive source plan"));
++        }
++    }
+     options.validate()?;
+     if let Some(original) = &request.raytrace {
+         original.validate()?;
+@@ -161,7 +236,7 @@
+         }
+     }
+     anisotropic_faces::prepare(scene, options, || Ok(()))?;
+-    certificates(scene, options)?;
++    certificates(scene, options, nested)?;
+     for input in &options.dielectrics {
+         if options.reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|v| v.body == input.body_name))
+             || options.anisotropic_faces.iter().flatten().any(|v| v.body_index == input.body_index)
+@@ -225,8 +300,13 @@
+     let n = usize::try_from(a.triangles).map_err(|_| error(TraceError::MemoryLimit))?;
+     let film_bytes = if let Some(progressive) = options.progressive {
+         let checkpoint = a.encoded_limit.checked_add(job::FRAME_METADATA_BYTES).ok_or_else(|| error(TraceError::MemoryLimit))?;
++        let previews = if let Some(plan) = partial {
++            plan.additional_bytes()?
++        } else {
++            u64::from(progressive.preview_count()).checked_mul(checkpoint).ok_or_else(|| error(TraceError::MemoryLimit))?
++        };
+         PrimaryFilm::required_bytes(request.width, request.height, progressive, options.budget)?
+-            .checked_add(u64::from(progressive.preview_count()).checked_mul(checkpoint).ok_or_else(|| error(TraceError::MemoryLimit))?)
++            .checked_add(previews)
+             .and_then(|v| v.checked_add(std::mem::size_of::<Progressive>() as u64))
+             .ok_or_else(|| error(TraceError::MemoryLimit))?
+     } else {
+@@ -376,6 +456,8 @@
+ /// lighting state, encode pixels, or allocate outside the existing job reservation.
+ struct OpticalTask {
+     certificates: [Option<Certificate>; MAX_OVERRIDES],
++    parents: [Option<usize>; MAX_OVERRIDES],
++    nested: bool,
+     pending: Option<DielectricPixel>,
+ }
+ 
+@@ -500,6 +582,23 @@
+     Complete(Vec<u8>),
+ }
+ 
++/// Additive host-only poll; the public legacy ImagePoll contract is unchanged.
++pub(crate) enum PartialImagePoll {
++    Pending(Progress),
++    Complete(Vec<u8>),
++    Preview { png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64 },
++}
++
++pub(crate) enum PartialBegin {
++    Started,
++    Exhausted,
++}
++
++enum ImageAdvance {
++    Legacy(ImagePoll),
++    Partial { png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64 },
++}
++
+ impl ImageTask {
+     pub fn punctual_diagnostics(&self) -> Option<job::PunctualDiagnostics> {
+         (!self.punctual_diagnostics.is_empty()).then_some(self.punctual_diagnostics)
+@@ -515,16 +614,64 @@
+         options: RaytraceOptions,
+         input: Option<crate::lighting::environment_input::EnvironmentInput>,
+     ) -> job::Result<Self> {
++        Self::new_with_environment_and_nested(scene, request, cancel, options, input, false)
++    }
++
++    pub(crate) fn new_with_environment_and_nested(
++        scene: ProductScene,
++        request: ImageRequest,
++        cancel: CancelToken,
++        options: RaytraceOptions,
++        input: Option<crate::lighting::environment_input::EnvironmentInput>,
++        nested: bool,
++    ) -> job::Result<Self> {
++        Self::new_with_policy(scene, request, cancel, options, input, nested, PreviewPolicy::Legacy)
++    }
++
++    pub(crate) fn new_with_environment_and_nested_and_partial(
++        scene: ProductScene,
++        request: ImageRequest,
++        cancel: CancelToken,
++        options: RaytraceOptions,
++        input: Option<crate::lighting::environment_input::EnvironmentInput>,
++        nested: bool,
++        plan: job::PartialPreviewPlan,
++    ) -> job::Result<Self> {
++        Self::new_with_policy(scene, request, cancel, options, input, nested, PreviewPolicy::Shared(plan))
++    }
++
++    pub(crate) fn new_with_environment_and_nested_and_protected_partial(
++        scene: ProductScene,
++        request: ImageRequest,
++        cancel: CancelToken,
++        options: RaytraceOptions,
++        input: Option<crate::lighting::environment_input::EnvironmentInput>,
++        nested: bool,
++        plan: job::ProtectedPreviewPlan,
++    ) -> job::Result<Self> {
++        Self::new_with_policy(scene, request, cancel, options, input, nested, PreviewPolicy::Protected(plan))
++    }
++
++    fn new_with_policy(
++        scene: ProductScene,
++        request: ImageRequest,
++        cancel: CancelToken,
++        options: RaytraceOptions,
++        input: Option<crate::lighting::environment_input::EnvironmentInput>,
++        nested: bool,
++        policy: PreviewPolicy,
++    ) -> job::Result<Self> {
+         cancel.check()?;
+-        let mut admission = admit(&scene, &request, &options)?;
++        let mut admission = admit_with_policy(&scene, &request, &options, nested, policy)?;
++        let partial = policy.partial_plan();
+         let mut optical = Vec::new();
+         if !options.dielectrics.is_empty() {
+-            let certificates = certificates(&scene, &options)?;
++            let (certificates, parents) = certificates(&scene, &options, nested)?;
+             optical.try_reserve_exact(1).map_err(|_| error(TraceError::AllocationFailed))?;
+             if optical.capacity() != 1 {
+                 return Err(error(TraceError::MemoryLimit));
+             }
+-            optical.push(OpticalTask { certificates, pending: None });
++            optical.push(OpticalTask { certificates, parents, nested, pending: None });
+         }
+         if input.is_some() {
+             options.validate_environment_reflections(&scene)?;
+@@ -538,7 +685,10 @@
+         admission.preparation_bytes = admission.preparation_bytes.checked_add(extra).ok_or_else(|| error(TraceError::MemoryLimit))?;
+         let environment = input.map(|e| e.begin()).transpose().map_err(environment_error)?;
+         let lights = lighting(&options)?;
+-        let mut work = WorkBudget::new(options.budget.limits().max_work_units).map_err(error)?;
++        let mut work = match policy {
++            PreviewPolicy::Protected(plan) => WorkBudget::new_protected(plan),
++            PreviewPolicy::Legacy | PreviewPolicy::Shared(_) => WorkBudget::new(options.budget.limits().max_work_units),
++        }.map_err(error)?;
+         let anisotropic_targets = anisotropic_faces::prepare(&scene, &options, || work.tick(&cancel).map_err(error))?;
+         let mut effects = Vec::new();
+         if let Some(values) = &options.surface_effects {
+@@ -601,7 +751,7 @@
+             .map(|options| -> job::Result<Progressive> {
+                 let bytes = PrimaryFilm::required_bytes(request.width, request.height, options, budget)?;
+                 let film = PrimaryFilm::new(request.width, request.height, options, bytes, &cancel, budget)?;
+-                Ok(Progressive { film, options, resolving: false, resolve_pixel: 0 })
++                Ok(Progressive { film, options, resolving: false, resolve_pixel: 0, partial_plan: partial, partial: None, last_partial: None })
+             })
+             .transpose()?;
+         Ok(Self {
+@@ -646,6 +796,12 @@
+     pub fn progress(&self) -> Progress {
+         let (phase, done, total) = if self.done {
+             (Phase::Completed, 1, 1)
++        } else if let Some(partial) = self.progressive.as_ref().and_then(|p| p.partial.as_ref()) {
++            if let Some(encoder) = &self.encoder {
++                (Phase::Encoding, encoder.row() as u64, u64::from(partial.plan.height()))
++            } else {
++                (Phase::Encoding, partial.next as u64, partial.plan.pixels())
++            }
+         } else if let Some(e) = &self.encoder {
+             (Phase::Encoding, e.row() as u64, self.request.height as u64)
+         } else if let Some(progressive) = &self.progressive {
+@@ -1299,7 +1455,19 @@
+         let scene = PreparedScene { bvh, primitives: &self.looks, source: &self.scene };
+         // Optics always uses the certified geometric boundary, before optional opaque
+         // shading-normal effects. Distance starts before the numerical spawn offset.
+-        let shared = scene.resolve_hit(pending.ray, hit).map_err(error)?;
++        let mut shared = scene.resolve_hit(pending.ray, hit).map_err(error)?;
++        let exact_face = if optical.nested {
++            match state.selected.and_then(|index| optical.certificates.get(index).copied().flatten()) {
++                Some(Certificate::ClosedBox(bounds)) => {
++                    let face = dielectric::exact_box_face(bounds, shared.vertices, shared.geometric_normal, shared.position, pending.ray).map_err(error)?;
++                    shared.position = face.point;
++                    Some(face)
++                }
++                _ => None,
++            }
++        } else {
++            None
++        };
+         if let Some(index) = state.path.medium {
+             let medium = self.options.dielectrics.get(index).ok_or_else(|| invalid("active dielectric medium"))?;
+             let distance = shared.position.dist(state.path.segment_start);
+@@ -1363,16 +1531,21 @@
+                 if boundary_axes > 1 {
+                     return Err(invalid("dielectric box edge or corner has an ambiguous interface normal"));
+                 }
++                let parent = optical.parents.get(index).copied().ok_or_else(|| invalid("missing dielectric parent"))?;
++                let parent_ior = match parent {
++                    Some(parent) => self.options.dielectrics.get(parent).ok_or_else(|| invalid("missing parent optical material"))?.ior,
++                    None => 1.0,
++                };
+                 let (incident, transmitted, next_medium) = if shared.front_face {
+-                    if state.path.medium.is_some() {
+-                        return Err(invalid("nested dielectric entry"));
++                    if state.path.medium != parent {
++                        return Err(invalid("dielectric entry does not match certified parent"));
+                     }
+-                    (1.0, medium.ior, Some(index))
++                    (parent_ior, medium.ior, Some(index))
+                 } else {
+                     if state.path.medium != Some(index) {
+                         return Err(invalid("dielectric exit without matching entry"));
+                     }
+-                    (medium.ior, 1.0, None)
++                    (medium.ior, parent_ior, parent)
+                 };
+                 let optics = dielectric::interface(direction, normal, incident, transmitted).map_err(error)?;
+                 let f = optics.reflectance;
+@@ -1380,8 +1553,14 @@
+                 (optics, Vec3::new(f, f, f), Vec3::new(t, t, t), next_medium)
+             }
+         };
++        let spawn = |direction, reflected| {
++            match exact_face {
++                Some(face) => face.spawn(direction, reflected).map_err(error),
++                None => shared.spawn(direction).map_err(error),
++            }
++        };
+         state.push(OpticalPath {
+-            ray: shared.spawn(optics.reflected).map_err(error)?,
++            ray: spawn(optics.reflected, true)?,
+             throughput: dielectric::multiply(state.path.throughput, reflected_weight),
+             medium: state.path.medium,
+             segment_start: shared.position,
+@@ -1390,7 +1569,7 @@
+         })?;
+         if let Some(direction) = optics.transmitted {
+             state.push(OpticalPath {
+-                ray: shared.spawn(direction).map_err(error)?,
++                ray: spawn(direction, false)?,
+                 throughput: dielectric::multiply(state.path.throughput, transmitted_weight),
+                 medium: next_medium,
+                 segment_start: shared.position,
+@@ -1446,6 +1625,161 @@
+         Ok(())
+     }
+ 
++
++    pub(crate) fn protected_preview_report(&self) -> Option<job::ProtectedPreviewReport> {
++        self.work.protected_report()
++    }
++
++    pub(crate) fn partial_preview_ready(&self, plan: job::PartialPreviewPlan) -> job::Result<bool> {
++        self.cancel.check()?;
++        plan.validate()?;
++        if (plan.source_width(), plan.source_height()) != (self.request.width, self.request.height) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview source dimensions changed"));
++        }
++        let Some(progressive) = &self.progressive else { return Ok(false) };
++        if progressive.partial_plan != Some(plan) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview plan differs from the task policy"));
++        }
++        if self.done || !progressive.film.ready() || !self.pending.is_none()
++            || self.encoder.is_some() || progressive.partial.is_some() || progressive.resolving || !self.pixels.is_empty()
++        {
++            return Ok(false);
++        }
++        let frontier = progressive.film.partial_frontier()?;
++        if frontier.completed_passes >= progressive.options.samples_per_pixel {
++            return Ok(false);
++        }
++        let safe = if frontier.updated_prefix == 0 {
++            frontier.completed_passes > 0 && self.pixel == frontier.pixels
++        } else {
++            self.pixel == frontier.updated_prefix
++        };
++        if !safe {
++            return Ok(false);
++        }
++        if self.work.protected.is_some() && !self.work.protected_ready(committed_frontier(frontier)?).map_err(error)? {
++            return Ok(false);
++        }
++        progressive::represented_changed(plan, progressive.last_partial, frontier)
++    }
++
++    /// Host must already hold its one in-flight credit. No host lease or clock
++    /// lives here; an insufficient optional debit does not mutate trace state.
++    pub(crate) fn begin_partial_preview(&mut self, plan: job::PartialPreviewPlan) -> job::Result<PartialBegin> {
++        if !self.partial_preview_ready(plan)? {
++            if self.protected_preview_report().is_some_and(|report| report.quota_exhausted) {
++                return Ok(PartialBegin::Exhausted);
++            }
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview requires a fresh safe completed pixel"));
++        }
++        let frontier = self.progressive.as_ref().ok_or_else(|| invalid("missing progressive film"))?.film.partial_frontier()?;
++        if self.work.protected.is_some() {
++            if !self.work.charge_presentation(committed_frontier(frontier)?, &self.cancel).map_err(error)? {
++                return Err(JobError::new(ErrorCode::InvalidRequest, "protected snapshot has no reached unconsumed milestone"));
++            }
++        } else {
++            let units = plan.snapshot_work()?;
++            if self.work.remaining() < units {
++                return Ok(PartialBegin::Exhausted);
++            }
++            self.work.charge(units, &self.cancel).map_err(error)?;
++        }
++        let count = usize::try_from(plan.pixels()).map_err(|_| error(TraceError::MemoryLimit))?;
++        let mut covered = Vec::new();
++        covered.try_reserve_exact(count).map_err(|_| error(TraceError::AllocationFailed))?;
++        if covered.capacity() != count {
++            return Err(error(TraceError::MemoryLimit));
++        }
++        self.cancel.check()?;
++        let progressive = self.progressive.as_mut().ok_or_else(|| invalid("missing progressive film"))?;
++        progressive.partial = Some(progressive::PartialResolve { plan, frontier, resume_pixel: self.pixel, next: 0, covered });
++        Ok(PartialBegin::Started)
++    }
++
++    /// One prepaid representative resolve, encoder setup, or encoding row.
++    /// Work was debited before allocation; cancel/continuation bounds remain real.
++    fn partial_preview_one(&mut self) -> job::Result<Option<ImageAdvance>> {
++        self.cancel.check()?;
++        let (plan, frontier, resume_pixel, next) = {
++            let partial = self.progressive.as_ref().and_then(|p| p.partial.as_ref()).ok_or_else(|| invalid("missing partial resolve state"))?;
++            (partial.plan, partial.frontier, partial.resume_pixel, partial.next)
++        };
++        let count = usize::try_from(plan.pixels()).map_err(|_| error(TraceError::MemoryLimit))?;
++        if next < count {
++            let index = plan.source_index(next)?;
++            let value = self.progressive.as_ref().ok_or_else(|| invalid("missing partial film"))?.film.partial_pixel(index)?;
++            let (rgba, covered) = match value {
++                crate::film::primary::PartialPixel::Unknown => ([0; 4], 0),
++                crate::film::primary::PartialPixel::Sampled { linear_premultiplied, covered, count } => {
++                    let covered = u16::try_from(covered).map_err(|_| error(TraceError::MemoryLimit))?;
++                    let count = u16::try_from(count).map_err(|_| error(TraceError::MemoryLimit))?;
++                    let [r, g, b] = linear_premultiplied;
++                    (composite_spatial(Vec3::new(r, g, b), covered, count, self.request.background, self.options.exposure_ev)?, covered)
++                }
++            };
++            if next.checked_mul(4) != Some(self.pixels.len()) {
++                return Err(invalid("partial RGBA cursor mismatch"));
++            }
++            self.cancel.check()?;
++            let partial = self.progressive.as_mut().and_then(|p| p.partial.as_mut()).ok_or_else(|| invalid("missing partial cell state"))?;
++            if partial.covered.len() != next || partial.covered.capacity() != count {
++                return Err(invalid("partial coverage cursor or capacity mismatch"));
++            }
++            self.pixels.extend_from_slice(&rgba);
++            partial.covered.push(covered);
++            partial.next += 1;
++            return Ok(None);
++        }
++        if next != count {
++            return Err(invalid("partial display cursor exceeded its plan"));
++        }
++        if self.encoder.is_none() {
++            let limit = plan.encoded_limit()?;
++            let capacity = usize::try_from(limit).map_err(|_| error(TraceError::MemoryLimit))?;
++            let mut output = Vec::new();
++            output.try_reserve_exact(capacity).map_err(|_| error(TraceError::AllocationFailed))?;
++            if output.capacity() != capacity {
++                return Err(error(TraceError::MemoryLimit));
++            }
++            self.cancel.check()?;
++            self.encoder = Some(job::encoding::PngEncoding::with_output(plan.width(), plan.height(), limit, self.cancel.clone(), output)?);
++            return Ok(None);
++        }
++        let png = self.encoder.as_mut().ok_or_else(|| invalid("missing partial encoder"))?.step(&self.pixels)?;
++        let Some(png) = png else { return Ok(None) };
++        self.cancel.check()?;
++        let progressive = self.progressive.as_mut().ok_or_else(|| invalid("missing completed partial film"))?;
++        if progressive.film.partial_frontier()? != frontier || self.pixel != resume_pixel || !self.pending.is_none() {
++            return Err(invalid("partial snapshot changed its captured sample frontier"));
++        }
++        let partial = progressive.partial.take().ok_or_else(|| invalid("missing completed partial output"))?;
++        if partial.covered.len() != count || partial.covered.capacity() != count {
++            return Err(invalid("partial covered output differs from its plan"));
++        }
++        let updated_prefix = u64::try_from(frontier.updated_prefix).map_err(|_| error(TraceError::MemoryLimit))?;
++        progressive.last_partial = Some(frontier);
++        self.encoder = None;
++        self.pixels.clear();
++        // Preserve the complete-pass sentinel too: after host hashing, the
++        // ordinary continuation must still charge its tick before P -> 0.
++        self.pixel = resume_pixel;
++        Ok(Some(ImageAdvance::Partial { png, covered: partial.covered, completed_passes: frontier.completed_passes, updated_prefix }))
++    }
++
++    pub(crate) fn step_with_partial_previews(&mut self, units: usize) -> job::Result<PartialImagePoll> {
++        if self.progressive.as_ref().is_none_or(|p| p.partial_plan.is_none()) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial polling requires the CPU partial policy"));
++        }
++        match self.advance_image(units)? {
++            ImageAdvance::Legacy(ImagePoll::Pending(progress)) => Ok(PartialImagePoll::Pending(progress)),
++            ImageAdvance::Legacy(ImagePoll::Complete(png)) => Ok(PartialImagePoll::Complete(png)),
++            ImageAdvance::Partial { png, covered, completed_passes, updated_prefix } => {
++                Ok(PartialImagePoll::Preview { png, covered, completed_passes, updated_prefix })
++            }
++            ImageAdvance::Legacy(ImagePoll::Preview { .. }) => Err(invalid("partial policy produced a legacy checkpoint")),
++        }
++    }
++
+     fn resolve_progressive_one(&mut self) -> job::Result<()> {
+         self.work.tick(&self.cancel).map_err(error)?;
+         let progressive = self.progressive.as_mut().ok_or_else(|| invalid("missing progressive resolve state"))?;
+@@ -1478,12 +1812,26 @@
+     /// At most four continuations/encoding rows. One cumulative work budget spans
+     /// geometry preparation, every absolute camera sample and every checkpoint.
+     pub fn step_with_previews(&mut self, units: usize) -> job::Result<ImagePoll> {
++        if self.progressive.as_ref().is_some_and(|p| p.partial_plan.is_some()) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial CPU tasks require their additive internal poll"));
++        }
++        match self.advance_image(units)? {
++            ImageAdvance::Legacy(poll) => Ok(poll),
++            ImageAdvance::Partial { .. } => Err(invalid("legacy policy produced a partial snapshot")),
++        }
++    }
++
++    fn advance_image(&mut self, units: usize) -> job::Result<ImageAdvance> {
+         self.cancel.check()?;
+         if units == 0 || units > 16384 || self.done {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "invalid raytrace step or completed task"));
+         }
+         for _ in 0..units.min(4) {
+-            if self.progressive.as_ref().is_some_and(|p| !p.film.ready()) {
++            if self.progressive.as_ref().is_some_and(|p| p.partial.is_some()) {
++                if let Some(preview) = self.partial_preview_one()? {
++                    return Ok(preview);
++                }
++            } else if self.progressive.as_ref().is_some_and(|p| !p.film.ready()) {
+                 self.progressive
+                     .as_mut()
+                     .ok_or_else(|| invalid("missing progressive initialization"))?
+@@ -1508,11 +1856,11 @@
+                             self.encoder = None;
+                             self.pixels.clear();
+                             self.pixel = 0;
+-                            return Ok(ImagePoll::Preview { png, samples_per_pixel });
++                            return Ok(ImageAdvance::Legacy(ImagePoll::Preview { png, samples_per_pixel }));
+                         }
+                     }
+                     self.release_completed_work()?;
+-                    return Ok(ImagePoll::Complete(png));
++                    return Ok(ImageAdvance::Legacy(ImagePoll::Complete(png)));
+                 }
+             } else if self.progressive.as_ref().is_some_and(|p| p.resolving) {
+                 self.resolve_progressive_one()?;
+@@ -1528,7 +1876,7 @@
+                     if let Some(progressive) = &mut self.progressive {
+                         self.work.tick(&self.cancel).map_err(error)?;
+                         let samples = progressive.film.samples();
+-                        if samples == progressive.options.samples_per_pixel || samples.is_power_of_two() {
++                        if samples == progressive.options.samples_per_pixel || (progressive.partial_plan.is_none() && samples.is_power_of_two()) {
+                             progressive.resolving = true;
+                         } else {
+                             self.pixel = 0;
+@@ -1557,7 +1905,7 @@
+                 self.prepare_one()?;
+             }
+         }
+-        Ok(ImagePoll::Pending(self.progress()))
++        Ok(ImageAdvance::Legacy(ImagePoll::Pending(self.progress())))
+     }
+ }
+ /// Apply the already selected deterministic effect to the shared opaque hit.
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -1421,3 +1421,241 @@
+     cancel.cancel();
+     assert_eq!(PendingPixelSlot::new(&cancel).err().unwrap().code, ErrorCode::Cancelled);
+ }
++
++fn nested_optical_task() -> ImageTask {
++    let (scene, mut options) = dielectric::tests::nested_fixture(false);
++    for medium in &mut options.dielectrics {
++        medium.ior = if medium.body_name == "Outer" { 1.5 } else { 2.0 };
++        medium.absorption_per_mm = [0.0; 3];
++    }
++    ImageTask::new_with_environment_and_nested(
++        scene, dielectric::tests::request(options.clone()), CancelToken::default(), options, None, true,
++    ).unwrap()
++}
++
++#[test]
++fn nested_image_interfaces_use_actual_parent_ior_and_restore_it_on_exit() {
++    let mut task = nested_optical_task();
++    let outer_entry = 0.96 / 2.25;
++    let inner_entry = outer_entry * (27.0 / 49.0);
++    let inner_exit = inner_entry * (256.0 / 147.0);
++    let expected = [
++        (1, Some(0), outer_entry),
++        (2, Some(1), inner_entry),
++        (3, Some(0), inner_exit),
++        (4, None, inner_exit * 2.16),
++    ];
++    let mut next = 0;
++    for _ in 0..100_000 {
++        assert!(matches!(task.step(1).unwrap(), TaskPoll::Pending(_)));
++        if let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref()) {
++            let (depth, medium, throughput) = expected[next];
++            if state.path.boundaries == depth && state.path.medium == medium {
++                assert!((state.path.throughput.x - throughput).abs() < 1e-12);
++                assert!((state.path.throughput.y - throughput).abs() < 1e-12);
++                assert!((state.path.throughput.z - throughput).abs() < 1e-12);
++                next += 1;
++                if next == expected.len() {
++                    return;
++                }
++            }
++        }
++    }
++    panic!("nested first transmitted path did not cross all four interfaces");
++}
++
++#[test]
++fn nested_paths_keep_one_unit_work_cancellation_and_total_budget_contracts() {
++    for cancel in [false, true] {
++        let mut task = nested_optical_task();
++        let mut observed = false;
++        for _ in 0..100_000 {
++            let before = task.work.used();
++            assert!(matches!(task.step(1).unwrap(), TaskPoll::Pending(_)));
++            assert!(task.work.used() - before <= 1, "one-unit continuation overspent its quantum");
++            if task.optical.first().and_then(|optical| optical.pending.as_ref()).is_some_and(|state| state.path.medium == Some(1)) {
++                if cancel {
++                    task.cancel.cancel();
++                } else {
++                    task.work.limit = task.work.used();
++                }
++                assert_eq!(task.step(1).err().unwrap().code, if cancel { ErrorCode::Cancelled } else { ErrorCode::LimitExceeded });
++                assert!(!task.done);
++                observed = true;
++                break;
++            }
++        }
++        assert!(observed, "nested interior was never reached");
++    }
++}
++
++#[test]
++fn nested_admission_bills_parent_table_and_keeps_geometry_and_camera_refusals() {
++    let (scene, options) = dielectric::tests::nested_fixture(false);
++    let request = dielectric::tests::request(options.clone());
++    let admitted = admit_with_nested(&scene, &request, &options, true).unwrap();
++    let original = options.retained_dielectric_bytes().unwrap()
++        + request.raytrace.as_ref().unwrap().retained_dielectric_bytes().unwrap()
++        + std::mem::size_of::<OpticalTask>() as u64;
++    assert!(admitted.preparation_bytes >= original);
++    assert!(std::mem::size_of::<OpticalTask>() >= std::mem::size_of::<[Option<usize>; MAX_OVERRIDES]>());
++
++    let mut invalid = scene.clone();
++    std::sync::Arc::make_mut(&mut invalid.meshes[1].mesh).triangles.pop();
++    assert!(admit_with_nested(&invalid, &request, &options, true).is_err());
++
++    let mut inside = request.clone();
++    inside.camera.distance = 0.1;
++    inside.camera.target = Vec3::new(0.0, 0.0, 2.0);
++    let mut task = ImageTask::new_with_environment_and_nested(scene, inside, CancelToken::default(), options, None, true).unwrap();
++    for _ in 0..100_000 {
++        match task.step(1) {
++            Err(error) => {
++                assert_eq!(error.code, ErrorCode::InvalidScene);
++                assert!(error.message.contains("inside a dielectric"));
++                return;
++            }
++            Ok(TaskPoll::Pending(_)) => {}
++            Ok(TaskPoll::Complete(_)) => panic!("inside camera must not publish"),
++        }
++    }
++    panic!("inside camera was not refused");
++}
++
++fn close_gap_nested_task(gap: f64, positive: bool) -> ImageTask {
++    use std::sync::Arc;
++    let mut outer = dielectric::tests::box_body(3.0);
++    outer.name = "OuterGap".into();
++    for p in &mut Arc::make_mut(&mut outer.mesh).positions {
++        *p = Vec3::new(p.x * 0.2, p.y * 0.2, p.z + 1.0);
++    }
++    let mut inner = dielectric::tests::box_body(2.0);
++    inner.name = "InnerGap".into();
++    for p in &mut Arc::make_mut(&mut inner.mesh).positions {
++        *p = Vec3::new(p.x * 0.1, p.y * 0.1, if p.z == 0.0 { 1.0 + gap } else { 3.0 });
++    }
++    let mut scene = dielectric::tests::scene(outer);
++    scene.meshes.push(inner);
++    let options = RaytraceOptions {
++        dielectrics: scene.meshes.iter().enumerate().map(|(body_index, body)| job::DielectricOptions {
++            body_index, body_name:body.name.clone(), boundary:job::DielectricBoundary::ClosedBox,
++            ior:1.0, absorption_per_mm:[0.0;3], thickness_mm:0.0,
++        }).collect(),
++        lights:Some(Vec::new()), shadows:false,
++        environment:Some(job::RaytraceEnvironmentOptions { color:[1.0;3], intensity:1.0 }),
++        ..Default::default()
++    };
++    let mut request = dielectric::tests::request(options.clone());
++    request.camera.set_view(if positive { crate::StandardView::Bottom } else { crate::StandardView::Top });
++    request.camera.target = Vec3::new(0.0,0.0,2.5);
++    request.camera.fov = 0.0;
++    ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap()
++}
++
++#[test]
++fn positive_one_ulp_nested_gap_and_separated_control_visit_every_real_interface() {
++    for gap in [f64::EPSILON, 0.25] {
++        for positive in [false, true] {
++            let mut task = close_gap_nested_task(gap, positive);
++            let points = if positive { [1.0,1.0+gap,3.0,4.0] } else { [4.0,3.0,1.0+gap,1.0] };
++            let media = [Some(0),Some(1),Some(0),None];
++            let mut next = 0;
++            let mut completed = false;
++            for _ in 0..100_000 {
++                match task.step(1).unwrap() {
++                    TaskPoll::Pending(_) => {
++                        if next < points.len()
++                            && let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref())
++                            && state.path.boundaries == next as u8 + 1
++                        {
++                            assert_eq!(state.path.medium, media[next]);
++                            assert_eq!(state.path.segment_start.z, points[next]);
++                            assert_eq!(state.path.ray.origin(), state.path.segment_start, "propagation and Beer start share one physical point");
++                            assert_eq!(state.path.throughput, Vec3::new(1.0,1.0,1.0));
++                            next += 1;
++                        }
++                    }
++                    TaskPoll::Complete(png) => {
++                        assert_eq!(next, 4, "an admitted interface was skipped");
++                        let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
++                        assert_eq!(image.get_pixel(0,0).0, [188,188,188,255]);
++                        completed = true;
++                        break;
++                    }
++                }
++            }
++            assert!(completed, "close-gap image failed to complete");
++        }
++    }
++}
++
++#[test]
++fn nested_reflected_route_keeps_child_beer_then_restores_parent_from_both_sides() {
++    for positive in [false, true] {
++        let (scene, mut options) = dielectric::tests::nested_fixture(false);
++        for medium in &mut options.dielectrics {
++            medium.ior = if medium.body_name == "Outer" { 1.5 } else { 2.0 };
++        }
++        let mut request = dielectric::tests::request(options.clone());
++        request.camera.set_view(if positive { crate::StandardView::Bottom } else { crate::StandardView::Top });
++        request.camera.target = Vec3::new(0.0,0.0,2.0);
++        request.camera.fov = 0.0;
++        let mut task = ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap();
++        let (near, far) = if positive { (1.0,3.0) } else { (3.0,1.0) };
++        let factor = (0.96 / 2.25) * (27.0 / 49.0) / 49.0;
++        let reflected = Vec3::new(factor * (-0.1_f64 - 0.3*2.0).exp(), factor * (-0.2_f64 - 0.4*2.0).exp(), factor);
++        let returned = dielectric::multiply(reflected, Vec3::new((-0.3_f64*2.0).exp(),(-0.4_f64*2.0).exp(),1.0)) * (256.0/147.0);
++        let mut saw_reflected = false;
++        let mut restored = false;
++        for _ in 0..1_000_000 {
++            if let TaskPoll::Complete(_) = task.step(1).unwrap() {
++                break;
++            }
++            let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref()) else { continue };
++            let path = state.path;
++            if path.boundaries == 3 && path.medium == Some(1) && path.segment_start.z == far {
++                assert!((path.throughput - reflected).len() < 1e-12);
++                assert_eq!(path.ray.origin(), path.segment_start);
++                assert!(path.ray.direction().z * if positive { -1.0 } else { 1.0 } > 0.0);
++                saw_reflected = true;
++            }
++            if saw_reflected && path.boundaries == 4 && path.medium == Some(0) && path.segment_start.z == near {
++                assert!((path.throughput - returned).len() < 1e-12);
++                assert_eq!(path.ray.origin(), path.segment_start);
++                restored = true;
++                break;
++            }
++        }
++        assert!(saw_reflected && restored, "actual reflected child route never restored its parent");
++    }
++}
++
++#[test]
++fn exact_box_launch_is_opt_in_and_legacy_default_origin_is_preserved() {
++    for nested in [false, true] {
++        let mut material = dielectric::tests::input(job::DielectricBoundary::ClosedBox);
++        material.ior = 1.0;
++        let options = RaytraceOptions { dielectrics:vec![material], lights:Some(Vec::new()), shadows:false, ..Default::default() };
++        let request = dielectric::tests::request(options.clone());
++        let mut task = ImageTask::new_with_environment_and_nested(
++            dielectric::tests::scene(dielectric::tests::box_body(2.0)), request, CancelToken::default(), options, None, nested,
++        ).unwrap();
++        let mut observed = false;
++        for _ in 0..100_000 {
++            assert!(matches!(task.step(1).unwrap(), TaskPoll::Pending(_)));
++            if let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref())
++                && state.path.boundaries == 1 && state.path.medium == Some(0)
++            {
++                assert_eq!(state.path.segment_start.z, 2.0);
++                if nested {
++                    assert_eq!(state.path.ray.origin(), state.path.segment_start);
++                } else {
++                    assert!(state.path.ray.origin().z < state.path.segment_start.z, "default must retain its original inward offset");
++                }
++                observed = true;
++                break;
++            }
++        }
++        assert!(observed, "first box entry was not observed");
++    }
++}
+--- a/crates/render/src/raytrace/mod.rs
++++ b/crates/render/src/raytrace/mod.rs
+@@ -66,6 +66,20 @@
+ pub struct WorkBudget {
+     limit: u64,
+     used: u64,
++    protected: Option<ProtectedWork>,
++}
++
++/// One owned ledger, not another spendable budget. Keeping the policy and actual
++/// counters here preserves the final report after the image task drops its film.
++#[derive(Debug)]
++struct ProtectedWork {
++    plan: crate::job::ProtectedPreviewPlan,
++    ordinary_used: u64,
++    presentation_used: u64,
++    presentation_limit: u64,
++    aggregate_limit: u64,
++    accepted_snapshots: u32,
++    next_milestone_index: u32,
+ }
+ 
+ impl WorkBudget {
+@@ -73,22 +87,138 @@
+         if limit == 0 || limit > crate::job::MAX_CPU_WORK {
+             return Err(TraceError::InvalidInput("work limit outside 1..=MAX_WORK"));
+         }
+-        Ok(Self { limit, used: 0 })
+-    }
++        Ok(Self { limit, used: 0, protected: None })
++    }
++
++    pub(crate) fn new_protected(plan: crate::job::ProtectedPreviewPlan) -> Result<Self> {
++        plan.validate().map_err(|_| TraceError::InvalidInput("invalid protected feedback plan"))?;
++        let presentation_limit = plan.presentation_limit().map_err(|_| TraceError::WorkLimit)?;
++        let aggregate_limit = plan.aggregate_limit().map_err(|_| TraceError::WorkLimit)?;
++        if aggregate_limit > crate::job::MAX_PROTECTED_CPU_WORK {
++            return Err(TraceError::WorkLimit);
++        }
++        Ok(Self {
++            limit: plan.ordinary_limit(),
++            used: 0,
++            protected: Some(ProtectedWork {
++                plan, ordinary_used: 0, presentation_used: 0, presentation_limit,
++                aggregate_limit, accepted_snapshots: 0, next_milestone_index: 0,
++            }),
++        })
++    }
++
+     pub fn used(&self) -> u64 {
+         self.used
+     }
++
++    /// Legacy meaning is unchanged. Protected ordinary callers retain B-O;
++    /// presentation and aggregate capacity have separate, explicit getters.
+     pub fn remaining(&self) -> u64 {
+-        self.limit - self.used
+-    }
++        self.ordinary_remaining()
++    }
++
++    pub(crate) fn ordinary_remaining(&self) -> u64 {
++        self.limit - self.protected.as_ref().map_or(self.used, |state| state.ordinary_used)
++    }
++
++    pub(crate) fn presentation_remaining(&self) -> u64 {
++        self.protected.as_ref().map_or(0, |state| state.presentation_limit - state.presentation_used)
++    }
++
++    pub(crate) fn aggregate_remaining(&self) -> u64 {
++        self.protected.as_ref().map_or(self.limit, |state| state.aggregate_limit) - self.used
++    }
++
++    pub(crate) fn protected_report(&self) -> Option<crate::job::ProtectedPreviewReport> {
++        let state = self.protected.as_ref()?;
++        let quota_limit = state.plan.quota_limit();
++        Some(crate::job::ProtectedPreviewReport {
++            policy_version: 1,
++            ordinary_limit: self.limit,
++            presentation_limit: state.presentation_limit,
++            aggregate_limit: state.aggregate_limit,
++            ordinary_used: state.ordinary_used,
++            presentation_used: state.presentation_used,
++            accepted_snapshots: state.accepted_snapshots,
++            quota_limit,
++            next_milestone_index: state.next_milestone_index,
++            quota_exhausted: state.accepted_snapshots == quota_limit,
++            milestones_complete: state.next_milestone_index == quota_limit,
++        })
++    }
++
++    /// Read-only eligibility at a real committed camera frontier. Source progress
++    /// is not a work credit: it selects a milestone, never reserves ordinary work.
++    fn protected_ready(&self, committed: u64) -> Result<bool> {
++        let state = self.protected.as_ref().ok_or(TraceError::InvalidInput("protected feedback policy missing"))?;
++        if committed >= state.plan.total_commits()
++            || state.accepted_snapshots >= state.plan.quota_limit()
++            || state.next_milestone_index >= state.plan.quota_limit()
++        {
++            return Ok(false);
++        }
++        let milestone = state.plan.milestone(state.next_milestone_index).map_err(|_| TraceError::Internal("invalid protected milestone"))?;
++        let cost = state.plan.snapshot_work().map_err(|_| TraceError::WorkLimit)?;
++        Ok(committed >= milestone && self.presentation_remaining() >= cost && self.aggregate_remaining() >= cost)
++    }
++
++    /// Debit ONE W and coalesce all reached milestones in the same transaction.
++    /// A wait/refusal changes no counters. Cancellation after a debit is not a refund.
++    fn charge_presentation(&mut self, committed: u64, cancel: &CancelToken) -> Result<bool> {
++        check_cancel(cancel)?;
++        if !self.protected_ready(committed)? {
++            return Ok(false);
++        }
++        let state = self.protected.as_ref().ok_or(TraceError::InvalidInput("protected feedback policy missing"))?;
++        let cost = state.plan.snapshot_work().map_err(|_| TraceError::WorkLimit)?;
++        let presentation_used = state.presentation_used.checked_add(cost).filter(|v| *v <= state.presentation_limit).ok_or(TraceError::WorkLimit)?;
++        let used = self.used.checked_add(cost).filter(|v| *v <= state.aggregate_limit).ok_or(TraceError::WorkLimit)?;
++        let accepted = state.accepted_snapshots.checked_add(1).filter(|n| *n <= state.plan.quota_limit()).ok_or(TraceError::WorkLimit)?;
++        let mut next = state.next_milestone_index;
++        while next < state.plan.quota_limit() {
++            if state.plan.milestone(next).map_err(|_| TraceError::Internal("invalid protected milestone"))? > committed {
++                break;
++            }
++            next = next.checked_add(1).ok_or(TraceError::WorkLimit)?;
++        }
++        check_cancel(cancel)?;
++        let state = self.protected.as_mut().ok_or(TraceError::Internal("protected ledger disappeared"))?;
++        state.presentation_used = presentation_used;
++        state.accepted_snapshots = accepted;
++        state.next_milestone_index = next;
++        self.used = used;
++        Ok(true)
++    }
++
+     fn tick(&mut self, cancel: &CancelToken) -> Result<()> {
+         self.charge(1, cancel)
+     }
+ 
+     fn charge(&mut self, units: u64, cancel: &CancelToken) -> Result<()> {
+         check_cancel(cancel)?;
+-        self.used = self.used.checked_add(units).filter(|used| *used <= self.limit).ok_or(TraceError::WorkLimit)?;
++        if let Some(state) = &mut self.protected {
++            let ordinary = state.ordinary_used.checked_add(units).filter(|v| *v <= self.limit).ok_or(TraceError::WorkLimit)?;
++            let used = self.used.checked_add(units).filter(|v| *v <= state.aggregate_limit).ok_or(TraceError::WorkLimit)?;
++            state.ordinary_used = ordinary;
++            self.used = used;
++        } else {
++            self.used = self.used.checked_add(units).filter(|used| *used <= self.limit).ok_or(TraceError::WorkLimit)?;
++        }
+         Ok(())
++    }
++
++    /// Private test boundary only: the ordinary allowance is fixed before any
++    /// real task work, preserving Q and the same O/V ledger. No production caller.
++    #[cfg(test)]
++    fn new_protected_for_test(plan: crate::job::ProtectedPreviewPlan, ordinary: u64) -> Result<Self> {
++        let mut work = Self::new_protected(plan)?;
++        if ordinary == 0 || ordinary > work.limit {
++            return Err(TraceError::InvalidInput("test ordinary limit outside profile"));
++        }
++        let state = work.protected.as_mut().ok_or(TraceError::Internal("test protected policy missing"))?;
++        state.aggregate_limit = ordinary.checked_add(state.presentation_limit).filter(|v| *v <= crate::job::MAX_PROTECTED_CPU_WORK).ok_or(TraceError::WorkLimit)?;
++        work.limit = ordinary;
++        Ok(work)
+     }
+ }
+ 

@@ -1,0 +1,1627 @@
+--- a/crates/render/src/job/host_tests.rs
++++ b/crates/render/src/job/host_tests.rs
+@@ -1228,3 +1228,679 @@
+     drop(lease);
+     assert_eq!(host.admitted_bytes(), 0);
+ }
++
++mod partial_preview_contract {
++    use super::*;
++    use crate::job::PartialPreviewPlan;
++
++    fn credits() -> (Arc<Budget>, Reservation, Arc<PartialCredits>) {
++        let plan = PartialPreviewPlan::new(4, 1).unwrap();
++        let total = 2 * plan.slot_bytes().unwrap() + 1024 + 17;
++        let budget = Arc::new(Budget { used: AtomicU64::new(0), limit: total });
++        let mut work = budget.reserve(total).unwrap();
++        let credits = PartialCredits::new(plan, &mut work).unwrap();
++        assert_eq!(work.bytes, 17);
++        (budget, work, credits)
++    }
++    fn take(credits: &Arc<PartialCredits>) -> ReturnReservation {
++        assert!(credits.request().unwrap());
++        credits.acquire().unwrap().unwrap()
++    }
++    fn payload(mut lease: ReturnReservation, sequence: u64) -> Arc<RenderPartialPreview> {
++        lease.published().unwrap();
++        Arc::new(RenderPartialPreview {
++            info: PartialPreviewInfo {
++                frame: FrameInfo { job: id(7724, 1), scene_generation: 19, backend: crate::builtin_backend().id,
++                    executor: ExecutorId::new("cpu-raytrace").unwrap(), width: 4, height: 1,
++                    encoding: ColourEncoding::Srgb, alpha: AlphaConvention::Straight, png_bytes: 4, png_sha256: "unit-lease-fixture".into() },
++                sequence, source_width: 4, source_height: 1, completed_passes: 0, updated_prefix: 1,
++                projection: PartialPreviewProjection::TopLeftRepresentativeV1,
++            },
++            png: vec![1, 2, 3, 4], covered: vec![1, 0, 0, 0], _lease: lease,
++        })
++    }
++    #[test]
++    fn plan_is_canonical_no_upscale_and_maps_top_left_without_source_scan() {
++        for (w, h, expected) in [(16384, 4096, (1024, 256)), (2160, 3840, (576, 1024)), (4, 1, (4, 1)), (u32::MAX, 1, (1024, 1))] {
++            let plan = PartialPreviewPlan::new(w, h).unwrap();
++            assert_eq!((plan.width(), plan.height()), expected);
++            assert_eq!((plan.source_width(), plan.source_height()), (w, h));
++            assert_eq!(plan.source_index(0).unwrap(), 0);
++            assert!(plan.source_index(plan.pixels() as usize).is_err());
++            assert!(plan.pixels() <= 1024 * 1024);
++        }
++        let plan = PartialPreviewPlan::new(16384, 4096).unwrap();
++        assert_eq!(plan.source_index(1025).unwrap(), 16 * 16384 + 16);
++        assert_eq!(plan.snapshot_work().unwrap(), 12 * 1024 * 256 + 65538);
++        assert!(PartialPreviewPlan::new(0, 1).is_err());
++        assert!(PartialPreviewPlan::new(1, 0).is_err());
++    }
++    #[test]
++    fn same_budget_merge_moves_ownership_once_and_wrong_pool_preserves_both() {
++        let a = Arc::new(Budget { used: AtomicU64::new(0), limit: 100 });
++        let b = Arc::new(Budget { used: AtomicU64::new(0), limit: 100 });
++        let mut retained = a.reserve(80).unwrap();
++        let mut donor = retained.split(30).unwrap();
++        let mut foreign = b.reserve(9).unwrap();
++        assert_eq!(retained.merge_from(&mut foreign).unwrap_err().code, ErrorCode::WrongOwner);
++        assert_eq!((retained.bytes, foreign.bytes), (50, 9));
++        retained.merge_from(&mut donor).unwrap();
++        assert_eq!((retained.bytes, donor.bytes, a.used.load(Ordering::Acquire)), (80, 0, 80));
++        assert!(retained.split(81).is_err());
++        assert_eq!(retained.bytes, 80);
++        drop(donor);
++        assert_eq!(a.used.load(Ordering::Acquire), 80);
++        drop(retained);
++        drop(foreign);
++        assert_eq!((a.used.load(Ordering::Acquire), b.used.load(Ordering::Acquire)), (0, 0));
++    }
++    #[test]
++    fn two_total_slots_include_inflight_and_clones_do_not_mint_capacity() {
++        let (budget, work, credits) = credits();
++        let total = budget.used.load(Ordering::Acquire);
++        let first = take(&credits);
++        assert!(credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none(), "one encoder even with another free slot");
++        let first = payload(first, 1);
++        let held = first.clone();
++        let second = payload(take(&credits), 2);
++        assert!(credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none());
++        assert!(credits.requested.load(Ordering::Acquire), "full credit preserves coalesced demand");
++        drop(first);
++        assert!(credits.acquire().unwrap().is_none(), "a clone retains the same first slot");
++        assert_eq!(budget.used.load(Ordering::Acquire), total);
++        drop(held);
++        let third = credits.acquire().unwrap().unwrap();
++        assert_eq!(budget.used.load(Ordering::Acquire), total, "return/transfer does not reserve globally again");
++        assert_eq!(second.png(), &[1, 2, 3, 4]);
++        drop(third);
++        drop(second);
++        credits.close();
++        assert_eq!(budget.used.load(Ordering::Acquire), 17 + 1024);
++        drop(credits);
++        drop(work);
++        assert_eq!(budget.used.load(Ordering::Acquire), 0);
++    }
++    #[test]
++    fn demand_during_inflight_survives_publication_and_terminal_held_frames_stay_billed() {
++        let (budget, work, credits) = credits();
++        let first = take(&credits);
++        assert!(!credits.requested.load(Ordering::Acquire));
++        assert!(credits.request().unwrap());
++        let first = payload(first, 1);
++        assert!(credits.requested.load(Ordering::Acquire));
++        let second = payload(credits.acquire().unwrap().unwrap(), 2);
++        let per_slot = credits.plan.slot_bytes().unwrap();
++        credits.close();
++        assert!(!credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none());
++        drop(work);
++        assert_eq!(budget.used.load(Ordering::Acquire), 2 * per_slot + 1024);
++        drop(credits);
++        assert_eq!(first.covered(), &[1, 0, 0, 0]);
++        drop(first);
++        assert_eq!(budget.used.load(Ordering::Acquire), per_slot + 1024);
++        drop(second);
++        assert_eq!(budget.used.load(Ordering::Acquire), 0);
++    }
++    #[test]
++    fn optional_exhaustion_is_real_and_legacy_request_remains_noop() {
++        let (_, work, credits) = credits();
++        assert!(credits.request().unwrap());
++        credits.exhaust();
++        assert!(credits.exhausted.load(Ordering::Acquire));
++        assert!(!credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none());
++        credits.close();
++        drop(work);
++        let host = CpuHost::cooperative();
++        let job = host.submit(id(7724, 2), 19, empty(), request()).unwrap();
++        let before = serde_json::to_value(job.status().unwrap()).unwrap();
++        assert!(!job.request_partial_preview().unwrap());
++        assert!(!job.partial_preview_exhausted().unwrap());
++        assert!(job.partial_preview().unwrap().is_none());
++        assert_eq!(serde_json::to_value(job.status().unwrap()).unwrap(), before);
++        job.cancel().unwrap();
++        assert!(!job.request_partial_preview().unwrap());
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    fn real_fixture() -> (CpuHost, JobHandle, Running) {
++        let host = ImageHost(Arc::new(Owner {
++            executor: None, shared: CpuHost::shared(MEMORY_LIMIT), kind: HostKind::NativeWorker,
++            running: Mutex::new(None), _worker: None,
++        }));
++        let request = ImageRequest {
++            integrator: Integrator::Raytrace,
++            raytrace: Some(crate::job::RaytraceOptions {
++                progressive: Some(crate::job::CpuProgressiveOptions { samples_per_pixel: 5, seed: 123 }),
++                lights: Some(Vec::new()), ..Default::default()
++            }), width: 16, height: 16, ..request()
++        };
++        let job = host.submit_cpu_partial_with_environment_and_options(id(7724, 3), 19, empty(), request, JobOptions::default(), None).unwrap();
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        let running = Running::begin(work).unwrap();
++        (host, job, running)
++    }
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn real_partial_png_carries_unknown_and_two_held_payloads_do_not_block_final() {
++        let (host, job, mut running) = real_fixture();
++        assert!(job.request_partial_preview().unwrap());
++        let mut during = false;
++        for _ in 0..100_000 {
++            assert!(running.advance(1).unwrap());
++            if !during && running.partial.as_ref().unwrap().0[0].lease.is_some() {
++                assert!(job.request_partial_preview().unwrap());
++                during = true;
++            }
++            if job.partial_preview().unwrap().is_some() { break; }
++        }
++        let first = job.partial_preview().unwrap().unwrap();
++        assert!(during);
++        assert_eq!(first.info.sequence, 1);
++        assert_eq!(first.info.completed_passes, 0);
++        assert!(first.info.updated_prefix > 0 && first.info.updated_prefix < 256);
++        assert!(job.preview().unwrap().is_none(), "partial mode never publishes uncredited legacy snapshots");
++        let decoded = image::load_from_memory(first.png()).unwrap().to_rgba8();
++        assert_eq!(decoded.dimensions(), (16, 16));
++        for (i, rgba) in decoded.pixels().enumerate() {
++            assert_eq!(rgba.0[3], if (i as u64) < first.info.updated_prefix { 255 } else { 0 });
++            assert_eq!(first.covered()[i], 0, "empty scene means a real miss, never a fabricated hit");
++        }
++        let first_hash = Sha256::digest(first.png());
++        for _ in 0..100_000 {
++            if job.partial_preview().unwrap().is_some_and(|p| p.info.sequence == 2) { break; }
++            assert!(running.advance(1).unwrap());
++        }
++        let second = job.partial_preview().unwrap().unwrap();
++        assert_eq!(second.info.sequence, 2, "request issued during encoding must survive first publication");
++        assert!(job.request_partial_preview().unwrap());
++        assert_eq!(job.0.partial.as_ref().unwrap().state.lock().unwrap().free.bytes, 0);
++        for _ in 0..100_000 {
++            if !running.advance(1).unwrap() { break; }
++            assert!(job.partial_preview().unwrap().is_some_and(|p| p.info.sequence == 2));
++            assert!(running.partial.as_ref().unwrap().0[0].lease.is_none());
++            assert!(running.partial.as_ref().unwrap().0[0].pending.is_none());
++        }
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
++        let final_frame = job.frame().unwrap().unwrap();
++        assert_eq!((final_frame.info.width, final_frame.info.height), (16, 16));
++        assert!(job.partial_preview().unwrap().is_none());
++        assert!(!job.request_partial_preview().unwrap());
++        assert_eq!(Sha256::digest(first.png()), first_hash);
++        let per_slot = job.0.partial.as_ref().unwrap().plan.slot_bytes().unwrap();
++        drop(running);
++        let before = host.admitted_bytes();
++        drop(first);
++        assert_eq!(host.admitted_bytes(), before - per_slot);
++        drop(second);
++        assert_eq!(host.admitted_bytes(), before - 2 * per_slot);
++        drop(final_frame);
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++}
++
++#[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++mod partial_preview_terminal_errors {
++    use super::*;
++    use crate::job::{CpuProgressiveOptions, RaytraceOptions};
++
++    #[test]
++    fn cancellation_during_real_partial_hash_closes_slots_and_publishes_nothing() {
++        let host = ImageHost(Arc::new(Owner { executor: None, shared: CpuHost::shared(MEMORY_LIMIT),
++            kind: HostKind::NativeWorker, running: Mutex::new(None), _worker: None }));
++        let request = ImageRequest { integrator: Integrator::Raytrace, raytrace: Some(RaytraceOptions {
++            progressive: Some(CpuProgressiveOptions { samples_per_pixel: 5, seed: 7 }), lights: Some(Vec::new()), ..Default::default()
++        }), width: 8, height: 8, ..request() };
++        let job = host.submit_cpu_partial_with_environment_and_options(id(7725, 1), 19, empty(), request, JobOptions::default(), None).unwrap();
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        let mut running = Running::begin(work).unwrap();
++        assert!(job.request_partial_preview().unwrap());
++        for _ in 0..100_000 {
++            if running.pending_png.is_some() { break; }
++            assert!(running.advance(1).unwrap());
++        }
++        assert!(running.pending_png.is_some());
++        assert!(job.partial_preview().unwrap().is_none());
++        assert!(running.partial.as_ref().unwrap().0[0].pending.is_some());
++        job.cancel().unwrap();
++        assert!(!job.request_partial_preview().unwrap());
++        assert!(!running.guarded_step(1));
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Cancelled);
++        assert!(job.partial_preview().unwrap().is_none());
++        assert!(job.frame().unwrap().is_none());
++        drop(running);
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++}
++
++#[test]
++fn partial_credit_last_drop_fails_closed_after_poison_without_losing_leases() {
++    let plan = crate::job::PartialPreviewPlan::new(1, 1).unwrap();
++    let bytes = 2 * plan.slot_bytes().unwrap() + 1024;
++    let budget = Arc::new(Budget { used: AtomicU64::new(0), limit: bytes });
++    let mut work = budget.reserve(bytes).unwrap();
++    let credits = PartialCredits::new(plan, &mut work).unwrap();
++    credits.request().unwrap();
++    let held = credits.acquire().unwrap().unwrap();
++    let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++        let _state = credits.state.lock().unwrap();
++        panic!("deliberate test-only credit lock poison");
++    }));
++    assert!(poisoned.is_err());
++    drop(held);
++    assert_eq!(budget.used.load(Ordering::Acquire), 1024);
++    credits.close();
++    drop(credits);
++    drop(work);
++    assert_eq!(budget.used.load(Ordering::Acquire), 0);
++}
++
++mod protected_feedback_contract {
++    use super::*;
++    use crate::job::{CpuBudget, ProtectedPreviewPlan, ProtectedPreviewReport, MAX_CPU_WORK, MAX_PROTECTED_CPU_WORK};
++
++    #[test]
++    fn profile_ordinary_caps_are_unchanged_and_protected_aggregate_is_explicit() {
++        assert_eq!(MAX_CPU_WORK, 16_000_000_000_000);
++        assert_eq!(MAX_PROTECTED_CPU_WORK, 16_000_809_500_800);
++        for (profile, ordinary) in [(CpuBudget::Compact, 1_000_000_000), (CpuBudget::Studio, 1_000_000_000_000), (CpuBudget::Workstation, MAX_CPU_WORK)] {
++            let plan = ProtectedPreviewPlan::new(1024, 1024, 16, profile).unwrap();
++            plan.validate().unwrap();
++            assert_eq!(plan.ordinary_limit(), ordinary);
++            assert_eq!(plan.quota_limit(), 64);
++            assert_eq!(plan.snapshot_work().unwrap(), 12_648_450);
++            assert_eq!(plan.presentation_limit().unwrap(), 809_500_800);
++            assert_eq!(plan.aggregate_limit().unwrap(), ordinary + 809_500_800);
++            assert_eq!(plan.preview_plan(), crate::job::PartialPreviewPlan::new(1024, 1024).unwrap());
++        }
++        let largest = ProtectedPreviewPlan::new(1024, 1024, 16, CpuBudget::Workstation).unwrap();
++        assert_eq!(largest.aggregate_limit().unwrap(), MAX_PROTECTED_CPU_WORK);
++    }
++    #[test]
++    fn zero_single_and_spread_milestones_are_checked_below_final_target() {
++        let zero = ProtectedPreviewPlan::new(1, 1, 1, CpuBudget::Compact).unwrap();
++        assert_eq!((zero.total_commits(), zero.quota_limit(), zero.presentation_limit().unwrap()), (1, 0, 0));
++        assert_eq!(zero.aggregate_limit().unwrap(), zero.ordinary_limit());
++        assert!(zero.milestone(0).is_err());
++        let single = ProtectedPreviewPlan::new(2, 1, 1, CpuBudget::Compact).unwrap();
++        assert_eq!(single.quota_limit(), 1);
++        assert_eq!(single.milestone(0).unwrap(), 1);
++        assert!(single.milestone(1).is_err());
++        for (w, h, spp, quota) in [(3, 1, 1, 2), (66, 1, 1, 64), (32, 32, 64, 64)] {
++            let plan = ProtectedPreviewPlan::new(w, h, spp, CpuBudget::Compact).unwrap();
++            assert_eq!(plan.quota_limit(), quota);
++            let milestones: Vec<_> = (0..quota).map(|j| plan.milestone(j).unwrap()).collect();
++            assert_eq!(milestones.first(), Some(&1));
++            assert_eq!(milestones.last(), Some(&(plan.total_commits() - 1)));
++            assert!(milestones.windows(2).all(|pair| pair[0] < pair[1]));
++            assert!(plan.milestone(quota).is_err());
++            assert!(plan.milestone(u32::MAX).is_err());
++        }
++    }
++    #[test]
++    fn protected_plan_preserves_explicit_large_profiles_and_rejects_invalid_inputs() {
++        let large = ProtectedPreviewPlan::new(4096, 4096, 4096, CpuBudget::Workstation).unwrap();
++        assert_eq!(large.samples_per_pixel(), 4096);
++        assert_eq!(large.budget(), CpuBudget::Workstation);
++        assert_eq!(large.total_commits(), 68_719_476_736);
++        assert_eq!((large.preview_plan().width(), large.preview_plan().height()), (1024, 1024));
++        assert!(large.aggregate_limit().unwrap() <= MAX_PROTECTED_CPU_WORK);
++        for (w, h, spp, budget) in [(0, 1, 1, CpuBudget::Compact), (1, 0, 1, CpuBudget::Compact),
++            (1, 1, 0, CpuBudget::Compact), (1, 1, 65, CpuBudget::Compact),
++            (u32::MAX, u32::MAX, u32::MAX, CpuBudget::Workstation), (4096, 4096, 4096, CpuBudget::Compact)] {
++            assert!(ProtectedPreviewPlan::new(w, h, spp, budget).is_err());
++        }
++    }
++
++    // Synthetic REPORT-validation fixtures only; real producer usage is tested below.
++    fn report(plan: ProtectedPreviewPlan, ordinary_used: u64, accepted: u32, next: u32) -> ProtectedPreviewReport {
++        ProtectedPreviewReport { policy_version: 1, ordinary_limit: plan.ordinary_limit(),
++            presentation_limit: plan.presentation_limit().unwrap(), aggregate_limit: plan.aggregate_limit().unwrap(),
++            ordinary_used, presentation_used: u64::from(accepted) * plan.snapshot_work().unwrap(),
++            accepted_snapshots: accepted, quota_limit: plan.quota_limit(), next_milestone_index: next,
++            quota_exhausted: accepted == plan.quota_limit(), milestones_complete: next == plan.quota_limit() }
++    }
++    fn credits(plan: ProtectedPreviewPlan) -> (Arc<Budget>, Reservation, Arc<PartialCredits>) {
++        let total = 2 * plan.preview_plan().slot_bytes().unwrap() + 1024;
++        let budget = Arc::new(Budget { used: AtomicU64::new(0), limit: total });
++        let mut work = budget.reserve(total).unwrap();
++        let credits = PartialCredits::new_protected(plan, &mut work).unwrap();
++        assert_eq!(work.bytes, 0);
++        (budget, work, credits)
++    }
++    #[test]
++    fn coalesced_milestones_do_not_fabricate_spent_quota_or_permanent_exhaustion() {
++        let plan = ProtectedPreviewPlan::new(32, 32, 64, CpuBudget::Compact).unwrap();
++        let (budget, work, credits) = credits(plan);
++        assert!(credits.state.lock().unwrap().report.is_none());
++        let value = report(plan, 31, 1, 64);
++        credits.store_report(Some(value)).unwrap();
++        assert_eq!(credits.state.lock().unwrap().report, Some(value));
++        assert!(value.milestones_complete && !value.quota_exhausted);
++        assert_eq!(value.presentation_used, 77_826);
++        assert!(value.presentation_used < value.presentation_limit);
++        assert!(!credits.exhausted.load(Ordering::Acquire));
++        assert!(credits.request().unwrap());
++        assert!(credits.state.lock().unwrap().report == Some(value));
++        credits.close();
++        drop(credits);
++        drop(work);
++        assert_eq!(budget.used.load(Ordering::Acquire), 0);
++    }
++    #[test]
++    fn actual_report_invariants_and_monotonic_refusals_preserve_the_prior_observation() {
++        let plan = ProtectedPreviewPlan::new(32, 32, 64, CpuBudget::Compact).unwrap();
++        let (_, work, credits) = credits(plan);
++        let good = report(plan, 31, 1, 2);
++        credits.store_report(Some(good)).unwrap();
++        let bad = [
++            report(plan, 30, 1, 2), report(plan, 31, 0, 2), report(plan, 31, 1, 1),
++            ProtectedPreviewReport { ordinary_used: plan.ordinary_limit() + 1, ..good },
++            ProtectedPreviewReport { presentation_used: plan.presentation_limit().unwrap() + 1, ..good },
++            ProtectedPreviewReport { aggregate_limit: MAX_PROTECTED_CPU_WORK + 1, ..good },
++            ProtectedPreviewReport { quota_exhausted: true, ..good },
++            ProtectedPreviewReport { milestones_complete: true, ..good },
++            ProtectedPreviewReport { policy_version: 2, ..good },
++        ];
++        for value in bad {
++            assert!(credits.store_report(Some(value)).is_err());
++            assert_eq!(credits.state.lock().unwrap().report, Some(good));
++        }
++        assert!(credits.store_report(None).is_err());
++        assert_eq!(credits.state.lock().unwrap().report, Some(good));
++        let at_limits = report(plan, plan.ordinary_limit(), plan.quota_limit(), plan.quota_limit());
++        credits.store_report(Some(at_limits)).unwrap();
++        assert_eq!(at_limits.ordinary_used + at_limits.presentation_used, at_limits.aggregate_limit);
++        assert!(credits.exhausted.load(Ordering::Acquire));
++        assert!(!credits.request().unwrap());
++        credits.close();
++        drop(credits);
++        drop(work);
++    }
++    #[test]
++    fn legacy_report_is_absent_and_rejected_protected_admission_does_not_reserve() {
++        let host = CpuHost::cooperative();
++        let job = host.submit(id(7730, 1), 19, empty(), request()).unwrap();
++        let before = serde_json::to_value(job.status().unwrap()).unwrap();
++        assert!(job.protected_preview_report().unwrap().is_none());
++        assert_eq!(serde_json::to_value(job.status().unwrap()).unwrap(), before);
++        let admitted = host.admitted_bytes();
++        assert!(host.submit_cpu_protected_partial_with_environment_and_options(id(7730, 2), 19, empty(), request(), JobOptions::default(), None).is_err());
++        assert_eq!(host.admitted_bytes(), admitted);
++        assert!(job.protected_preview_report().unwrap().is_none());
++    }
++}
++
++#[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++mod protected_feedback_real_host {
++    use super::*;
++    use crate::job::{CpuProgressiveOptions, RaytraceOptions};
++
++    fn fixture(serial: u64, width: u32, height: u32, samples: u32) -> (CpuHost, JobHandle, Running) {
++        let host = ImageHost(Arc::new(Owner { executor: None, shared: CpuHost::shared(MEMORY_LIMIT),
++            kind: HostKind::NativeWorker, running: Mutex::new(None), _worker: None }));
++        let request = ImageRequest { integrator: Integrator::Raytrace, raytrace: Some(RaytraceOptions {
++            progressive: Some(CpuProgressiveOptions { samples_per_pixel: samples, seed: 123 }),
++            lights: Some(Vec::new()), ..Default::default()
++        }), width, height, background: [10, 20, 30], ..request() };
++        let job = host.submit_cpu_protected_partial_with_environment_and_options(id(7731, serial), 19, empty(), request, JobOptions::default(), None).unwrap();
++        assert!(job.protected_preview_report().unwrap().is_none(), "no future ledger is invented while queued");
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        let running = Running::begin(work).unwrap();
++        assert!(job.protected_preview_report().unwrap().is_some(), "report is read from the real constructed task");
++        (host, job, running)
++    }
++    fn finish(running: &mut Running) {
++        for _ in 0..1_000_000 { if !running.advance(1).unwrap() { return; } }
++        panic!("small protected CPU fixture did not finish");
++    }
++    #[test]
++    fn actual_32_by_32_control_and_feedback_keep_ordinary_work_and_final_png_identical() {
++        let (control_host, control, mut control_run) = fixture(1, 32, 32, 64);
++        finish(&mut control_run);
++        let control_report = control.protected_preview_report().unwrap().unwrap();
++        let control_frame = control.frame().unwrap().unwrap();
++        assert_eq!(control_report.presentation_used, 0);
++        assert_eq!(control_report.accepted_snapshots, 0);
++        assert!(control_report.ordinary_used > 0);
++        let (host, job, mut running) = fixture(2, 32, 32, 64);
++        assert!(job.request_partial_preview().unwrap());
++        finish(&mut running);
++        let report = job.protected_preview_report().unwrap().unwrap();
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
++        assert_eq!(report.ordinary_used, control_report.ordinary_used);
++        assert_eq!(report.ordinary_limit, 1_000_000_000);
++        assert_eq!(report.accepted_snapshots, 1);
++        assert_eq!(report.presentation_used, 77_826);
++        assert_eq!(report.ordinary_used + report.presentation_used, control_report.ordinary_used + 77_826);
++        assert_eq!(report.aggregate_limit, report.ordinary_limit + report.presentation_limit);
++        assert!(!report.quota_exhausted);
++        let frame = job.frame().unwrap().unwrap();
++        assert_eq!(frame.png(), control_frame.png());
++        let decoded = image::load_from_memory(frame.png()).unwrap().to_rgba8();
++        assert_eq!(decoded.dimensions(), (32, 32));
++        assert!(decoded.pixels().all(|p| p.0 == [10, 20, 30, 255]), "analytic all-miss final pixels");
++        let terminal = job.protected_preview_report().unwrap();
++        assert!(!job.request_partial_preview().unwrap());
++        assert_eq!(job.protected_preview_report().unwrap(), terminal);
++        drop(frame); drop(job); drop(running);
++        drop(control_frame); drop(control); drop(control_run);
++        assert_eq!((host.admitted_bytes(), control_host.admitted_bytes()), (0, 0));
++    }
++    #[test]
++    fn real_quota_exhaustion_does_not_remove_normal_full_pass_or_final_work() {
++        let (control_host, control, mut control_run) = fixture(3, 2, 1, 2);
++        finish(&mut control_run);
++        let expected = control.protected_preview_report().unwrap().unwrap();
++        let control_frame = control.frame().unwrap().unwrap();
++        let (host, job, mut running) = fixture(4, 2, 1, 2);
++        let mut exhausted_seen = false;
++        for _ in 0..100_000 {
++            job.request_partial_preview().unwrap();
++            let more = running.advance(1).unwrap();
++            let report = job.protected_preview_report().unwrap().unwrap();
++            if report.quota_exhausted {
++                exhausted_seen = true;
++                assert!(job.partial_preview_exhausted().unwrap());
++                assert!(!job.request_partial_preview().unwrap());
++            }
++            if !more { break; }
++        }
++        assert!(exhausted_seen);
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
++        let report = job.protected_preview_report().unwrap().unwrap();
++        assert_eq!((report.accepted_snapshots, report.quota_limit, report.next_milestone_index), (3, 3, 3));
++        assert!(report.quota_exhausted && report.milestones_complete);
++        assert_eq!(report.presentation_used, report.presentation_limit);
++        assert_eq!(report.ordinary_used, expected.ordinary_used, "full-pass tick and final remain ordinary");
++        let frame = job.frame().unwrap().unwrap();
++        assert_eq!(frame.png(), control_frame.png());
++        drop(frame); drop(job); drop(running);
++        drop(control_frame); drop(control); drop(control_run);
++        assert_eq!((host.admitted_bytes(), control_host.admitted_bytes()), (0, 0));
++    }
++    #[test]
++    fn two_retained_protected_payloads_keep_their_leases_without_blocking_final() {
++        let (host, job, mut running) = fixture(5, 2, 1, 2);
++        assert!(job.request_partial_preview().unwrap());
++        for _ in 0..100_000 {
++            if job.partial_preview().unwrap().is_some() { break; }
++            assert!(running.advance(1).unwrap());
++        }
++        let first = job.partial_preview().unwrap().unwrap();
++        assert!(job.request_partial_preview().unwrap());
++        for _ in 0..100_000 {
++            if job.partial_preview().unwrap().is_some_and(|p| p.info.sequence == 2) { break; }
++            assert!(running.advance(1).unwrap());
++        }
++        let second = job.partial_preview().unwrap().unwrap();
++        assert_eq!(second.info.sequence, 2);
++        let old_hash = Sha256::digest(first.png());
++        assert!(job.request_partial_preview().unwrap());
++        assert_eq!(job.0.partial.as_ref().unwrap().state.lock().unwrap().free.bytes, 0);
++        finish(&mut running);
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
++        let report = job.protected_preview_report().unwrap().unwrap();
++        assert_eq!((report.accepted_snapshots, report.quota_limit), (2, 3));
++        assert!(!report.quota_exhausted);
++        assert_eq!(Sha256::digest(first.png()), old_hash);
++        drop(running);
++        let slot = job.0.partial.as_ref().unwrap().plan.slot_bytes().unwrap();
++        let retained = host.admitted_bytes();
++        drop(first);
++        assert_eq!(host.admitted_bytes(), retained - slot);
++        drop(second);
++        assert_eq!(host.admitted_bytes(), retained - 2 * slot);
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++    #[test]
++    fn charged_begin_followed_by_poll_error_retains_actual_report_without_refund() {
++        let (host, job, mut running) = fixture(6, 32, 32, 64);
++        let plan = job.0.partial.as_ref().unwrap().plan;
++        for _ in 0..100_000 {
++            if running.task.as_mut().unwrap().partial_ready(plan).unwrap() { break; }
++            assert!(running.advance(1).unwrap());
++        }
++        assert!(running.task.as_mut().unwrap().partial_ready(plan).unwrap());
++        assert!(job.request_partial_preview().unwrap());
++        // Invalid zero quantum fails AFTER the host's accepted safe BEGIN/precharge.
++        assert!(!running.guarded_step(0));
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Failed);
++        let report = job.protected_preview_report().unwrap().unwrap();
++        assert_eq!(report.accepted_snapshots, 1);
++        assert_eq!(report.presentation_used, 77_826);
++        assert!(job.frame().unwrap().is_none());
++        assert!(!job.request_partial_preview().unwrap());
++        drop(running); drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++    #[test]
++    fn cancellation_while_host_hashes_does_not_charge_twice_or_refund_feedback() {
++        let (host, job, mut running) = fixture(7, 32, 32, 64);
++        assert!(job.request_partial_preview().unwrap());
++        for _ in 0..100_000 {
++            if running.pending_png.is_some() { break; }
++            assert!(running.advance(1).unwrap());
++        }
++        assert!(running.pending_png.is_some());
++        let before = job.protected_preview_report().unwrap().unwrap();
++        assert_eq!((before.accepted_snapshots, before.presentation_used), (1, 77_826));
++        job.cancel().unwrap();
++        assert!(!running.guarded_step(1));
++        assert_eq!(job.protected_preview_report().unwrap(), Some(before));
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Cancelled);
++        assert!(job.frame().unwrap().is_none());
++        drop(running); drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++}
++
++#[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++mod protected_begin_setup_errors {
++    use super::*;
++    use crate::job::{CpuProgressiveOptions, EmissionSides, RaytraceOptions, SurfaceEmission};
++    use solidcraft_geom::Vec3;
++
++    fn fixture(serial: u64) -> (CpuHost, JobHandle, Work) {
++        let host = ImageHost(Arc::new(Owner { executor: None, shared: CpuHost::shared(MEMORY_LIMIT),
++            kind: HostKind::NativeWorker, running: Mutex::new(None), _worker: None }));
++        let mesh = Arc::new(Mesh { positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y], normals: vec![Vec3::Z; 3],
++            triangles: vec![[0, 1, 2]], tri_face: vec![0], ..Default::default() });
++        let scene = ProductScene { bounds: mesh.bounds(), meshes: vec![crate::ProductMesh {
++            name: "Setup witness".into(), mesh, color: [0; 3], opacity: 1.0, surface: None, transmission: None, faces: Vec::new(),
++        }] };
++        let request = ImageRequest { integrator: Integrator::Raytrace, raytrace: Some(RaytraceOptions {
++            progressive: Some(CpuProgressiveOptions { samples_per_pixel: 2, seed: 123 }),
++            lights: Some(Vec::new()), emissions: Some(vec![SurfaceEmission { body_index: 0, body: "Setup witness".into(),
++                color: [1.0, 0.0, 0.0], strength: 2.0, sides: EmissionSides::Both }]), ..Default::default()
++        }), width: 2, height: 1, ..request() };
++        assert_eq!(request.raytrace.as_ref().unwrap().emissions.as_ref().unwrap().len(), 1);
++        let job = host.submit_cpu_protected_partial_with_environment_and_options(id(7732, serial), 19, scene, request, JobOptions::default(), None).unwrap();
++        assert!(job.protected_preview_report().unwrap().is_none());
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        (host, job, work)
++    }
++    fn observed_report(credits: &PartialCredits) -> crate::job::ProtectedPreviewReport {
++        let Ok(state) = credits.state.try_lock() else { panic!("wrapping factory must run outside the report/credit lock") };
++        let actual = state.report.expect("real task report must be captured BEFORE fallible wrapping");
++        assert_eq!(actual.policy_version, 1);
++        assert_eq!(actual.ordinary_limit, 1_000_000_000);
++        assert_eq!(actual.accepted_snapshots, 0);
++        assert_eq!(actual.ordinary_used, 1, "the single emission retains its pre-existing ordinary constructor tick");
++        assert_eq!(actual.presentation_used, 0);
++        actual
++    }
++    fn assert_failed_report(host: CpuHost, job: JobHandle, actual: crate::job::ProtectedPreviewReport, message: &str) {
++        assert_eq!(job.protected_preview_report().unwrap(), Some(actual), "no invented zeros or discarded real constructor work");
++        let status = job.status().unwrap();
++        assert_eq!(status.progress.phase, Phase::Failed);
++        let error = status.error.unwrap();
++        assert_eq!(error.code, ErrorCode::AllocationFailed);
++        assert_eq!(error.message, message);
++        assert!(job.frame().unwrap().is_none());
++        assert!(job.partial_preview().unwrap().is_none());
++        assert!(!job.request_partial_preview().unwrap());
++        let request_bytes = job.0._request_reservation.as_ref().map_or(0, |lease| lease.bytes);
++        assert_eq!(host.admitted_bytes(), request_bytes + 1024, "task/free slots released; actual report metadata retained");
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++    #[test]
++    fn protected_setup_failure_preserves_constructed_task_report_and_error() {
++        let (host, job, work) = fixture(1);
++        let observed = std::cell::Cell::new(None);
++        let running = Running::begin_with_partial_factory(work, |credits| {
++            // Deterministic fault AFTER the REAL producer and first host slot exist.
++            observed.set(Some(observed_report(&credits)));
++            Err(JobError::new(ErrorCode::AllocationFailed, "injected auxiliary setup failure"))
++        });
++        assert!(running.is_none());
++        let actual = observed.get().expect("post-construction factory must be reached");
++        assert_failed_report(host, job, actual, "injected auxiliary setup failure");
++    }
++    #[test]
++    fn first_host_slot_failure_preserves_the_raw_producer_report() {
++        let (host, job, work) = fixture(2);
++        let Work { scene, handle, reservation, environment, .. } = work;
++        let plan = handle.0.partial.as_ref().unwrap().protected.unwrap();
++        let options = handle.0.request.raytrace.clone().unwrap();
++        let task = crate::raytrace::image::ImageTask::new_with_environment_and_nested_and_protected_partial(
++            scene, handle.0.request.clone(), handle.0.cancel.clone(), options, environment, handle.0.options.nested_media, plan,
++        ).unwrap();
++        let observed = std::cell::Cell::new(None);
++        let result = WorkTask::raytrace_with_slot(task, handle.0.partial.as_deref(), |_task| {
++            // The actual producer exists even though its FIRST wrapper cannot be made.
++            observed.set(Some(observed_report(handle.0.partial.as_deref().unwrap())));
++            Err(JobError::new(ErrorCode::AllocationFailed, "injected first host slot failure"))
++        });
++        let error = result.err().expect("injected wrapping failure must propagate");
++        let actual = observed.get().expect("first-slot factory must be reached");
++        terminal(&handle, error);
++        drop(reservation);
++        drop(handle);
++        assert_failed_report(host, job, actual, "injected first host slot failure");
++    }
++    #[test]
++    fn an_actual_constructor_refusal_keeps_report_none_and_skips_auxiliary_setup() {
++        let (host, job, mut work) = fixture(3);
++        drop(job);
++        // Private invalid-constructor fixture only; no public admission/cap bypass.
++        Arc::get_mut(&mut work.handle.0).unwrap().request.width = 0;
++        let job = work.handle.clone();
++        let running = Running::begin_with_partial_factory(work, |_| {
++            panic!("constructor refusal must not attempt auxiliary setup")
++        });
++        assert!(running.is_none());
++        assert!(job.protected_preview_report().unwrap().is_none());
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Failed);
++        assert!(job.frame().unwrap().is_none());
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++}
+--- a/crates/render/src/job/linear_exr.rs
++++ b/crates/render/src/job/linear_exr.rs
+@@ -14,7 +14,70 @@
+     if w == 0 || h == 0 || w > 8192 || h > 8192 || w * h > 16_777_216 {
+         return Err(invalid("linear EXR requires 1..8192 sides and at most 16777216 pixels"));
+     }
+-    Ok(w * h * 16 + h * 16 + 4096)
++    encoded_limit_with_limits(width, height, super::GPU_PATH_LIMITS)
++}
++
++/// Internal bounded policy, not proof of a host reservation. Future callers must
++/// retain their request's lease and charge work before advancing output stages.
++pub(crate) fn output_pixels_with_limits(width: u32, height: u32, limits: crate::RenderLimits) -> Result<u64> {
++    let maximum = super::CpuBudget::Workstation.image_limits(false);
++    if limits.max_dimension > maximum.max_dimension || limits.max_pixels > maximum.max_pixels
++        || limits.max_scratch_bytes > maximum.max_scratch_bytes
++    {
++        return Err(invalid("output policy exceeds the bounded implementation envelope"));
++    }
++    let (w, h) = (u64::from(width), u64::from(height));
++    if limits.fit(w, h, None) != Some((w, h)) {
++        return Err(invalid("output dimensions exceed the explicit policy"));
++    }
++    let pixels = w.checked_mul(h).ok_or_else(|| invalid("output pixel count overflow"))?;
++    checked_output_bytes(pixels, 1, 0, limits)?;
++    Ok(pixels)
++}
++
++/// Checked combined live-byte estimate; this is not an individual Vec layout or a lease.
++pub(crate) fn checked_stage_bytes(count: u64, element_bytes: u64, extra: u64, limits: crate::RenderLimits) -> Result<u64> {
++    let maximum = super::CpuBudget::Workstation.image_limits(false);
++    if limits.max_dimension > maximum.max_dimension || limits.max_pixels > maximum.max_pixels
++        || limits.max_scratch_bytes > maximum.max_scratch_bytes
++    {
++        return Err(invalid("output policy exceeds the bounded implementation envelope"));
++    }
++    let bytes = count.checked_mul(element_bytes).and_then(|n| n.checked_add(extra))
++        .ok_or_else(|| invalid("output byte layout overflow"))?;
++    if bytes > limits.max_scratch_bytes {
++        return Err(invalid("output byte layout exceeds its explicit policy"));
++    }
++    Ok(bytes)
++}
++
++/// Check an individual addressable byte layout separately from combined estimates.
++pub(crate) fn checked_output_bytes(count: u64, element_bytes: u64, extra: u64, limits: crate::RenderLimits) -> Result<usize> {
++    let bytes = checked_stage_bytes(count, element_bytes, extra, limits)?;
++    let addressable = usize::try_from(bytes).map_err(|_| invalid("output byte layout exceeds address space"))?;
++    if std::alloc::Layout::array::<u8>(addressable).is_err() {
++        return Err(invalid("output byte layout exceeds address space"));
++    }
++    Ok(addressable)
++}
++
++pub(crate) fn encoded_limit_with_limits(width: u32, height: u32, limits: crate::RenderLimits) -> Result<u64> {
++    let pixels = output_pixels_with_limits(width, height, limits)?;
++    let row_bytes = u64::from(width).checked_mul(16).ok_or_else(|| invalid("EXR row overflow"))?;
++    i32::try_from(row_bytes).map_err(|_| invalid("EXR row exceeds scanline representation"))?;
++    i32::try_from(width).and_then(|_| i32::try_from(height)).map_err(|_| invalid("EXR window exceeds integer representation"))?;
++    let extra = u64::from(height).checked_mul(16).and_then(|n| n.checked_add(4096)).ok_or_else(|| invalid("EXR metadata overflow"))?;
++    Ok(checked_output_bytes(pixels, 16, extra, limits)? as u64)
++}
++
++pub(crate) fn scanline_layout(width: u32, height: u32, header_bytes: usize, limits: crate::RenderLimits) -> Result<(usize, usize)> {
++    let limit = encoded_limit_with_limits(width, height, limits)?;
++    let rows = usize::try_from(height).map_err(|_| invalid("EXR row count exceeds address space"))?;
++    let row = usize::try_from(width).ok().and_then(|n| n.checked_mul(16)).ok_or_else(|| invalid("EXR row layout overflow"))?;
++    let first = rows.checked_mul(8).and_then(|n| n.checked_add(header_bytes)).ok_or_else(|| invalid("EXR offset table overflow"))?;
++    let total = row.checked_add(8).and_then(|n| n.checked_mul(rows)).and_then(|n| n.checked_add(first)).ok_or_else(|| invalid("EXR scanline layout overflow"))?;
++    if total as u64 > limit { return Err(invalid("EXR output exceeds its admission")); }
++    Ok((first, total))
+ }
+ 
+ fn attribute(out: &mut Vec<u8>, name: &[u8], kind: &[u8], value: &[u8]) -> Result<()> {
+@@ -32,6 +95,12 @@
+ }
+ 
+ pub(super) fn header(width: u32, height: u32) -> Result<Vec<u8>> {
++    encoded_limit(width, height)?;
++    header_with_limits(width, height, super::GPU_PATH_LIMITS)
++}
++
++pub(crate) fn header_with_limits(width: u32, height: u32, limits: crate::RenderLimits) -> Result<Vec<u8>> {
++    encoded_limit_with_limits(width, height, limits)?;
+     let mut out = Vec::new();
+     out.try_reserve_exact(4096).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "EXR header allocation failed"))?;
+     out.extend_from_slice(&20_000_630_u32.to_le_bytes());
+@@ -83,20 +152,25 @@
+ }
+ impl ExrTask {
+     pub fn new(width: u32, height: u32, pixels: Vec<[f32; 4]>, cancel: CancelToken) -> Result<Self> {
+-        let limit = encoded_limit(width, height)?;
++        encoded_limit(width, height)?;
++        Self::new_with_limits(width, height, pixels, cancel, super::GPU_PATH_LIMITS)
++    }
++
++    pub(crate) fn new_with_limits(width: u32, height: u32, pixels: Vec<[f32; 4]>, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
++        let limit = encoded_limit_with_limits(width, height, limits)?;
+         if pixels.len() as u64 != u64::from(width) * u64::from(height) {
+             return Err(invalid("EXR pixel count differs from dimensions"));
+         }
+         cancel.check()?;
+-        let mut bytes = header(width, height)?;
++        checked_output_bytes(pixels.capacity() as u64, 16, 0, limits)?;
++        checked_stage_bytes(pixels.capacity() as u64, 16, limit, limits)?;
++        let mut bytes = header_with_limits(width, height, limits)?;
+         let row_bytes = u64::from(width) * 16;
+-        let first = bytes.len() as u64 + u64::from(height) * 8;
+-        let total = first + u64::from(height) * (row_bytes + 8);
+-        if total > limit {
+-            return Err(invalid("EXR output exceeds its admission"));
+-        }
+-        let additional = usize::try_from(total).ok().and_then(|n| n.checked_sub(bytes.len())).ok_or_else(|| invalid("EXR address space exceeded"))?;
++        let (first, total) = scanline_layout(width, height, bytes.len(), limits)?;
++        let first = first as u64;
++        let additional = total.checked_sub(bytes.len()).ok_or_else(|| invalid("EXR address space exceeded"))?;
+         bytes.try_reserve_exact(additional).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "EXR output allocation failed"))?;
++        if bytes.capacity() as u64 > limit { return Err(invalid("EXR output exceeds its admission")); }
+         for y in 0..height {
+             bytes.extend_from_slice(&(first + u64::from(y) * (row_bytes + 8)).to_le_bytes());
+         }
+@@ -197,4 +271,43 @@
+         cancel.cancel();
+         assert_eq!(task.step(1).unwrap_err().code, ErrorCode::Cancelled);
+     }
+-}
++
++    #[test]
++    fn explicit_output_policy_is_exact_bounded_and_checked_before_allocation() {
++        let wide = super::super::CpuBudget::Workstation.image_limits(false);
++        assert_eq!(output_pixels_with_limits(8193, 1, wide).unwrap(), 8193);
++        assert_eq!(encoded_limit_with_limits(8193, 1, wide).unwrap(), 135200);
++        assert_eq!(checked_output_bytes(8193, 8, 65536, wide).unwrap(), 131080);
++        for (w, h) in [(0, 1), (1, 0), (u32::MAX, u32::MAX)] {
++            assert!(output_pixels_with_limits(w, h, wide).is_err());
++        }
++        assert!(output_pixels_with_limits(8193, 1, super::super::GPU_PATH_LIMITS).is_err(), "a reduced fit is not acceptance");
++        for hostile in [
++            crate::RenderLimits { max_dimension: u64::MAX, ..wide },
++            crate::RenderLimits { max_pixels: u64::MAX, ..wide },
++            crate::RenderLimits { max_scratch_bytes: u64::MAX, ..wide },
++        ] {
++            assert!(output_pixels_with_limits(1, 1, hostile).is_err());
++        }
++        assert!(checked_output_bytes(u64::MAX, 16, 0, wide).is_err());
++        assert!(checked_output_bytes(1, 1, u64::MAX, wide).is_err());
++        assert!(scanline_layout(1, 1, usize::MAX, wide).is_err());
++        assert!(checked_output_bytes(1, 16, 0, crate::RenderLimits { max_scratch_bytes: 15, ..wide }).is_err());
++        assert!(checked_output_bytes(isize::MAX as u64 + 1, 1, 0, wide).is_err());
++    }
++
++    #[test]
++    fn explicit_gpu_exr_keeps_legacy_bytes_and_dimension_before_cancel_order() {
++        let pixels = vec![[4.0, 1.0, 0.25, 1.0]; 6];
++        let expected = encode(pixels.clone(), 3, 2);
++        let mut task = ExrTask::new_with_limits(3, 2, pixels, CancelToken::default(), super::super::GPU_PATH_LIMITS).unwrap();
++        assert!(task.step(2).unwrap());
++        assert_eq!(task.finish().unwrap().0, expected);
++        let cancel = CancelToken::default();
++        cancel.cancel();
++        let error = ExrTask::new(0, 1, vec![], cancel.clone()).err().unwrap();
++        assert_eq!(error.code, ErrorCode::InvalidRequest);
++        assert!(error.to_string().contains("linear EXR requires 1..8192"));
++        assert_eq!(ExrTask::new(1, 1, vec![], cancel).err().unwrap().code, ErrorCode::InvalidRequest);
++    }
++}
+--- a/crates/render/src/job/linear_exr_decode.rs
++++ b/crates/render/src/job/linear_exr_decode.rs
+@@ -17,13 +17,24 @@
+ impl Decoder {
+     pub(super) fn new(bytes: &[u8], width: u32, height: u32, cancel: &CancelToken) -> Result<Self> {
+         cancel.check()?;
+-        let limit = super::linear_exr::encoded_limit(width, height)?;
+-        let expected = super::linear_exr::header(width, height)?;
++        super::linear_exr::encoded_limit(width, height)?;
++        Self::new_with_limits(bytes, width, height, cancel, super::GPU_PATH_LIMITS)
++    }
++    pub(crate) fn new_with_limits(bytes: &[u8], width: u32, height: u32, cancel: &CancelToken, limits: crate::RenderLimits) -> Result<Self> {
++        cancel.check()?;
++        let limit = super::linear_exr::encoded_limit_with_limits(width, height, limits)?;
++        let count = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
++        super::linear_exr::checked_output_bytes(count, 16, 0, limits)?;
++        super::linear_exr::checked_stage_bytes(count, 16, 4096, limits)?;
++        let expected = if limits == super::GPU_PATH_LIMITS {
++            super::linear_exr::header(width, height)?
++        } else {
++            super::linear_exr::header_with_limits(width, height, limits)?
++        };
+         if bytes.len() as u64 > limit || !bytes.starts_with(&expected) {
+             return Err(invalid("master is not the retained native FLOAT32 linear-sRGB/D65 profile"));
+         }
+-        let first = expected.len() + height as usize * 8;
+-        let length = first + height as usize * (width as usize * 16 + 8);
++        let (first, length) = super::linear_exr::scanline_layout(width, height, expected.len(), limits)?;
+         if bytes.len() != length {
+             return Err(invalid("native master has missing or trailing scanline bytes"));
+         }
+@@ -79,7 +90,8 @@
+     }
+ }
+ fn word(bytes: &[u8], offset: usize) -> Result<u32> {
+-    bytes.get(offset..offset + 4).and_then(|s| s.try_into().ok()).map(u32::from_le_bytes).ok_or_else(|| invalid("truncated native master word"))
++    let end = offset.checked_add(4).ok_or_else(|| invalid("native master word offset overflow"))?;
++    bytes.get(offset..end).and_then(|s| s.try_into().ok()).map(u32::from_le_bytes).ok_or_else(|| invalid("truncated native master word"))
+ }
+ 
+ #[cfg(test)]
+@@ -117,4 +129,22 @@
+         assert!(decoder.step(&bytes, &cancel).is_err());
+         assert_eq!(decoder.rows(), 0);
+     }
++
++    #[test]
++    fn explicit_wide_native_roundtrip_retains_raw_bits_and_legacy_limits() {
++        let wide = super::super::CpuBudget::Workstation.image_limits(false);
++        let raw = vec![[4.0, 1.0, 0.25, 1.0]; 8193];
++        let cancel = CancelToken::default();
++        let mut task = super::super::linear_exr::ExrTask::new_with_limits(8193, 1, raw.clone(), cancel.clone(), wide).unwrap();
++        assert!(task.step(1).unwrap());
++        let (bytes, unchanged) = task.finish().unwrap();
++        assert_eq!(unchanged, raw);
++        assert!(Decoder::new(&bytes, 8193, 1, &cancel).is_err());
++        let mut decoder = Decoder::new_with_limits(&bytes, 8193, 1, &cancel, wide).unwrap();
++        assert!(decoder.step(&bytes, &cancel).unwrap());
++        assert_eq!(decoder.finish().unwrap(), raw);
++        cancel.cancel();
++        assert_eq!(Decoder::new(&[], 0, 0, &cancel).err().unwrap().code, ErrorCode::Cancelled);
++        assert_eq!(Decoder::new_with_limits(&[], 0, 0, &cancel, wide).err().unwrap().code, ErrorCode::Cancelled);
++    }
+ }
+--- a/crates/render/src/job/mod.rs
++++ b/crates/render/src/job/mod.rs
+@@ -44,7 +44,7 @@
+ pub(crate) use host::Reservation;
+ pub use host::{
+     CpuHost, HostKind, ImageHost, JobEnvironmentInfo, JobHandle, JobStatus, LinearAlphaConvention, LinearColourEncoding, LinearMasterInfo,
+-    PreviewInfo, RenderFrame, RenderPreview,
++    PartialPreviewInfo, PartialPreviewProjection, PreviewInfo, RenderFrame, RenderPartialPreview, RenderPreview,
+ };
+ pub use image::{Admission, ImageTask, TaskPoll, admit, admit_geometry, admit_geometry_with_limits};
+ pub use lens::ThinLens;
+@@ -1282,3 +1282,149 @@
+         }
+     }
+ }
++
++/// Fixed representative presentation plan; fitting never grants source admission.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct PartialPreviewPlan {
++    source_width: u32,
++    source_height: u32,
++    width: u32,
++    height: u32,
++}
++impl PartialPreviewPlan {
++    pub fn source_width(&self) -> u32 { self.source_width }
++    pub fn source_height(&self) -> u32 { self.source_height }
++    pub fn width(&self) -> u32 { self.width }
++    pub fn height(&self) -> u32 { self.height }
++    pub fn new(source_width: u32, source_height: u32) -> Result<Self> {
++        if source_width == 0 || source_height == 0 {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview source dimensions must be positive"));
++        }
++        let edge = source_width.max(source_height);
++        let fit = |side: u32| {
++            if edge <= 1024 { side } else { ((u64::from(side) * 1024 + u64::from(edge) / 2) / u64::from(edge)).max(1) as u32 }
++        };
++        Ok(Self { source_width, source_height, width: fit(source_width), height: fit(source_height) })
++    }
++    pub fn validate(&self) -> Result<()> {
++        if *self != Self::new(self.source_width, self.source_height)? {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview dimensions differ from the fixed plan"));
++        }
++        Ok(())
++    }
++    pub fn pixels(&self) -> u64 {
++        u64::from(self.width) * u64::from(self.height)
++    }
++    pub fn source_index(&self, preview_index: usize) -> Result<usize> {
++        self.validate()?;
++        let index = u64::try_from(preview_index).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "partial preview index overflow"))?;
++        if index >= self.pixels() {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview index outside its plan"));
++        }
++        let x = (index % u64::from(self.width)) * u64::from(self.source_width) / u64::from(self.width);
++        let y = (index / u64::from(self.width)) * u64::from(self.source_height) / u64::from(self.height);
++        let source = y.checked_mul(u64::from(self.source_width)).and_then(|v| v.checked_add(x))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial source index overflow"))?;
++        usize::try_from(source).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "partial source index exceeds address space"))
++    }
++    pub fn encoded_limit(&self) -> Result<u64> {
++        self.validate()?;
++        self.pixels().checked_mul(8).and_then(|v| v.checked_add(65_536))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial PNG capacity overflow"))
++    }
++    pub fn covered_bytes(&self) -> Result<u64> {
++        self.validate()?;
++        self.pixels().checked_mul(2).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial coverage capacity overflow"))
++    }
++    pub fn snapshot_work(&self) -> Result<u64> {
++        self.validate()?;
++        self.pixels().checked_mul(12).and_then(|v| v.checked_add(65_538))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial work bound overflow"))
++    }
++    /// Two retained payload slots; existing admitted RGBA/encoder scratch is reused.
++    #[cfg(feature = "raytrace-cpu")]
++    pub(crate) fn additional_bytes(&self) -> Result<u64> {
++        self.slot_bytes()?.checked_mul(2).and_then(|v| v.checked_add(1024))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial preview admission overflow"))
++    }
++    pub(crate) fn slot_bytes(&self) -> Result<u64> {
++        self.encoded_limit()?.checked_add(self.covered_bytes()?).and_then(|v| v.checked_add(2048))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial retained slot overflow"))
++    }
++}
++
++/// Explicit protected-feedback aggregate ceiling; the ordinary MAX_CPU_WORK is unchanged.
++pub const MAX_PROTECTED_CPU_WORK: u64 = 16_000_809_500_800;
++
++/// Checked per-job feedback policy, not an admission token or an arbitrary work envelope.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct ProtectedPreviewPlan {
++    preview: PartialPreviewPlan,
++    samples_per_pixel: u32,
++    budget: CpuBudget,
++    total_commits: u64,
++    quota_limit: u32,
++}
++impl ProtectedPreviewPlan {
++    pub fn new(source_width: u32, source_height: u32, samples_per_pixel: u32, budget: CpuBudget) -> Result<Self> {
++        budget.validate_image(source_width, source_height, Some(CpuProgressiveOptions { samples_per_pixel, seed: 0 }))?;
++        let preview = PartialPreviewPlan::new(source_width, source_height)?;
++        let total_commits = u64::from(source_width).checked_mul(u64::from(source_height))
++            .and_then(|v| v.checked_mul(u64::from(samples_per_pixel)))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected camera-commit count overflow"))?;
++        let quota_limit = if total_commits <= 1 { 0 } else {
++            u32::try_from((total_commits - 1).min(64)).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "protected quota overflow"))?
++        };
++        let plan = Self { preview, samples_per_pixel, budget, total_commits, quota_limit };
++        plan.aggregate_limit()?;
++        Ok(plan)
++    }
++    pub fn validate(&self) -> Result<()> {
++        if *self != Self::new(self.preview.source_width(), self.preview.source_height(), self.samples_per_pixel, self.budget)? {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "protected feedback plan differs from its canonical policy"));
++        }
++        Ok(())
++    }
++    pub fn preview_plan(&self) -> PartialPreviewPlan { self.preview }
++    pub fn samples_per_pixel(&self) -> u32 { self.samples_per_pixel }
++    pub fn budget(&self) -> CpuBudget { self.budget }
++    pub fn total_commits(&self) -> u64 { self.total_commits }
++    pub fn ordinary_limit(&self) -> u64 { self.budget.limits().max_work_units }
++    pub fn quota_limit(&self) -> u32 { self.quota_limit }
++    pub fn snapshot_work(&self) -> Result<u64> { self.preview.snapshot_work() }
++    pub fn presentation_limit(&self) -> Result<u64> {
++        self.snapshot_work()?.checked_mul(u64::from(self.quota_limit))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected presentation allowance overflow"))
++    }
++    pub fn aggregate_limit(&self) -> Result<u64> {
++        self.ordinary_limit().checked_add(self.presentation_limit()?).filter(|v| *v <= MAX_PROTECTED_CPU_WORK)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected aggregate work exceeds its explicit ceiling"))
++    }
++    /// Zero-based, strictly increasing milestones below the final target.
++    pub fn milestone(&self, index: u32) -> Result<u64> {
++        if index >= self.quota_limit {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "protected milestone index outside its quota"));
++        }
++        if self.quota_limit == 1 { return Ok(1); }
++        self.total_commits.checked_sub(2).and_then(|v| v.checked_mul(u64::from(index)))
++            .and_then(|v| v.checked_div(u64::from(self.quota_limit - 1)))
++            .and_then(|v| v.checked_add(1))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected milestone arithmetic overflow"))
++    }
++}
++
++/// Actual admitted policy and monotonic producer usage; never a saved design field.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
++pub struct ProtectedPreviewReport {
++    pub policy_version: u32,
++    pub ordinary_limit: u64,
++    pub presentation_limit: u64,
++    pub aggregate_limit: u64,
++    pub ordinary_used: u64,
++    pub presentation_used: u64,
++    pub accepted_snapshots: u32,
++    pub quota_limit: u32,
++    pub next_milestone_index: u32,
++    pub quota_exhausted: bool,
++    pub milestones_complete: bool,
++}
+--- a/crates/render/src/job/photographic.rs
++++ b/crates/render/src/job/photographic.rs
+@@ -98,6 +98,12 @@
+         }
+         count.checked_mul(8).and_then(|n| n.checked_add(16_384)).ok_or_else(|| invalid("photographic scratch size overflow"))
+     }
++    pub(crate) fn scratch_bytes_with_limits(self, width: u32, height: u32, limits: crate::RenderLimits) -> Result<u64> {
++        self.validate()?;
++        let count = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
++        if !self.active() { return Ok(0); }
++        super::linear_exr::checked_stage_bytes(count, 8, 16_384, limits)
++    }
+ }
+ #[derive(Clone, Copy, Debug, Default)]
+ struct Highlight {
+@@ -114,6 +120,22 @@
+ impl PhotographicTask {
+     pub fn new(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken) -> Result<Self> {
+         options.scratch_bytes(width, height)?;
++        Self::create(width, height, source, linear, options, cancel, GPU_PATH_LIMITS)
++    }
++    pub(crate) fn new_with_limits(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
++        options.scratch_bytes_with_limits(width, height, limits)?;
++        cancel.check()?;
++        let count = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
++        if usize::try_from(count).ok() != Some(linear.len()) || linear.len().checked_mul(4) != Some(source.len()) || !options.active() {
++            return Err(invalid("photographic stage requires an admitted opaque image, matching source pixels and an active effect"));
++        }
++        let raw_bytes = super::linear_exr::checked_output_bytes(linear.capacity() as u64, 16, 0, limits)? as u64;
++        let source_bytes = super::linear_exr::checked_output_bytes(source.capacity() as u64, 1, 0, limits)? as u64;
++        let retained = raw_bytes.checked_add(source_bytes).and_then(|n| n.checked_add(16_384)).ok_or_else(|| invalid("photographic retained byte overflow"))?;
++        super::linear_exr::checked_stage_bytes(count, 4, retained, limits)?;
++        Self::create(width, height, source, linear, options, cancel, limits)
++    }
++    fn create(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
+         if std::mem::size_of::<PhotographicState>() > 16_384 {
+             return Err(invalid("photographic metadata exceeds its admitted allowance"));
+         }
+@@ -122,7 +144,7 @@
+         if state.capacity() != 1 {
+             return Err(invalid("photographic state exceeds bounded capacity"));
+         }
+-        state.push(PhotographicState::new(width, height, source, linear, options, cancel)?);
++        state.push(PhotographicState::new(width, height, source, linear, options, cancel, limits)?);
+         Ok(Self { state })
+     }
+     pub fn step(&mut self, units: usize) -> Result<bool> {
+@@ -153,21 +175,23 @@
+     ready: bool,
+ }
+ impl PhotographicState {
+-    pub fn new(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken) -> Result<Self> {
++    pub fn new(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
+         options.validate()?;
+         cancel.check()?;
+         let count = u64::from(width) * u64::from(height);
+         if width == 0
+             || height == 0
+-            || u64::from(width) > GPU_PATH_LIMITS.max_dimension
+-            || u64::from(height) > GPU_PATH_LIMITS.max_dimension
+-            || count > GPU_PATH_LIMITS.max_pixels
++            || super::linear_exr::output_pixels_with_limits(width, height, limits).is_err()
+             || usize::try_from(count).ok() != Some(linear.len())
+             || linear.len().checked_mul(4) != Some(source.len())
+             || !options.active()
+         {
+             return Err(invalid("photographic stage requires an admitted opaque image, matching source pixels and an active effect"));
+         }
++        let raw_bytes = super::linear_exr::checked_output_bytes(linear.capacity() as u64, 16, 0, limits)? as u64;
++        let source_bytes = super::linear_exr::checked_output_bytes(source.capacity() as u64, 1, 0, limits)? as u64;
++        let retained = raw_bytes.checked_add(source_bytes).and_then(|n| n.checked_add(16_384)).ok_or_else(|| invalid("photographic retained byte overflow"))?;
++        super::linear_exr::checked_stage_bytes(count, 4, retained, limits)?;
+         let mut output = Vec::new();
+         output.try_reserve_exact(source.len()).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "photographic output allocation failed"))?;
+         if output.capacity() != source.len() {
+@@ -449,4 +473,35 @@
+         assert!(task.step(1).is_err());
+         assert!(serde_json::from_str::<Photographic>(r#"{"physical_lens":true}"#).is_err());
+     }
+-}
++
++    #[test]
++    fn explicit_wide_photographic_keeps_constants_and_legacy_refusal() {
++        let wide = super::super::CpuBudget::Workstation.image_limits(false);
++        let options = Photographic { radial_distortion: 0.1, chromatic_pixels: 2.0, soft_focus: 0.3, sharpening: 0.2, ..Default::default() };
++        assert!(PhotographicTask::new(8193, 1, vec![], vec![], options, CancelToken::default()).is_err());
++        let rgba = [128, 128, 128, 255].repeat(8193);
++        let mut task = PhotographicTask::new_with_limits(8193, 1, rgba.clone(), vec![[0.25, 0.25, 0.25, 1.0]; 8193], options, CancelToken::default(), wide).unwrap();
++        while !task.step(256).unwrap() {}
++        assert_eq!(task.finish().unwrap(), rgba);
++        let cancel = CancelToken::default(); cancel.cancel();
++        assert_eq!(Photographic::default().scratch_bytes(0, u32::MAX).unwrap(), 0);
++        assert_eq!(PhotographicTask::new(0, 1, vec![], vec![], options, cancel.clone()).err().unwrap().code, ErrorCode::InvalidRequest);
++        assert_eq!(PhotographicTask::new(0, 1, vec![], vec![], Photographic::default(), cancel).err().unwrap().code, ErrorCode::Cancelled);
++    }
++
++    #[test]
++    fn explicit_gpu_photographic_matches_legacy_and_cancel_never_finishes() {
++        let options = Photographic { grain: 0.03, seed: 37, ..Default::default() };
++        let rgba = [64, 128, 192, 255].repeat(6);
++        let linear = vec![[0.1, 0.5, 2.0, 1.0]; 6];
++        let mut legacy = PhotographicTask::new(3, 2, rgba.clone(), linear.clone(), options, CancelToken::default()).unwrap();
++        let mut explicit = PhotographicTask::new_with_limits(3, 2, rgba.clone(), linear.clone(), options, CancelToken::default(), GPU_PATH_LIMITS).unwrap();
++        while !legacy.step(1).unwrap() {} while !explicit.step(16).unwrap() {}
++        assert_eq!(legacy.finish().unwrap(), explicit.finish().unwrap());
++        let cancel = CancelToken::default();
++        let mut task = PhotographicTask::new_with_limits(3, 2, rgba, linear, options, cancel.clone(), GPU_PATH_LIMITS).unwrap();
++        cancel.cancel();
++        assert_eq!(task.step(1).unwrap_err().code, ErrorCode::Cancelled);
++        assert_eq!(task.finish().err().unwrap().code, ErrorCode::Cancelled);
++    }
++}
+--- a/crates/render/src/job/png.rs
++++ b/crates/render/src/job/png.rs
+@@ -51,8 +51,20 @@
+             return Err(JobError::new(ErrorCode::InvalidRequest, "invalid PNG dimensions or RGBA length"));
+         }
+         cancel.check()?;
++        Self::new_with_limits(request, rgba, cancel, super::GPU_PATH_LIMITS)
++    }
++    pub(crate) fn new_with_limits(request: &ImageRequest, rgba: Vec<u8>, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
++        let pixels = super::linear_exr::output_pixels_with_limits(request.width, request.height, limits)?;
++        let rgba_bytes = super::linear_exr::checked_output_bytes(pixels, 4, 0, limits)?;
++        if rgba.len() != rgba_bytes {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "invalid PNG dimensions or RGBA length"));
++        }
++        let limit = super::linear_exr::checked_output_bytes(pixels, 8, 65_536, limits)?;
++        let retained = super::linear_exr::checked_output_bytes(rgba.capacity() as u64, 1, 0, limits)? as u64;
++        super::linear_exr::checked_stage_bytes(1, retained, limit as u64, limits)?;
++        cancel.check()?;
+         let bytes = Arc::new(Mutex::new(Vec::new()));
+-        let output = Output { bytes: bytes.clone(), limit: (pixels * 8 + 65_536) as usize, cancel: cancel.clone() };
++        let output = Output { bytes: bytes.clone(), limit, cancel: cancel.clone() };
+         let mut encoder = png::Encoder::new(output, request.width, request.height);
+         encoder.set_color(png::ColorType::Rgba);
+         encoder.set_depth(png::BitDepth::Eight);
+@@ -85,3 +97,43 @@
+         Ok(TaskPoll::Complete(std::mem::take(&mut *bytes)))
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn request(width: u32, height: u32) -> ImageRequest {
++        ImageRequest { width, height, camera: Default::default(), integrator: Default::default(), raytrace: None,
++            environment: None, textures: None, studio_weights: None, background: [0; 3], transparent_background: false }
++    }
++    fn finish(mut task: PngTask) -> Vec<u8> {
++        loop { if let TaskPoll::Complete(bytes) = task.step(1).unwrap() { return bytes; } }
++    }
++
++    #[test]
++    fn explicit_png_keeps_default_bytes_and_roundtrips_a_narrow_wide_image() {
++        let small = request(3, 2); let rgba = [20, 40, 60, 255].repeat(6);
++        let legacy = finish(PngTask::new(&small, rgba.clone(), CancelToken::default()).unwrap());
++        let explicit = finish(PngTask::new_with_limits(&small, rgba, CancelToken::default(), super::super::GPU_PATH_LIMITS).unwrap());
++        assert_eq!(explicit, legacy);
++        let wide = request(8193, 1); let rgba = [20, 40, 60, 255].repeat(8193);
++        assert!(PngTask::new(&wide, vec![], CancelToken::default()).is_err());
++        let png = finish(PngTask::new_with_limits(&wide, rgba.clone(), CancelToken::default(), super::super::CpuBudget::Workstation.image_limits(false)).unwrap());
++        let decoded = image::load_from_memory(&png).unwrap().to_rgba8();
++        assert_eq!(decoded.dimensions(), (8193, 1));
++        assert_eq!(decoded.as_raw(), &rgba);
++    }
++
++    #[test]
++    fn png_dimension_length_and_cancel_precedence_remains_legacy() {
++        let cancel = CancelToken::default(); cancel.cancel();
++        assert_eq!(PngTask::new(&request(0, 1), vec![], cancel.clone()).err().unwrap().code, ErrorCode::InvalidRequest);
++        assert_eq!(PngTask::new(&request(1, 1), vec![], cancel.clone()).err().unwrap().code, ErrorCode::InvalidRequest);
++        assert_eq!(PngTask::new(&request(1, 1), vec![0; 4], cancel.clone()).err().unwrap().code, ErrorCode::Cancelled);
++        let bad = crate::RenderLimits { max_scratch_bytes: u64::MAX, ..super::super::GPU_PATH_LIMITS };
++        assert!(PngTask::new_with_limits(&request(1, 1), vec![0; 4], CancelToken::default(), bad).is_err());
++        let cancel = CancelToken::default();
++        let mut task = PngTask::new_with_limits(&request(1, 1), vec![0; 4], cancel.clone(), super::super::GPU_PATH_LIMITS).unwrap();
++        cancel.cancel(); assert_eq!(task.step(1).err().unwrap().code, ErrorCode::Cancelled);
++    }
++}
+--- a/crates/render/src/job/presentation.rs
++++ b/crates/render/src/job/presentation.rs
+@@ -45,6 +45,11 @@
+     pub fn display(self, width: u32, height: u32) -> Result<Display> {
+         self.validate()?;
+         super::linear_exr::encoded_limit(width, height)?;
++        self.display_with_limits(width, height, super::GPU_PATH_LIMITS)
++    }
++    pub(crate) fn display_with_limits(self, width: u32, height: u32, limits: crate::RenderLimits) -> Result<Display> {
++        self.validate()?;
++        super::linear_exr::output_pixels_with_limits(width, height, limits)?;
+         Ok(Display {
+             width,
+             height,
+@@ -97,6 +102,19 @@
+             return Err(JobError::new(ErrorCode::InvalidRequest, "bloom/display length mismatch"));
+         }
+         super::linear_exr::encoded_limit(self.width, self.height)?;
++        self.encode_bloom_at_with_limits(input, output, cancel, offset, bloom, super::GPU_PATH_LIMITS)
++    }
++    pub(crate) fn encode_bloom_at_with_limits(
++        self, input: &[[f32; 4]], output: &mut [u8], cancel: &CancelToken,
++        offset: usize, bloom: Option<&[[f32; 3]]>, limits: crate::RenderLimits,
++    ) -> Result<()> {
++        if bloom.is_some_and(|pixels| pixels.len() != input.len()) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "bloom/display length mismatch"));
++        }
++        let count = super::linear_exr::output_pixels_with_limits(self.width, self.height, limits)?;
++        super::linear_exr::checked_output_bytes(count, 16, 0, limits)?;
++        super::linear_exr::checked_output_bytes(count, 4, 0, limits)?;
++        if bloom.is_some() { super::linear_exr::checked_output_bytes(count, 12, 0, limits)?; }
+         self.finishing.validate()?;
+         if let Some(backdrop) = self.backdrop {
+             backdrop.validate()?;
+@@ -143,3 +161,49 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn raw_radiance_ev_and_coverage_have_independent_analytic_display_oracles() {
++        let raw = [[4.0, 1.0, 0.25, 1.0], [2.0, 0.5, 0.125, 0.5]];
++        let before = raw.map(|pixel| pixel.map(f32::to_bits));
++        let display = Presentation { exposure_ev: 1.0, background: [0; 3], ..Default::default() }.display(2, 1).unwrap();
++        let mut output = [0; 8];
++        display.encode(&raw, &mut output, &CancelToken::default()).unwrap();
++        let opaque = [8.0 / 9.0, 2.0 / 3.0, 1.0 / 3.0].map(solidcraft_geom::srgb::encode8);
++        let covered = [4.0 / 9.0, 1.0 / 3.0, 1.0 / 6.0].map(solidcraft_geom::srgb::encode8);
++        assert_eq!(&output[..4], &[opaque[0], opaque[1], opaque[2], 255]);
++        assert_eq!(&output[4..], &[covered[0], covered[1], covered[2], 255]);
++        assert_eq!(raw.map(|pixel| pixel.map(f32::to_bits)), before);
++    }
++
++    #[test]
++    fn wide_display_requires_explicit_policy_on_both_calls_without_allocating_a_frame() {
++        let wide = super::super::CpuBudget::Workstation.image_limits(false);
++        assert!(Presentation::default().display(8193, 1).is_err());
++        let display = Presentation::default().display_with_limits(8193, 1, wide).unwrap();
++        let mut output = [0; 4];
++        let raw = [[1.0, 0.0, 0.0, 1.0]];
++        assert!(display.encode_at(&raw, &mut output, &CancelToken::default(), 8192).is_err());
++        display.encode_bloom_at_with_limits(&raw, &mut output, &CancelToken::default(), 8192, None, wide).unwrap();
++        assert_eq!(output, [solidcraft_geom::srgb::encode8(0.5), 0, 0, 255]);
++        assert!(display.encode_bloom_at_with_limits(&raw, &mut output, &CancelToken::default(), 8193, None, wide).is_err());
++    }
++
++    #[test]
++    fn explicit_gpu_display_matches_legacy_and_preserves_validation_before_cancel() {
++        let display = Presentation { exposure_ev: -1.0, ..Default::default() }.display(3, 2).unwrap();
++        let input = [[0.125, 2.0, 0.5, 1.0]; 6];
++        let mut legacy = [0; 24];
++        let mut explicit = [0; 24];
++        display.encode(&input, &mut legacy, &CancelToken::default()).unwrap();
++        display.encode_bloom_at_with_limits(&input, &mut explicit, &CancelToken::default(), 0, None, super::super::GPU_PATH_LIMITS).unwrap();
++        assert_eq!(explicit, legacy);
++        let cancel = CancelToken::default(); cancel.cancel();
++        assert_eq!(display.encode(&[], &mut explicit, &cancel).unwrap_err().code, ErrorCode::InvalidRequest);
++        assert_eq!(display.encode(&input, &mut explicit, &cancel).unwrap_err().code, ErrorCode::Cancelled);
++    }
++}
+--- a/crates/render/src/job/regrade.rs
++++ b/crates/render/src/job/regrade.rs
+@@ -7,19 +7,29 @@
+ pub(super) fn required_bytes(source: &RenderFrame, settings: Presentation) -> Result<u64> {
+     settings.validate()?;
+     super::linear_exr::encoded_limit(source.info.width, source.info.height)?;
++    required_bytes_with_limits(source, settings, super::GPU_PATH_LIMITS)
++}
++
++pub(crate) fn required_bytes_with_limits(source: &RenderFrame, settings: Presentation, limits: crate::RenderLimits) -> Result<u64> {
++    settings.validate()?;
++    super::linear_exr::encoded_limit_with_limits(source.info.width, source.info.height, limits)?;
+     if source.linear_exr().is_none() {
+         return Err(JobError::new(ErrorCode::InvalidRequest, "this completed frame has no retained raw linear master"));
+     }
+-    // Includes decoded float4, bloom ping/pong float3 or display bytes, bounded
+-    // PNG output and codec/header/task metadata. The source keeps its own lease.
+-    Ok(u64::from(source.info.width) * u64::from(source.info.height) * 48
+-        + 1_048_576
+-        + settings.finishing.photographic.scratch_bytes(source.info.width, source.info.height)?)
++    output_bytes(source.info.width, source.info.height, settings, limits)
++}
++
++fn output_bytes(width: u32, height: u32, settings: Presentation, limits: crate::RenderLimits) -> Result<u64> {
++    let pixels = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
++    let photo = settings.finishing.photographic.scratch_bytes_with_limits(width, height, limits)?;
++    let extra = photo.checked_add(1_048_576).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "regrade byte estimate overflow"))?;
++    super::linear_exr::checked_stage_bytes(pixels, 48, extra, limits)
+ }
+ 
+ pub(super) struct RegradeTask {
+     source: Arc<RenderFrame>,
+     settings: Presentation,
++    limits: crate::RenderLimits,
+     cancel: CancelToken,
+     decoder: Option<Decoder>,
+     bloom: Option<BloomTask>,
+@@ -33,11 +43,20 @@
+ impl RegradeTask {
+     pub(super) fn new(source: Arc<RenderFrame>, settings: Presentation, cancel: CancelToken) -> Result<Self> {
+         required_bytes(&source, settings)?;
++        Self::new_with_limits(source, settings, cancel, super::GPU_PATH_LIMITS)
++    }
++    pub(crate) fn new_with_limits(source: Arc<RenderFrame>, settings: Presentation, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
++        required_bytes_with_limits(&source, settings, limits)?;
+         let raw = source.linear_exr().ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "linear master disappeared"))?;
+-        let decoder = Decoder::new(raw, source.info.width, source.info.height, &cancel)?;
++        let decoder = if limits == super::GPU_PATH_LIMITS {
++            Decoder::new(raw, source.info.width, source.info.height, &cancel)?
++        } else {
++            Decoder::new_with_limits(raw, source.info.width, source.info.height, &cancel, limits)?
++        };
+         Ok(Self {
+             source,
+             settings,
++            limits,
+             cancel,
+             decoder: Some(decoder),
+             bloom: None,
+@@ -81,7 +100,7 @@
+                 background: self.settings.background,
+                 transparent_background: self.settings.transparent_background,
+             };
+-            self.png = Some(PngTask::new(&request, task.finish()?, self.cancel.clone())?);
++            self.png = Some(PngTask::new_with_limits(&request, task.finish()?, self.cancel.clone(), self.limits)?);
+             return self.pending(0, u64::from(height));
+         }
+         if let Some(mut decoder) = self.decoder.take() {
+@@ -93,7 +112,7 @@
+             }
+             let pixels = decoder.finish()?;
+             if let Some(bloom) = self.settings.finishing.bloom.filter(|b| b.active()) {
+-                self.bloom = Some(BloomTask::new(width, height, pixels, bloom, self.cancel.clone())?);
++                self.bloom = Some(BloomTask::new_with_limits(width, height, pixels, bloom, self.cancel.clone(), self.limits)?);
+                 return self.pending(0, u64::from(height) * 7);
+             }
+             self.linear = Some(pixels);
+@@ -124,7 +143,8 @@
+             .ok_or_else(|| JobError::new(ErrorCode::Internal, "missing regrade pixels"))?;
+         let output = self.rgba.get_mut(self.encoded * 4..end * 4).ok_or_else(|| JobError::new(ErrorCode::Internal, "missing regrade output"))?;
+         let glow = self.glow.as_deref().and_then(|g| g.get(self.encoded..end));
+-        self.settings.display(width, height)?.encode_bloom_at(pixels, output, &self.cancel, self.encoded, glow)?;
++        self.settings.display_with_limits(width, height, self.limits)?
++            .encode_bloom_at_with_limits(pixels, output, &self.cancel, self.encoded, glow, self.limits)?;
+         self.encoded = end;
+         if end < count {
+             return self.pending(end as u64, count as u64);
+@@ -132,13 +152,14 @@
+         self.glow = None;
+         if self.settings.finishing.photographic.active() {
+             let pixels = self.linear.take().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing photographic master pixels"))?;
+-            self.photographic = Some(super::photographic::PhotographicTask::new(
++            self.photographic = Some(super::photographic::PhotographicTask::new_with_limits(
+                 width,
+                 height,
+                 std::mem::take(&mut self.rgba),
+                 pixels,
+                 self.settings.finishing.photographic,
+                 self.cancel.clone(),
++                self.limits,
+             )?);
+             return self.pending(0, u64::from(width) * u64::from(height));
+         }
+@@ -155,7 +176,22 @@
+             background: self.settings.background,
+             transparent_background: self.settings.transparent_background,
+         };
+-        self.png = Some(PngTask::new(&request, std::mem::take(&mut self.rgba), self.cancel.clone())?);
++        self.png = Some(PngTask::new_with_limits(&request, std::mem::take(&mut self.rgba), self.cancel.clone(), self.limits)?);
+         self.pending(0, u64::from(height))
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn regrade_size_estimate_is_explicit_checked_and_does_not_grant_a_lease() {
++        let wide = super::super::CpuBudget::Workstation.image_limits(false);
++        assert_eq!(output_bytes(8193, 1, Presentation::default(), wide).unwrap(), 8193 * 48 + 1_048_576);
++        assert!(output_bytes(8193, 1, Presentation::default(), super::super::GPU_PATH_LIMITS).is_err());
++        assert!(output_bytes(u32::MAX, u32::MAX, Presentation::default(), wide).is_err());
++        assert!(output_bytes(1, 1, Presentation::default(), crate::RenderLimits { max_scratch_bytes: u64::MAX, ..wide }).is_err());
++        assert!(output_bytes(1, 1, Presentation::default(), crate::RenderLimits { max_scratch_bytes: 1_048_576, ..wide }).is_err());
++    }
++}
+--- a/crates/render/src/raytrace/dielectric.rs
++++ b/crates/render/src/raytrace/dielectric.rs
+@@ -241,6 +241,160 @@
+     lo.x <= hi.x && lo.y <= hi.y && lo.z <= hi.z
+ }
+ 
++/// Immediate parents of already-certified axis-aligned boxes. Strict containment
++/// is sufficient for this exact box subset; touching and partial overlap refuse.
++/// Eight overrides bound this to at most 64 comparisons, without allocation.
++pub(super) fn parents(
++    certificates: &[Option<Certificate>; MAX_OVERRIDES],
++    nested: bool,
++) -> Result<[Option<usize>; MAX_OVERRIDES]> {
++    let mut result = [None; MAX_OVERRIDES];
++    for (child, certificate) in certificates.iter().enumerate() {
++        let Some(Certificate::ClosedBox(bounds)) = certificate else { continue };
++        for (candidate, certificate) in certificates.iter().enumerate() {
++            let Some(Certificate::ClosedBox(container)) = certificate else { continue };
++            if candidate == child || !overlaps(*bounds, *container) {
++                continue;
++            }
++            if !nested {
++                return Err(TraceError::InvalidInput("nested, touching or overlapping dielectric volumes are unsupported"));
++            }
++            if strictly_contains(*container, *bounds) {
++                let parent = result.get_mut(child).ok_or(TraceError::Internal("dielectric child index"))?;
++                let replace = match *parent {
++                    None => true,
++                    Some(previous) => match certificates.get(previous).copied().flatten() {
++                        Some(Certificate::ClosedBox(old)) => strictly_contains(old, *container),
++                        _ => return Err(TraceError::Internal("dielectric parent certificate")),
++                    },
++                };
++                if replace {
++                    *parent = Some(candidate);
++                }
++            } else if !strictly_contains(*bounds, *container) {
++                return Err(TraceError::InvalidInput("dielectric boxes must be disjoint or strictly nested; touching and overlap are unsupported"));
++            }
++        }
++    }
++    Ok(result)
++}
++
++fn strictly_contains(outer: Bounds, inner: Bounds) -> bool {
++    let lo = outer.min();
++    let hi = outer.max();
++    let a = inner.min();
++    let b = inner.max();
++    lo.x < a.x && lo.y < a.y && lo.z < a.z && hi.x > b.x && hi.y > b.y && hi.z > b.z
++}
++
++/// A certified axis-aligned face point, shared by propagation and Beer intervals.
++/// This is used only by the explicit nested-box path, never by general spawn.
++#[derive(Clone, Copy)]
++pub(super) struct ExactBoxFace {
++    pub point: Vec3,
++    axis: usize,
++    outward: f64,
++    entering: bool,
++}
++
++impl ExactBoxFace {
++    pub fn spawn(self, direction: Vec3, reflected: bool) -> Result<super::Ray> {
++        let ray = super::Ray::new(self.point, direction, 0.0_f64.next_up(), super::MAX_DISTANCE_MM)?;
++        let side = super::component(ray.direction(), self.axis) * self.outward;
++        let exterior = if reflected { self.entering } else { !self.entering };
++        if (exterior && side <= 0.0) || (!exterior && side >= 0.0) {
++            return Err(TraceError::InvalidInput("nested box continuation is tangent or on the wrong side"));
++        }
++        Ok(ray)
++    }
++}
++
++/// Recover the exact constant-axis coordinate from the actual certified face.
++/// Tangential coordinates are validated, never clamped or displaced. Equal
++/// ray/other-face depths conservatively refuse independently of ordinal ties.
++pub(super) fn exact_box_face(
++    bounds: Bounds,
++    vertices: [Vec3; 3],
++    normal: Vec3,
++    position: Vec3,
++    incoming: super::Ray,
++) -> Result<ExactBoxFace> {
++    let mut face = None;
++    for axis in 0..3 {
++        let [a, b, c] = vertices.map(|v| super::component(v, axis));
++        if a == b && b == c {
++            if face.is_some() {
++                return Err(TraceError::InvalidInput("nested box face has ambiguous constant axes"));
++            }
++            face = Some((axis, a));
++        }
++    }
++    let (axis, plane) = face.ok_or(TraceError::InvalidInput("nested box face is not axis aligned"))?;
++    let lo = bounds.min();
++    let hi = bounds.max();
++    let outward = if plane == super::component(lo, axis) {
++        -1.0
++    } else if plane == super::component(hi, axis) {
++        1.0
++    } else {
++        return Err(TraceError::InvalidInput("nested box face disagrees with its certificate"));
++    };
++    let axis_vector = match axis {
++        0 => Vec3::X,
++        1 => Vec3::Y,
++        2 => Vec3::Z,
++        _ => return Err(TraceError::Internal("nested box face axis")),
++    };
++    if normal != axis_vector * outward || Triangle::new(vertices)?.geometric_normal() != Some(normal) {
++        return Err(TraceError::InvalidInput("nested box outward normal disagrees with its certified face"));
++    }
++    for vertex in vertices {
++        for a in 0..3 {
++            let coordinate = super::component(vertex, a);
++            if coordinate != super::component(lo, a) && coordinate != super::component(hi, a) {
++                return Err(TraceError::InvalidInput("nested box face vertex is not a certified corner"));
++            }
++        }
++    }
++    let point = match axis {
++        0 => Vec3::new(plane, position.y, position.z),
++        1 => Vec3::new(position.x, plane, position.z),
++        2 => Vec3::new(position.x, position.y, plane),
++        _ => return Err(TraceError::Internal("nested box point axis")),
++    };
++    if !point.is_finite() {
++        return Err(TraceError::InvalidInput("nested box reconstructed point is not finite"));
++    }
++    let direction = super::component(incoming.direction(), axis);
++    if direction == 0.0 {
++        return Err(TraceError::InvalidInput("nested box incident ray is tangent"));
++    }
++    let depth = (plane - super::component(incoming.origin(), axis)) / direction;
++    let [min, max] = incoming.interval();
++    if !depth.is_finite() || depth < min || depth > max {
++        return Err(TraceError::InvalidInput("nested box face is outside the incident ray interval"));
++    }
++    for a in 0..3 {
++        if a == axis {
++            continue;
++        }
++        let coordinate = super::component(point, a);
++        if coordinate <= super::component(lo, a) || coordinate >= super::component(hi, a) {
++            return Err(TraceError::InvalidInput("nested box edge, corner or outside-face point is ambiguous"));
++        }
++        let d = super::component(incoming.direction(), a);
++        if d != 0.0 {
++            for plane in [super::component(lo, a), super::component(hi, a)] {
++                let other = (plane - super::component(incoming.origin(), a)) / d;
++                if other == depth {
++                    return Err(TraceError::InvalidInput("nested box simultaneous face depths are ambiguous"));
++                }
++            }
++        }
++    }
++    Ok(ExactBoxFace { point, axis, outward, entering: direction * outward < 0.0 })
++}
++
+ #[cfg(test)]
+ #[path = "dielectric_tests.rs"]
+ pub(super) mod tests;

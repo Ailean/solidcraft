@@ -1,0 +1,1693 @@
+--- a/crates/render/src/raytrace/primary_aa_tests.rs
++++ b/crates/render/src/raytrace/primary_aa_tests.rs
+@@ -716,3 +716,763 @@
+     }
+     panic!("area work ceiling was reset or the fixture did not finish");
+ }
++
++
++fn partial_four_pixel_source(samples: u32, seed: u32) -> (ProductScene, ImageRequest, RaytraceOptions) {
++    let mut camera = crate::Camera { distance: 10.0, fov: 0.0, ..Default::default() };
++    camera.set_view(StandardView::Top);
++    let body = |name: &str, x0: f64, x1: f64| {
++        let point = |x, y| {
++            let (origin, _) = camera.ray(x, y, 4.0, 1.0);
++            Vec3::new(origin.x, origin.y, 0.0)
++        };
++        ProductMesh {
++            transmission: None, name: name.into(),
++            mesh: Arc::new(Mesh {
++                positions: vec![point(x0, 0.0), point(x1, 0.0), point(x1, 1.0), point(x0, 1.0)],
++                normals: vec![Vec3::Z; 4], triangles: vec![[0,1,2],[0,2,3]], tri_face: vec![0;2], ..Default::default()
++            }),
++            color: [0;3], opacity: 1.0,
++            surface: Some(OpaqueSurface::new(Vec3::ZERO, 0.0, 1.0, 1.5).unwrap()),
++            faces: Vec::new(),
++        }
++    };
++    let meshes = vec![body("Partial red", 0.0, 1.0), body("Partial black", 2.0, 3.0)];
++    let bounds = meshes.iter().fold(Aabb3::EMPTY, |bounds, body| bounds.union(&body.mesh.bounds()));
++    let options = RaytraceOptions {
++        progressive: Some(job::CpuProgressiveOptions { samples_per_pixel:samples, seed }),
++        lights: Some(Vec::new()), shadows: false,
++        emissions: Some(vec![job::SurfaceEmission {
++            body_index:0, body:"Partial red".into(), color:[1.0,0.0,0.0], strength:2.0, sides:job::EmissionSides::Both,
++        }]),
++        ..Default::default()
++    };
++    let request = ImageRequest {
++        studio_weights:None, environment:None, textures:None, integrator:job::Integrator::Raytrace,
++        raytrace:Some(options.clone()), camera, width:4, height:1,
++        background:[10,20,30], transparent_background:false,
++    };
++    (ProductScene { meshes, bounds }, request, options)
++}
++
++fn partial_four_pixel_task(samples: u32, seed: u32, partial: bool) -> ImageTask {
++    let (scene, request, options) = partial_four_pixel_source(samples, seed);
++    if partial {
++        let plan = job::PartialPreviewPlan::new(4,1).unwrap();
++        ImageTask::new_with_environment_and_nested_and_partial(scene,request,CancelToken::default(),options,None,false,plan).unwrap()
++    } else {
++        ImageTask::new(scene,request,CancelToken::default(),options).unwrap()
++    }
++}
++
++type PartialRayLog = Vec<(usize,u32,[u64;6])>;
++fn record_partial_primary(task: &ImageTask, was_empty: bool, log: &mut PartialRayLog) {
++    if was_empty && let Some(pending) = task.pending.as_ref() {
++        let origin = pending.ray.origin();
++        let direction = pending.ray.direction();
++        let ordinal = task.progressive.as_ref().unwrap().film.samples();
++        log.push((task.pixel,ordinal,[origin.x.to_bits(),origin.y.to_bits(),origin.z.to_bits(),
++            direction.x.to_bits(),direction.y.to_bits(),direction.z.to_bits()]));
++    }
++}
++fn reach_partial_frontier(task: &mut ImageTask, passes: u32, prefix: usize, rays: &mut PartialRayLog) {
++    for _ in 0..200_000 {
++        if let Some(progressive) = &task.progressive
++            && progressive.film.ready()
++            && progressive.film.partial_frontier().unwrap().completed_passes == passes
++            && progressive.film.partial_frontier().unwrap().updated_prefix == prefix
++            && task.pending.is_none()
++        {
++            return;
++        }
++        let was_empty = task.pending.is_none();
++        assert!(matches!(task.step_with_partial_previews(1).unwrap(), PartialImagePoll::Pending(_)));
++        record_partial_primary(task,was_empty,rays);
++    }
++    panic!("real task did not reach requested committed frontier");
++}
++fn finish_partial_snapshot(task: &mut ImageTask) -> (Vec<u8>,Vec<u16>,u32,u64) {
++    let paid = task.work.used();
++    for _ in 0..200_000 {
++        let poll = task.step_with_partial_previews(1).unwrap();
++        assert_eq!(task.work.used(),paid,"prepaid resolve/encode must not debit the job twice");
++        match poll {
++            PartialImagePoll::Pending(_) => {}
++            PartialImagePoll::Preview { png,covered,completed_passes,updated_prefix } => return (png,covered,completed_passes,updated_prefix),
++            PartialImagePoll::Complete(_) => panic!("partial snapshot must not become a final frame"),
++        }
++    }
++    panic!("bounded partial snapshot did not finish");
++}
++fn finish_partial_final(task: &mut ImageTask, partial: bool, rays: &mut PartialRayLog) -> (Vec<u8>,Vec<[u64;3]>) {
++    let target = task.options.progressive.unwrap().samples_per_pixel;
++    let mut bits = None;
++    for _ in 0..1_000_000 {
++        if bits.is_none()
++            && let Some(progressive) = &task.progressive
++            && progressive.film.ready() && progressive.film.samples() == target
++        {
++            bits = Some((0..task.request.width as usize * task.request.height as usize)
++                .map(|index| progressive.film.pixel(index).unwrap().0.map(f64::to_bits)).collect());
++        }
++        let was_empty = task.pending.is_none();
++        let complete = if partial {
++            match task.step_with_partial_previews(1).unwrap() {
++                PartialImagePoll::Pending(_) => None,
++                PartialImagePoll::Complete(png) => Some(png),
++                PartialImagePoll::Preview { .. } => panic!("producer created an unrequested partial snapshot"),
++            }
++        } else {
++            match task.step_with_previews(1).unwrap() {
++                ImagePoll::Pending(_) | ImagePoll::Preview { .. } => None,
++                ImagePoll::Complete(png) => Some(png),
++            }
++        };
++        record_partial_primary(task,was_empty,rays);
++        if let Some(png) = complete {
++            return (png,bits.expect("uniform target film must exist before final resolution"));
++        }
++    }
++    panic!("partial/control final did not finish");
++}
++
++#[test]
++fn partial_real_film_png_distinguishes_unknown_miss_hit_and_known_black() {
++    let mut task = partial_four_pixel_task(5,123,true);
++    let plan = job::PartialPreviewPlan::new(4,1).unwrap();
++    reach_partial_frontier(&mut task,0,2,&mut Vec::new());
++    assert!(task.partial_preview_ready(plan).unwrap());
++    let before = task.work.used();
++    assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
++    assert_eq!(task.work.used(),before+plan.snapshot_work().unwrap());
++    let (png,covered,passes,prefix) = finish_partial_snapshot(&mut task);
++    assert_eq!((passes,prefix,task.pixel),(0,2,2));
++    assert_eq!(covered,[1,0,0,0]);
++    let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
++    assert_eq!(image.dimensions(),(4,1));
++    assert_eq!(image.get_pixel(0,0).0,[213,0,0,255],"linear red2 -> Reinhard2/3 -> sRGB213");
++    assert_eq!(image.get_pixel(1,0).0,[10,20,30,255],"observed miss is the captured backplate");
++    assert_eq!(image.get_pixel(2,0).0,[0,0,0,0]);
++    assert_eq!(image.get_pixel(3,0).0,[0,0,0,0]);
++
++    reach_partial_frontier(&mut task,1,0,&mut Vec::new());
++    assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
++    let (png,covered,passes,prefix) = finish_partial_snapshot(&mut task);
++    assert_eq!((passes,prefix,task.pixel),(1,0,4),"snapshot retains the sentinel until the normal charged transition");
++    assert_eq!(covered,[1,0,1,0]);
++    let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
++    assert_eq!(image.get_pixel(2,0).0,[0,0,0,255],"known black is opaque, not Unknown");
++    assert_eq!(image.get_pixel(3,0).0,[10,20,30,255]);
++}
++
++#[test]
++fn partial_snapshots_preserve_interior_cursor_absolute_rays_and_final_bits() {
++    for seed in [0,123] {
++        let mut task = partial_four_pixel_task(5,seed,true);
++        let plan = job::PartialPreviewPlan::new(4,1).unwrap();
++        let mut actual_rays = Vec::new();
++        for (passes,prefix) in [(0,1),(0,3),(1,0)] {
++            reach_partial_frontier(&mut task,passes,prefix,&mut actual_rays);
++            assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
++            let _ = finish_partial_snapshot(&mut task);
++            assert_eq!(task.pixel,if prefix==0 {4}else{prefix});
++        }
++        let actual = finish_partial_final(&mut task,true,&mut actual_rays);
++        let mut control = partial_four_pixel_task(5,seed,false);
++        let mut control_rays = Vec::new();
++        let expected = finish_partial_final(&mut control,false,&mut control_rays);
++        assert_eq!(actual,expected,"final PNG and linear film bits must be exact");
++        assert_eq!(actual_rays,control_rays,"snapshot timing cannot replay a camera pixel or ordinal");
++        assert_eq!(actual_rays.len(),20);
++    }
++}
++
++#[test]
++fn partial_work_preflight_is_optional_and_successful_debit_is_once() {
++    let plan = job::PartialPreviewPlan::new(4,1).unwrap();
++    for enough in [false,true] {
++        let mut task = partial_four_pixel_task(5,123,true);
++        reach_partial_frontier(&mut task,0,2,&mut Vec::new());
++        let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++        let before = task.work.used();
++        let cost = plan.snapshot_work().unwrap();
++        task.work.limit = before+cost-u64::from(!enough);
++        if enough {
++            assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
++            assert_eq!(task.work.used(),before+cost);
++            let _ = finish_partial_snapshot(&mut task);
++            assert_eq!(task.step_with_partial_previews(1).err().unwrap().code,ErrorCode::LimitExceeded,
++                "accepted presentation does not promise future trace headroom");
++        } else {
++            assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Exhausted));
++            assert_eq!(task.work.used(),before);
++            assert_eq!(task.pixel,2);
++            assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(),frontier);
++            assert!(task.progressive.as_ref().unwrap().partial.is_none());
++            assert!(task.encoder.is_none() && task.pixels.is_empty());
++            assert!(matches!(task.step_with_partial_previews(1).unwrap(),PartialImagePoll::Pending(_)));
++        }
++    }
++}
++
++#[test]
++fn partial_ready_requires_actual_safe_commit_plan_and_new_represented_state() {
++    let mut task = partial_four_pixel_task(5,123,true);
++    let plan = job::PartialPreviewPlan::new(4,1).unwrap();
++    assert!(!task.partial_preview_ready(plan).unwrap());
++    let mut observed_pending = false;
++    for _ in 0..200_000 {
++        let _ = task.step_with_partial_previews(1).unwrap();
++        if !task.pending.is_none() {
++            assert!(!task.partial_preview_ready(plan).unwrap());
++            let used=task.work.used();
++            assert!(task.begin_partial_preview(plan).is_err());
++            assert_eq!(task.work.used(),used);
++            observed_pending = true;
++            break;
++        }
++    }
++    assert!(observed_pending,"test must observe a real in-flight primary pixel");
++    reach_partial_frontier(&mut task,0,1,&mut Vec::new());
++    assert!(task.partial_preview_ready(job::PartialPreviewPlan::new(8,1).unwrap()).is_err());
++    assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
++    let _ = finish_partial_snapshot(&mut task);
++    assert!(!task.partial_preview_ready(plan).unwrap(),"same frontier cannot be a fresh snapshot");
++
++    use crate::film::primary::PartialFrontier;
++    let reduced = job::PartialPreviewPlan::new(4096,1).unwrap();
++    let old = PartialFrontier { completed_passes:0, updated_prefix:1, pixels:4096 };
++    assert!(!progressive::represented_changed(reduced,Some(old),PartialFrontier { updated_prefix:4,..old }).unwrap());
++    assert!(progressive::represented_changed(reduced,Some(old),PartialFrontier { updated_prefix:5,..old }).unwrap());
++}
++
++#[test]
++fn partial_cancel_before_resolve_or_during_encoding_never_emits_payload() {
++    let plan = job::PartialPreviewPlan::new(4,1).unwrap();
++    for during_encoding in [false,true] {
++        let mut task = partial_four_pixel_task(5,123,true);
++        reach_partial_frontier(&mut task,0,2,&mut Vec::new());
++        assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
++        let paid=task.work.used();
++        if during_encoding {
++            for _ in 0..20 {
++                if task.encoder.is_some() { break }
++                assert!(matches!(task.step_with_partial_previews(1).unwrap(),PartialImagePoll::Pending(_)));
++            }
++            assert!(task.encoder.is_some());
++        }
++        task.cancel.cancel();
++        assert_eq!(task.step_with_partial_previews(1).err().unwrap().code,ErrorCode::Cancelled);
++        assert_eq!(task.work.used(),paid,"there is no refund or second partial-stage debit");
++        assert!(!task.done);
++    }
++}
++
++#[test]
++fn partial_reduced_resolve_is_bounded_by_display_cells_and_admission_is_not_legacy_prepay() {
++    let fixed=fixture(1,1,None);
++    let mut options=fixed.options.clone();
++    options.progressive=Some(job::CpuProgressiveOptions { samples_per_pixel:5,seed:123 });
++    let mut request=fixed.request.clone();
++    request.width=1500;
++    request.raytrace=Some(options.clone());
++    let plan=job::PartialPreviewPlan::new(1500,1).unwrap();
++    let first=admit_with_partial_preview(&fixed.scene,&request,&options,false,plan).unwrap();
++    options.progressive.as_mut().unwrap().samples_per_pixel=9;
++    request.raytrace=Some(options.clone());
++    let second=admit_with_partial_preview(&fixed.scene,&request,&options,false,plan).unwrap();
++    assert_eq!(first.estimated_total_bytes,second.estimated_total_bytes,"streaming reserves two slots, not every legacy power2 image");
++    let mut task=ImageTask::new_with_environment_and_nested_and_partial(
++        fixed.scene,request,CancelToken::default(),options,None,false,plan).unwrap();
++    reach_partial_frontier(&mut task,0,1,&mut Vec::new());
++    assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
++    let paid=task.work.used();
++    let mut output=None;
++    let mut steps=0_u64;
++    for _ in 0..2000 {
++        steps+=1;
++        match task.step_with_partial_previews(1).unwrap() {
++            PartialImagePoll::Pending(_) => {}
++            PartialImagePoll::Preview { png,covered,.. } => { output=Some((png,covered)); break; }
++            PartialImagePoll::Complete(_) => panic!("display resolve cannot complete the final"),
++        }
++        assert_eq!(task.work.used(),paid);
++    }
++    let (png,covered)=output.expect("bounded reduced snapshot");
++    assert_eq!(steps,plan.pixels()+u64::from(plan.height())+2);
++    assert_eq!(covered.len() as u64,plan.pixels());
++    assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().dimensions(),(1024,1));
++    assert_eq!((task.request.width,task.request.height),(1500,1));
++    assert_eq!(task.pixel,1);
++}
++
++#[test]
++fn partial_area_first_pass_and_final_preserve_all_existing_emitter_sample_counts() {
++    for area_samples in [1,4,16,64] {
++        let source=progressive_area_fixture(area_samples,5,23,true);
++        let plan=job::PartialPreviewPlan::new(source.request.width,source.request.height).unwrap();
++        let mut task=ImageTask::new_with_environment_and_nested_and_partial(
++            source.scene.clone(),source.request.clone(),CancelToken::default(),source.options.clone(),None,false,plan).unwrap();
++        reach_partial_frontier(&mut task,1,0,&mut Vec::new());
++        assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
++        let (first,_,passes,prefix)=finish_partial_snapshot(&mut task);
++        assert_eq!((passes,prefix),(1,0));
++        let (actual,_)=finish_partial_final(&mut task,true,&mut Vec::new());
++        let (legacy_previews,expected,_)=progressive_complete(source,1);
++        assert_eq!(first,legacy_previews[0].1);
++        assert_eq!(actual,expected,"area source normalization/sampler must remain unchanged");
++    }
++}
++
++
++fn partial_original_hdr() -> crate::lighting::environment_input::EnvironmentInput {
++    use crate::lighting::{HdrSource,environment_input::EnvironmentInput};
++    let mut bytes=b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\nPRIMARIES=0.64 0.33 0.30 0.60 0.15 0.06 0.3127 0.3290\n\n-Y 2 +X 4\n".to_vec();
++    for _ in 0..8 { bytes.extend_from_slice(&[128,128,128,129]); }
++    EnvironmentInput::new(HdrSource::new(bytes).unwrap(),0.0,1.0,4).unwrap()
++}
++
++#[test]
++fn partial_hdr_rough_reflection_first_pass_and_final_match_legacy_sampling() {
++    let base=fixture(1,1,Some(true));
++    let mut scene=base.scene.clone();
++    scene.meshes[0].surface=Some(OpaqueSurface::new(Vec3::new(0.8,0.4,0.2),1.0,0.35,1.5).unwrap());
++    let mut options=base.options.clone();
++    options.progressive=Some(job::CpuProgressiveOptions { samples_per_pixel:5,seed:23 });
++    let request=ImageRequest { raytrace:Some(options.clone()),..base.request.clone() };
++    let plan=job::PartialPreviewPlan::new(request.width,request.height).unwrap();
++    let mut task=ImageTask::new_with_environment_and_nested_and_partial(
++        scene.clone(),request.clone(),CancelToken::default(),options.clone(),Some(partial_original_hdr()),false,plan).unwrap();
++    let control=ImageTask::new_with_environment(scene,request,CancelToken::default(),options,Some(partial_original_hdr())).unwrap();
++    reach_partial_frontier(&mut task,1,0,&mut Vec::new());
++    assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
++    let (first,_,passes,prefix)=finish_partial_snapshot(&mut task);
++    assert_eq!((passes,prefix),(1,0));
++    let (actual,_)=finish_partial_final(&mut task,true,&mut Vec::new());
++    let (legacy_previews,expected,_)=progressive_complete(control,1);
++    assert_eq!(first,legacy_previews[0].1);
++    assert_eq!(actual,expected,"HDR and rough-reflection sample identity cannot depend on presentation");
++}
++
++#[test]
++fn partial_full_pass_snapshot_preserves_regular_transition_work_and_final_ledger() {
++    let mut task = partial_four_pixel_task(5,123,true);
++    let mut control = partial_four_pixel_task(5,123,true);
++    let plan = job::PartialPreviewPlan::new(4,1).unwrap();
++    let mut actual_rays = Vec::new();
++    let mut control_rays = Vec::new();
++    reach_partial_frontier(&mut task,1,0,&mut actual_rays);
++    reach_partial_frontier(&mut control,1,0,&mut control_rays);
++    let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++    assert_eq!(frontier,control.progressive.as_ref().unwrap().film.partial_frontier().unwrap());
++    assert_eq!((task.pixel,control.pixel),(4,4));
++    let before = control.work.used();
++    assert_eq!(task.work.used(),before);
++    let cost = plan.snapshot_work().unwrap();
++    assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
++    let (_,_,passes,prefix) = finish_partial_snapshot(&mut task);
++    assert_eq!((passes,prefix,task.pixel),(1,0,4),"snapshot may not consume the ordinary pass transition");
++    assert_eq!(task.work.used(),before+cost);
++    assert_eq!(control.work.used(),before);
++    assert!(!task.partial_preview_ready(plan).unwrap(),"unchanged frontier remains coalesced");
++
++    // The host hashes without stepping this task. On the next producer step,
++    // BOTH tasks owe the same ordinary pass-transition debit before a new ray.
++    assert!(matches!(task.step_with_partial_previews(1).unwrap(),PartialImagePoll::Pending(_)));
++    assert!(matches!(control.step_with_partial_previews(1).unwrap(),PartialImagePoll::Pending(_)));
++    assert_eq!((task.pixel,control.pixel),(0,0));
++    assert!(task.pending.is_none() && control.pending.is_none());
++    assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(),frontier);
++    assert_eq!(control.progressive.as_ref().unwrap().film.partial_frontier().unwrap(),frontier);
++    assert_eq!(control.work.used(),before+1,"the no-snapshot control owes the regular transition tick");
++    assert_eq!(task.work.used(),before+cost+1,"the snapshot must preserve that same tick in addition to W");
++
++    let actual = finish_partial_final(&mut task,true,&mut actual_rays);
++    let expected = finish_partial_final(&mut control,true,&mut control_rays);
++    assert_eq!(actual,expected,"same partial policy: final PNG and linear film bits are exact");
++    assert_eq!(actual_rays,control_rays,"presentation cannot replay or skip a primary sample");
++    assert_eq!(actual_rays.len(),20);
++    assert_eq!(task.work.used(),control.work.used()+cost,"the complete-job optional cost is exactly W, not W-1");
++}
++
++
++fn protected_plan(task: &ImageTask) -> job::ProtectedPreviewPlan {
++    job::ProtectedPreviewPlan::new(task.request.width,task.request.height,task.options.progressive.unwrap().samples_per_pixel,task.options.budget).unwrap()
++}
++fn protected_rebuild(source: &ImageTask, input: Option<crate::lighting::environment_input::EnvironmentInput>) -> ImageTask {
++    ImageTask::new_with_environment_and_nested_and_protected_partial(
++        source.scene.clone(),source.request.clone(),CancelToken::default(),source.options.clone(),input,false,protected_plan(source)).unwrap()
++}
++fn shared_partial_rebuild(source: &ImageTask, input: Option<crate::lighting::environment_input::EnvironmentInput>) -> ImageTask {
++    ImageTask::new_with_environment_and_nested_and_partial(
++        source.scene.clone(),source.request.clone(),CancelToken::default(),source.options.clone(),input,false,protected_plan(source).preview_plan()).unwrap()
++}
++fn empty_progressive_source() -> ImageTask {
++    let fixed=fixture(1,1,None);
++    let options=RaytraceOptions {
++        progressive:Some(job::CpuProgressiveOptions { samples_per_pixel:64,seed:123 }),
++        lights:Some(Vec::new()),shadows:false,..Default::default()
++    };
++    let request=ImageRequest { width:32,height:32,background:[10,20,30],raytrace:Some(options.clone()),..fixed.request };
++    ImageTask::new(fixed.scene,request,CancelToken::default(),options).unwrap()
++}
++fn initial_test_work(task: &mut ImageTask, ordinary: u64, protected: bool) {
++    assert_eq!(task.work.used(),0,"test boundary is fixed BEFORE any real work, never mid-render");
++    task.work=if protected { WorkBudget::new_protected_for_test(protected_plan(task),ordinary).unwrap() }
++        else { WorkBudget::new(ordinary).unwrap() };
++}
++fn require_empty_final(png: &[u8], bits: &[[u64;3]]) {
++    let image=::image::load_from_memory(png).unwrap().to_rgba8();
++    assert_eq!(image.dimensions(),(32,32));
++    assert!(image.pixels().all(|p| p.0==[10,20,30,255]),"independent all-miss backplate oracle");
++    assert_eq!(bits.len(),1024);
++    assert!(bits.iter().all(|p| *p==[0.0_f64.to_bits();3]),"no emitted or reflected radiance in the empty fixture");
++}
++
++#[test]
++fn protected_actual_empty_counterexample_preserves_final_work_while_shared_cap_can_starve() {
++    let source=empty_progressive_source();
++    let plan=protected_plan(&source);
++    assert_eq!((plan.total_commits(),plan.quota_limit(),plan.snapshot_work().unwrap()),(65536,64,77826));
++    let mut reference=shared_partial_rebuild(&source,None);
++    let mut reference_rays=Vec::new();
++    let expected=finish_partial_final(&mut reference,true,&mut reference_rays);
++    require_empty_final(&expected.0,&expected.1);
++    let ordinary=reference.work.used();
++    assert!(ordinary>plan.snapshot_work().unwrap());
++
++    let mut control=shared_partial_rebuild(&source,None);
++    initial_test_work(&mut control,ordinary,false);
++    let actual=finish_partial_final(&mut control,true,&mut Vec::new());
++    assert_eq!(actual,expected);
++    assert_eq!(control.work.used(),ordinary);
++
++    let mut starved=shared_partial_rebuild(&source,None);
++    initial_test_work(&mut starved,ordinary,false);
++    reach_partial_frontier(&mut starved,0,1,&mut Vec::new());
++    assert!(matches!(starved.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++    let _=finish_partial_snapshot(&mut starved);
++    let mut failure=None;
++    for _ in 0..1_000_000 {
++        match starved.step_with_partial_previews(1) {
++            Ok(PartialImagePoll::Pending(_)) => {}
++            Ok(PartialImagePoll::Complete(_)) => panic!("shared cap T cannot pay the same T ordinary work plus W"),
++            Ok(PartialImagePoll::Preview { .. }) => panic!("no unrequested snapshot"),
++            Err(error) => {failure=Some(error.code);break;}
++        }
++    }
++    assert_eq!(failure,Some(ErrorCode::LimitExceeded));
++    assert!(!starved.done);
++    assert!(starved.work.used()<=ordinary);
++
++    for request_snapshot in [false,true] {
++        let mut task=protected_rebuild(&source,None);
++        initial_test_work(&mut task,ordinary,true);
++        let mut rays=Vec::new();
++        if request_snapshot {
++            reach_partial_frontier(&mut task,0,1,&mut rays);
++            let before=task.protected_preview_report().unwrap();
++            assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++            let _=finish_partial_snapshot(&mut task);
++            let paid=task.protected_preview_report().unwrap();
++            assert_eq!(paid.ordinary_used,before.ordinary_used);
++            assert_eq!((paid.presentation_used,paid.accepted_snapshots),(77826,1));
++        }
++        let actual=finish_partial_final(&mut task,true,&mut rays);
++        assert_eq!(actual,expected,"protected feedback cannot change PNG or linear film");
++        assert_eq!(rays,reference_rays,"absolute pixel/ordinal/ray sequence is identical");
++        assert_eq!(rays.len(),65536);
++        let report=task.protected_preview_report().expect("actual report survives completed-film destruction");
++        assert_eq!(report.ordinary_used,ordinary);
++        let optional=if request_snapshot {77826}else{0};
++        assert_eq!(report.presentation_used,optional);
++        assert_eq!(task.work.used(),ordinary+optional);
++        assert_eq!(report.aggregate_limit,ordinary+plan.presentation_limit().unwrap());
++        assert!(task.done && task.progressive.is_none());
++    }
++}
++
++#[test]
++fn protected_real_milestone_wait_is_not_exhaustion_or_a_debit() {
++    let source=empty_progressive_source();
++    let mut task=protected_rebuild(&source,None);
++    let plan=protected_plan(&task);
++    let preview=plan.preview_plan();
++    reach_partial_frontier(&mut task,0,1,&mut Vec::new());
++    assert!(matches!(task.begin_partial_preview(preview).unwrap(),PartialBegin::Started));
++    let _=finish_partial_snapshot(&mut task);
++    reach_partial_frontier(&mut task,0,2,&mut Vec::new());
++    let before=task.protected_preview_report().unwrap();
++    let frontier=task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++    let cursor=task.pixel;
++    assert!(plan.milestone(before.next_milestone_index).unwrap()>2);
++    for _ in 0..4 {
++        assert!(!task.partial_preview_ready(preview).unwrap());
++        assert_eq!(task.begin_partial_preview(preview).err().unwrap().code,ErrorCode::InvalidRequest);
++        assert_eq!(task.protected_preview_report().unwrap(),before);
++        assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(),frontier);
++        assert_eq!(task.pixel,cursor);
++        assert!(task.encoder.is_none() && task.pixels.is_empty());
++        assert!(task.progressive.as_ref().unwrap().partial.is_none());
++    }
++    assert!(!before.quota_exhausted && !before.milestones_complete);
++    let milestone=plan.milestone(before.next_milestone_index).unwrap();
++    reach_partial_frontier(&mut task,(milestone/1024) as u32,(milestone%1024) as usize,&mut Vec::new());
++    assert!(task.partial_preview_ready(preview).unwrap(),"later real progress makes a temporary wait eligible");
++}
++
++#[test]
++fn protected_real_coalesced_last_milestone_preserves_unspent_quota_and_final_priority() {
++    let source=partial_four_pixel_task(5,123,true);
++    let mut task=protected_rebuild(&source,None);
++    let mut control=shared_partial_rebuild(&source,None);
++    let plan=protected_plan(&task);
++    let mut rays=Vec::new();
++    reach_partial_frontier(&mut task,4,3,&mut rays);
++    assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++    let _=finish_partial_snapshot(&mut task);
++    let coalesced=task.protected_preview_report().unwrap();
++    assert_eq!((coalesced.accepted_snapshots,coalesced.next_milestone_index,coalesced.quota_limit),(1,19,19));
++    assert!(coalesced.milestones_complete && !coalesced.quota_exhausted);
++    assert_eq!(coalesced.presentation_used,plan.snapshot_work().unwrap());
++    assert!(coalesced.presentation_used<coalesced.presentation_limit);
++    assert!(!task.partial_preview_ready(plan.preview_plan()).unwrap());
++    let actual=finish_partial_final(&mut task,true,&mut rays);
++    let mut control_rays=Vec::new();
++    let expected=finish_partial_final(&mut control,true,&mut control_rays);
++    assert_eq!(actual,expected);
++    assert_eq!(rays,control_rays);
++    let report=task.protected_preview_report().unwrap();
++    assert_eq!(report.ordinary_used,control.work.used());
++    assert_eq!(task.work.used(),control.work.used()+plan.snapshot_work().unwrap());
++    assert!(task.done,"final never waits to spend unreachable/unused quota");
++}
++
++#[test]
++fn protected_actual_sixty_four_snapshots_exhaust_quota_without_failing_final() {
++    let source=empty_progressive_source();
++    let mut control=shared_partial_rebuild(&source,None);
++    let expected=finish_partial_final(&mut control,true,&mut Vec::new());
++    let ordinary=control.work.used();
++    let mut task=protected_rebuild(&source,None);
++    initial_test_work(&mut task,ordinary,true);
++    let plan=protected_plan(&task);
++    let mut rays=Vec::new();
++    for index in 0..64 {
++        let milestone=plan.milestone(index).unwrap();
++        reach_partial_frontier(&mut task,(milestone/1024) as u32,(milestone%1024) as usize,&mut rays);
++        assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++        let _=finish_partial_snapshot(&mut task);
++        let report=task.protected_preview_report().unwrap();
++        assert_eq!(report.accepted_snapshots,index+1);
++        assert_eq!(report.next_milestone_index,index+1);
++        assert_eq!(report.presentation_used,u64::from(index+1)*77826);
++    }
++    let exhausted=task.protected_preview_report().unwrap();
++    assert!(exhausted.quota_exhausted && exhausted.milestones_complete);
++    assert_eq!(exhausted.presentation_used,exhausted.presentation_limit);
++    let frontier=task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++    let cursor=task.pixel;
++    for _ in 0..4 {
++        assert!(!task.partial_preview_ready(plan.preview_plan()).unwrap());
++        assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Exhausted));
++        assert_eq!(task.protected_preview_report().unwrap(),exhausted);
++        assert_eq!(task.pixel,cursor);
++        assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(),frontier);
++    }
++    let actual=finish_partial_final(&mut task,true,&mut rays);
++    assert_eq!(actual,expected);
++    require_empty_final(&actual.0,&actual.1);
++    assert_eq!(rays.len(),65536);
++    let complete=task.protected_preview_report().unwrap();
++    assert_eq!(complete.ordinary_used,ordinary);
++    assert_eq!(task.work.used(),complete.aggregate_limit,"O reaches its full original T and V exactly Q");
++    assert_eq!(complete.presentation_used,64*77826);
++}
++
++#[test]
++fn protected_full_pass_snapshot_keeps_the_ordinary_transition_tick_and_report_after_complete() {
++    let source=partial_four_pixel_task(5,123,true);
++    let mut task=protected_rebuild(&source,None);
++    let mut control=shared_partial_rebuild(&source,None);
++    let plan=protected_plan(&task);
++    let mut rays=Vec::new();
++    let mut control_rays=Vec::new();
++    reach_partial_frontier(&mut task,1,0,&mut rays);
++    reach_partial_frontier(&mut control,1,0,&mut control_rays);
++    let before=task.protected_preview_report().unwrap();
++    assert_eq!(before.ordinary_used,control.work.used());
++    assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++    let _=finish_partial_snapshot(&mut task);
++    assert_eq!((task.pixel,control.pixel),(4,4));
++    assert!(matches!(task.step_with_partial_previews(1).unwrap(),PartialImagePoll::Pending(_)));
++    assert!(matches!(control.step_with_partial_previews(1).unwrap(),PartialImagePoll::Pending(_)));
++    assert_eq!((task.pixel,control.pixel),(0,0));
++    let after=task.protected_preview_report().unwrap();
++    assert_eq!(after.ordinary_used,before.ordinary_used+1);
++    assert_eq!(after.ordinary_used,control.work.used());
++    assert_eq!(after.presentation_used,plan.snapshot_work().unwrap());
++    let actual=finish_partial_final(&mut task,true,&mut rays);
++    let expected=finish_partial_final(&mut control,true,&mut control_rays);
++    assert_eq!(actual,expected);assert_eq!(rays,control_rays);
++    assert_eq!(task.protected_preview_report().unwrap().ordinary_used,control.work.used());
++    assert!(control.protected_preview_report().is_none(),"old IF1 has no protected report");
++}
++
++#[test]
++fn protected_cancelled_begin_and_encoder_keep_the_actual_paid_report_without_refund() {
++    let source=partial_four_pixel_task(5,123,true);
++    for debit_first in [false,true] {
++        let mut task=protected_rebuild(&source,None);
++        let plan=protected_plan(&task);
++        reach_partial_frontier(&mut task,0,1,&mut Vec::new());
++        let before=task.protected_preview_report().unwrap();
++        if debit_first {
++            assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++            for _ in 0..20 {
++                if task.encoder.is_some() {break;}
++                assert!(matches!(task.step_with_partial_previews(1).unwrap(),PartialImagePoll::Pending(_)));
++            }
++            assert!(task.encoder.is_some());
++        }
++        let paid=task.protected_preview_report().unwrap();
++        task.cancel.cancel();
++        let code=if debit_first {task.step_with_partial_previews(1).err().unwrap().code}
++            else {task.begin_partial_preview(plan.preview_plan()).err().unwrap().code};
++        assert_eq!(code,ErrorCode::Cancelled);
++        assert_eq!(task.protected_preview_report().unwrap(),paid);
++        assert_eq!(paid.ordinary_used,before.ordinary_used);
++        assert_eq!(paid.presentation_used,if debit_first {plan.snapshot_work().unwrap()}else{0});
++        assert_eq!(paid.accepted_snapshots,u32::from(debit_first));
++        assert_eq!(paid.next_milestone_index,u32::from(debit_first));
++    }
++}
++
++#[test]
++fn protected_admission_matches_actual_source_sampling_budget_before_constructing_the_task() {
++    let source=partial_four_pixel_task(5,123,true);
++    let plan=protected_plan(&source);
++    let protected=admit_with_protected_partial_preview(&source.scene,&source.request,&source.options,false,plan).unwrap();
++    let shared=admit_with_partial_preview(&source.scene,&source.request,&source.options,false,plan.preview_plan()).unwrap();
++    assert_eq!(protected.estimated_total_bytes,shared.estimated_total_bytes,"same two slots and source/codec buffers; fixed task layout guard stays required");
++    for wrong in [
++        job::ProtectedPreviewPlan::new(8,1,5,source.options.budget).unwrap(),
++        job::ProtectedPreviewPlan::new(4,1,3,source.options.budget).unwrap(),
++        job::ProtectedPreviewPlan::new(4,1,5,job::CpuBudget::Studio).unwrap(),
++    ] {
++        assert_eq!(admit_with_protected_partial_preview(&source.scene,&source.request,&source.options,false,wrong).err().unwrap().code,ErrorCode::InvalidRequest);
++        assert_eq!(ImageTask::new_with_environment_and_nested_and_protected_partial(
++            source.scene.clone(),source.request.clone(),CancelToken::default(),source.options.clone(),None,false,wrong).err().unwrap().code,ErrorCode::InvalidRequest);
++    }
++    assert_eq!(source.options.emissions.as_ref().unwrap().len(),1,"original fixture authors one red surface emission");
++    let task=protected_rebuild(&source,None);
++    let report=task.protected_preview_report().unwrap();
++    assert_eq!((report.ordinary_used,report.presentation_used,report.accepted_snapshots,report.next_milestone_index),(1,0,0,0),
++        "one authored emission owes one ordinary construction tick before the first camera sample");
++    assert_eq!(report.aggregate_limit,plan.aggregate_limit().unwrap());
++}
++
++#[test]
++fn protected_area_and_hdr_reflection_preserve_ordinary_work_absolute_rays_and_final_pixels() {
++    for area_samples in [1,4,16,64] {
++        let source=progressive_area_fixture(area_samples,5,23,true);
++        let mut task=protected_rebuild(&source,None);
++        let mut control=shared_partial_rebuild(&source,None);
++        let plan=protected_plan(&task);
++        let mut rays=Vec::new();let mut control_rays=Vec::new();
++        reach_partial_frontier(&mut task,1,0,&mut rays);
++        assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++        let _=finish_partial_snapshot(&mut task);
++        assert_eq!(finish_partial_final(&mut task,true,&mut rays),finish_partial_final(&mut control,true,&mut control_rays));
++        assert_eq!(rays,control_rays);
++        assert_eq!(task.protected_preview_report().unwrap().ordinary_used,control.work.used());
++        assert_eq!(task.work.used(),control.work.used()+plan.snapshot_work().unwrap());
++    }
++    let mut source=progressive_fixture(5,23,Some(true),0.0);
++    source.scene.meshes[0].surface=Some(OpaqueSurface::new(Vec3::new(0.8,0.4,0.2),1.0,0.35,1.5).unwrap());
++    let mut task=protected_rebuild(&source,Some(partial_original_hdr()));
++    let mut control=shared_partial_rebuild(&source,Some(partial_original_hdr()));
++    let plan=protected_plan(&task);
++    let mut rays=Vec::new();let mut control_rays=Vec::new();
++    reach_partial_frontier(&mut task,1,0,&mut rays);
++    assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++    let _=finish_partial_snapshot(&mut task);
++    assert_eq!(finish_partial_final(&mut task,true,&mut rays),finish_partial_final(&mut control,true,&mut control_rays));
++    assert_eq!(rays,control_rays);
++    assert_eq!(task.protected_preview_report().unwrap().ordinary_used,control.work.used());
++    assert_eq!(task.work.used(),control.work.used()+plan.snapshot_work().unwrap());
++}
++
++
++#[test]
++fn protected_real_sampling_is_independent_of_quantum_and_feedback_schedule() {
++    for seed in [0,123] {
++        let source=partial_four_pixel_task(5,seed,true);
++        let mut control=shared_partial_rebuild(&source,None);
++        let expected=finish_partial_final(&mut control,true,&mut Vec::new());
++        let ordinary=control.work.used();
++        for quantum in [1,2,4] {
++            let mut task=protected_rebuild(&source,None);
++            let plan=protected_plan(&task);
++            let mut snapshots=0_u32;
++            let mut output=None;
++            let mut bits=None;
++            for _ in 0..200_000 {
++                if bits.is_none()
++                    && let Some(progressive)=&task.progressive
++                    && progressive.film.ready() && progressive.film.samples()==5
++                {
++                    bits=Some((0..4).map(|i| progressive.film.pixel(i).unwrap().0.map(f64::to_bits)).collect::<Vec<_>>());
++                }
++                if snapshots<3 && task.partial_preview_ready(plan.preview_plan()).unwrap() {
++                    assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++                    let _=finish_partial_snapshot(&mut task);
++                    snapshots+=1;
++                }
++                match task.step_with_partial_previews(quantum).unwrap() {
++                    PartialImagePoll::Pending(_) => {}
++                    PartialImagePoll::Complete(png) => {output=Some(png);break;}
++                    PartialImagePoll::Preview { .. } => panic!("no snapshot was requested in this continuation"),
++                }
++            }
++            assert!(snapshots>0,"actual safe frontiers must be observed in this original fixture");
++            assert_eq!(output.unwrap(),expected.0);
++            assert_eq!(bits.unwrap(),expected.1);
++            let report=task.protected_preview_report().unwrap();
++            assert_eq!(report.ordinary_used,ordinary);
++            assert_eq!(report.accepted_snapshots,snapshots);
++            assert_eq!(report.presentation_used,u64::from(snapshots)*plan.snapshot_work().unwrap());
++            assert_eq!(task.work.used(),ordinary+report.presentation_used);
++        }
++    }
++}
++
++#[test]
++fn protected_real_one_and_two_camera_commit_jobs_finish_with_exact_zero_or_one_snapshot() {
++    for samples in [1,2] {
++        let source=progressive_fixture(samples,123,None,0.0);
++        let mut task=protected_rebuild(&source,None);
++        let mut control=shared_partial_rebuild(&source,None);
++        let plan=protected_plan(&task);
++        let mut rays=Vec::new();let mut control_rays=Vec::new();
++        assert_eq!(plan.quota_limit(),samples-1);
++        if samples==1 {
++            let initial=task.protected_preview_report().unwrap();
++            assert!(initial.quota_exhausted && initial.milestones_complete);
++            assert_eq!(initial.presentation_limit,0);
++            assert!(!task.partial_preview_ready(plan.preview_plan()).unwrap());
++        } else {
++            reach_partial_frontier(&mut task,1,0,&mut rays);
++            assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++            let _=finish_partial_snapshot(&mut task);
++            assert_eq!(task.pixel,1,"normal complete-pass transition remains pending");
++        }
++        assert_eq!(finish_partial_final(&mut task,true,&mut rays),finish_partial_final(&mut control,true,&mut control_rays));
++        assert_eq!(rays,control_rays);
++        let report=task.protected_preview_report().unwrap();
++        assert_eq!(report.accepted_snapshots,samples-1);
++        assert_eq!(report.presentation_used,u64::from(samples-1)*plan.snapshot_work().unwrap());
++        assert_eq!(report.ordinary_used,control.work.used());
++        assert!(report.quota_exhausted && report.milestones_complete);
++    }
++}
+--- a/crates/render/src/raytrace/progressive.rs
++++ b/crates/render/src/raytrace/progressive.rs
+@@ -8,6 +8,72 @@
+     pub options: CpuProgressiveOptions,
+     pub resolving: bool,
+     pub resolve_pixel: usize,
++    pub partial_plan: Option<crate::job::PartialPreviewPlan>,
++    pub partial: Option<PartialResolve>,
++    pub last_partial: Option<crate::film::primary::PartialFrontier>,
++}
++
++pub(super) struct PartialResolve {
++    pub plan: crate::job::PartialPreviewPlan,
++    pub frontier: crate::film::primary::PartialFrontier,
++    pub resume_pixel: usize,
++    pub next: usize,
++    pub covered: Vec<u16>,
++}
++
++/// Read-only O(1) test for new represented data; no scan over the source film.
++/// A completed global pass is meaningful even if its last source pixels are
++/// not representatives: the receiver's global Unknown authority changes then.
++pub(super) fn represented_changed(
++    plan: crate::job::PartialPreviewPlan,
++    before: Option<crate::film::primary::PartialFrontier>,
++    now: crate::film::primary::PartialFrontier,
++) -> crate::job::Result<bool> {
++    use crate::job::{ErrorCode, JobError};
++    plan.validate()?;
++    let source_pixels = u64::from(plan.source_width()) * u64::from(plan.source_height());
++    if u64::try_from(now.pixels).ok() != Some(source_pixels) || now.updated_prefix >= now.pixels {
++        return Err(JobError::new(ErrorCode::InvalidScene, "partial film frontier differs from its source plan"));
++    }
++    let Some(before) = before else { return Ok(now.completed_passes != 0 || now.updated_prefix != 0) };
++    if before.pixels != now.pixels
++        || before.completed_passes > now.completed_passes
++        || (before.completed_passes == now.completed_passes && before.updated_prefix > now.updated_prefix)
++    {
++        return Err(JobError::new(ErrorCode::InvalidScene, "partial film frontier went backwards"));
++    }
++    if before.completed_passes != now.completed_passes {
++        return Ok(true);
++    }
++    if before.updated_prefix == now.updated_prefix {
++        return Ok(false);
++    }
++    let w = u64::from(plan.source_width());
++    let h = u64::from(plan.source_height());
++    let pw = u64::from(plan.width());
++    let ph = u64::from(plan.height());
++    let lower = u64::try_from(before.updated_prefix).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "partial source index overflow"))?;
++    let x = lower % w;
++    let y = lower / w;
++    let mut v = y.checked_mul(ph).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial row mapping overflow"))?.div_ceil(h);
++    if v >= ph {
++        return Ok(false);
++    }
++    let mut u = if v * h / ph == y {
++        x.checked_mul(pw).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial column mapping overflow"))?.div_ceil(w)
++    } else {
++        0
++    };
++    if u >= pw {
++        v += 1;
++        u = 0;
++    }
++    if v >= ph {
++        return Ok(false);
++    }
++    let display = v.checked_mul(pw).and_then(|n| n.checked_add(u)).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial display index overflow"))?;
++    let display = usize::try_from(display).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "partial display address overflow"))?;
++    Ok(plan.source_index(display)? < now.updated_prefix)
+ }
+ 
+ /// Integer-only mixing before conversion to exactly representable 53-bit unit
+--- a/crates/render/src/raytrace/tests.rs
++++ b/crates/render/src/raytrace/tests.rs
+@@ -259,3 +259,156 @@
+         assert_eq!(Triangle::new([p; 3]).is_ok(), accepted);
+     }
+ }
++
++
++#[test]
++fn protected_ledger_keeps_ordinary_profiles_and_requires_the_explicit_new_envelope() {
++    use crate::job::{CpuBudget,ProtectedPreviewPlan,MAX_CPU_WORK,MAX_PROTECTED_CPU_WORK};
++    assert_eq!(MAX_CPU_WORK,16_000_000_000_000);
++    assert_eq!(MAX_PROTECTED_CPU_WORK,16_000_809_500_800);
++    assert!(WorkBudget::new(MAX_CPU_WORK+1).is_err());
++    assert!(WorkBudget::new(MAX_PROTECTED_CPU_WORK).is_err());
++    for budget in CpuBudget::ALL {
++        let plan=ProtectedPreviewPlan::new(1024,1024,2,budget).unwrap();
++        let work=WorkBudget::new_protected(plan).unwrap();
++        let report=work.protected_report().unwrap();
++        assert_eq!(report.ordinary_limit,budget.limits().max_work_units);
++        assert_eq!(report.presentation_limit,64*12_648_450);
++        assert_eq!(report.aggregate_limit,report.ordinary_limit+report.presentation_limit);
++        assert_eq!(work.remaining(),report.ordinary_limit);
++        assert_eq!(work.ordinary_remaining(),report.ordinary_limit);
++        assert_eq!(work.presentation_remaining(),report.presentation_limit);
++        assert_eq!(work.aggregate_remaining(),report.aggregate_limit);
++        assert_eq!((report.ordinary_used,report.presentation_used,work.used()),(0,0,0));
++    }
++    let max=ProtectedPreviewPlan::new(1024,1024,2,CpuBudget::Workstation).unwrap();
++    assert_eq!(max.aggregate_limit().unwrap(),MAX_PROTECTED_CPU_WORK);
++    assert!(WorkBudget::new(100).unwrap().protected_report().is_none());
++    assert!(ProtectedPreviewPlan::new(u32::MAX,u32::MAX,u32::MAX,CpuBudget::Workstation).is_err());
++}
++
++#[test]
++fn protected_ledger_exact_ordinary_and_aggregate_boundaries_do_not_steal_or_refund() {
++    use crate::job::{CpuBudget,ProtectedPreviewPlan};
++    let plan=ProtectedPreviewPlan::new(1,1,2,CpuBudget::Compact).unwrap();
++    let cost=plan.snapshot_work().unwrap();
++    let cancel=CancelToken::default();
++    let mut work=WorkBudget::new_protected_for_test(plan,7).unwrap();
++    work.charge(6,&cancel).unwrap();
++    assert!(work.charge_presentation(1,&cancel).unwrap());
++    let before=work.protected_report().unwrap();
++    assert_eq!((before.ordinary_used,before.presentation_used),(6,cost));
++    assert_eq!(work.remaining(),1,"presentation did not consume the last ordinary tick");
++    assert_eq!(work.presentation_remaining(),0);
++    assert_eq!(work.aggregate_remaining(),1);
++    assert_eq!(work.charge(2,&cancel),Err(TraceError::WorkLimit));
++    assert_eq!(work.protected_report().unwrap(),before);
++    work.tick(&cancel).unwrap();
++    let complete=work.protected_report().unwrap();
++    assert_eq!((complete.ordinary_used,complete.presentation_used,work.used()),(7,cost,7+cost));
++    assert_eq!(work.aggregate_remaining(),0);
++    assert_eq!(work.charge(u64::MAX,&cancel),Err(TraceError::WorkLimit));
++    assert!(!work.charge_presentation(1,&cancel).unwrap());
++    assert_eq!(work.protected_report().unwrap(),complete);
++}
++
++#[test]
++fn protected_milestones_coalesce_without_fabricating_accepted_snapshots_or_spent_quota() {
++    use crate::job::{CpuBudget,ProtectedPreviewPlan};
++    let plan=ProtectedPreviewPlan::new(4,1,5,CpuBudget::Compact).unwrap();
++    let mut work=WorkBudget::new_protected(plan).unwrap();
++    let initial=work.protected_report().unwrap();
++    assert!(!work.charge_presentation(0,&CancelToken::default()).unwrap());
++    assert_eq!(work.protected_report().unwrap(),initial);
++    assert!(work.charge_presentation(19,&CancelToken::default()).unwrap());
++    let coalesced=work.protected_report().unwrap();
++    assert_eq!((coalesced.accepted_snapshots,coalesced.next_milestone_index,coalesced.quota_limit),(1,19,19));
++    assert_eq!(coalesced.presentation_used,plan.snapshot_work().unwrap());
++    assert!(coalesced.presentation_used<coalesced.presentation_limit);
++    assert!(coalesced.milestones_complete);
++    assert!(!coalesced.quota_exhausted);
++    for progress in [19,20,u64::MAX] {
++        assert!(!work.protected_ready(progress).unwrap());
++        assert!(!work.charge_presentation(progress,&CancelToken::default()).unwrap());
++        assert_eq!(work.protected_report().unwrap(),coalesced);
++    }
++}
++
++#[test]
++fn protected_zero_and_one_milestone_policies_are_real_boundaries() {
++    use crate::job::{CpuBudget,ProtectedPreviewPlan};
++    let cancel=CancelToken::default();
++    let zero=ProtectedPreviewPlan::new(1,1,1,CpuBudget::Compact).unwrap();
++    let mut work=WorkBudget::new_protected(zero).unwrap();
++    let report=work.protected_report().unwrap();
++    assert_eq!((report.quota_limit,report.presentation_limit),(0,0));
++    assert_eq!(report.aggregate_limit,report.ordinary_limit);
++    assert!(report.quota_exhausted && report.milestones_complete);
++    assert!(!work.charge_presentation(0,&cancel).unwrap());
++    assert!(zero.milestone(0).is_err());
++    let one=ProtectedPreviewPlan::new(1,1,2,CpuBudget::Compact).unwrap();
++    assert_eq!(one.quota_limit(),1);
++    assert_eq!(one.milestone(0).unwrap(),1);
++    assert!(one.milestone(1).is_err());
++    let mut work=WorkBudget::new_protected(one).unwrap();
++    assert!(!work.charge_presentation(0,&cancel).unwrap());
++    assert!(work.charge_presentation(1,&cancel).unwrap());
++    assert!(work.protected_report().unwrap().quota_exhausted);
++}
++
++#[test]
++fn protected_quota_exhaustion_leaves_the_entire_ordinary_allowance_available() {
++    use crate::job::{CpuBudget,ProtectedPreviewPlan};
++    let plan=ProtectedPreviewPlan::new(32,32,64,CpuBudget::Compact).unwrap();
++    let cancel=CancelToken::default();
++    let mut work=WorkBudget::new_protected_for_test(plan,17).unwrap();
++    for index in 0..64 {
++        assert!(work.charge_presentation(plan.milestone(index).unwrap(),&cancel).unwrap());
++    }
++    let exhausted=work.protected_report().unwrap();
++    assert_eq!((exhausted.accepted_snapshots,exhausted.next_milestone_index),(64,64));
++    assert_eq!(exhausted.presentation_used,exhausted.presentation_limit);
++    assert!(exhausted.quota_exhausted && exhausted.milestones_complete);
++    assert_eq!(work.ordinary_remaining(),17);
++    assert!(!work.charge_presentation(plan.total_commits()-1,&cancel).unwrap());
++    work.charge(17,&cancel).unwrap();
++    let final_report=work.protected_report().unwrap();
++    assert_eq!(work.used(),final_report.aggregate_limit);
++    assert_eq!(final_report.ordinary_used,17);
++}
++
++#[test]
++fn protected_cancel_before_debit_is_atomic_and_after_debit_is_never_refunded() {
++    use crate::job::{CpuBudget,ProtectedPreviewPlan};
++    let plan=ProtectedPreviewPlan::new(4,1,5,CpuBudget::Compact).unwrap();
++    let mut work=WorkBudget::new_protected(plan).unwrap();
++    let before=work.protected_report().unwrap();
++    let cancelled=CancelToken::default();cancelled.cancel();
++    assert_eq!(work.charge_presentation(1,&cancelled),Err(TraceError::Cancelled));
++    assert_eq!(work.protected_report().unwrap(),before);
++    let cancel=CancelToken::default();
++    assert!(work.charge_presentation(1,&cancel).unwrap());
++    let paid=work.protected_report().unwrap();
++    cancel.cancel();
++    assert_eq!(work.tick(&cancel),Err(TraceError::Cancelled));
++    assert_eq!(work.charge_presentation(2,&cancel),Err(TraceError::Cancelled));
++    assert_eq!(work.protected_report().unwrap(),paid);
++    assert_eq!(work.used(),plan.snapshot_work().unwrap());
++}
++
++#[test]
++fn protected_private_test_boundary_is_chosen_before_work_and_never_changes_the_production_plan() {
++    use crate::job::{CpuBudget,ProtectedPreviewPlan};
++    let plan=ProtectedPreviewPlan::new(4,1,5,CpuBudget::Compact).unwrap();
++    assert!(WorkBudget::new_protected_for_test(plan,0).is_err());
++    assert!(WorkBudget::new_protected_for_test(plan,plan.ordinary_limit()+1).is_err());
++    let mut first=WorkBudget::new_protected(plan).unwrap();
++    first.charge_presentation(19,&CancelToken::default()).unwrap();
++    let paid=first.protected_report().unwrap();
++    // A distinct admitted job starts a new ledger; it does not restore/transfer
++    // any state in the first job. Repeated report reads do not reset either one.
++    let second=WorkBudget::new_protected(plan).unwrap();
++    for _ in 0..4 {assert_eq!(first.protected_report().unwrap(),paid);}
++    assert_eq!(second.protected_report().unwrap().presentation_used,0);
++    assert_eq!(first.protected_report().unwrap(),paid);
++}
+--- a/crates/ui-egui/src/render_workspace.rs
++++ b/crates/ui-egui/src/render_workspace.rs
+@@ -1967,7 +1967,7 @@
+         // Navigation can invalidate the displayed image in this frame. Observe before
+         // any geometry interaction, and observe again below after visible UI actions.
+         interactive::before_paint(app, ui.ctx());
+-        let waiting = interactive::awaiting_current_frame(app);
++        let waiting = interactive::blocks_geometry_input(app);
+         let navigating = input.scroll != 0.0
+             || input.pinch != 1.0
+             || input.pan != egui::Vec2::ZERO
+@@ -2013,7 +2013,7 @@
+     ui.painter().rect_filled(viewport, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
+     // Reobserve after the existing shared navigation path, before any pixel paint.
+     interactive::before_paint(app, ui.ctx());
+-    if interactive::paint(app, ui, rect) || interactive::awaiting_current_frame(app) {
++    if interactive::paint(app, ui, rect) || interactive::blocks_geometry_input(app) {
+         shot::overlay(app, ui, viewport);
+         crate::viewport::axis_view(app, ui, viewport);
+         crate::navigation_bar_view::show(app, ui, viewport);
+--- a/crates/ui-egui/src/render_workspace_interactive.rs
++++ b/crates/ui-egui/src/render_workspace_interactive.rs
+@@ -35,11 +35,225 @@
+     sequence: u32,
+     complete: bool,
+ }
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++struct PartialCursor {
++    sequence: u64,
++    completed_passes: u32,
++    updated_prefix: u64,
++}
++
++/// The source frontier is not a uniform samples-per-pixel count.
++pub(super) fn partial_sample_count(
++    completed_passes: u32,
++    updated_prefix: u64,
++    index: u64,
++    pixels: u64,
++    target: u32,
++) -> Result<u32, String> {
++    if pixels == 0
++        || index >= pixels
++        || updated_prefix >= pixels
++        || target == 0
++        || completed_passes > target
++        || (completed_passes == target && updated_prefix != 0)
++    {
++        return Err(crate::i18n::tr("render.error_provisional_identity").into());
++    }
++    completed_passes
++        .checked_add(u32::from(index < updated_prefix))
++        .filter(|count| *count <= target)
++        .ok_or_else(|| crate::i18n::tr("render.error_provisional_identity").into())
++}
++
++/// Alpha denotes knowledge only in this additive provisional PNG contract.
++/// Physical primary coverage has already been composited by the renderer.
++pub(super) fn validate_partial_pixel(count: u32, covered: u16, pixel: egui::Color32, background: [u8; 3]) -> Result<(), String> {
++    if u32::from(covered) > count
++        || (count == 0 && pixel.a() != 0)
++        || (count > 0 && pixel.a() != 255)
++        || (count > 0 && covered == 0 && pixel != egui::Color32::from_rgb(background[0], background[1], background[2]))
++    {
++        return Err(crate::i18n::tr("render.error_provisional_identity").into());
++    }
++    Ok(())
++}
++
++fn partial_advances(previous: Option<PartialCursor>, next: PartialCursor) -> bool {
++    next.sequence != 0
++        && previous.is_none_or(|old| {
++            next.sequence > old.sequence
++                && (next.completed_passes, next.updated_prefix) > (old.completed_passes, old.updated_prefix)
++        })
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(super) struct PartialSampling {
++    plan: solidcraft_engine::render::job::PartialPreviewPlan,
++    cursor: PartialCursor,
++}
++
++impl PartialSampling {
++    pub(super) fn source_unknown(&self) -> bool {
++        self.cursor.completed_passes == 0
++    }
++
++    pub(super) fn sample_range(&self) -> (u32, u32) {
++        (self.cursor.completed_passes, self.cursor.completed_passes + u32::from(self.cursor.updated_prefix != 0))
++    }
++
++    pub(super) fn sampled_source_pixels(&self) -> u64 {
++        if self.source_unknown() {
++            self.cursor.updated_prefix
++        } else {
++            u64::from(self.plan.source_width()) * u64::from(self.plan.source_height())
++        }
++    }
++
++    fn uniform_samples(&self) -> Option<u32> {
++        (self.cursor.completed_passes != 0 && self.cursor.updated_prefix == 0).then_some(self.cursor.completed_passes)
++    }
++}
++
++pub(super) struct PartialExpectation<'a> {
++    pub(super) job: JobId,
++    pub(super) scene_generation: u64,
++    pub(super) request: &'a solidcraft_engine::render::job::ImageRequest,
++    pub(super) final_dimensions: [u32; 2],
++}
++
++/// Only the actual caller's current job/ticket may construct this expectation.
++/// Validating a descriptor is not authorization to attach a renderer or final.
++pub(super) fn validate_partial_metadata(
++    expected: &PartialExpectation<'_>,
++    info: &solidcraft_engine::render::job::PartialPreviewInfo,
++    png_len: usize,
++    covered_len: usize,
++    previous: Option<PartialSampling>,
++) -> Result<Option<PartialSampling>, String> {
++    use solidcraft_engine::render::job::{AlphaConvention, ColourEncoding, PartialPreviewPlan, PartialPreviewProjection};
++    let invalid = || crate::i18n::tr("render.error_provisional_identity").to_string();
++    let progressive = expected.request.raytrace.as_ref().and_then(|options| options.progressive).ok_or_else(invalid)?;
++    progressive
++        .validate_image_with_budget(expected.request.width, expected.request.height, expected.request.cpu_budget())
++        .map_err(|error| error.to_string())?;
++    let plan = PartialPreviewPlan::new(expected.request.width, expected.request.height).map_err(|error| error.to_string())?;
++    plan.validate().map_err(|error| error.to_string())?;
++    let source_pixels = u64::from(plan.source_width()) * u64::from(plan.source_height());
++    if expected.request.integrator != Integrator::Raytrace
++        || expected.request.transparent_background
++        || expected.final_dimensions.contains(&0)
++        || info.frame.job != expected.job
++        || info.frame.scene_generation != expected.scene_generation
++        || info.frame.executor.as_str() != "cpu-raytrace"
++        || info.frame.encoding != ColourEncoding::Srgb
++        || info.frame.alpha != AlphaConvention::Straight
++        || (info.source_width, info.source_height) != (plan.source_width(), plan.source_height())
++        || (info.frame.width, info.frame.height) != (plan.width(), plan.height())
++        || info.projection != PartialPreviewProjection::TopLeftRepresentativeV1
++        || u64::try_from(covered_len).map_err(|_| invalid())? != plan.pixels()
++        || info.frame.png_bytes != u64::try_from(png_len).map_err(|_| invalid())?
++        || info.frame.png_bytes > plan.encoded_limit().map_err(|error| error.to_string())?
++        || info.frame.png_sha256.len() != 64
++        || !info.frame.png_sha256.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
++        || (info.completed_passes == 0 && info.updated_prefix == 0)
++    {
++        return Err(invalid());
++    }
++    // This validates the global frontier even when reduced representatives hide
++    // the last unobserved source pixel. No fake uniform SPP from the preview size.
++    partial_sample_count(info.completed_passes, info.updated_prefix, 0, source_pixels, progressive.samples_per_pixel)?;
++    let cursor = PartialCursor { sequence: info.sequence, completed_passes: info.completed_passes, updated_prefix: info.updated_prefix };
++    if cursor.sequence == 0 {
++        return Err(invalid());
++    }
++    if let Some(old) = previous {
++        if old.plan != plan {
++            return Err(invalid());
++        }
++        if cursor.sequence <= old.cursor.sequence {
++            return Ok(None);
++        }
++    }
++    if !partial_advances(previous.map(|old| old.cursor), cursor) {
++        return Err(invalid());
++    }
++    Ok(Some(PartialSampling { plan, cursor }))
++}
++
++/// Bounded O(M) borrowed-sidecar check. The shared plan supplies every source index.
++pub(super) fn validate_partial_pixels(
++    sampling: PartialSampling,
++    target: u32,
++    covered: &[u16],
++    image: &egui::ColorImage,
++    background: [u8; 3],
++) -> Result<(), String> {
++    let invalid = || crate::i18n::tr("render.error_provisional_identity").to_string();
++    if image.size != [sampling.plan.width() as usize, sampling.plan.height() as usize]
++        || u64::try_from(image.pixels.len()).map_err(|_| invalid())? != sampling.plan.pixels()
++        || covered.len() != image.pixels.len()
++    {
++        return Err(invalid());
++    }
++    let source_pixels = u64::from(sampling.plan.source_width()) * u64::from(sampling.plan.source_height());
++    for (index, (pixel, coverage)) in image.pixels.iter().zip(covered).enumerate() {
++        let source_index = sampling.plan.source_index(index).map_err(|error| error.to_string())?;
++        let count = partial_sample_count(
++            sampling.cursor.completed_passes,
++            sampling.cursor.updated_prefix,
++            u64::try_from(source_index).map_err(|_| invalid())?,
++            source_pixels,
++            target,
++        )?;
++        validate_partial_pixel(count, *coverage, *pixel, background)?;
++    }
++    Ok(())
++}
++
++
++pub(super) fn decode_partial_image(
++    request: &solidcraft_engine::render::job::ImageRequest,
++    info: &solidcraft_engine::render::job::PartialPreviewInfo,
++    png: &[u8],
++    covered: &[u16],
++    sampling: PartialSampling,
++    max_texture_side: usize,
++) -> Result<egui::ColorImage, String> {
++    let invalid = || crate::i18n::tr("render.error_provisional_identity").to_string();
++    if (info.frame.width, info.frame.height) != (sampling.plan.width(), sampling.plan.height())
++        || super::display_dimensions(info.frame.width, info.frame.height, max_texture_side)? != (info.frame.width, info.frame.height)
++    {
++        return Err(crate::i18n::tr("render.error_display_fit").into());
++    }
++    let image = super::decode_render_image(
++        png, info.frame.width, info.frame.height, super::captured_image_limits(request), max_texture_side,
++    )?;
++    let target = request.raytrace.as_ref().and_then(|options| options.progressive).ok_or_else(invalid)?.samples_per_pixel;
++    validate_partial_pixels(sampling, target, covered, &image, request.background)?;
++    Ok(image)
++}
++
++pub(super) fn partial_request_due(previous: Option<(JobId, Duration)>, job: JobId, now: Duration) -> bool {
++    previous.is_none_or(|(old, when)| old != job || now.saturating_sub(when) >= Duration::from_millis(250))
++}
++
++fn capture_dimensions(request: &Value) -> Result<[u32; 2], String> {
++    let invalid = || crate::i18n::tr("render.error_provisional_identity").to_string();
++    let settings = request.get("settings").ok_or_else(invalid)?;
++    let dimension = |key: &str| {
++        settings.get(key).and_then(Value::as_u64).and_then(|value| u32::try_from(value).ok()).filter(|value| *value != 0).ok_or_else(invalid)
++    };
++    Ok([dimension("width")?, dimension("height")?])
++}
++
+ struct Cached {
+     key: PixelKey,
+     revision: VisualRevision,
+     info: FrameInfo,
+     samples: u32,
++    partial: Option<PartialSampling>,
++    final_dimensions: [u32; 2],
+     stale: bool,
+     texture: Result<egui::TextureHandle, String>,
+ }
+@@ -48,6 +262,10 @@
+     context: Option<InteractiveRender>,
+     pub(super) pending: Option<Pending>,
+     issued: Option<CaptureTicket>,
++    issued_dimensions: Option<[u32; 2]>,
++    partial_request: Option<(JobId, Duration)>,
++    partial_exhausted: bool,
++    protected_feedback_snapshot: Option<(JobId, solidcraft_engine::render::job::ProtectedPreviewReport)>,
+     observed: Option<Intent>,
+     visual: u64,
+     clock: Duration,
+@@ -63,6 +281,10 @@
+             context: None,
+             pending: None,
+             issued: None,
++            issued_dimensions: None,
++            partial_request: None,
++            partial_exhausted: false,
++            protected_feedback_snapshot: None,
+             observed: None,
+             visual: 0,
+             clock: Duration::ZERO,
+@@ -81,6 +303,10 @@
+             let _ = context.disable();
+         }
+         self.issued = None;
++        self.issued_dimensions = None;
++        self.partial_request = None;
++        self.partial_exhausted = false;
++        self.protected_feedback_snapshot = None;
+         self.observed = None;
+         self.phase = Phase::Off;
+         self.user_paused = false;
+@@ -162,6 +388,10 @@
+         self.visual = self.visual.checked_add(1).ok_or_else(|| app.tr("render.interactive_error").to_string())?;
+         self.observed = Some(intent);
+         self.issued = None;
++        self.issued_dimensions = None;
++        self.partial_request = None;
++        self.partial_exhausted = false;
++        self.protected_feedback_snapshot = None;
+         self.error = None;
+         if self.user_paused {
+             if let Some(frame) = &mut self.frame {
+@@ -203,6 +433,10 @@
+         context.set_final_active(suspend || waiting_for_model, self.clock).map_err(|error| error.to_string())?;
+         if suspend || waiting_for_model {
+             self.issued = None;
++        self.issued_dimensions = None;
++        self.partial_request = None;
++        self.partial_exhausted = false;
++        self.protected_feedback_snapshot = None;
+         }
+         if suspend && !self.user_paused {
+             self.frame = None;
+@@ -252,6 +486,10 @@
+                 .ok_or_else(|| app.tr("render.interactive_error").to_string())?
+                 .snapshot(&app.session, ticket, request)
+                 .map_err(|error| error.to_string())?;
++            self.issued_dimensions = Some(capture_dimensions(request)?);
++            self.partial_request = None;
++            self.partial_exhausted = false;
++            self.protected_feedback_snapshot = None;
+             self.issued = Some(ticket);
+             self.pending = Some(spawn(snapshot)?);
+             self.phase = Phase::Updating;
+@@ -272,19 +510,81 @@
+         if status.request.integrator != Integrator::Raytrace || status.scene_generation != ticket.revision().scene_generation {
+             return Err(crate::i18n::tr("render.interactive_error").into());
+         }
+-        // Prefer an immutable checkpoint. A completed 16-SPP preview is also
+-        // provisional and is never inserted into view.job/completed/result slots.
+-        let preview = job.preview().map_err(|error| error.to_string())?;
+-        if let Some(preview) = preview {
+-            let key = PixelKey { job: job.id(), sequence: preview.info.frame_sequence, complete: false };
+-            self.cache_png(ctx, key, ticket.revision(), &preview.info.frame, preview.info.samples_per_pixel, (preview.png(), &status.request))?;
+-        } else if let Some(frame) = job.frame().map_err(|error| error.to_string())? {
++        // Demand is advisory, not capture authority. False attempts still throttle.
++        if !status.progress.phase.terminal() && partial_request_due(self.partial_request, job.id(), self.clock) {
++            self.partial_request = Some((job.id(), self.clock));
++            let _ = job.request_partial_preview().map_err(|error| error.to_string())?;
++        }
++        // Report counters belong to this actual admitted job. None is not a
++        // theoretical zero ledger; old/shared-cap routes retain their own cause.
++        let report = job.protected_preview_report().map_err(|error| error.to_string())?;
++        self.protected_feedback_snapshot = report.map(|report| (job.id(), report));
++        self.partial_exhausted = if let Some(report) = report {
++            report.quota_exhausted
++        } else {
++            job.partial_preview_exhausted().map_err(|error| error.to_string())?
++        };
++        let partial = job.partial_preview().map_err(|error| error.to_string())?;
++        // Read the real terminal after the partial slot: completion can race the
++        // earlier status. Terminal16 stays provisional, never a final export.
++        if let Some(frame) = job.frame().map_err(|error| error.to_string())? {
+             let key = PixelKey { job: job.id(), sequence: 0, complete: true };
+             let samples = status.request.raytrace.as_ref().and_then(|options| options.progressive).map_or(0, |options| options.samples_per_pixel);
+             self.cache_png(ctx, key, ticket.revision(), &frame.info, samples, (frame.png(), &status.request))?;
++        } else if let Some(partial) = partial {
++            self.cache_partial_png(ctx, &job, ticket, &status.request, &partial)?;
++        } else if let Some(preview) = job.preview().map_err(|error| error.to_string())? {
++            let key = PixelKey { job: job.id(), sequence: preview.info.frame_sequence, complete: false };
++            self.cache_png(ctx, key, ticket.revision(), &preview.info.frame, preview.info.samples_per_pixel, (preview.png(), &status.request))?;
+         }
+         Ok(())
+     }
++    fn cache_partial_png(
++        &mut self,
++        ctx: &egui::Context,
++        job: &solidcraft_engine::render::job::JobHandle,
++        ticket: CaptureTicket,
++        request: &solidcraft_engine::render::job::ImageRequest,
++        publication: &solidcraft_engine::render::job::RenderPartialPreview,
++    ) -> Result<(), String> {
++        let invalid = || crate::i18n::tr("render.error_provisional_identity").to_string();
++        let final_dimensions = self.issued_dimensions.ok_or_else(invalid)?;
++        let expected = PartialExpectation {
++            job: job.id(), scene_generation: ticket.revision().scene_generation, request, final_dimensions,
++        };
++        let previous = self.frame.as_ref()
++            .filter(|old| old.key.job == job.id() && old.revision == ticket.revision()).and_then(|old| old.partial);
++        let Some(sampling) = validate_partial_metadata(
++            &expected, &publication.info, publication.png().len(), publication.covered().len(), previous,
++        )? else {
++            return Ok(());
++        };
++        let info = &publication.info.frame;
++        let image = decode_partial_image(
++            request, &publication.info, publication.png(), publication.covered(), sampling,
++            ctx.input(|input| input.max_texture_side),
++        )?;
++        // Decoding can overlap worker cancellation/completion. Do not adopt a
++        // late partial, and leave a real terminal for the next normal refresh.
++        let status = job.status().map_err(|error| error.to_string())?;
++        if status.progress.phase.terminal()
++            || self.issued != Some(ticket)
++            || self.revision() != Some(ticket.revision())
++            || self.context.as_ref().ok_or_else(invalid)?.current().map_err(|error| error.to_string())?.is_none_or(|current| current.id() != job.id())
++        {
++            return Ok(());
++        }
++        let texture = ctx.load_texture("sc_render_interactive_partial", image, egui::TextureOptions::NEAREST);
++        self.frame = Some(Cached {
++            key: PixelKey { job: job.id(), sequence: 0, complete: false },
++            revision: ticket.revision(), info: info.clone(), samples: 0,
++            partial: Some(sampling), final_dimensions, stale: false, texture: Ok(texture),
++        });
++        // The cache retains neither source Arc, PNG nor covered sidecar. Ending
++        // this borrow is not a credit ACK: host/external owners may still retain it.
++        Ok(())
++    }
++
+     fn cache_png(
+         &mut self,
+         ctx: &egui::Context,
+@@ -295,7 +595,7 @@
+         payload: (&[u8], &solidcraft_engine::render::job::ImageRequest),
+     ) -> Result<(), String> {
+         let (png, request) = payload;
+-        if self.frame.as_ref().is_some_and(|frame| frame.key == key && frame.revision == revision) {
++        if self.frame.as_ref().is_some_and(|frame| frame.partial.is_none() && frame.key == key && frame.revision == revision) {
+             return Ok(());
+         }
+         if info.job != key.job
+@@ -316,7 +616,11 @@
+         )
+         .map(|image| ctx.load_texture("sc_render_interactive", image, egui::TextureOptions::LINEAR));
+         let error = texture.as_ref().err().cloned();
+-        self.frame = Some(Cached { key, revision, info: info.clone(), samples, stale: false, texture });
++        self.frame = Some(Cached {
++            key, revision, info: info.clone(), samples, partial: None,
++            final_dimensions: self.issued_dimensions.ok_or_else(|| crate::i18n::tr("render.error_provisional_identity").to_string())?,
++            stale: false, texture,
++        });
+         if let Some(error) = error {
+             return Err(error);
+         }
+@@ -381,6 +685,10 @@
+                 context.pause().map_err(|error| error.to_string())?;
+                 state.user_paused = true;
+                 state.issued = None;
++                state.issued_dimensions = None;
++                state.partial_request = None;
++                state.partial_exhausted = false;
++                state.protected_feedback_snapshot = None;
+                 state.phase = Phase::Paused;
+             }
+             Action::Resume => {
+@@ -392,6 +700,10 @@
+                 context.resume(state.clock).map_err(|error| error.to_string())?;
+                 state.user_paused = false;
+                 state.issued = None;
++                state.issued_dimensions = None;
++                state.partial_request = None;
++                state.partial_exhausted = false;
++                state.protected_feedback_snapshot = None;
+                 state.error = None;
+                 state.frame = None;
+                 state.phase = Phase::Updating;
+@@ -458,18 +770,86 @@
+         && state.frame.is_none()
+ }
+ 
++/// Pausing an Unknown source must not restore invisible geometry hit targets.
++/// Pure UI visibility policy, shared by pixel paint and the Unknown-only guard.
++/// These flags describe an existing cached frame, never a renderer/job capability.
++#[derive(Clone, Copy)]
++pub(super) struct FrameVisibility {
++    pub(super) has_context: bool,
++    pub(super) final_active: bool,
++    pub(super) has_error: bool,
++    pub(super) paused: bool,
++    pub(super) stale: bool,
++    pub(super) revision_matches: bool,
++    pub(super) texture_ok: bool,
++}
++
++impl FrameVisibility {
++    pub(super) fn paintable(self) -> bool {
++        self.has_context
++            && !self.final_active
++            && !self.has_error
++            && self.texture_ok
++            && (self.paused || (!self.stale && self.revision_matches))
++    }
++
++    pub(super) fn blocks_unknown(self, source_unknown: bool) -> bool {
++        source_unknown && self.paintable()
++    }
++}
++
++fn frame_visibility(state: &State, frame: &Cached) -> FrameVisibility {
++    FrameVisibility {
++        has_context: state.context.is_some(),
++        final_active: state.final_active,
++        has_error: state.error.is_some(),
++        paused: state.user_paused,
++        stale: frame.stale,
++        revision_matches: state.revision() == Some(frame.revision),
++        texture_ok: frame.texture.is_ok(),
++    }
++}
++
++pub(super) fn blocks_geometry_input(app: &SolveApp) -> bool {
++    awaiting_current_frame(app)
++        || (super::active(app)
++            && app.render_workspace.view.method == ImageMethod::CpuRaytrace
++            && !app.render_workspace.view.result
++            && app.render_workspace.interactive.context.as_ref().is_some_and(|context| context.is_current(&app.session))
++            && app.render_workspace.interactive.frame.as_ref().is_some_and(|frame| {
++                frame_visibility(&app.render_workspace.interactive, frame)
++                    .blocks_unknown(frame.partial.is_some_and(|sampling| sampling.source_unknown()))
++            }))
++}
++
++fn paint_unknown_underlay(ui: &egui::Ui, rect: egui::Rect) {
++    let tokens = Tokens::get();
++    let painter = ui.painter().with_clip_rect(rect);
++    painter.rect_filled(rect, 0.0, tokens.file_background);
++    // Fixed64 theme cells independent of source pixel count; no model or final fill.
++    for y in 0..8 {
++        for x in 0..8 {
++            if (x + y) % 2 == 0 {
++                let min = rect.min + egui::vec2(rect.width() * x as f32 / 8.0, rect.height() * y as f32 / 8.0);
++                let max = rect.min + egui::vec2(rect.width() * (x + 1) as f32 / 8.0, rect.height() * (y + 1) as f32 / 8.0);
++                painter.rect_filled(egui::Rect::from_min_max(min, max), 0.0, tokens.file_border);
++            }
++        }
++    }
++}
++
+ pub(super) fn paint(app: &SolveApp, ui: &egui::Ui, rect: egui::Rect) -> bool {
+     let state = &app.render_workspace.interactive;
+-    if state.context.is_none() || state.final_active || state.error.is_some() {
+-        return false;
+-    }
+     let Some(frame) = &state.frame else { return false };
+-    if !state.user_paused && (frame.stale || state.revision() != Some(frame.revision)) {
++    if !frame_visibility(state, frame).paintable() {
+         return false;
+     }
+     let Ok(texture) = &frame.texture else { return false };
+     let scale = (rect.width() / frame.info.width as f32).min(rect.height() / frame.info.height as f32);
+     let target = egui::Rect::from_center_size(rect.center(), egui::vec2(frame.info.width as f32, frame.info.height as f32) * scale);
++    if frame.partial.is_some_and(|sampling| sampling.source_unknown()) {
++        paint_unknown_underlay(ui, target);
++    }
+     ui.painter().with_clip_rect(rect).image(
+         texture.id(),
+         target,
+@@ -520,13 +900,9 @@
+         |ui| {
+             ui.set_width(width);
+             ui.set_max_width(width);
++            ui.set_max_height(height);
+             ui.set_clip_rect(ui.clip_rect().intersect(bounds));
+-            egui::ScrollArea::vertical()
+-                .id_salt("sc_render_interactive_controls_scroll")
+-                .min_scrolled_height(0.0)
+-                .max_height(height)
+-                .auto_shrink([false, true])
+-                .show(ui, |ui| controls(app, ui));
++            controls(app, ui);
+         },
+     );
+     crate::shell::register_panel(app, "render:interactive-card", Some(card.response.rect.intersect(bounds)), None);
+@@ -547,34 +923,17 @@
+     };
+     let label = app.tr(key).to_string();
+     let error = state.error.clone();
+-    let samples = state.frame.as_ref().map(|frame| frame.samples);
++    let partial = state.frame.as_ref().and_then(|frame| frame.partial);
++    let samples = state.frame.as_ref().and_then(|frame| frame.partial.map_or(Some(frame.samples), |sampling| sampling.uniform_samples()));
+     let dimensions = state.frame.as_ref().map(|frame| (frame.info.width, frame.info.height));
+     let stale = state.frame.as_ref().is_some_and(|frame| frame.stale);
+     let final_active = state.final_active;
+-    ui_kit::text(ui, &label, ui_kit::Text::Inline);
+-    if running {
+-        ui_kit::text(ui, app.tr("render.interactive_provisional"), ui_kit::Text::Note("render.interactive_provisional"));
+-    }
+-    if let Some(samples) = samples {
+-        let label = crate::i18n::format("render.interactive_samples", &[("done", &samples.to_string()), ("total", "16")]);
+-        ui_kit::text(ui, &label, ui_kit::Text::Inline);
+-    }
+-    if let Some((width, height)) = dimensions {
+-        ui_kit::text(ui, &format!("{width} × {height} px"), ui_kit::Text::Inline);
+-    }
+-    if stale {
+-        ui_kit::text(ui, app.tr("render.interactive_stale"), ui_kit::Text::Note("render.interactive_stale"));
+-    }
+-    if final_active {
+-        ui_kit::text(ui, app.tr("render.interactive_final_active"), ui_kit::Text::Note("render.interactive_final_active"));
+-    }
+-    if let Some(error) = error {
+-        ui_kit::text(ui, &error, ui_kit::Text::Error("render.interactive_error"));
+-    }
++    let final_dimensions = state.frame.as_ref().map(|frame| frame.final_dimensions);
++    let partial_exhausted = state.partial_exhausted;
++    let protected_feedback = state.protected_feedback_snapshot
++        .filter(|(job, _)| state.issued.is_some_and(|ticket| ticket.job_id() == *job))
++        .map(|(_, report)| report);
+     let reason = ready(app).err();
+-    if let Some(reason) = &reason {
+-        ui_kit::text(ui, reason, ui_kit::Text::Note("render.interactive_requires_cpu"));
+-    }
+     let mut action = None;
+     ui.horizontal_wrapped(|ui| {
+         for (action_value, name, key, enabled) in if !running {
+@@ -604,6 +963,77 @@
+         }
+         ui.ctx().request_repaint();
+     }
++    // Actions remain outside the scroller. In a short free rectangle, status
++    // text may scroll but must not push Pause/Resume/Off below the visible clip.
++    let height = ui.available_height().max(0.0);
++    if height > 0.0 {
++        egui::ScrollArea::vertical()
++            .id_salt("sc_render_interactive_controls_scroll")
++            .min_scrolled_height(0.0)
++            .max_height(height)
++            .auto_shrink([false, true])
++            .show(ui, |ui| {
++                ui_kit::text(ui, &label, ui_kit::Text::Inline);
++                if running {
++                    ui_kit::text(ui, app.tr("render.interactive_provisional"), ui_kit::Text::Note("render.interactive_provisional"));
++                }
++                if let Some(sampling) = partial {
++                    let (min, max) = sampling.sample_range();
++                    let pixels = u64::from(sampling.plan.source_width()) * u64::from(sampling.plan.source_height());
++                    let label = crate::i18n::format("render.interactive_partial_samples", &[
++                        ("min", &min.to_string()), ("max", &max.to_string()),
++                        ("known", &sampling.sampled_source_pixels().to_string()), ("pixels", &pixels.to_string()),
++                    ]);
++                    ui_kit::text(ui, &label, ui_kit::Text::Inline);
++                } else if let Some(samples) = samples {
++                    let label = crate::i18n::format("render.interactive_samples", &[("done", &samples.to_string()), ("total", "16")]);
++                    ui_kit::text(ui, &label, ui_kit::Text::Inline);
++                }
++                if let Some(sampling) = partial {
++                    if let (Some((width, height)), Some(final_dimensions)) = (dimensions, final_dimensions) {
++                        let label = crate::i18n::format("render.interactive_partial_dimensions", &[
++                            ("display_width", &width.to_string()), ("display_height", &height.to_string()),
++                            ("source_width", &sampling.plan.source_width().to_string()), ("source_height", &sampling.plan.source_height().to_string()),
++                            ("final_width", &final_dimensions[0].to_string()), ("final_height", &final_dimensions[1].to_string()),
++                        ]);
++                        ui_kit::text(ui, &label, ui_kit::Text::Inline);
++                    }
++                } else if let Some((width, height)) = dimensions {
++                    ui_kit::text(ui, &format!("{width} × {height} px"), ui_kit::Text::Inline);
++                }
++                if let Some(report) = protected_feedback.filter(|_| matches!(phase, Phase::Updating | Phase::Refining)) {
++                    let label = crate::i18n::format("render.interactive_feedback_usage", &[
++                        ("started", &report.accepted_snapshots.to_string()), ("limit", &report.quota_limit.to_string()),
++                    ]);
++                    ui_kit::text(ui, &label, ui_kit::Text::Inline);
++                    ui_kit::text(ui, app.tr("render.interactive_feedback_policy"), ui_kit::Text::Note("render.interactive_feedback_policy"));
++                    let reason = if report.quota_exhausted {
++                        Some("render.interactive_feedback_quota_exhausted")
++                    } else if report.milestones_complete {
++                        Some("render.interactive_feedback_milestones_complete")
++                    } else {
++                        None
++                    };
++                    if let Some(reason) = reason {
++                        ui_kit::text(ui, app.tr(reason), ui_kit::Text::Note(reason));
++                    }
++                } else if protected_feedback.is_none() && partial_exhausted && phase != Phase::TargetReached {
++                    ui_kit::text(ui, app.tr("render.interactive_partial_exhausted"), ui_kit::Text::Note("render.interactive_partial_exhausted"));
++                }
++                if stale {
++                    ui_kit::text(ui, app.tr("render.interactive_stale"), ui_kit::Text::Note("render.interactive_stale"));
++                }
++                if final_active {
++                    ui_kit::text(ui, app.tr("render.interactive_final_active"), ui_kit::Text::Note("render.interactive_final_active"));
++                }
++                if let Some(error) = error {
++                    ui_kit::text(ui, &error, ui_kit::Text::Error("render.interactive_error"));
++                }
++                if let Some(reason) = &reason {
++                    ui_kit::text(ui, reason, ui_kit::Text::Note("render.interactive_requires_cpu"));
++                }
++            });
++    }
+ }
+ pub(super) fn command_ready(app: &SolveApp) -> Result<(), String> {
+     if app.render_workspace.interactive.context.is_some() { Ok(()) } else { ready(app) }
+@@ -625,7 +1055,17 @@
+     let state = &app.render_workspace.interactive;
+     json!({"enabled":state.context.is_some(),"phase":format!("{:?}",state.phase),"visual_revision":state.visual,
+         "pending_capture":state.pending.is_some(),"paused":state.user_paused,"error":state.error,
+-        "samples":state.frame.as_ref().map(|frame| frame.samples),"stale":state.frame.as_ref().is_some_and(|frame|frame.stale),
++        "samples":state.frame.as_ref().and_then(|frame|frame.partial.map_or(Some(frame.samples), |sampling|sampling.uniform_samples())),
++        "partial":state.frame.as_ref().and_then(|frame|frame.partial).map(|sampling|json!({
++            "sequence":sampling.cursor.sequence,"completed_passes":sampling.cursor.completed_passes,"updated_prefix":sampling.cursor.updated_prefix,
++            "source_width":sampling.plan.source_width(),"source_height":sampling.plan.source_height(),
++            "sample_min":sampling.sample_range().0,"sample_max":sampling.sample_range().1,
++            "source_sampled_pixels":sampling.sampled_source_pixels(),"source_unknown":sampling.source_unknown()
++        })),
++        "final_dimensions":state.frame.as_ref().map(|frame|frame.final_dimensions),
++        // Diagnostic snapshot only, never a terminal audit or a new JobStatus field.
++        "protected_feedback_snapshot":state.protected_feedback_snapshot.map(|(job, report)|json!({"job":job,"report":report})),
++        "partial_exhausted":state.partial_exhausted,"stale":state.frame.as_ref().is_some_and(|frame|frame.stale),
+         "job":state.frame.as_ref().map(|frame|frame.info.job),"provisional":true})
+ }
+ 

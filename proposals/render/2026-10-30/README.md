@@ -59,3 +59,8 @@ The original 516-case core result remains bound to its exact unchanged core sour
 [Current validation status](STATUS.md) supersedes the earlier snapshot above. The [engine test-helper Result correction](engine-test-helper-result.patch) and exact engine sources are now preserved here. [Native mouse/keyboard acceptance](native-mouse-keyboard-acceptance.md) is planned after validation and an actual application build; it has not been executed.
 
 </details>
+
+<!-- protected-combined-source-20261030 -->
+## Protected CPU progressive-feedback source
+
+[Complete27-file source checkpoint](protected-combined-source/README.md), including31 new unrun producer/host regressions and the protected receiver over the previous reviewed A2 foundation. Exact text composition only: unapplied, unformatted, uncompiled and unrun; cross-module review pending. Manual-final streaming, general/progressive glass, library routing, finishing and native long-scene cadence/quality remain open. This cumulative patch is an alternative to overlapping earlier increments, never an extra layer on top of them.

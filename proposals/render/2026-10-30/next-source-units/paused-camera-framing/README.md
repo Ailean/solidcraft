@@ -1,0 +1,13 @@
+# Paused Interactive — camera/framing source unit
+
+**Unapplied, unformatted, uncompiled and unrun.** This three-file unit was independently source-reviewed (`47c6b753`); no actionable blocker was found within its narrow camera/framing scope. It is separate from the Raster unit beside it and is not a combined production candidate.
+
+The exact base is adopted C16 source manifest `7a30db715b0f342b37e4f5c53f7297cef1d56e22cf65a55278d6e14fd46cc852`, reconstructed through [C16's source lineage](../../c16-defaults-auto-result/README.md). `candidate.patch` and `bindings.json` retain the exact three-file before/candidate hashes, sizes and LF endpoint policy. Verify that base; do not apply over arbitrary newer source, a future formatter stage or the Raster UI candidate without explicit rebind.
+
+The accepted real ImageRequest supplies Cached.camera in both validated PNG and partial paths. Geometry input is blocked only when currently paintable Interactive pixels disagree with the complete current camera or authored aspect. Paused reference pixels remain visible. Picking uses the same painted-image rectangle, excluding letterbox margins; shared navigation, release/Escape cleanup, current JobId/ticket checks, final/export authority and the earlier Unknown policy remain. It does not restore an old camera or globally prohibit useful same-camera appearance editing.
+
+Three original declarations append to the exact552355-byte UI255 prefix, producing UI258: real native-host Pause/pan/release against retained pixels, successive same-camera appearance assignments with letterbox exclusion, and drag release after authored-aspect change. They are **unrun in-process host/input tests**, not human mouse/keyboard evidence. An unsupported-host refusal branch cannot qualify CPU rendering. Partial camera assignment has source inspection only; no new hostile/concurrency/partial runtime qualification is claimed.
+
+**Not closed:** same-camera geometric model changes, placements and visibility. This unit does not prove full scene identity or close the whole paused-input issue. Separate geometry identity work remains necessary without overblocking appearance-only edits. No native layout, long-scene cadence, quality or full-CI result follows from the source review.
+
+Changes a default: no. Preserve Nateaux's UI and actual contributor interfaces. Engineer must rebind/review any later shared composition; only the sole builder may run a freshly admitted source-specific validation. No C15/C16 or older PASS is inherited. Only source and curated bindings are published here, without private controls, logs or machine paths.

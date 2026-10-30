@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "status": "PRIVATE_UNIT_SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "authorship": "Worker #1, SolidCraft Render team under0xlillith; independent Designer narrow source review retained.",
+  "base": {
+    "source_manifest_sha256": "7a30db715b0f342b37e4f5c53f7297cef1d56e22cf65a55278d6e14fd46cc852",
+    "public_source": "../../c16-defaults-auto-result/README.md",
+    "description": "Exact actual adopted C16 pre-format source, not latest main or Raster archival source."
+  },
+  "original_manifest_sha256": "60f5912a2cb2182c42f066747d915eb089ef499b40a5cceff1d4224486c195a6",
+  "original_binding_sha256": "3b7db4abeabe06e6711dc94dcf0d953dab637bfb4e3aad87d90334615bb652df",
+  "independent_source_review_sha256": "47c6b7535e2ea2a29d6b4d76ad1c51759dd36d65cdb6f616d24130bc0d654e65",
+  "patch": {
+    "path": "candidate.patch",
+    "bytes": 17967,
+    "sha256": "d804f38d981dedf3235060ef7d98274ef0765bf0602bc4650e68fd70aa71f296"
+  },
+  "files": [
+    {
+      "path": "crates/ui-egui/src/render_workspace_interactive.rs",
+      "before": {
+        "sha256": "ca191e803c2c9dceb96e85668b5c77d31f24475e5048f573e2ca5ed75059e813",
+        "bytes": 49827,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 1089,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "fc8d2b4d5102d81f3711c6313bbb0cdc8bca58fdc9be5b1d9874ac7fa2859513",
+        "bytes": 51525,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 1130,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace.rs",
+      "before": {
+        "sha256": "e202f6006332d21942e6bd01a4889601c77f2f1ab84039c0bc5aea2fd0cc18f0",
+        "bytes": 107739,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 2444,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "0b0eead2ec0ee12fafbe367960b6d46be6f362637f2a3184376553c96ea16894",
+        "bytes": 107938,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 2446,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before": {
+        "sha256": "2acd261a36f2baa0acedad44eed6cf67ad7d6ee895e2197539735a266c36ed3e",
+        "bytes": 552355,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 10169,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "b38377aae33c2e933b81ac438f466ca80a148acacc5e5fe0e9c08156749d4bef",
+        "bytes": 562679,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 10343,
+        "UTF8_BOM": false
+      }
+    }
+  ],
+  "EOL_policy": "Original patch bytes are retained. For exact reconstruction, verify RAW preimage SHA, normalize only physical CRLF to LF where required for text-hunk replay, restore each declared endpoint EOL, and verify the exact RAW candidate SHA. No fuzzy whitespace or universal literal RAW replay claim.",
+  "UI_declarations": {
+    "before": 255,
+    "candidate": 258,
+    "added_unrun": 3
+  },
+  "original_UI255_RAW_prefix_bytes_preserved": 552355,
+  "full_scene_geometry_placement_visibility_identity_closed": false,
+  "Changes a default": "no",
+  "source_adopted_or_executed": false
+}

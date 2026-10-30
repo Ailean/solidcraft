@@ -1,0 +1,876 @@
+{
+  "schema": 1,
+  "status": "PRIVATE_ARCHIVAL_SOURCE_CHAIN_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "authorship": "Worker #3, SolidCraft Render team under0xlillith; independent Kernel implementation review and focal closure retained.",
+  "base": {
+    "source_manifest_sha256": "2fe4f37371e7376e02ae89a080e51fad82e6f6c564bfe8b8a8075c2951fe1f31",
+    "public_formatter_bridge": "../../c16-defaults-auto-result/c15-postformat-manifest.json",
+    "description": "Exact archived C15 post-format source. This is not the current C16/W1 UI receiver."
+  },
+  "original_index_sha256": "73f6c9bde80c25c7d2a22f30409b9efaa1d9cda97231c1d99720df8d71637455",
+  "original_source_manifest_sha256": "5f1d83897823898e10f0daefdb8ec015295aae3ca021d96032c6ab6828612e2a",
+  "independent_source_review_sha256": "5756983402c707d4335416fa8e355c2d584e3cb57e3e4c1f69b2db534bf1e8d2",
+  "independent_F3_closure_sha256": "b48743c223e41e901d3c99182e0228daad174d9c2700d34eb8429536ecef1bad",
+  "patch_order": [
+    {
+      "path": "01-base-main.patch",
+      "sha256": "b5efadddcda2dadfee82485d30ef6b1c23e36f175cd0580c9e245d62bb86e1e3",
+      "bytes": 53929,
+      "stage": "main",
+      "source_files": 12
+    },
+    {
+      "path": "02-base-mechanical-non-ui.patch",
+      "sha256": "6e23465532df7598e8e1ba15cf2f38721829e9d0256570ea75fc6c45d9c07561",
+      "bytes": 9018,
+      "stage": "mechanical_non_ui",
+      "source_files": 19
+    },
+    {
+      "path": "03-base-mechanical-ui.patch",
+      "sha256": "08cd6c2d25ef580203153bda6b089bbf21fad60fea3397a059c34f79d29320da",
+      "bytes": 1755,
+      "stage": "mechanical_ui",
+      "source_files": 2
+    },
+    {
+      "path": "04-f1-test-dto-path.patch",
+      "sha256": "0d297ec69b302844e7647458b27d25409ab8b90c84361f05b696df18f3841ac3",
+      "bytes": 2818,
+      "stage": "F1 test DTO paths",
+      "source_files": 1
+    },
+    {
+      "path": "05-f2-empty-capacity.patch",
+      "sha256": "4c8c1c05a3357137e5596cc0be00bca2c28cd83c6a5f868f3bdcc0d3b8f0d1bf",
+      "bytes": 2822,
+      "stage": "F2 empty capacity billing",
+      "source_files": 2
+    },
+    {
+      "path": "06-f3-borrowed-json.patch",
+      "sha256": "98911803290ef9a57be81b0cd17a5a1a0ff3a6aa3379ed4d510d15cde671c7a0",
+      "bytes": 5084,
+      "stage": "F3 borrowed JSON before copy",
+      "source_files": 2
+    }
+  ],
+  "original33_file_source_bindings": [
+    {
+      "path": "crates/engine/src/render_jobs.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "4a2d5c1886ca029d383874f9aece71b866390fad2b6651193e218b2c302c5f48",
+        "bytes": 42310,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 856,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "80a110ce652c01d7de86a8627582a08a8d87f5670ba8e9703d1271f3592b40e7",
+        "bytes": 42331,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 856,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/engine/src/cmd/render.rs",
+      "group": "main",
+      "before": {
+        "sha256": "c8e029139a5a01efa9196dd45c419fec4a6191f752a86e3b023e2bb0e0fc3ba4",
+        "bytes": 41491,
+        "EOL": "CRLF",
+        "CRLF": 424,
+        "LF": 424,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "869a7bb3345d0dfe7d220eccfa9d8ac11421723fbccacb73b596a6bbfc0e5f02",
+        "bytes": 41892,
+        "EOL": "CRLF",
+        "CRLF": 424,
+        "LF": 424,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/engine/src/cmd/render/job_tests.rs",
+      "group": "main",
+      "before": {
+        "sha256": "545f7e6043aa8fa1d24787021e199f25e2aebadeb4150641b1b77649ef38292a",
+        "bytes": 68734,
+        "EOL": "CRLF",
+        "CRLF": 1218,
+        "LF": 1218,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "22ed3118fc92b84fbe80645ee4c44c64d1753e4979e4132677bdba6f4272156f",
+        "bytes": 71850,
+        "EOL": "CRLF",
+        "CRLF": 1271,
+        "LF": 1271,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/engine/src/cmd/render/jobs.rs",
+      "group": "main",
+      "before": {
+        "sha256": "741caaaeb765853b6d89e0a69eaa8f425654689433a8eee48d3587d276144dd2",
+        "bytes": 64072,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 1255,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "b4cbe807251130730b3f9ff3eb34ee9ce24b4ba28dd887d1d8beca646fce3e5c",
+        "bytes": 65570,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 1277,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/gpu/src/path/denoise_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "19d7d68e870e61e78da7f4f868c52fddb24f389c94d96745aa5f9b785dbfbbe7",
+        "bytes": 16109,
+        "EOL": "CRLF",
+        "CRLF": 349,
+        "LF": 349,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "2e3d2f17590457407389be4458640257f39d629422dc03fd476adbd19077b313",
+        "bytes": 16130,
+        "EOL": "CRLF",
+        "CRLF": 349,
+        "LF": 349,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/gpu/src/path/mod.rs",
+      "group": "main",
+      "before": {
+        "sha256": "56eb1fe9e358d08377e37ec28628463497faaae4365a3890d289ba94a66b1777",
+        "bytes": 51168,
+        "EOL": "CRLF",
+        "CRLF": 1034,
+        "LF": 1034,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "7ac11bb0cff6d740fc520dd62840aae2815961f34e6251fd3e1cffdc4edede23",
+        "bytes": 51526,
+        "EOL": "CRLF",
+        "CRLF": 1040,
+        "LF": 1040,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/gpu/src/path/tests.rs",
+      "group": "main",
+      "before": {
+        "sha256": "ea1d58e5fe879b35724879a65ddd4a738edfc0ea4fd57f17148ffc4a95b89f0a",
+        "bytes": 166721,
+        "EOL": "CRLF",
+        "CRLF": 3328,
+        "LF": 3328,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "bc337ca1f22c3554fb51a47787de9d5a104e50311ec399ae2286e7e606b0b0bb",
+        "bytes": 167131,
+        "EOL": "CRLF",
+        "CRLF": 3337,
+        "LF": 3337,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/examples/cpu_resource_smoke.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "b01e26fba1472ae504f8b177b2e151d6d077636381727f1fc358d8fb5c927225",
+        "bytes": 8602,
+        "EOL": "CRLF",
+        "CRLF": 188,
+        "LF": 188,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "6200bd74b322b069c21253e6733385a4c296523b37cf2a12aea8259b2bd16674",
+        "bytes": 8623,
+        "EOL": "CRLF",
+        "CRLF": 188,
+        "LF": 188,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/host_regrade_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "7ccf5300f99f7e97883f5493513c00227713ba06c045b8e6255c33646c2efbf1",
+        "bytes": 7193,
+        "EOL": "CRLF",
+        "CRLF": 171,
+        "LF": 171,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "0d6528440bca497a097600da7fbab084d946adba65ea0575919d6602be97f5f4",
+        "bytes": 7214,
+        "EOL": "CRLF",
+        "CRLF": 171,
+        "LF": 171,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/host_tests.rs",
+      "group": "main",
+      "before": {
+        "sha256": "d35a649443908a80db0b061c8ab111d45271bbb941b47f48eed2aca55f6f4f14",
+        "bytes": 97653,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 2046,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "9f85c3fc5f339fae97ab3cd39f06e54cfcc0231573baac563695f89fe4a5f269",
+        "bytes": 100887,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 2108,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/host.rs",
+      "group": "main",
+      "before": {
+        "sha256": "1884acfd018cb38683bd6ec92b171eff5a1b39eb5fd7e79bec0e31a3e76aa879",
+        "bytes": 115999,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 2587,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "f4892fbc5940d2151caeca66d1355d12d4b50570c422b83784bf0bae2a0f98e0",
+        "bytes": 116643,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 2594,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/image_tests.rs",
+      "group": "main",
+      "before": {
+        "sha256": "98dfbb281a16aea600a6cff86652b3c92e566eb1188c2942a873df5742183368",
+        "bytes": 19074,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 390,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "a82677ca2e3af1e7110b31e4ea74931ab23ff4f40863a756c2990367d98f995a",
+        "bytes": 23775,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 475,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/image.rs",
+      "group": "main",
+      "before": {
+        "sha256": "0e6fa062eba9d5c0f4899fc92d7e7e667bbad295b35ff6bc8addbc9db7fd6285",
+        "bytes": 34526,
+        "EOL": "CRLF",
+        "CRLF": 813,
+        "LF": 813,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "3e98059f9510e0ed9de16442a6c65801b6757a66cb88b902f427313c7e712912",
+        "bytes": 35902,
+        "EOL": "CRLF",
+        "CRLF": 836,
+        "LF": 836,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/interactive.rs",
+      "group": "main",
+      "before": {
+        "sha256": "ccc8aaa5fc76038b39e8829f87b0888ccd92816567ea8b3d83778201364a4cce",
+        "bytes": 11088,
+        "EOL": "CRLF",
+        "CRLF": 288,
+        "LF": 288,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "5fb7062276adfdc22d1fa651750119feb90870b31d12fb0fc0b852c4b430468d",
+        "bytes": 11135,
+        "EOL": "CRLF",
+        "CRLF": 289,
+        "LF": 289,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/mod.rs",
+      "group": "main",
+      "before": {
+        "sha256": "10b26a76921445cce0029a19e2c9e591663dc5b8876c055b2f07618a4ddeab74",
+        "bytes": 62100,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 1474,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "79c24d3f921c7e78044a32f3b829211380e234672f07a5b86f740dcf814fdebd",
+        "bytes": 66464,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 1559,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/png.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "2d8c7204b6524515b9f13e0219bde0983f67562f8f49b8b7fae6a0d9ccb470fc",
+        "bytes": 7253,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 159,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "61beefeaca1c219c427ec68c5f776f7b0e68c422c9930b3829c63119b9f2bdc9",
+        "bytes": 7274,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 159,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/raster_lights.rs",
+      "group": "main",
+      "before": null,
+      "candidate": {
+        "sha256": "2e5de123b2aba2ac44ef409f3b07882dd909b077d0046080b6bd82de171ae469",
+        "bytes": 5402,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 123,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/regrade.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "0f5e83d3d0ecbd0f0235ba6befcc2c34781a75c611ae26ab49e1f13a7c5a32d3",
+        "bytes": 9382,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 208,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "6f7a76b2e153f444939e0475cf835a5dbc996513a5622ce803ac050f019bd08e",
+        "bytes": 9424,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 208,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/rt2_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "48385581616ef4d5dd3f8a4695fbd491064d1ff2eb99d071bd51b61b8a928fd9",
+        "bytes": 8507,
+        "EOL": "CRLF",
+        "CRLF": 175,
+        "LF": 175,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "cb37434a1199d7a3b5dc60aba19a981e5712fffe4a5d95c5c6fcec507b189e82",
+        "bytes": 8528,
+        "EOL": "CRLF",
+        "CRLF": 175,
+        "LF": 175,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/job/led_strip/tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "f34f73369332748ed6482be31698130d4dc4972fbc9d1a703a50ac18d814c0fb",
+        "bytes": 11914,
+        "EOL": "CRLF",
+        "CRLF": 254,
+        "LF": 254,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "6cf184c9183e120394e5030c745e33e217d5915da914be7546389b8de480c037",
+        "bytes": 11935,
+        "EOL": "CRLF",
+        "CRLF": 254,
+        "LF": 254,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/raytrace/anisotropic_faces_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "0e4689451471f53fc969cb0291d3fa2e45184b11b24aa61982efac5759eef314",
+        "bytes": 11612,
+        "EOL": "CRLF",
+        "CRLF": 246,
+        "LF": 246,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "7f3d88d1649bff3f99a13b7f38ee31cac0dc53f51e438d8320158fad5642e0a5",
+        "bytes": 11633,
+        "EOL": "CRLF",
+        "CRLF": 246,
+        "LF": 246,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/raytrace/anisotropic_reflection_image_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "8d994a5fd9ef7711fd853b0e6d79bc5debbd0e36356a1e5ebebabf94feb9bc5d",
+        "bytes": 14036,
+        "EOL": "CRLF",
+        "CRLF": 317,
+        "LF": 317,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "fd27088c2ad9ed204d71a4c3dc383860fd8c02a32b4c2d6e49b88ca6b1991ce9",
+        "bytes": 14057,
+        "EOL": "CRLF",
+        "CRLF": 317,
+        "LF": 317,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/raytrace/deterministic_primary_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "efdd751d6b2e208d6be4b7ff7f2ed1c9f35cef8266a140eeff7405494e02ef07",
+        "bytes": 26598,
+        "EOL": "CRLF",
+        "CRLF": 612,
+        "LF": 612,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "99f0590d106a85204bf404db64439adce0011980274159b3a8720fb5d34329b7",
+        "bytes": 26640,
+        "EOL": "CRLF",
+        "CRLF": 612,
+        "LF": 612,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/raytrace/dielectric_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "cd6654b63e310fa8c06972060e00c65d056fa691d52c081f2c01fbf41fd2c5cd",
+        "bytes": 34054,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 735,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "e5feb689b944ee6a5247ea8dcab571728367b21faf49f1ecfc0a20ac4bcab198",
+        "bytes": 34075,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 735,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/raytrace/environment_image_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "48e78f834af1df766d602167c7032628bc158629eec655334d0ed781e8836c85",
+        "bytes": 14799,
+        "EOL": "CRLF",
+        "CRLF": 305,
+        "LF": 305,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "ff7325ccdb9a56bd5b7e9163ba0691ae05bda7e55569f8a648958621d29f23d3",
+        "bytes": 14820,
+        "EOL": "CRLF",
+        "CRLF": 305,
+        "LF": 305,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/raytrace/environment_reflection_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "24e3d3378d6ef31a940e218cc0cbc072a7e9bad021411c24bb18e22bc861c0af",
+        "bytes": 12780,
+        "EOL": "CRLF",
+        "CRLF": 295,
+        "LF": 295,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "beecd012fa3cb742198574c8cdc64179c260e08644986cb59198b014d25372cd",
+        "bytes": 12801,
+        "EOL": "CRLF",
+        "CRLF": 295,
+        "LF": 295,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/raytrace/image_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "4a4f46bc26e560fe4087a4fbf4439ea768d05fec2a414af7ad371f5a6897f62d",
+        "bytes": 115864,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 2455,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "7973017ddeead9c87bd64e932c78a33fbcaaba2284a6af6e05f6e05f48350df2",
+        "bytes": 115885,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 2455,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/raytrace/primary_aa_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "66f4d53f8f544c8eeaad8ef7879b50163bcf64528d9aafd20f2c248b1e758e50",
+        "bytes": 89705,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 1810,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "74b7d278b75a2f566301f458c7f6aac557bbf12faef8ce3cd3eb5c9baff3cac4",
+        "bytes": 89747,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 1810,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/raytrace/punctual_image_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "47a59a1361a6dfe6d4fb880c411c5932bbdf8809eb479058bd29237f4ce3f442",
+        "bytes": 11405,
+        "EOL": "CRLF",
+        "CRLF": 275,
+        "LF": 275,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "d3f7ee57bfc84298fb36607989e71764734176f2a47e6f468e29fcd31fee6491",
+        "bytes": 11426,
+        "EOL": "CRLF",
+        "CRLF": 275,
+        "LF": 275,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/render/src/raytrace/reflection_image_tests.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "8148967b0ca991b9d685a9c133f7082213cc00c5f442b27801eb8b500eebe575",
+        "bytes": 15786,
+        "EOL": "CRLF",
+        "CRLF": 324,
+        "LF": 324,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "3e775cd9d2e1543ba629acdf6b0b5e4c48cd2c3f6222e6ffbdf0d1a54681182e",
+        "bytes": 15807,
+        "EOL": "CRLF",
+        "CRLF": 324,
+        "LF": 324,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "tools/render-library/native_smoke.rs",
+      "group": "mechanical_non_ui",
+      "before": {
+        "sha256": "f9563f490a5b636415a861b14a61e8c10f0719b86eb3b224c4f7e93b00561b48",
+        "bytes": 6578,
+        "EOL": "CRLF",
+        "CRLF": 147,
+        "LF": 147,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "cbf897b7c16a613906967d00e4968c04d022785524919a20bc10ec0773cb4e7a",
+        "bytes": 6599,
+        "EOL": "CRLF",
+        "CRLF": 147,
+        "LF": 147,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "group": "mechanical_ui",
+      "before": {
+        "sha256": "5eeb9bb333cad6936dae8bade8c3be0eece2cea7f52d274c6bd59b28c42625d9",
+        "bytes": 545234,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 10030,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "8cdbbfafe9c65fef6be665198fd77b61bf494195310cad58bb43e9d0d1c20803",
+        "bytes": 545297,
+        "EOL": "LF",
+        "CRLF": 0,
+        "LF": 10030,
+        "UTF8_BOM": false
+      }
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_thumbnails.rs",
+      "group": "mechanical_ui",
+      "before": {
+        "sha256": "50c67ceb50118dd7e85f34beae80cf35974588f5e022c5c7461857f617087d29",
+        "bytes": 7454,
+        "EOL": "CRLF",
+        "CRLF": 184,
+        "LF": 184,
+        "UTF8_BOM": false
+      },
+      "candidate": {
+        "sha256": "4b3f2cc6380600c536fdc0068f09ef48461e2d453f8e09be21b4a80eab05f823",
+        "bytes": 7475,
+        "EOL": "CRLF",
+        "CRLF": 184,
+        "LF": 184,
+        "UTF8_BOM": false
+      }
+    }
+  ],
+  "additive_correction_bindings": [
+    {
+      "label": "F1 test DTO paths",
+      "original_manifest_sha256": "d7fdb13cfd7e2e1aaccc212726958ad41c91551792accb1d5a64535df79a4272",
+      "patch": "04-f1-test-dto-path.patch",
+      "files": [
+        {
+          "path": "crates/render/src/job/image_tests.rs",
+          "before": {
+            "sha256": "a82677ca2e3af1e7110b31e4ea74931ab23ff4f40863a756c2990367d98f995a",
+            "bytes": 23775,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF": 475,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "c1b82d29297c831c7cef6d6749c32887257078678edc5d334880898f8be8e60e",
+            "bytes": 23795,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF": 475,
+            "UTF8_BOM": false
+          }
+        }
+      ]
+    },
+    {
+      "label": "F2 empty capacity billing",
+      "original_manifest_sha256": "68de0bc3a7311dc8020ca4f17df6393151c0e466c05c5a004438b366804aec2c",
+      "patch": "05-f2-empty-capacity.patch",
+      "files": [
+        {
+          "path": "crates/render/src/job/raster_lights.rs",
+          "before": {
+            "sha256": "2e5de123b2aba2ac44ef409f3b07882dd909b077d0046080b6bd82de171ae469",
+            "bytes": 5402,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF": 123,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "3ce43f30255b209dd9ad6bb36034f2678d7c0f03d7b6934ae4ba67dac908d63b",
+            "bytes": 5463,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF": 124,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/render/src/job/image_tests.rs",
+          "before": {
+            "sha256": "c1b82d29297c831c7cef6d6749c32887257078678edc5d334880898f8be8e60e",
+            "bytes": 23795,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF": 475,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "236e56d0943780929d0d31711d38807c1fad013877285aa4bc8f0aba31b53207",
+            "bytes": 25575,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF": 507,
+            "UTF8_BOM": false
+          }
+        }
+      ]
+    },
+    {
+      "label": "F3 borrowed JSON before copy",
+      "original_manifest_sha256": "c68f10e3bbc0e70e241c1264f564c8357c1881098142dfe30747b84fdb2905ba",
+      "patch": "06-f3-borrowed-json.patch",
+      "files": [
+        {
+          "path": "crates/engine/src/cmd/render/jobs.rs",
+          "before": {
+            "sha256": "b4cbe807251130730b3f9ff3eb34ee9ce24b4ba28dd887d1d8beca646fce3e5c",
+            "bytes": 65570,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF": 1277,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "523346f6b0432c290c80180363ce7804de449623df884aa52a03c47d4589507c",
+            "bytes": 66004,
+            "EOL": "LF",
+            "CRLF": 0,
+            "LF": 1283,
+            "UTF8_BOM": false
+          }
+        },
+        {
+          "path": "crates/engine/src/cmd/render/job_tests.rs",
+          "before": {
+            "sha256": "22ed3118fc92b84fbe80645ee4c44c64d1753e4979e4132677bdba6f4272156f",
+            "bytes": 71850,
+            "EOL": "CRLF",
+            "CRLF": 1271,
+            "LF": 1271,
+            "UTF8_BOM": false
+          },
+          "candidate": {
+            "sha256": "cefb4fb9b11dffb79148a79b3a43eb0011df7f725fdd9a98c809bfad694a5cbb",
+            "bytes": 73905,
+            "EOL": "CRLF",
+            "CRLF": 1316,
+            "LF": 1316,
+            "UTF8_BOM": false
+          }
+        }
+      ]
+    }
+  ],
+  "final_reviewed_archival_endpoint_hashes": {
+    "crates/engine/src/cmd/render.rs": "869a7bb3345d0dfe7d220eccfa9d8ac11421723fbccacb73b596a6bbfc0e5f02",
+    "crates/engine/src/cmd/render/job_tests.rs": "cefb4fb9b11dffb79148a79b3a43eb0011df7f725fdd9a98c809bfad694a5cbb",
+    "crates/engine/src/cmd/render/jobs.rs": "523346f6b0432c290c80180363ce7804de449623df884aa52a03c47d4589507c",
+    "crates/engine/src/render_jobs.rs": "80a110ce652c01d7de86a8627582a08a8d87f5670ba8e9703d1271f3592b40e7",
+    "crates/gpu/src/path/denoise_tests.rs": "2e3d2f17590457407389be4458640257f39d629422dc03fd476adbd19077b313",
+    "crates/gpu/src/path/mod.rs": "7ac11bb0cff6d740fc520dd62840aae2815961f34e6251fd3e1cffdc4edede23",
+    "crates/gpu/src/path/tests.rs": "bc337ca1f22c3554fb51a47787de9d5a104e50311ec399ae2286e7e606b0b0bb",
+    "crates/render/examples/cpu_resource_smoke.rs": "6200bd74b322b069c21253e6733385a4c296523b37cf2a12aea8259b2bd16674",
+    "crates/render/src/job/host.rs": "f4892fbc5940d2151caeca66d1355d12d4b50570c422b83784bf0bae2a0f98e0",
+    "crates/render/src/job/host_regrade_tests.rs": "0d6528440bca497a097600da7fbab084d946adba65ea0575919d6602be97f5f4",
+    "crates/render/src/job/host_tests.rs": "9f85c3fc5f339fae97ab3cd39f06e54cfcc0231573baac563695f89fe4a5f269",
+    "crates/render/src/job/image.rs": "3e98059f9510e0ed9de16442a6c65801b6757a66cb88b902f427313c7e712912",
+    "crates/render/src/job/image_tests.rs": "236e56d0943780929d0d31711d38807c1fad013877285aa4bc8f0aba31b53207",
+    "crates/render/src/job/interactive.rs": "5fb7062276adfdc22d1fa651750119feb90870b31d12fb0fc0b852c4b430468d",
+    "crates/render/src/job/led_strip/tests.rs": "6cf184c9183e120394e5030c745e33e217d5915da914be7546389b8de480c037",
+    "crates/render/src/job/mod.rs": "79c24d3f921c7e78044a32f3b829211380e234672f07a5b86f740dcf814fdebd",
+    "crates/render/src/job/png.rs": "61beefeaca1c219c427ec68c5f776f7b0e68c422c9930b3829c63119b9f2bdc9",
+    "crates/render/src/job/raster_lights.rs": "3ce43f30255b209dd9ad6bb36034f2678d7c0f03d7b6934ae4ba67dac908d63b",
+    "crates/render/src/job/regrade.rs": "6f7a76b2e153f444939e0475cf835a5dbc996513a5622ce803ac050f019bd08e",
+    "crates/render/src/job/rt2_tests.rs": "cb37434a1199d7a3b5dc60aba19a981e5712fffe4a5d95c5c6fcec507b189e82",
+    "crates/render/src/raytrace/anisotropic_faces_tests.rs": "7f3d88d1649bff3f99a13b7f38ee31cac0dc53f51e438d8320158fad5642e0a5",
+    "crates/render/src/raytrace/anisotropic_reflection_image_tests.rs": "fd27088c2ad9ed204d71a4c3dc383860fd8c02a32b4c2d6e49b88ca6b1991ce9",
+    "crates/render/src/raytrace/deterministic_primary_tests.rs": "99f0590d106a85204bf404db64439adce0011980274159b3a8720fb5d34329b7",
+    "crates/render/src/raytrace/dielectric_tests.rs": "e5feb689b944ee6a5247ea8dcab571728367b21faf49f1ecfc0a20ac4bcab198",
+    "crates/render/src/raytrace/environment_image_tests.rs": "ff7325ccdb9a56bd5b7e9163ba0691ae05bda7e55569f8a648958621d29f23d3",
+    "crates/render/src/raytrace/environment_reflection_tests.rs": "beecd012fa3cb742198574c8cdc64179c260e08644986cb59198b014d25372cd",
+    "crates/render/src/raytrace/image_tests.rs": "7973017ddeead9c87bd64e932c78a33fbcaaba2284a6af6e05f6e05f48350df2",
+    "crates/render/src/raytrace/primary_aa_tests.rs": "74b7d278b75a2f566301f458c7f6aac557bbf12faef8ce3cd3eb5c9baff3cac4",
+    "crates/render/src/raytrace/punctual_image_tests.rs": "d3f7ee57bfc84298fb36607989e71764734176f2a47e6f468e29fcd31fee6491",
+    "crates/render/src/raytrace/reflection_image_tests.rs": "3e775cd9d2e1543ba629acdf6b0b5e4c48cd2c3f6222e6ffbdf0d1a54681182e",
+    "crates/ui-egui/src/render_workspace_tests.rs": "8cdbbfafe9c65fef6be665198fd77b61bf494195310cad58bb43e9d0d1c20803",
+    "crates/ui-egui/src/render_workspace_thumbnails.rs": "4b3f2cc6380600c536fdc0068f09ef48461e2d453f8e09be21b4a80eab05f823",
+    "tools/render-library/native_smoke.rs": "cbf897b7c16a613906967d00e4968c04d022785524919a20bc10ec0773cb4e7a"
+  },
+  "EOL_policy": "Original patch bytes are retained. For exact reconstruction, verify RAW preimage SHA, normalize only physical CRLF to LF where required for text-hunk replay, restore each declared endpoint EOL, and verify the exact RAW candidate SHA. No fuzzy whitespace or universal literal RAW replay claim.",
+  "new_test_declarations_UNRUN": 14,
+  "original_review_findings": {
+    "F1": "New test DTO names fixed by04",
+    "F2": "Direct empty Vec retained capacity conservatively billed by05",
+    "F3": "Borrowed strict JSON validation precedes copying the new wire payload in06"
+  },
+  "mechanical_UI_rebind_required": true,
+  "actual_current_C16_W1_W2_combination_invented_or_adopted": false,
+  "UI_editor_saved_format_nonzero_EV_supported_or_physical_glass_enabled": false
+}

@@ -1,0 +1,879 @@
+--- a/crates/engine/src/cmd/render.rs
++++ b/crates/engine/src/cmd/render.rs
+@@ -124,7 +124,7 @@
+ CommandSpec::new("render.settings.capture_hdr", "Save Render Settings with HDR", resources::capture_settings).icon("settings").doc_only()
+     .params("name, set: typed CPU/GPU setup patch with hdr/environment unset; path: scoped HDR; expected_sha256?: digest returned by render.hdr.inspect (changed sources refuse); rotation_rad?:0, intensity?:1; samples?:1/4/16/64 for CPU only (default16); assume_linear_srgb?:false for GPU only. Captures immutable bytes and saves resource plus setup atomically in one undo, without a host; returns name/setup/resource metadata, never source bytes"),
+ CommandSpec::new("render.preflight", "Check Render Request", jobs::preflight).icon("inspect").noundo().doc_only()
+-    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace, transient studio_weights and progressive_feedback may accompany it. progressive_feedback?: false; transient protected display updates during CPU progressive rendering only; true refuses raster, GPU and fixed CPU requests. Omission preserves legacy admission/submission. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy requires fixed sampling; certified smooth thin-sheet/box dielectrics support fixed or progressive sampling under the same certificates and bounded optical transport. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed or progressive CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; progressive/Interactive optics retain primary_samples:1 and selected reflections.samples:1 limits and never drop unsupported intent. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
++    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace, transient studio_weights, raster_lights and progressive_feedback may accompany it. raster_lights?: transient null (legacy studio) or 0..8 directional sources {direction:[x,y,z],color:[linear r,g,b],intensity:0..64}; empty array is dark direct lighting. Requires builtin Raster without studio_weights, raytrace, HDR, transmission, exposure or other method controls. Directions are finite/nonzero and bounded by 1e9; RGB is 0..1. Not saved; no shadows or physical glass. progressive_feedback?: false; transient protected display updates during CPU progressive rendering only; true refuses raster, GPU and fixed CPU requests. Omission preserves legacy admission/submission. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy requires fixed sampling; certified smooth thin-sheet/box dielectrics support fixed or progressive sampling under the same certificates and bounded optical transport. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed or progressive CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; progressive/Interactive optics retain primary_samples:1 and selected reflections.samples:1 limits and never drop unsupported intent. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
+ CommandSpec::new("render.start", "Render Image", jobs::start).key("R").noundo().doc_only().at("RENDER", "IMAGE").icon("render_image")
+     .params("Same request as render.preflight. Captures an immutable product scene and queues a bounded image job. Returns its session-scoped job identity, captured scene_generation and progress. Does not change the design. See docs/render-jobs.md"),
+ CommandSpec::new("render.status", "Render Progress", jobs::status).icon("list").noundo().doc_only()
+--- a/crates/engine/src/cmd/render/job_tests.rs
++++ b/crates/engine/src/cmd/render/job_tests.rs
+@@ -1,6 +1,59 @@
+ use super::*;
+ use solidcraft_render::job::{CpuHost, JobId};
+ 
++#[test]
++fn transient_raster_rig_survives_saved_normalization_check_start_status_and_png() {
++    let (mut s, host) = session();
++    s.execute("solid.box", &json!({"length":20,"width":15,"height":10})).unwrap();
++    s.execute("render.settings.set", &json!({"name":"Rig","set":{"width":32,"height":32,"job":{"method":"raster","transparent_background":false}}})).unwrap();
++    let doc = s.doc.clone();
++    let before = (s.revision, s.undo.len(), s.redo.len(), s.evaluations);
++    let legacy = s.execute("render.start", &json!({"setup":"Rig"})).unwrap();
++    let legacy_id: JobId = serde_json::from_value(legacy["job"].clone()).unwrap();
++    finish(&host);
++    let legacy_png = s.render_job_handle(legacy_id).unwrap().frame().unwrap().unwrap().png().to_vec();
++    for rig in [json!([]), json!([{"direction":[0,-1,1],"color":[1,0,0],"intensity":2}])] {
++    let params = json!({"setup":"Rig","raster_lights":rig});
++    let checked = s.execute("render.preflight", &params).unwrap();
++    assert_eq!(checked["request"]["raster_lights"].as_array().unwrap().len(), params["raster_lights"].as_array().unwrap().len());
++    assert_eq!(checked["retained_request_bytes"].as_u64().unwrap() > 0, !params["raster_lights"].as_array().unwrap().is_empty());
++    let started = s.execute("render.start", &params).unwrap();
++    let job: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++    finish(&host);
++    let status = s.execute("render.status", &json!({"job":job})).unwrap();
++    assert_eq!(status["request"], checked["request"]);
++    assert_eq!(status["progress"]["phase"], "completed");
++    let handle = s.render_job_handle(job).unwrap();
++    let frame = handle.frame().unwrap().unwrap();
++    assert!(frame.png().starts_with(b"\x89PNG\r\n\x1a\n"));
++    assert_ne!(frame.png(), legacy_png.as_slice());
++    assert!(Arc::ptr_eq(&doc, &s.doc));
++    assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations));
++    assert!(!s.doc.to_json().contains("raster_lights"));
++    }
++}
++
++#[test]
++fn raster_rig_rejects_foreign_intent_and_unsupported_setup_controls_without_reserving() {
++    let (mut s, host) = session();
++    s.execute("solid.box", &json!({"length":20,"width":15,"height":10})).unwrap();
++    s.execute("render.preflight", &json!({"raster_lights":[]})).unwrap();
++    let doc = s.doc.clone();
++    for command in ["render.preflight", "render.start"] {
++        for extra in [json!({"integrator":"raytrace"}), json!({"progressive":true}), json!({"studio_weights":[1,1,1]}),
++            json!({"raytrace":{}}), json!({"nested_media":true}), json!({"progressive_feedback":true}),
++            json!({"settings":{"exposure_ev":1}}), json!({"settings":{"environment_rotation":1}})] {
++            let mut params = json!({"raster_lights":[]});
++            for (key, value) in extra.as_object().unwrap() {
++                params[key] = value.clone();
++            }
++            assert!(s.execute(command, &params).is_err(), "{command}: {params}");
++            assert_eq!(host.admitted_bytes(), 0);
++            assert!(Arc::ptr_eq(&doc, &s.doc));
++        }
++    }
++}
++
+ fn session() -> (Session, CpuHost) {
+     let host = CpuHost::cooperative();
+     let mut s = Session::default();
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -11,6 +11,8 @@
+ #[derive(Default, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ struct Start {
++    #[serde(default, deserialize_with = "solidcraft_render::job::deserialize_raster_lights")]
++    raster_lights: Option<Vec<solidcraft_render::job::DirectionalLightOptions>>,
+     progressive_feedback: bool,
+     nested_media: bool,
+     studio_weights: Option<[f64; 3]>,
+@@ -112,6 +114,9 @@
+     if object.contains_key("setup") || object.contains_key("replace") {
+         return Err(bad(command, "Interactive requires an explicit settings snapshot without setup or replace"));
+     }
++    if input.raster_lights.is_some() {
++        return Err(bad(command, "Interactive does not accept explicit Raster lights"));
++    }
+     if input.integrator != Integrator::Raytrace || input.progressive || input.transparent_background {
+         return Err(bad(command, "Interactive requires opaque CPU ray tracing, not GPU progressive or raster rendering"));
+     }
+@@ -145,7 +150,7 @@
+             return Err(bad(command, "choose either captured HDR or constant CPU environment"));
+         }
+     }
+-    let final_request = ImageRequest {
++    let final_request = ImageRequest { raster_lights: None,
+         camera: settings.camera,
+         width: settings.width,
+         height: settings.height,
+@@ -573,7 +578,7 @@
+     } else {
+         return Ok(None);
+     };
+-    if let Some(key) = object.keys().find(|key| !matches!(key.as_str(), "setup" | "settings" | "replace" | "studio_weights" | "progressive_feedback"))
++    if let Some(key) = object.keys().find(|key| !matches!(key.as_str(), "setup" | "settings" | "replace" | "studio_weights" | "progressive_feedback" | "raster_lights"))
+     {
+         return Err(bad(
+             command,
+@@ -613,6 +618,9 @@
+         }
+     };
+     lowered["settings"] = serde_json::to_value(settings).map_err(|e| bad(command, e.to_string()))?;
++    if let Some(lights) = object.get("raster_lights") {
++        lowered["raster_lights"] = lights.clone();
++    }
+     if let Some(weights) = object.get("studio_weights") {
+         lowered["studio_weights"] = weights.clone();
+     }
+@@ -658,6 +666,13 @@
+         ));
+     }
+     let mut input: Start = serde_json::from_value(params.clone()).map_err(|e| bad(command, e.to_string()))?;
++    solidcraft_render::job::validate_raster_lights(&input.raster_lights).map_err(job_error)?;
++    if input.raster_lights.is_some()
++        && (input.integrator != Integrator::Raster || input.progressive || input.progressive_feedback || input.nested_media
++            || input.raytrace.is_some() || input.studio_weights.is_some() || input.environment.is_some())
++    {
++        return Err(bad(command, "explicit Raster lights require Raster without CPU/GPU controls, environment or studio_weights"));
++    }
+     if input.progressive_feedback
+         && (input.integrator != Integrator::Raytrace || input.raytrace.as_ref().and_then(|options| options.progressive).is_none())
+     {
+@@ -789,6 +804,11 @@
+     // (the render workspace and the other executors use them) still renders here, and the reply
+     // names what this render leaves out (#5089). The raytrace path takes them only through a
+     // saved job, so a raytrace request with them is still refused.
++    if input.raster_lights.is_some()
++        && (settings.exposure_ev != 0.0 || settings.environment_rotation != 0.0 || settings.environment_intensity != 1.0)
++    {
++        return Err(bad(command, "explicit Raster lights do not implement exposure or environment controls"));
++    }
+     let ignored = if input.integrator == Integrator::Raster { ignored_controls(&settings) } else { Vec::new() };
+     if input.integrator != Integrator::Raster
+         && (settings.exposure_ev != 0.0 || settings.environment_rotation != 0.0 || settings.environment_intensity != 1.0)
+@@ -828,7 +848,7 @@
+     if resolved.executor != expected_executor {
+         return Err(bad(command, "resolved executor is not installed as an image job host"));
+     }
+-    let request = ImageRequest {
++    let request = ImageRequest { raster_lights: input.raster_lights.take(),
+         studio_weights: validate_studio_weights(input.studio_weights, command)?,
+         environment: None,
+         textures: None,
+@@ -847,6 +867,8 @@
+         host.admit(&scene, &request, options).map_err(job_error)?
+     };
+     let retained_lights = request.raytrace.as_ref().map_or(Ok(0), |o| o.retained_bytes()).map_err(job_error)?;
++    let retained_lights = retained_lights.checked_add(request.raster_lights_retained_bytes().map_err(job_error)?)
++        .ok_or_else(|| bad(command, "retained light metadata overflow"))?;
+     let retained_environment =
+         if environment_info.is_some() { std::mem::size_of::<solidcraft_render::lighting::environment_input::EnvironmentInfo>() as u64 } else { 0 };
+     let retained_request_bytes = retained_lights.checked_add(retained_environment).ok_or_else(|| bad(command, "request metadata overflow"))?;
+@@ -1054,7 +1076,7 @@
+     if !host.is_available() {
+         return Err(bad(command, "image host is unavailable"));
+     }
+-    let request = ImageRequest {
++    let request = ImageRequest { raster_lights: None,
+         studio_weights: validate_studio_weights(input.studio_weights, command)?,
+         integrator: Default::default(),
+         raytrace: None,
+--- a/crates/gpu/src/path/mod.rs
++++ b/crates/gpu/src/path/mod.rs
+@@ -318,6 +318,9 @@
+ }
+ 
+ fn admission(scene: &ProductScene, request: &ImageRequest, options: JobOptions) -> Result<Admission> {
++    if request.raster_lights.is_some() {
++        return Err(JobError::new(ErrorCode::InvalidRequest, "GPU path rendering does not accept explicit Raster lights"));
++    }
+     if request.integrator != solidcraft_render::job::Integrator::Raster || request.raytrace.is_some() {
+         return Err(JobError::new(ErrorCode::InvalidRequest, "GPU path rendering does not accept CPU raytrace options"));
+     }
+@@ -474,6 +477,9 @@
+         Ok(value)
+     }
+     fn admit(&self, scene: &ProductScene, request: &ImageRequest, options: JobOptions) -> Result<Admission> {
++        if request.raster_lights.is_some() {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "GPU path rendering does not accept explicit Raster lights"));
++        }
+         self.context.ensure_available()?;
+         let a = admission(scene, request, options)?;
+         let limit = self.context.device.limits().max_storage_buffer_binding_size;
+--- a/crates/gpu/src/path/tests.rs
++++ b/crates/gpu/src/path/tests.rs
+@@ -20,7 +20,7 @@
+ fn request(size: u32) -> ImageRequest {
+     let mut camera = Camera { distance: 4.0, ..Default::default() };
+     camera.set_view(StandardView::Top);
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         integrator: Default::default(),
+         raytrace: None,
+@@ -429,7 +429,7 @@
+     }
+     let bounds = meshes.iter().fold(Aabb3::EMPTY, |a, m| a.union(&m.mesh.bounds()));
+     let camera = Camera { target: Vec3::new(0.0, 0.0, 1.0), yaw: -0.45, pitch: 0.5, distance: 13.0, fov: 0.65, ..Default::default() };
+-    let request = ImageRequest {
++    let request = ImageRequest { raster_lights: None,
+         studio_weights: None,
+         integrator: Default::default(),
+         raytrace: None,
+@@ -3326,3 +3326,12 @@
+     let backend = session.render_backend();
+     assert!(backend.executors.iter().any(|d| d.id.as_str() == "gpu-path" && matches!(d.availability, Availability::Unavailable { .. })));
+ }
++#[test]
++fn direct_gpu_admission_refuses_explicit_raster_rigs_even_when_empty() {
++    let mut input = request(16);
++    input.raster_lights = Some(Vec::new());
++    let error = admission(&sphere(white()), &input, JobOptions::default()).unwrap_err();
++    assert_eq!(error.code, ErrorCode::InvalidRequest);
++    assert!(error.message.contains("Raster lights"));
++}
++
+--- a/crates/render/src/job/host_tests.rs
++++ b/crates/render/src/job/host_tests.rs
+@@ -1,6 +1,68 @@
+ use super::*;
+ use solidcraft_geom::{Aabb3, Mesh};
+ 
++#[test]
++fn raster_rig_charges_original_and_task_capacity_then_retains_record_through_eviction() {
++    let host = CpuHost::cooperative();
++    let legacy = host.admit(&empty(), &request(), JobOptions::default()).unwrap();
++    let mut input = request();
++    let mut lights = Vec::with_capacity(1);
++    lights.push(super::super::DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 2.0 });
++    let capacity = lights.capacity();
++    input.raster_lights = Some(lights);
++    let retained = (capacity * std::mem::size_of::<super::super::DirectionalLightOptions>()) as u64;
++    let task_fee = (8 * std::mem::size_of::<super::super::DirectionalLightOptions>()) as u64;
++    let admitted = host.admit(&empty(), &input, JobOptions::default()).unwrap();
++    assert_eq!(admitted.estimated_total_bytes, legacy.estimated_total_bytes + task_fee);
++    let job = host.submit(id(830, 1), 1, empty(), input).unwrap();
++    assert_eq!(host.admitted_bytes(), admitted.estimated_total_bytes + retained);
++    let status = job.status().unwrap();
++    assert_eq!(status.request.raster_lights.as_ref().unwrap().len(), 1);
++    assert!(status.request.raster_lights.as_ref().unwrap().capacity() <= 8);
++    assert_eq!(job.0.request.raster_lights.as_ref().unwrap().capacity(), capacity);
++    // Caller-owned status metadata is outside the host lease lifetime.
++    drop(status);
++    drain(&host);
++    let held_frame = job.frame().unwrap().unwrap();
++    job.0.data.lock().unwrap().frame = None;
++    assert!(host.admitted_bytes() > retained);
++    drop(held_frame);
++    assert_eq!(host.admitted_bytes(), retained);
++    drop(job);
++    assert_eq!(host.admitted_bytes(), 0);
++    // These counters test fees/lifetimes; declaration-order source review separately
++    // verifies request payload destruction precedes release of request credits.
++}
++
++#[test]
++fn raster_rig_cancel_retains_only_original_request_until_last_handle() {
++    let host = CpuHost::cooperative();
++    let mut input = request();
++    input.raster_lights = Some(vec![super::super::DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 2.0 }]);
++    let retained = input.raster_lights_retained_bytes().unwrap();
++    let job = host.submit(id(831, 1), 1, empty(), input).unwrap();
++    job.cancel().unwrap();
++    drain(&host);
++    assert_eq!(job.status().unwrap().progress.phase, Phase::Cancelled);
++    assert_eq!(host.admitted_bytes(), retained);
++    drop(job);
++    assert_eq!(host.admitted_bytes(), 0);
++}
++
++#[test]
++fn registered_and_interactive_routes_refuse_even_empty_raster_rigs_without_work() {
++    let (registered, _) = probe_host(1024);
++    let mut input = request();
++    input.raster_lights = Some(Vec::new());
++    assert_eq!(registered.admit(&empty(), &input, JobOptions::default()).unwrap_err().code, ErrorCode::InvalidRequest);
++    assert_eq!(registered.submit(id(832, 1), 1, empty(), input.clone()).err().unwrap().code, ErrorCode::InvalidRequest);
++    assert_eq!(registered.admitted_bytes(), 0);
++    assert!(!registered.pump(1).unwrap());
++    assert!(super::super::interactive::cpu_request(&input).is_err());
++    input.integrator = Integrator::Raytrace;
++    assert!(super::super::interactive::cpu_request(&input).is_err());
++}
++
+ mod interactive {
+     use super::*;
+     use crate::job::{RaytraceOptions, interactive::*};
+@@ -568,7 +630,7 @@
+ }
+ 
+ fn request() -> ImageRequest {
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         integrator: Default::default(),
+         raytrace: None,
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -148,7 +148,8 @@
+ 
+ /// Retained runtime input capacities survive work/PNG eviction through status handles.
+ fn retained_request_bytes(request: &ImageRequest) -> Result<u64> {
+-    request.raytrace.as_ref().map_or(Ok(0), |options| options.retained_bytes())
++    let existing = request.raytrace.as_ref().map_or(Ok(0), |options| options.retained_bytes())?;
++    existing.checked_add(request.raster_lights_retained_bytes()?).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "retained request size overflow"))
+ }
+ 
+ #[cfg(all(test, feature = "raytrace-cpu", not(target_arch = "wasm32")))]
+@@ -184,7 +185,7 @@
+         for _ in 0..4 {
+             strip.append_to(&mut options, 64)?;
+         }
+-        Ok(ImageRequest {
++        Ok(ImageRequest { raster_lights: None,
+             studio_weights: None,
+             environment: None,
+             textures: None,
+@@ -390,10 +391,11 @@
+     textures: Option<super::textures::TextureSummary>,
+     options: JobOptions,
+     environment: Option<JobEnvironmentInfo>,
+-    _request_reservation: Option<Reservation>,
+     id: JobId,
+     scene_generation: u64,
+     request: ImageRequest,
++    // Rust fields drop in declaration order: payload before its retained credits.
++    _request_reservation: Option<Reservation>,
+     resolved: crate::ResolvedRequest,
+     cancel: CancelToken,
+     data: Mutex<Data>,
+@@ -433,7 +435,7 @@
+             environment: self.0.environment.clone(),
+             job: self.0.id,
+             scene_generation: self.0.scene_generation,
+-            request: self.0.request.clone(),
++            request: self.0.request.try_clone_for_host()?,
+             resolved: self.0.resolved.clone(),
+             progress: data.progress,
+             error: data.error.clone(),
+@@ -832,7 +834,7 @@
+             } else {
+                 WorkTask::new(
+                     work.scene,
+-                    work.handle.0.request.clone(),
++                    work.handle.0.request.try_clone_for_host()?,
+                     work.handle.0.cancel.clone(),
+                     work.environment,
+                     work.handle.0.options,
+@@ -1345,6 +1347,10 @@
+         options: JobOptions,
+         partial: Option<CpuPreviewPolicy>,
+     ) -> Result<Admission> {
++        request.validate_raster_request()?;
++        if self.0.executor.is_some() && request.raster_lights.is_some() {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "registered executors do not accept explicit Raster lights"));
++        }
+         if let Some(policy) = partial {
+             let plan = policy.preview_plan();
+             if self.0.executor.is_some()
+@@ -1676,13 +1682,14 @@
+         }
+         self.check_request_sum(estimated_total_bytes, request_bytes, request.cpu_budget())?;
+         let mut reservation = self.0.shared.budget.reserve(estimated_total_bytes)?;
+-        let request_reservation = if request_bytes == 0 { None } else { Some(self.0.shared.budget.reserve(request_bytes)?) };
++
+         let partial_credits = partial_plan
+             .map(|policy| match policy {
+                 CpuPreviewPolicy::Shared(plan) => PartialCredits::new(plan, &mut reservation),
+                 CpuPreviewPolicy::Protected(plan) => PartialCredits::new_protected(plan, &mut reservation),
+             })
+             .transpose()?;
++        let request_reservation = if request_bytes == 0 { None } else { Some(self.0.shared.budget.reserve(request_bytes)?) };
+         // Preserve the original CPU option capacities in the retained request and its lease.
+         // Registered executors instead move resource Arcs into work and keep a small public copy.
+         let (public_request, work_request) = if self.0.executor.is_some() {
+@@ -1779,7 +1786,7 @@
+             },
+         )
+         .map_err(|e| JobError::new(ErrorCode::InvalidRequest, e.to_string()))?;
+-        let request = ImageRequest {
++        let request = ImageRequest { raster_lights: None,
+             studio_weights: None,
+             width: frame.info.width,
+             height: frame.info.height,
+@@ -2005,7 +2012,7 @@
+     fn request() -> ImageRequest {
+         let mut lights = Vec::with_capacity(8);
+         lights.push(super::super::DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 1.0 });
+-        ImageRequest {
++        ImageRequest { raster_lights: None,
+             studio_weights: None,
+             environment: None,
+             textures: None,
+@@ -2075,7 +2082,7 @@
+         let expected = std::mem::size_of::<EnvironmentInfo>() as u64;
+         let mut host = CpuHost::for_platform().unwrap();
+         let budget = host.0.shared.budget.clone();
+-        let request = ImageRequest {
++        let request = ImageRequest { raster_lights: None,
+             studio_weights: None,
+             environment: None,
+             textures: None,
+@@ -2188,7 +2195,7 @@
+     }
+ 
+     fn request() -> ImageRequest {
+-        ImageRequest {
++        ImageRequest { raster_lights: None,
+             studio_weights: None,
+             environment: None,
+             textures: None,
+--- a/crates/render/src/job/image_tests.rs
++++ b/crates/render/src/job/image_tests.rs
+@@ -6,7 +6,7 @@
+ fn request() -> ImageRequest {
+     let mut camera = Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(StandardView::Front);
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+@@ -388,3 +388,88 @@
+     assert_eq!((image.width(), image.height()), (4, 4));
+     assert_eq!(image.get_pixel(3, 3).0, [20, 40, 60, 255]);
+ }
++
++
++#[test]
++fn explicit_raster_linear_rgb_reaches_png_with_one_display_transfer() {
++    let mut part = square("matte", [0; 3], 1.0, Vec3::ZERO);
++    part.surface = Some(crate::surface::OpaqueSurface::new(Vec3::new(0.8, 0.5, 0.25), 0.0, 1.0, 1.0).unwrap());
++    let mut input = request();
++    // Orthographic Front is exactly normal to the square, so no perspective-view approximation.
++    assert_eq!(input.camera.fov, 0.0);
++    input.raster_lights = Some(vec![super::DirectionalLightOptions { direction: [0.0, -1.0, 0.0], color: [0.25, 0.5, 1.0], intensity: 2.0 }]);
++    let png = finish(ImageTask::new(scene(vec![part]), input, CancelToken::default()).unwrap());
++    let image = image::load_from_memory(&png).unwrap().to_rgba8();
++    // Independently derived: [.4,.5,.5]/pi -> Reinhard -> piecewise sRGB -> nearest byte.
++    for (x, y) in [(32, 32), (31, 32), (32, 31)] {
++        assert_eq!(image.get_pixel(x, y).0, [94, 104, 104, 255]);
++    }
++    assert_eq!(image.get_pixel(0, 0).0, [0; 4]);
++}
++
++#[test]
++fn explicit_raster_three_four_five_cosine_reaches_png() {
++    let mut part = square("matte", [0; 3], 1.0, Vec3::ZERO);
++    part.surface = Some(crate::surface::OpaqueSurface::new(Vec3::new(0.8, 0.5, 0.25), 0.0, 1.0, 1.0).unwrap());
++    let mut input = request();
++    input.raster_lights = Some(vec![super::DirectionalLightOptions { direction: [3.0, -4.0, 0.0], color: [1.0; 3], intensity: 2.0 }]);
++    let png = finish(ImageTask::new(scene(vec![part]), input, CancelToken::default()).unwrap());
++    let image = image::load_from_memory(&png).unwrap().to_rgba8();
++    // Independently derived: [1.28,.8,.4]/pi -> Reinhard -> sRGB.
++    assert_eq!(image.get_pixel(32, 32).0, [146, 124, 94, 255]);
++}
++
++#[test]
++fn explicit_empty_raster_rig_is_dark_while_absence_keeps_legacy() {
++    let part = scene(vec![square("part", [200, 180, 160], 1.0, Vec3::ZERO)]);
++    let mut input = request();
++    input.transparent_background = false;
++    let absent = finish(ImageTask::new(part.clone(), input.clone(), CancelToken::default()).unwrap());
++    let wire = serde_json::to_value(&input).unwrap();
++    assert!(wire.get("raster_lights").is_none());
++    let mut null = wire.clone();
++    null["raster_lights"] = serde_json::Value::Null;
++    let legacy: ImageRequest = serde_json::from_value(null).unwrap();
++    assert_eq!(finish(ImageTask::new(part.clone(), legacy, CancelToken::default()).unwrap()), absent);
++    input.raster_lights = Some(Vec::new());
++    let dark = finish(ImageTask::new(part, input, CancelToken::default()).unwrap());
++    assert_ne!(dark, absent);
++    let image = image::load_from_memory(&dark).unwrap().to_rgba8();
++    assert_eq!(image.get_pixel(32, 32).0, [0, 0, 0, 255]);
++    assert_eq!(image.get_pixel(0, 0).0, [20, 40, 60, 255]);
++}
++
++#[test]
++fn explicit_raster_request_rejects_capacity_conflicts_and_foreign_integrators() {
++    let part = scene(vec![square("part", [200; 3], 1.0, Vec3::ZERO)]);
++    let light = super::DirectionalLightOptions { direction: [0.0, -1.0, 0.0], color: [1.0; 3], intensity: 1.0 };
++    let mut input = request();
++    let mut oversized = Vec::with_capacity(9);
++    oversized.push(light);
++    input.raster_lights = Some(oversized);
++    assert_eq!(admit(&part, &input).unwrap_err().code, ErrorCode::InvalidRequest);
++    input.raster_lights = Some(Vec::new());
++    input.studio_weights = Some([1.0; 3]);
++    assert_eq!(admit(&part, &input).unwrap_err().code, ErrorCode::InvalidRequest);
++    input.studio_weights = None;
++    input.raytrace = Some(Default::default());
++    assert_eq!(admit(&part, &input).unwrap_err().code, ErrorCode::InvalidRequest);
++    input.raytrace = None;
++    input.integrator = super::Integrator::Raytrace;
++    assert_eq!(admit(&part, &input).unwrap_err().code, ErrorCode::InvalidRequest);
++}
++
++#[test]
++fn explicit_raster_scalar_surrogate_preserves_straight_alpha_without_claiming_glass() {
++    let part = square("scalar", [0; 3], 0.5, Vec3::ZERO);
++    let mut input = request();
++    input.raster_lights = Some(vec![super::DirectionalLightOptions { direction: [0.0, -1.0, 0.0], color: [1.0; 3], intensity: 2.0 }]);
++    let png = finish(ImageTask::new(scene(vec![part.clone()]), input.clone(), CancelToken::default()).unwrap());
++    let image = image::load_from_memory(&png).unwrap().to_rgba8();
++    // Scalar surrogate rho=0, IOR=1.5, roughness=1: F0/4pi=.01/pi.
++    // Intensity2 gives .02/pi; Reinhard + sRGB independently rounds to19.
++    assert_eq!(image.get_pixel(32, 32).0, [19, 19, 19, 128]);
++    let mut physical = part;
++    physical.transmission = Some(crate::transmission::Transmission::new(Vec3::ZERO, None).unwrap());
++    assert_eq!(admit(&scene(vec![physical]), &input).unwrap_err().code, ErrorCode::InvalidRequest);
++}
+--- a/crates/render/src/job/image.rs
++++ b/crates/render/src/job/image.rs
+@@ -49,6 +49,7 @@
+ /// counted even when another owner already holds them. Allocator and codec internals are estimates.
+ /// Includes the CPU raster work estimate and its 384 MiB per-job check.
+ pub fn admit(scene: &ProductScene, request: &ImageRequest) -> Result<Admission> {
++    request.validate_raster_request()?;
+     if request.environment.is_some() || request.textures.is_some() {
+         return Err(JobError::new(ErrorCode::InvalidRequest, "captured GPU environments and textures require a registered image executor"));
+     }
+@@ -79,7 +80,7 @@
+ }
+ 
+ pub(crate) fn admit_base(scene: &ProductScene, request: &ImageRequest) -> Result<Admission> {
+-    admit_raster(admit_source(scene, request, MAX_TRIANGLES)?)
++    admit_raster(admit_source(scene, request, MAX_TRIANGLES)?, request)
+ }
+ 
+ /// Common camera, dimension and source admission for registered executors, without any CPU
+@@ -107,6 +108,9 @@
+ /// pixel/codec allowance, then let the ray tracer charge its actual BVH and film.
+ #[cfg(feature = "raytrace-cpu")]
+ pub(crate) fn admit_raytrace_source(scene: &ProductScene, request: &ImageRequest, budget: super::CpuBudget) -> Result<Admission> {
++    if request.raster_lights.is_some() {
++        return Err(invalid("explicit Raster lights cannot enter CPU ray tracing"));
++    }
+     budget.validate_execution()?;
+     budget.validate_image(request.width, request.height, request.raytrace.as_ref().and_then(|o| o.progressive))?;
+     let source = admit_source_with_budget(scene, request, budget.limits().max_triangles, budget)?;
+@@ -162,6 +166,10 @@
+     max_geometry_bytes: u64,
+     image_limits: crate::RenderLimits,
+ ) -> Result<Source> {
++    request.validate_raster_request()?;
++    if request.raster_lights.is_some() && scene.has_transmission() {
++        return Err(invalid("explicit Raster lights do not implement physical transmission"));
++    }
+     if !request.camera.is_valid() {
+         return Err(JobError::new(ErrorCode::InvalidRequest, "invalid image camera"));
+     }
+@@ -243,14 +251,16 @@
+ }
+ 
+ /// The CPU raster scratch/preparation estimate and its 384 MiB per-job check.
+-fn admit_raster(source: Source) -> Result<Admission> {
++fn admit_raster(source: Source, request: &ImageRequest) -> Result<Admission> {
+     let mut a = source.admission;
++    let task_light_bytes = request.raster_lights_task_bytes()?;
+     // Three bounded 16-byte lists, a conservative map-node allowance, and codec overhead.
+     let preparation = a
+         .triangles
+         .checked_mul(48)
+         .and_then(|n| a.face_appearances.checked_mul(160).and_then(|f| n.checked_add(f)))
+         .and_then(|n| n.checked_add(source.bodies * 128 + 262_144))
++        .and_then(|n| n.checked_add(task_light_bytes))
+         .ok_or_else(|| limit("work list size overflow"))?;
+     let total = a
+         .geometry_bytes
+@@ -664,7 +674,7 @@
+         }
+         let triangle = self.triangle.as_mut().ok_or_else(|| invalid("missing raster triangle"))?;
+         let eye = (self.request.camera.fov > 0.0).then(|| self.request.camera.eye());
+-        raster_pixel(triangle, self.sw, self.back, eye, self.request.studio_weights, &mut self.pixels, &mut self.depth)?;
++        raster_pixel(triangle, self.sw, self.back, eye, self.request.studio_weights, self.request.raster_lights.as_deref(), &mut self.pixels, &mut self.depth)?;
+         triangle.x += 1;
+         if triangle.x > triangle.bounds[1] {
+             triangle.x = triangle.bounds[0];
+@@ -730,6 +740,7 @@
+     back: Vec3,
+     eye: Option<Vec3>,
+     studio_weights: Option<[f64; 3]>,
++    raster_lights: Option<&[super::DirectionalLightOptions]>,
+     pixels: &mut [[u8; 4]],
+     depth: &mut [f32],
+ ) -> Result<()> {
+@@ -765,7 +776,19 @@
+         return Ok(());
+     }
+     let n = t.normals.iter().zip(weights).fold(Vec3::ZERO, |v, (n, w)| v + *n * (w / sum)).normalized().unwrap_or(Vec3::Z);
+-    let colour = if let Some(surface) = t.surface {
++    let colour = if let Some(lights) = raster_lights {
++        let surface = if let Some(surface) = t.surface {
++            surface
++        } else {
++            let [r, g, b] = t.colour;
++            crate::surface::OpaqueSurface::new(Vec3::new(r, g, b), 0.0, 1.0, 1.5).map_err(|e| invalid(&e.to_string()))?
++        };
++        let world = t.world.iter().zip(weights).fold(Vec3::ZERO, |p, (v, w)| p + *v * (w / sum));
++        let view = eye.map_or(back, |eye| eye - world);
++        let radiance = crate::studio::shade_directional(surface, n, view, lights).map_err(|e| invalid(&e.to_string()))?;
++        let mapped = crate::studio::tone_map(radiance).map_err(|e| invalid(&e.to_string()))?;
++        [mapped.x, mapped.y, mapped.z]
++    } else if let Some(surface) = t.surface {
+         let world = t.world.iter().zip(weights).fold(Vec3::ZERO, |p, (v, w)| p + *v * (w / sum));
+         let view = eye.map_or(back, |eye| eye - world);
+         let radiance = crate::studio::shade_weighted(surface, n, view, studio_weights.unwrap_or([1.0; 3])).map_err(|e| invalid(&e.to_string()))?;
+--- a/crates/render/src/job/interactive.rs
++++ b/crates/render/src/job/interactive.rs
+@@ -10,6 +10,7 @@
+ /// Prepare a separate low-resolution request. Never edits the final request,
+ /// changes renderer, removes optics/lights, or promises geometry admission.
+ pub fn cpu_request(final_request: &ImageRequest) -> Result<ImageRequest> {
++    final_request.validate_raster_request()?;
+     if final_request.integrator != Integrator::Raytrace || final_request.transparent_background {
+         return Err(JobError::new(ErrorCode::InvalidRequest, "Interactive CPU requires opaque ray tracing"));
+     }
+--- a/crates/render/src/job/mod.rs
++++ b/crates/render/src/job/mod.rs
+@@ -32,6 +32,7 @@
+ mod png;
+ pub mod presentation;
+ mod punctual;
++mod raster_lights;
+ mod regrade;
+ #[cfg(test)]
+ mod rt2_tests;
+@@ -51,6 +52,7 @@
+ pub use lighting::{AreaLight, AreaLights, MAX_AREA_LIGHTS, StudioLighting, Sun, ToneMap};
+ pub use png::PngTask;
+ pub use punctual::{PunctualDiagnostics, PunctualLightOptions, SpotConeOptions};
++pub use raster_lights::{deserialize as deserialize_raster_lights, validate as validate_raster_lights};
+ 
+ /// Native path-tracing ceilings, further restricted by the actual device.
+ /// Kept in the device-independent layer so saved intent and UI agree with execution.
+@@ -1051,6 +1053,9 @@
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct ImageRequest {
++    /// Explicit transient opaque Raster rig; None keeps the original implicit studio.
++    #[serde(default, deserialize_with = "deserialize_raster_lights", skip_serializing_if = "Option::is_none")]
++    pub raster_lights: Option<Vec<DirectionalLightOptions>>,
+     /// Transient visibility of the three implicit studio lights; never saved in a design.
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub studio_weights: Option<[f64; 3]>,
+@@ -1083,6 +1088,47 @@
+ }
+ 
+ impl ImageRequest {
++    /// Reject explicit Raster intent before allocating or entering another producer.
++    pub fn validate_raster_request(&self) -> Result<()> {
++        raster_lights::validate(&self.raster_lights)?;
++        if self.raster_lights.is_some()
++            && (self.integrator != Integrator::Raster || self.raytrace.is_some() || self.studio_weights.is_some()
++                || self.environment.is_some() || self.textures.is_some())
++        {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "explicit Raster lights require Raster without raytrace, GPU resources or studio_weights"));
++        }
++        Ok(())
++    }
++
++    pub fn raster_lights_retained_bytes(&self) -> Result<u64> {
++        raster_lights::retained_bytes(&self.raster_lights)
++    }
++
++    pub(super) fn raster_lights_task_bytes(&self) -> Result<u64> {
++        raster_lights::task_bytes(&self.raster_lights)
++    }
++
++    /// Internal status/task copy: the new Vec allocation is bounded and fallible.
++    pub(super) fn try_clone_for_host(&self) -> Result<Self> {
++        self.validate_raster_request()?;
++        // Preserve the old path, including existing unrelated payload semantics.
++        if self.raster_lights.is_none() {
++            return Ok(self.clone());
++        }
++        Ok(Self {
++            raster_lights: raster_lights::try_copy(&self.raster_lights)?,
++            studio_weights: self.studio_weights,
++            environment: self.environment.clone(),
++            textures: self.textures.clone(),
++            integrator: self.integrator,
++            raytrace: None, // validated absent above, never clone-then-clear
++            camera: self.camera,
++            width: self.width,
++            height: self.height,
++            background: self.background,
++            transparent_background: self.transparent_background,
++        })
++    }
+     pub fn cpu_budget(&self) -> CpuBudget {
+         if self.integrator == Integrator::Raytrace {
+             self.raytrace.as_ref().map_or(CpuBudget::Compact, |options| options.budget)
+@@ -1118,6 +1164,45 @@
+ }
+ #[cfg(test)]
+ mod runtime_request_roundtrip_tests {
++
++#[test]
++fn raster_light_wire_is_nullable_bounded_strict_and_fallibly_copied() {
++    #[derive(Serialize, Deserialize)]
++    #[serde(deny_unknown_fields)]
++    struct Rig {
++        #[serde(default, deserialize_with = "super::raster_lights::deserialize", skip_serializing_if = "Option::is_none")]
++        raster_lights: Option<Vec<DirectionalLightOptions>>,
++    }
++    use serde_json::json;
++    for value in [json!({}), json!({"raster_lights":null})] {
++        let rig: Rig = serde_json::from_value(value).unwrap();
++        assert!(rig.raster_lights.is_none());
++        assert_eq!(serde_json::to_value(rig).unwrap(), json!({}));
++    }
++    let light = json!({"direction":[0.0,0.0,1.0],"color":[0.25,0.5,1.0],"intensity":2.0});
++    for count in [0, 1, 8] {
++        let rig: Rig = serde_json::from_value(json!({"raster_lights":vec![light.clone();count]})).unwrap();
++        assert_eq!(rig.raster_lights.as_ref().unwrap().len(), count);
++        assert!(rig.raster_lights.as_ref().unwrap().capacity() <= 8);
++        let copy = super::raster_lights::try_copy(&rig.raster_lights).unwrap();
++        assert_eq!(copy, rig.raster_lights);
++        assert!(copy.as_ref().unwrap().capacity() <= 8);
++        assert_eq!(serde_json::to_value(rig).unwrap(), json!({"raster_lights":vec![light.clone();count]}));
++    }
++    assert!(serde_json::from_value::<Rig>(json!({"raster_lights":vec![light.clone();9]})).is_err());
++    for value in [json!(true), json!({}), json!([{"direction":[0,0,0],"color":[1,1,1],"intensity":0}]),
++        json!([{"direction":[0,0,1],"color":[1,1,1],"intensity":1,"shadows":true}])] {
++        assert!(serde_json::from_value::<Rig>(json!({"raster_lights":value})).is_err());
++    }
++    let mut excessive = Vec::with_capacity(9);
++    excessive.push(DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 1.0 });
++    assert!(super::raster_lights::try_copy(&Some(excessive)).is_err());
++    for intensity in [f64::NAN, f64::INFINITY, -1.0, 65.0] {
++        let invalid = Some(vec![DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity }]);
++        assert!(super::raster_lights::try_copy(&invalid).is_err());
++    }
++}
++
+     use super::*;
+     #[test]
+     fn default_preset_and_empty_lights_requests_roundtrip_without_invalid_null_sequence() {
+--- /dev/null
++++ b/crates/render/src/job/raster_lights.rs
+@@ -0,0 +1,123 @@
++//! Bounded transient Raster input. No design persistence or implicit light conversion.
++
++use std::fmt;
++
++use super::{DirectionalLightOptions, ErrorCode, JobError, Result};
++
++const MAX_LIGHTS: usize = crate::studio::MAX_SCHEMATIC_DIRECTIONAL_LIGHTS;
++
++fn invalid(message: &str) -> JobError {
++    JobError::new(ErrorCode::InvalidRequest, message)
++}
++
++fn validate_light(light: &DirectionalLightOptions) -> Result<()> {
++    if !light.direction.iter().all(|v| v.is_finite() && v.abs() <= 1e9) || !light.direction.iter().any(|v| *v != 0.0) {
++        return Err(invalid("Raster light direction must be finite, nonzero and bounded by 1e9"));
++    }
++    if !light.color.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v))
++        || !light.intensity.is_finite()
++        || !(0.0..=64.0).contains(&light.intensity)
++    {
++        return Err(invalid("Raster light requires linear RGB in 0..1 and intensity in 0..64"));
++    }
++    Ok(())
++}
++
++pub fn validate(lights: &Option<Vec<DirectionalLightOptions>>) -> Result<()> {
++    if let Some(lights) = lights {
++        if lights.len() > MAX_LIGHTS || lights.capacity() > MAX_LIGHTS {
++            return Err(invalid("Raster light length and retained capacity must be at most eight"));
++        }
++        for light in lights {
++            validate_light(light)?;
++        }
++    }
++    Ok(())
++}
++
++fn reserve() -> Result<Vec<DirectionalLightOptions>> {
++    let mut lights = Vec::new();
++    lights.try_reserve_exact(MAX_LIGHTS).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "could not reserve Raster lights"))?;
++    if lights.capacity() > MAX_LIGHTS {
++        return Err(invalid("Raster light allocation exceeded its bounded capacity"));
++    }
++    Ok(lights)
++}
++
++/// Copies only the bounded new payload; never whole-request clone-then-clear.
++pub(super) fn try_copy(lights: &Option<Vec<DirectionalLightOptions>>) -> Result<Option<Vec<DirectionalLightOptions>>> {
++    validate(lights)?;
++    let Some(source) = lights else { return Ok(None) };
++    if source.is_empty() {
++        return Ok(Some(Vec::new()));
++    }
++    let mut copy = reserve()?;
++    // Each element consists solely of fixed arrays and a scalar; no hidden allocation.
++    for light in source {
++        copy.push(DirectionalLightOptions { direction: light.direction, color: light.color, intensity: light.intensity });
++    }
++    Ok(Some(copy))
++}
++
++pub(super) fn retained_bytes(lights: &Option<Vec<DirectionalLightOptions>>) -> Result<u64> {
++    validate(lights)?;
++    let capacity = lights.as_ref().map_or(0, Vec::capacity);
++    capacity
++        .checked_mul(std::mem::size_of::<DirectionalLightOptions>())
++        .and_then(|bytes| u64::try_from(bytes).ok())
++        .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "Raster light retained size overflow"))
++}
++
++/// Task clones reserve this conservative fee before allocating their rig.
++pub(super) fn task_bytes(lights: &Option<Vec<DirectionalLightOptions>>) -> Result<u64> {
++    validate(lights)?;
++    if lights.as_ref().is_none_or(Vec::is_empty) {
++        return Ok(0);
++    }
++    MAX_LIGHTS
++        .checked_mul(std::mem::size_of::<DirectionalLightOptions>())
++        .and_then(|bytes| u64::try_from(bytes).ok())
++        .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "Raster task light size overflow"))
++}
++
++/// Missing fields use serde(default); explicit null is the unchanged legacy path.
++pub fn deserialize<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Option<Vec<DirectionalLightOptions>>, D::Error> {
++    struct Nullable;
++    impl<'de> serde::de::Visitor<'de> for Nullable {
++        type Value = Option<Vec<DirectionalLightOptions>>;
++        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++            f.write_str("null or at most eight Raster directional lights")
++        }
++        fn visit_none<E: serde::de::Error>(self) -> std::result::Result<Self::Value, E> {
++            Ok(None)
++        }
++        fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Self::Value, E> {
++            Ok(None)
++        }
++        fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> std::result::Result<Self::Value, D::Error> {
++            struct Sequence;
++            impl<'de> serde::de::Visitor<'de> for Sequence {
++                type Value = Vec<DirectionalLightOptions>;
++                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++                    f.write_str("at most eight Raster directional lights")
++                }
++                fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error> {
++                    let mut lights = Vec::new();
++                    while let Some(light) = sequence.next_element::<DirectionalLightOptions>()? {
++                        if lights.len() == MAX_LIGHTS {
++                            return Err(serde::de::Error::custom("at most eight Raster directional lights"));
++                        }
++                        validate_light(&light).map_err(serde::de::Error::custom)?;
++                        if lights.is_empty() {
++                            lights = reserve().map_err(serde::de::Error::custom)?;
++                        }
++                        lights.push(light);
++                    }
++                    Ok(lights)
++                }
++            }
++            d.deserialize_seq(Sequence).map(Some)
++        }
++    }
++    deserializer.deserialize_option(Nullable)
++}

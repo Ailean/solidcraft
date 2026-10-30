@@ -1,0 +1,38 @@
+--- a/crates/render/src/job/image_tests.rs
++++ b/crates/render/src/job/image_tests.rs
+@@ -397,7 +397,7 @@
+     let mut input = request();
+     // Orthographic Front is exactly normal to the square, so no perspective-view approximation.
+     assert_eq!(input.camera.fov, 0.0);
+-    input.raster_lights = Some(vec![super::DirectionalLightOptions { direction: [0.0, -1.0, 0.0], color: [0.25, 0.5, 1.0], intensity: 2.0 }]);
++    input.raster_lights = Some(vec![crate::job::DirectionalLightOptions { direction: [0.0, -1.0, 0.0], color: [0.25, 0.5, 1.0], intensity: 2.0 }]);
+     let png = finish(ImageTask::new(scene(vec![part]), input, CancelToken::default()).unwrap());
+     let image = image::load_from_memory(&png).unwrap().to_rgba8();
+     // Independently derived: [.4,.5,.5]/pi -> Reinhard -> piecewise sRGB -> nearest byte.
+@@ -412,7 +412,7 @@
+     let mut part = square("matte", [0; 3], 1.0, Vec3::ZERO);
+     part.surface = Some(crate::surface::OpaqueSurface::new(Vec3::new(0.8, 0.5, 0.25), 0.0, 1.0, 1.0).unwrap());
+     let mut input = request();
+-    input.raster_lights = Some(vec![super::DirectionalLightOptions { direction: [3.0, -4.0, 0.0], color: [1.0; 3], intensity: 2.0 }]);
++    input.raster_lights = Some(vec![crate::job::DirectionalLightOptions { direction: [3.0, -4.0, 0.0], color: [1.0; 3], intensity: 2.0 }]);
+     let png = finish(ImageTask::new(scene(vec![part]), input, CancelToken::default()).unwrap());
+     let image = image::load_from_memory(&png).unwrap().to_rgba8();
+     // Independently derived: [1.28,.8,.4]/pi -> Reinhard -> sRGB.
+@@ -442,7 +442,7 @@
+ #[test]
+ fn explicit_raster_request_rejects_capacity_conflicts_and_foreign_integrators() {
+     let part = scene(vec![square("part", [200; 3], 1.0, Vec3::ZERO)]);
+-    let light = super::DirectionalLightOptions { direction: [0.0, -1.0, 0.0], color: [1.0; 3], intensity: 1.0 };
++    let light = crate::job::DirectionalLightOptions { direction: [0.0, -1.0, 0.0], color: [1.0; 3], intensity: 1.0 };
+     let mut input = request();
+     let mut oversized = Vec::with_capacity(9);
+     oversized.push(light);
+@@ -463,7 +463,7 @@
+ fn explicit_raster_scalar_surrogate_preserves_straight_alpha_without_claiming_glass() {
+     let part = square("scalar", [0; 3], 0.5, Vec3::ZERO);
+     let mut input = request();
+-    input.raster_lights = Some(vec![super::DirectionalLightOptions { direction: [0.0, -1.0, 0.0], color: [1.0; 3], intensity: 2.0 }]);
++    input.raster_lights = Some(vec![crate::job::DirectionalLightOptions { direction: [0.0, -1.0, 0.0], color: [1.0; 3], intensity: 2.0 }]);
+     let png = finish(ImageTask::new(scene(vec![part.clone()]), input.clone(), CancelToken::default()).unwrap());
+     let image = image::load_from_memory(&png).unwrap().to_rgba8();
+     // Scalar surrogate rho=0, IOR=1.5, roughness=1: F0/4pi=.01/pi.

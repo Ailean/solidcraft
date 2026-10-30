@@ -84,3 +84,8 @@ The original 516-case core result remains bound to its exact unchanged core sour
 ## Progress by consolidated issue
 
 [Evidence-milestone chart for U01-U17](progress/README.md): 17 open items, partial code in12 and earlier partial native improvements in8; no item fully resolved end to end. These are milestones, not percentages of effort or an ETA. Current C16 stopped at RAM admission before any build/tests.
+
+<!-- next-render-source-units-20261030 -->
+## Separate reviewed source units
+
+[Camera/framing and Raster directional source units](next-source-units/README.md) preserve reviewed, unrun code without adopting or combining it. Camera/framing has3 original UI cases on C16 and leaves geometry/placement/visibility identity open. Raster preserves its33-file C15 archival base plus mandatory DTO-path, empty-capacity and borrowed-JSON fixes,14 new tests and explicit current UI/W2 rebind obligations. No source review or historical C15/C16 outcome is a runtime PASS; the later W2 core-policy packet is excluded until delivered/reviewed.

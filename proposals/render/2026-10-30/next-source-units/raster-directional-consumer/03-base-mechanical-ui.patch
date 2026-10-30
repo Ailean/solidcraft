@@ -1,0 +1,40 @@
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -1210,7 +1210,7 @@
+         let eye = camera.eye().to_f32();
+         let mut task = ImageTask::new(
+             scene,
+-            ImageRequest {
++            ImageRequest { raster_lights: None,
+                 studio_weights: None,
+                 environment: None,
+                 textures: None,
+@@ -3617,7 +3617,7 @@
+ #[test]
+ fn large_image_display_uses_captured_profile_and_keeps_export_pixels_unchanged() {
+     use solidcraft_engine::render::job::{CpuBudget, ImageRequest, RaytraceOptions};
+-    let request = ImageRequest {
++    let request = ImageRequest { raster_lights: None,
+         studio_weights: None,
+         integrator: Integrator::Raytrace,
+         raytrace: Some(RaytraceOptions { budget: CpuBudget::Studio, ..Default::default() }),
+@@ -8604,7 +8604,7 @@
+ 
+ fn partial_png_contract_request() -> solidcraft_engine::render::job::ImageRequest {
+     use solidcraft_engine::render::job::{CpuProgressiveOptions, ImageRequest, RaytraceOptions};
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/crates/ui-egui/src/render_workspace_thumbnails.rs
++++ b/crates/ui-egui/src/render_workspace_thumbnails.rs
+@@ -137,7 +137,7 @@
+         }
+         let permit = WorkerPermit;
+         let Some(setup) = app.session.doc.render.setups.get(&key.name) else { return };
+-        let request = solidcraft_engine::render::job::ImageRequest {
++        let request = solidcraft_engine::render::job::ImageRequest { raster_lights: None,
+             studio_weights: None,
+             camera: setup.camera,
+             width: SIZE[0],

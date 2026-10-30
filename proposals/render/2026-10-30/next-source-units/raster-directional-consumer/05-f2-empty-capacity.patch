@@ -1,0 +1,54 @@
+--- a/crates/render/src/job/raster_lights.rs
++++ b/crates/render/src/job/raster_lights.rs
+@@ -68,10 +68,11 @@
+         .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "Raster light retained size overflow"))
+ }
+ 
+-/// Task clones reserve this conservative fee before allocating their rig.
++/// Covers host clones and public ImageTask callers retaining an original Vec,
++/// including an empty Vec with nonzero capacity. None keeps the legacy estimate.
+ pub(super) fn task_bytes(lights: &Option<Vec<DirectionalLightOptions>>) -> Result<u64> {
+     validate(lights)?;
+-    if lights.as_ref().is_none_or(Vec::is_empty) {
++    if lights.is_none() {
+         return Ok(0);
+     }
+     MAX_LIGHTS
+--- a/crates/render/src/job/image_tests.rs
++++ b/crates/render/src/job/image_tests.rs
+@@ -473,3 +473,35 @@
+     physical.transmission = Some(crate::transmission::Transmission::new(Vec3::ZERO, None).unwrap());
+     assert_eq!(admit(&scene(vec![physical]), &input).unwrap_err().code, ErrorCode::InvalidRequest);
+ }
++#[test]
++fn direct_raster_task_accounts_empty_rig_capacity_without_changing_dark_or_legacy_paths() {
++    let part = scene(vec![square("part", [200; 3], 1.0, Vec3::ZERO)]);
++    let legacy = request();
++    let legacy_bytes = admit(&part, &legacy).unwrap().estimated_total_bytes;
++    assert!(ImageTask::new(part.clone(), legacy, CancelToken::default()).unwrap().request.raster_lights.is_none());
++    let fee = (8 * std::mem::size_of::<crate::job::DirectionalLightOptions>()) as u64;
++    let mut dark_png = None;
++    for capacity in [0, 8] {
++        let mut input = request();
++        input.raster_lights = Some(Vec::with_capacity(capacity));
++        let retained_capacity = input.raster_lights.as_ref().unwrap().capacity();
++        assert!(retained_capacity >= capacity && retained_capacity <= 8);
++        let actual_bytes = (retained_capacity * std::mem::size_of::<crate::job::DirectionalLightOptions>()) as u64;
++        let admitted = admit(&part, &input).unwrap();
++        assert_eq!(admitted.estimated_total_bytes, legacy_bytes + fee);
++        assert!(admitted.estimated_total_bytes - legacy_bytes >= actual_bytes);
++        // This is the public direct constructor, not host try_copy/Record fees.
++        let task = ImageTask::new(part.clone(), input, CancelToken::default()).unwrap();
++        assert_eq!(task.request.raster_lights.as_ref().unwrap().capacity(), retained_capacity);
++        assert_eq!(task.admission.estimated_total_bytes, legacy_bytes + fee);
++        let png = finish(task);
++        let image = image::load_from_memory(&png).unwrap().to_rgba8();
++        assert_eq!(image.get_pixel(32, 32).0, [0, 0, 0, 255]);
++        if let Some(expected) = &dark_png {
++            assert_eq!(&png, expected);
++        } else {
++            dark_png = Some(png);
++        }
++    }
++}
++

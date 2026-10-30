@@ -1,0 +1,236 @@
+--- a/crates/engine/src/render_jobs.rs
++++ b/crates/engine/src/render_jobs.rs
+@@ -799,7 +799,7 @@
+     fn final_cpu_protected_admission_accounts_captured_hdr_once_and_runs_real_host() {
+         use solidcraft_render::job::{CpuProgressiveOptions, ImageRequest, JobOptions, RaytraceOptions};
+         let (session, host) = native().unwrap();
+-        let request = ImageRequest {
++        let request = ImageRequest { raster_lights: None,
+             integrator: Integrator::Raytrace,
+             width: 13,
+             height: 7,
+--- a/crates/gpu/src/path/denoise_tests.rs
++++ b/crates/gpu/src/path/denoise_tests.rs
+@@ -156,7 +156,7 @@
+ fn request(size: u32) -> ImageRequest {
+     let mut camera = Camera { distance: 4.0, ..Default::default() };
+     camera.set_view(StandardView::Top);
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         integrator: Default::default(),
+         raytrace: None,
+--- a/crates/render/examples/cpu_resource_smoke.rs
++++ b/crates/render/examples/cpu_resource_smoke.rs
+@@ -30,7 +30,7 @@
+ fn request(width: u32, height: u32, budget: CpuBudget) -> ImageRequest {
+     let mut camera = Camera { distance: 65.0, ..Default::default() };
+     camera.set_view(StandardView::Top);
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/crates/render/src/job/host_regrade_tests.rs
++++ b/crates/render/src/job/host_regrade_tests.rs
+@@ -46,7 +46,7 @@
+ fn fixture(raw: bool) -> (ImageHost, JobHandle, Arc<AtomicUsize>, Presentation) {
+     let begins = Arc::new(AtomicUsize::new(0));
+     let host = ImageHost::cooperative_with(Arc::new(FixtureExecutor(begins.clone())));
+-    let request = ImageRequest {
++    let request = ImageRequest { raster_lights: None,
+         studio_weights: None,
+         width: 16,
+         height: 16,
+--- a/crates/render/src/job/png.rs
++++ b/crates/render/src/job/png.rs
+@@ -103,7 +103,7 @@
+     use super::*;
+ 
+     fn request(width: u32, height: u32) -> ImageRequest {
+-        ImageRequest {
++        ImageRequest { raster_lights: None,
+             width,
+             height,
+             camera: Default::default(),
+--- a/crates/render/src/job/regrade.rs
++++ b/crates/render/src/job/regrade.rs
+@@ -93,7 +93,7 @@
+                 self.photographic = Some(task);
+                 return self.pending(done, total);
+             }
+-            let request = ImageRequest {
++            let request = ImageRequest { raster_lights: None,
+                 studio_weights: None,
+                 width,
+                 height,
+@@ -175,7 +175,7 @@
+             return self.pending(0, u64::from(width) * u64::from(height));
+         }
+         self.linear = None;
+-        let request = ImageRequest {
++        let request = ImageRequest { raster_lights: None,
+             studio_weights: None,
+             width,
+             height,
+--- a/crates/render/src/job/rt2_tests.rs
++++ b/crates/render/src/job/rt2_tests.rs
+@@ -5,7 +5,7 @@
+ use solidcraft_geom::Aabb3;
+ 
+ fn request(integrator: Integrator) -> ImageRequest {
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/crates/render/src/job/led_strip/tests.rs
++++ b/crates/render/src/job/led_strip/tests.rs
+@@ -191,7 +191,7 @@
+     fn request(options: RaytraceOptions) -> ImageRequest {
+         let mut camera = Camera { distance: 50.0, ..Default::default() };
+         camera.set_view(StandardView::Top);
+-        ImageRequest {
++        ImageRequest { raster_lights: None,
+             studio_weights: None,
+             environment: None,
+             textures: None,
+--- a/crates/render/src/raytrace/anisotropic_faces_tests.rs
++++ b/crates/render/src/raytrace/anisotropic_faces_tests.rs
+@@ -145,7 +145,7 @@
+ #[test]
+ fn decoded_cpu_png_rotates_only_the_two_explicit_planar_targets() {
+     fn render(scene: ProductScene, camera: Camera, options: RaytraceOptions) -> ::image::RgbaImage {
+-        let request = ImageRequest {
++        let request = ImageRequest { raster_lights: None,
+             studio_weights: None,
+             environment: None,
+             textures: None,
+--- a/crates/render/src/raytrace/anisotropic_reflection_image_tests.rs
++++ b/crates/render/src/raytrace/anisotropic_reflection_image_tests.rs
+@@ -63,7 +63,7 @@
+         shadows: false,
+         ..Default::default()
+     };
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/crates/render/src/raytrace/deterministic_primary_tests.rs
++++ b/crates/render/src/raytrace/deterministic_primary_tests.rs
+@@ -63,7 +63,7 @@
+         }),
+         ..Default::default()
+     };
+-    let request = ImageRequest {
++    let request = ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+@@ -228,7 +228,7 @@
+         }),
+         ..Default::default()
+     };
+-    let request = ImageRequest {
++    let request = ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/crates/render/src/raytrace/dielectric_tests.rs
++++ b/crates/render/src/raytrace/dielectric_tests.rs
+@@ -42,7 +42,7 @@
+ pub(in crate::raytrace) fn request(options: RaytraceOptions) -> ImageRequest {
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Top);
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/crates/render/src/raytrace/environment_image_tests.rs
++++ b/crates/render/src/raytrace/environment_image_tests.rs
+@@ -34,7 +34,7 @@
+ fn request() -> ImageRequest {
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Top);
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/crates/render/src/raytrace/environment_reflection_tests.rs
++++ b/crates/render/src/raytrace/environment_reflection_tests.rs
+@@ -39,7 +39,7 @@
+ fn request(mode: ReflectionMode) -> ImageRequest {
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Top);
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -175,7 +175,7 @@
+     }
+ }
+ fn request() -> ImageRequest {
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/crates/render/src/raytrace/primary_aa_tests.rs
++++ b/crates/render/src/raytrace/primary_aa_tests.rs
+@@ -173,7 +173,7 @@
+         }),
+         ..Default::default()
+     };
+-    let request = ImageRequest {
++    let request = ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+@@ -756,7 +756,7 @@
+         }]),
+         ..Default::default()
+     };
+-    let request = ImageRequest {
++    let request = ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/crates/render/src/raytrace/punctual_image_tests.rs
++++ b/crates/render/src/raytrace/punctual_image_tests.rs
+@@ -43,7 +43,7 @@
+         shadows,
+         ..Default::default()
+     };
+-    let request = ImageRequest {
++    let request = ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/crates/render/src/raytrace/reflection_image_tests.rs
++++ b/crates/render/src/raytrace/reflection_image_tests.rs
+@@ -182,7 +182,7 @@
+ fn request(reflections: Option<ReflectionOptions>) -> ImageRequest {
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Front);
+-    ImageRequest {
++    ImageRequest { raster_lights: None,
+         studio_weights: None,
+         environment: None,
+         textures: None,
+--- a/tools/render-library/native_smoke.rs
++++ b/tools/render-library/native_smoke.rs
+@@ -57,7 +57,7 @@
+ fn request(root: &Path) -> Result<ImageRequest, Box<dyn Error>> {
+     let hdr = HdrSource::new(fs::read(root.join("assets/render/starter/environments/exports/neutral-side-softbox.hdr"))?)?;
+     let environment = EnvironmentSource::from_hdr(hdr, std::f64::consts::PI, 1.0, false)?;
+-    Ok(ImageRequest {
++    Ok(ImageRequest { raster_lights: None,
+         camera: Camera { distance: 220.0, ..Default::default() },
+         width: 320,
+         height: 240,

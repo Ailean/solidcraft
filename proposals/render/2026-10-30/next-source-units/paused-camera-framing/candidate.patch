@@ -1,0 +1,320 @@
+diff --git a/crates/ui-egui/src/render_workspace_interactive.rs b/crates/ui-egui/src/render_workspace_interactive.rs
+--- a/crates/ui-egui/src/render_workspace_interactive.rs
++++ b/crates/ui-egui/src/render_workspace_interactive.rs
+@@ -240,6 +240,8 @@
+     samples: u32,
+     partial: Option<PartialSampling>,
+     final_dimensions: [u32; 2],
++    // Accepted job camera, never the latest observed intent after Pause.
++    camera: solidcraft_engine::render::Camera,
+     stale: bool,
+     texture: Result<egui::TextureHandle, String>,
+ }
+@@ -565,6 +567,7 @@
+             samples: 0,
+             partial: Some(sampling),
+             final_dimensions,
++            camera: request.camera,
+             stale: false,
+             texture: Ok(texture),
+         });
+@@ -611,6 +614,7 @@
+             samples,
+             partial: None,
+             final_dimensions: self.issued_dimensions.ok_or_else(|| crate::i18n::tr("render.error_provisional_identity").to_string())?,
++            camera: request.camera,
+             stale: false,
+             texture,
+         });
+@@ -799,18 +803,56 @@
+     }
+ }
+ 
++fn input_frame(app: &SolveApp) -> Option<&Cached> {
++    let state = &app.render_workspace.interactive;
++    (super::active(app)
++        && app.render_workspace.view.method == ImageMethod::CpuRaytrace
++        && !app.render_workspace.view.result
++        && state.context.as_ref().is_some_and(|context| context.is_current(&app.session)))
++        .then_some(state.frame.as_ref())
++        .flatten()
++}
++
++/// Match accepted camera and authored aspect without using the latest visual
++/// revision: a paused appearance/light edit alone need not move geometry targets.
++fn camera_framing_matches(app: &SolveApp, frame: &Cached) -> bool {
++    let [width, height] = frame.final_dimensions;
++    let draft = &app.render_workspace.view.draft;
++    frame.camera == app.cam
++        && width != 0
++        && height != 0
++        && draft.width != 0
++        && draft.height != 0
++        && u64::from(width) * u64::from(draft.height) == u64::from(height) * u64::from(draft.width)
++}
++
+ pub(super) fn blocks_geometry_input(app: &SolveApp) -> bool {
+     awaiting_current_frame(app)
+-        || (super::active(app)
+-            && app.render_workspace.view.method == ImageMethod::CpuRaytrace
+-            && !app.render_workspace.view.result
+-            && app.render_workspace.interactive.context.as_ref().is_some_and(|context| context.is_current(&app.session))
+-            && app.render_workspace.interactive.frame.as_ref().is_some_and(|frame| {
+-                frame_visibility(&app.render_workspace.interactive, frame)
+-                    .blocks_unknown(frame.partial.is_some_and(|sampling| sampling.source_unknown()))
+-            }))
++        || input_frame(app).is_some_and(|frame| {
++            let visibility = frame_visibility(&app.render_workspace.interactive, frame);
++            visibility.blocks_unknown(frame.partial.is_some_and(|sampling| sampling.source_unknown()))
++                || (visibility.paintable() && !camera_framing_matches(app, frame))
++        })
+ }
+ 
++/// Use exactly the painted pixel rectangle for CAD projection and pointer bounds.
++/// Shared navigation keeps its existing viewport; no cached camera is installed.
++pub(super) fn geometry_input_rect(app: &SolveApp, rect: egui::Rect) -> egui::Rect {
++    input_frame(app)
++        .filter(|frame| frame_visibility(&app.render_workspace.interactive, frame).paintable())
++        .and_then(|frame| pixel_rect(&frame.info, rect))
++        .unwrap_or(rect)
++}
++
++fn pixel_rect(info: &FrameInfo, rect: egui::Rect) -> Option<egui::Rect> {
++    if info.width == 0 || info.height == 0 || !rect.is_finite() || !rect.is_positive() {
++        return None;
++    }
++    let scale = (rect.width() / info.width as f32).min(rect.height() / info.height as f32);
++    let target = egui::Rect::from_center_size(rect.center(), egui::vec2(info.width as f32, info.height as f32) * scale);
++    (target.is_finite() && target.is_positive()).then_some(target)
++}
++
+ fn paint_unknown_underlay(ui: &egui::Ui, rect: egui::Rect) {
+     let tokens = Tokens::get();
+     let painter = ui.painter().with_clip_rect(rect);
+@@ -834,8 +876,7 @@
+         return false;
+     }
+     let Ok(texture) = &frame.texture else { return false };
+-    let scale = (rect.width() / frame.info.width as f32).min(rect.height() / frame.info.height as f32);
+-    let target = egui::Rect::from_center_size(rect.center(), egui::vec2(frame.info.width as f32, frame.info.height as f32) * scale);
++    let Some(target) = pixel_rect(&frame.info, rect) else { return false };
+     if frame.partial.is_some_and(|sampling| sampling.source_unknown()) {
+         paint_unknown_underlay(ui, target);
+     }
+diff --git a/crates/ui-egui/src/render_workspace.rs b/crates/ui-egui/src/render_workspace.rs
+--- a/crates/ui-egui/src/render_workspace.rs
++++ b/crates/ui-egui/src/render_workspace.rs
+@@ -2170,6 +2170,8 @@
+         // any geometry interaction, and observe again below after visible UI actions.
+         interactive::before_paint(app, ui.ctx());
+         let waiting = interactive::blocks_geometry_input(app);
++        let geometry_rect = interactive::geometry_input_rect(app, rect);
++        let geometry_inside = input.inside && input.hover.is_some_and(|pos| geometry_rect.contains(pos));
+         let navigating = input.scroll != 0.0
+             || input.pinch != 1.0
+             || input.pan != egui::Vec2::ZERO
+@@ -2182,17 +2184,17 @@
+             || app.cam_anim.is_some();
+         let hits = input
+             .hover
+-            .filter(|_| input.inside && !navigating && !waiting)
+-            .map(|p| crate::viewport::pick_cached(app, &crate::viewport::projection(app, rect), p))
++            .filter(|_| geometry_inside && !navigating && !waiting)
++            .map(|p| crate::viewport::pick_cached(app, &crate::viewport::projection(app, geometry_rect), p))
+             .unwrap_or_default();
+         let candidate = assign::candidate(app, &hits, input.mods);
+         app.viewport.hover = candidate.as_ref().map(|(hit, _)| hit.clone());
+-        // No target or inside flag while blank; still drain drag release / Escape.
+-        let assigning = assign::input(app, ui, &response, candidate.as_ref(), input.inside && !navigating && !waiting);
+-        if !waiting && !assigning && input.inside && !navigating {
++        // No target while blank or misaligned; still drain drag release / Escape.
++        let assigning = assign::input(app, ui, &response, candidate.as_ref(), geometry_inside && !navigating && !waiting);
++        if !waiting && !assigning && geometry_inside && !navigating {
+             assign::hover_tooltip(app, &response, candidate.as_ref());
+         }
+-        if !waiting && !assigning && response.clicked_by(egui::PointerButton::Primary) && input.inside && !navigating {
++        if !waiting && !assigning && response.clicked_by(egui::PointerButton::Primary) && geometry_inside && !navigating {
+             let (add, toggle) = crate::tool_modifiers::selection_click(
+                 crate::tool_modifiers::Held::from_modifiers(input.mods),
+                 app.preferences.selection_shift_add_only,
+diff --git a/crates/ui-egui/src/render_workspace_tests.rs b/crates/ui-egui/src/render_workspace_tests.rs
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -10167,3 +10167,177 @@
+         assert_eq!(h.app.session.undo.len(), undo);
+     }
+ }
++
++
++// Original F1 regressions: real native accepted pixels, no injected cache/frame.
++// This first alignment block covers accepted camera and framing, not a new
++// proof of all possible scene/placement/visibility changes.
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn paused_known_image_after_finished_pan_blocks_current_camera_targets_but_keeps_navigation_and_escape() {
++    let Some((mut h, mut time, at)) =
++        interactive_canvas_input_fixture("paused_known_image_after_finished_pan_blocks_current_camera_targets_but_keeps_navigation_and_escape")
++    else {
++        return;
++    };
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    let job = interactive_recovery_require_success(&mut h, time + 0.3, time + 0.4);
++    time += 0.4;
++    let handle = interactive::test_current(&h.app).unwrap().unwrap();
++    let (accepted, samples, complete, texture) = interactive::test_cache(&h.app).unwrap();
++    assert_eq!((accepted.job, samples, complete), (job, 16, true));
++    h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++    assert!(!interactive::blocks_geometry_input(&h.app));
++    let camera = h.app.cam;
++    let document = h.app.session.doc.clone();
++    let undo = h.app.session.undo.len();
++    let end = at + egui::vec2(28.0, 12.0);
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![
++            egui::Event::PointerMoved(at),
++            egui::Event::PointerButton { pos: at, button: egui::PointerButton::Middle, pressed: true, modifiers: egui::Modifiers::NONE },
++        ],
++    );
++    interactive_canvas_input_frame(&mut h, &mut time, vec![egui::Event::PointerMoved(end)]);
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![egui::Event::PointerButton { pos: end, button: egui::PointerButton::Middle, pressed: false, modifiers: egui::Modifiers::NONE }],
++    );
++    interactive_canvas_input_frame(&mut h, &mut time, vec![]);
++    assert_ne!(h.app.cam.target, camera.target, "the real shared middle-pan must have moved the camera");
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Paused");
++    assert_eq!(interactive::inspect(&h.app)["stale"], true);
++    assert!(!interactive::awaiting_current_frame(&h.app), "this is known paused evidence, not the existing blank/Unknown guard");
++    assert!(interactive::blocks_geometry_input(&h.app));
++    let viewport = h.app.viewport.rect.unwrap();
++    let geometry_rect = interactive::geometry_input_rect(&h.app, viewport);
++    let projection = crate::viewport::projection(&h.app, geometry_rect);
++    let current_hit = projection.to_screen(camera.target).unwrap();
++    assert!(geometry_rect.contains(current_hit));
++    assert!(crate::viewport::pick(&h.app, &projection, current_hit).iter().any(|hit| {
++        matches!(hit, crate::viewport::Hit::Face { body, .. } if body == "Subject")
++    }), "prove there really is a current-camera target for the new guard to reject");
++    interactive_canvas_input_click(&mut h, &mut time, current_hit, egui::PointerButton::Primary, egui::Modifiers::NONE);
++    assert!(h.app.viewport.hover.is_none() && h.app.session.selection.is_empty());
++    interactive_canvas_input_click(&mut h, &mut time, current_hit, egui::PointerButton::Secondary, egui::Modifiers::NONE);
++    assert!(h.app.viewport.context_menu.is_none());
++    assign::arm(&mut h.app, json!({"appearance":"ABS - Red"})).unwrap();
++    interactive_canvas_input_click(&mut h, &mut time, current_hit, egui::PointerButton::Primary, egui::Modifiers::NONE);
++    assert_eq!(h.app.session.undo.len(), undo);
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }],
++    );
++    assert!(!h.app.render_workspace.view.assign.painting && !h.app.render_workspace.view.assign.sampling);
++    let (retained, retained_samples, retained_complete, retained_texture) = interactive::test_cache(&h.app).unwrap();
++    assert_eq!((retained.job, retained.png_sha256, retained_samples, retained_complete, retained_texture),
++        (job, accepted.png_sha256, samples, complete, texture));
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, time + 0.01, false, true);
++    assert!(painted, "the retained image stays visible as a reference");
++    output.textures_delta.clear();
++    assert!(!h.app.render_workspace.interactive.pending());
++    interactive_assert_final_export_isolation(&mut h, &handle);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++    assert!(!interactive::blocks_geometry_input(&h.app));
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn paused_aligned_known_image_supports_repeated_material_edits_and_uses_its_painted_rectangle() {
++    let Some((mut h, mut time, at)) =
++        interactive_canvas_input_fixture("paused_aligned_known_image_supports_repeated_material_edits_and_uses_its_painted_rectangle")
++    else {
++        return;
++    };
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    let job = interactive_recovery_require_success(&mut h, time + 0.3, time + 0.4);
++    time += 0.4;
++    h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++    let camera = h.app.cam;
++    let viewport = h.app.viewport.rect.unwrap();
++    let pixels = interactive::geometry_input_rect(&h.app, viewport);
++    assert!(pixels.width() < viewport.width(), "the original square image is letterboxed in this landscape viewport");
++    assert!((pixels.width() - pixels.height()).abs() <= f32::EPSILON * pixels.height().max(1.0));
++    let undo = h.app.session.undo.len();
++    for (index, name) in ["ABS - Blue", "ABS - Red"].into_iter().enumerate() {
++        assert!(!interactive::blocks_geometry_input(&h.app), "Pause alone and an earlier appearance edit cannot block aligned input");
++        assign::arm(&mut h.app, json!({"appearance":name})).unwrap();
++        interactive_canvas_input_click(&mut h, &mut time, at, egui::PointerButton::Primary, egui::Modifiers::NONE);
++        assert_eq!(h.app.session.undo.len(), undo + index + 1);
++        assert_eq!(h.app.session.doc.appearances.bodies["Subject"].name, name);
++        assert_eq!(h.app.cam, camera);
++        assert_eq!(interactive::inspect(&h.app)["phase"], "Paused");
++        assert_eq!(interactive::inspect(&h.app)["stale"], true);
++        assert_eq!(interactive::test_cache(&h.app).unwrap().0.job, job);
++        assert!(!interactive::blocks_geometry_input(&h.app));
++    }
++    assign::stop(&mut h.app);
++    let selection = h.app.session.selection.clone();
++    let outside_pixels = egui::pos2(viewport.left() + 1.0, viewport.center().y);
++    assert!(!pixels.contains(outside_pixels));
++    interactive_canvas_input_click(&mut h, &mut time, outside_pixels, egui::PointerButton::Primary, egui::Modifiers::NONE);
++    assert!(h.app.viewport.hover.is_none());
++    assert_eq!(h.app.session.selection, selection, "letterbox margins are not pixel-aligned CAD targets");
++    assert!(!h.app.render_workspace.interactive.pending());
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn paused_known_image_rejects_authored_aspect_change_without_blanket_pause_or_final_gate() {
++    let Some((mut h, mut time, at)) =
++        interactive_canvas_input_fixture("paused_known_image_rejects_authored_aspect_change_without_blanket_pause_or_final_gate")
++    else {
++        return;
++    };
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    let job = interactive_recovery_require_success(&mut h, time + 0.3, time + 0.4);
++    time += 0.4;
++    h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++    let camera = h.app.cam;
++    let width = h.app.render_workspace.view.draft.width;
++    assert!(!interactive::blocks_geometry_input(&h.app));
++    let document = h.app.session.doc.clone();
++    let revision = h.app.session.revision;
++    let undo = h.app.session.undo.len();
++    assign::tile(&mut h.app, json!({"appearance":"ABS - Red"}), true).unwrap();
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE }],
++    );
++    assert!(assign::preview(&h.app).is_some(), "start a real drag against aligned accepted pixels");
++    h.app.render_workspace.view.draft.width = width * 2;
++    interactive_canvas_input_frame(&mut h, &mut time, vec![]);
++    assert_eq!(h.app.cam, camera);
++    assert!(interactive::blocks_geometry_input(&h.app));
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    assert_eq!(interactive::test_cache(&h.app).unwrap().0.job, job);
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE }],
++    );
++    assert!(assign::preview(&h.app).is_none() && assign::hover(&h.app).is_none());
++    assert!(!assign::cancel(&mut h.app), "the blocked release must drain the real drag");
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!((h.app.session.revision, h.app.session.undo.len()), (revision, undo),
++        "the guard must stop a framing-only drag without relying on the document revision guard");
++    h.app.render_workspace.view.draft.width = width;
++    interactive_canvas_input_frame(&mut h, &mut time, vec![]);
++    assert!(!interactive::blocks_geometry_input(&h.app), "restoring the accepted aspect restores aligned same-camera input");
++    h.app.run("render.result.view", json!({"view":"image"})).unwrap();
++    assert!(!interactive::blocks_geometry_input(&h.app), "the manual Result path owns its own camera and input policy");
++    h.app.run("render.result.view", json!({"view":"model"})).unwrap();
++    h.app.run("render.interactive", json!({"action":"resume"})).unwrap();
++    interactive_canvas_input_frame(&mut h, &mut time, vec![]);
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(interactive::awaiting_current_frame(&h.app) && interactive::blocks_geometry_input(&h.app));
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++    assert!(!interactive::blocks_geometry_input(&h.app));
++}

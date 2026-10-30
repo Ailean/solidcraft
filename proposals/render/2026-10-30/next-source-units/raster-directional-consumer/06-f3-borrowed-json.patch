@@ -1,0 +1,98 @@
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -109,7 +109,7 @@
+ /// unsupported effects remain errors rather than disappearing from the request.
+ fn interactive_params(params: &Value) -> Result<Value> {
+     let command = "render.interactive";
+-    let mut input: Start = serde_json::from_value(params.clone()).map_err(|e| bad(command, e.to_string()))?;
++    let mut input = Start::deserialize(params).map_err(|e| bad(command, e.to_string()))?;
+     let object = params.as_object().ok_or_else(|| bad(command, "Interactive requires an explicit CPU request object"))?;
+     if object.contains_key("setup") || object.contains_key("replace") {
+         return Err(bad(command, "Interactive requires an explicit settings snapshot without setup or replace"));
+@@ -557,6 +557,11 @@
+ }
+ 
+ fn normalize_saved_job(s: &Session, params: &Value, command: &str) -> Result<Option<Normalized>> {
++    // Validate the new payload by reference even if this turns out to be an
++    // unsaved request. Never clone an unbounded caller-owned light array.
++    let raster_override = params.get("raster_lights")
++        .map(|value| solidcraft_render::job::deserialize_raster_lights(value).map_err(|e| bad(command, e.to_string())))
++        .transpose()?;
+     let Some(object) = params.as_object() else {
+         return Ok(None);
+     };
+@@ -618,8 +623,9 @@
+         }
+     };
+     lowered["settings"] = serde_json::to_value(settings).map_err(|e| bad(command, e.to_string()))?;
+-    if let Some(lights) = object.get("raster_lights") {
+-        lowered["raster_lights"] = lights.clone();
++    if let Some(lights) = raster_override {
++        // Only the already validated, bounded representation is materialized.
++        lowered["raster_lights"] = serde_json::to_value(lights).map_err(|e| bad(command, e.to_string()))?;
+     }
+     if let Some(weights) = object.get("studio_weights") {
+         lowered["studio_weights"] = weights.clone();
+@@ -665,7 +671,7 @@
+             "runtime GPU transmission, texture, lens, environment, lighting, tone-map and denoise controls require progressive rendering",
+         ));
+     }
+-    let mut input: Start = serde_json::from_value(params.clone()).map_err(|e| bad(command, e.to_string()))?;
++    let mut input = Start::deserialize(params).map_err(|e| bad(command, e.to_string()))?;
+     solidcraft_render::job::validate_raster_lights(&input.raster_lights).map_err(job_error)?;
+     if input.raster_lights.is_some()
+         && (input.integrator != Integrator::Raster || input.progressive || input.progressive_feedback || input.nested_media
+--- a/crates/engine/src/cmd/render/job_tests.rs
++++ b/crates/engine/src/cmd/render/job_tests.rs
+@@ -2,6 +2,51 @@
+ use solidcraft_render::job::{CpuHost, JobId};
+ 
+ #[test]
++fn raster_json_is_bounded_before_saved_normalization_and_preserves_null_empty_semantics() {
++    let (mut s, host) = session();
++    s.execute("render.settings.set", &json!({"name":"Bounded","set":{"width":16,"height":16,"job":{"method":"raster","transparent_background":false}}})).unwrap();
++    let light = json!({"direction":[0,0,1],"color":[1,1,1],"intensity":1});
++    let mut unknown = light.clone();
++    unknown["unexpected"] = json!({"nested":vec![0;32]});
++    let doc = s.doc.clone();
++    for rig in [json!(vec![light;9]), json!([unknown])] {
++        for saved in [false, true] {
++            let mut params = json!({"raster_lights":rig});
++            if saved {
++                params["setup"] = json!("Bounded");
++            }
++            let before = params.clone(); // deliberately small adversarial fixture, not production lowering
++            for command in ["render.preflight", "render.start"] {
++                assert!(s.execute(command, &params).is_err());
++                assert_eq!(params, before);
++                assert_eq!(host.admitted_bytes(), 0);
++                assert!(Arc::ptr_eq(&doc, &s.doc));
++            }
++        }
++    }
++    for saved in [false, true] {
++        for rig in [None, Some(Value::Null), Some(json!([]))] {
++            let empty = rig.as_ref().is_some_and(Value::is_array);
++            let mut params = json!({});
++            if saved {
++                params["setup"] = json!("Bounded");
++            }
++            if let Some(rig) = rig {
++                params["raster_lights"] = rig;
++            }
++            let checked = s.execute("render.preflight", &params).unwrap();
++            if empty {
++                assert_eq!(checked["request"]["raster_lights"], json!([]));
++            } else {
++                assert!(checked["request"].get("raster_lights").is_none());
++            }
++        }
++    }
++    // Source inspection, not this outcome test, proves the raw new array was
++    // borrowed/validated before materialization. No real OOM test is claimed.
++}
++
++#[test]
+ fn transient_raster_rig_survives_saved_normalization_check_start_status_and_png() {
+     let (mut s, host) = session();
+     s.execute("solid.box", &json!({"length":20,"width":15,"height":10})).unwrap();

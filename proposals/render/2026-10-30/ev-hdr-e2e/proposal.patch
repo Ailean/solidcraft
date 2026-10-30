@@ -1,0 +1,184 @@
+diff --git a/crates/ui-egui/src/render_workspace_tests.rs b/crates/ui-egui/src/render_workspace_tests.rs
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -8407,3 +8407,180 @@
+     assert_eq!(final_job.status().unwrap().progress.phase, Phase::Queued, "Off cannot cancel the unrelated final");
+     final_job.cancel().unwrap();
+ }
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_ev_reversal_real_cpu_pixels_follow_one_exposure_with_independent_lambert_oracle() {
++    use solidcraft_engine::render::job::DirectionalLightOptions;
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_ev_reversal_real_cpu_pixels_follow_one_exposure_with_independent_lambert_oracle") {
++        return;
++    }
++    h.app.run(
++        "appearance.assign",
++        json!({"bodies":["Subject"],"color":"#808080","opacity":1.0,
++            "pbr":{"metallic":0.0,"roughness":1.0,"dielectric_ior":1.0}}),
++    ).unwrap();
++    // Front view sees the y=0 face normally. All jittered rays through the
++    // central pixel stay inside that face, so neither coverage nor noise is an oracle.
++    h.app.cam.target = solidcraft_engine::geom::Vec3::new(5.0, 4.0, 2.0);
++    h.app.cam.yaw = 0.0;
++    h.app.cam.pitch = 0.0;
++    h.app.cam.roll = 0.0;
++    h.app.cam.distance = 10.0;
++    h.app.cam.fov = 0.0;
++    h.app.cam.up = solidcraft_engine::render::UpAxis::Z;
++    h.app.render_workspace.view.cpu.environment = cpu::Environment::None;
++    h.app.render_workspace.view.raytrace = solidcraft_engine::render::job::RaytraceOptions {
++        lights: Some(vec![DirectionalLightOptions { direction: [0.0, -1.0, 0.0], color: [1.0; 3], intensity: 0.5 }]),
++        shadows: false,
++        ..Default::default()
++    };
++    let camera = h.app.cam;
++    let final_options = h.app.render_workspace.view.raytrace.clone();
++    let final_size = (h.app.render_workspace.view.draft.width, h.app.render_workspace.view.draft.height);
++    let document = h.app.session.doc.clone();
++    let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    let mut previous_job = None;
++    let mut baseline_png = None;
++    let mut previous_visual = None;
++    for (step, ev) in [0.0_f64, 1.0, -1.0, 0.0].into_iter().enumerate() {
++        let time = epoch + step as f64;
++        h.app.render_workspace.view.draft.exposure_ev = ev;
++        interactive_clear_acceptance_frame(&mut h, time, false);
++        let visual = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++        if let Some(previous) = previous_visual {
++            assert!(visual > previous, "each committed EV must invalidate the previous image");
++        }
++        previous_visual = Some(visual);
++        assert!(interactive::test_cache(&h.app).is_none());
++        assert!(interactive::test_current(&h.app).unwrap().is_none());
++        // This is the real runtime request, not a test-only renderer request.
++        let wire = interactive_request(&h.app).unwrap();
++        assert_eq!(wire["settings"]["exposure_ev"], 0.0, "outer EV must not duplicate the CPU EV");
++        assert_eq!(wire["raytrace"]["exposure_ev"], ev);
++        interactive_clear_acceptance_frame(&mut h, time + 0.201, true);
++        let held = interactive_hold_real_completed_callback(&mut h);
++        let status = held.job.status().unwrap();
++        assert_eq!(status.request.camera, camera);
++        assert_eq!(status.request.raytrace.as_ref().unwrap().exposure_ev, ev, "actual admitted job must carry EV exactly once");
++        if let Some(previous) = previous_job {
++            assert_ne!(held.job.id(), previous, "an EV edit must not reuse the old admitted job");
++        }
++        previous_job = Some(held.job.id());
++        let frame = held.job.frame().unwrap().unwrap();
++        let png = image::load_from_memory_with_format(frame.png(), image::ImageFormat::Png).unwrap().to_rgba8();
++        // Original closed-form oracle: index-matched opaque dielectric has no
++        // Fresnel/specular term, so L = IEC-sRGB(128) * 0.5 / pi at normal incidence.
++        // Apply 2^EV once, Reinhard once, then IEC sRGB once and round to eight bits.
++        // No renderer BRDF/transfer helper or measured baseline supplies expectations.
++        let encoded = 128.0_f64 / 255.0;
++        let albedo = ((encoded + 0.055) / 1.055).powf(2.4);
++        let exposed = albedo * 0.5 / std::f64::consts::PI * 2.0_f64.powf(ev);
++        let mapped = exposed / (1.0 + exposed);
++        let srgb = if mapped <= 0.0031308 { 12.92 * mapped } else { 1.055 * mapped.powf(1.0 / 2.4) - 0.055 };
++        let expected = (255.0 * srgb).round() as u8;
++        assert!(expected > 0 && expected < 255, "fixture must stay away from black and clipping");
++        assert_eq!(png.get_pixel(7, 7).0, [expected, expected, expected, 255], "EV={ev}: actual native CPU PNG must match analytic radiance");
++        if step == 0 {
++            baseline_png = Some(frame.png().to_vec());
++        } else if step == 3 {
++            assert_eq!(frame.png(), baseline_png.as_ref().unwrap().as_slice(), "EV reversal must return the deterministic original PNG");
++        }
++        held.sender.send(held.reply).unwrap();
++        let (mut output, painted) = interactive_acceptance_frame(&mut h, time + 0.3, false, true);
++        assert!(painted);
++        let (cached, samples, complete, texture) = interactive::test_cache(&h.app).unwrap();
++        assert_eq!((cached.job, cached.png_sha256), (held.job.id(), frame.info.png_sha256.clone()));
++        assert_eq!((samples, complete), (16, true));
++        let uploaded = &output.textures_delta.set.get(&texture).unwrap().first().unwrap().image;
++        let egui::ImageData::Color(pixels) = uploaded;
++        assert_eq!(pixels.size, [16, 16]);
++        assert_eq!(pixels.pixels[7 * 16 + 7], Color32::from_rgb(expected, expected, expected), "the accepted texture must contain the analytic pixel");
++        output.textures_delta.clear();
++        assert_eq!(interactive::inspect(&h.app)["phase"], "TargetReached");
++        assert_eq!(interactive::inspect(&h.app)["stale"], false);
++        assert_eq!(interactive::inspect(&h.app)["provisional"], true);
++        interactive_assert_final_export_isolation(&mut h, &held.job);
++        assert_eq!(h.app.render_workspace.view.raytrace, final_options);
++        assert_eq!((h.app.render_workspace.view.draft.width, h.app.render_workspace.view.draft.height), final_size);
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()), history);
++    }
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_pending_hdr_invalidates_accepted_pixels_and_checked_resume_then_pause_retains_recovery() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_pending_hdr_invalidates_accepted_pixels_and_checked_resume_then_pause_retains_recovery") {
++        return;
++    }
++    let document = h.app.session.doc.clone();
++    let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    let original = interactive_recovery_require_success(&mut h, epoch + 0.201, epoch + 0.3);
++    let original_visual = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    let path = h.dir.join("interactive-accepted-to-pending-original.hdr");
++    let bytes = original_hdr_bytes(192, true);
++    std::fs::write(&path, &bytes).unwrap();
++    h.app.render_workspace.view.cpu.environment = cpu::Environment::Hdr;
++    h.app.render_workspace.view.cpu.hdr = hdr::Input::FilePending { path: path.to_string_lossy().into_owned() };
++    // Even a real valid file is not admitted until inspected. An already
++    // displayed CPU frame must disappear, not masquerade as the new HDR intent.
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.4, true, true);
++    assert!(!painted);
++    output.textures_delta.clear();
++    let error = interactive_recovery_require_error(&mut h, epoch + 0.5);
++    assert_eq!(error, h.app.tr("render.hdr_inspect_required"));
++    assert!(interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap() > original_visual);
++    assert!(h.app.run("render.interactive", json!({"action":"resume"})).is_err());
++    assert_eq!(interactive_recovery_require_error(&mut h, epoch + 1.0), error);
++    // A correcting inspection must respect explicit user pause. Resume then
++    // captures the actual checked HDR through Snapshot/CPU, rather than falling
++    // back to the old frame or manufacturing a successful callback.
++    h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++    hdr::inspect(&mut h.app, hdr::Target::Cpu, path.to_string_lossy().into_owned()).unwrap();
++    let checked = interactive_request(&h.app).unwrap();
++    {
++        use sha2::{Digest, Sha256};
++        assert_eq!(checked["environment"]["expected_sha256"], format!("{:x}", Sha256::digest(&bytes)));
++    }
++    interactive_clear_acceptance_frame(&mut h, epoch + 1.1, false);
++    interactive_clear_acceptance_frame(&mut h, epoch + 1.5, true);
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Paused");
++    assert_eq!(interactive::inspect(&h.app)["paused"], true);
++    assert!(interactive::inspect(&h.app)["error"].is_null());
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert!(interactive::test_current(&h.app).unwrap().is_none());
++    assert!(interactive::test_cache(&h.app).is_none(), "the earlier accepted image cannot return after correcting HDR");
++    h.app.run("render.interactive", json!({"action":"resume"})).unwrap();
++    let recovered = interactive_recovery_require_success(&mut h, epoch + 1.701, epoch + 1.8);
++    assert_ne!(recovered, original);
++    let job = interactive::test_current(&h.app).unwrap().unwrap();
++    assert_eq!(job.id(), recovered);
++    let frame = job.frame().unwrap().unwrap();
++    let (cached, samples, complete, texture) = interactive::test_cache(&h.app).unwrap();
++    assert_eq!(cached.png_sha256, frame.info.png_sha256);
++    assert_eq!((cached.job, samples, complete), (recovered, 16, true));
++    assert_eq!(interactive_request(&h.app).unwrap(), checked);
++    h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 2.0, true, true);
++    assert!(painted, "Pause retains the newly recovered actual frame");
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Paused");
++    assert_eq!(interactive::inspect(&h.app)["paused"], true);
++    let (paused, paused_samples, paused_complete, paused_texture) = interactive::test_cache(&h.app).unwrap();
++    assert_eq!((paused.job, paused.png_sha256, paused_samples, paused_complete, paused_texture), (recovered, frame.info.png_sha256.clone(), 16, true, texture));
++    assert!(!output.textures_delta.set.contains_key(&texture), "Pause reuses the recovered texture");
++    output.textures_delta.clear();
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert_eq!(job.frame().unwrap().unwrap().png(), frame.png());
++    interactive_assert_final_export_isolation(&mut h, &job);
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()), history);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}

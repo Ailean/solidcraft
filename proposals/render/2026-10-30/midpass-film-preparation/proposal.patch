@@ -1,0 +1,246 @@
+--- a/crates/render/src/film_primary.rs
++++ b/crates/render/src/film_primary.rs
+@@ -10,6 +10,23 @@
+ struct Pixel {
+     sum: [f64; 3],
+     covered: u32,
++}
++
++/// Observed scanline frontier; metadata only, never a caller-supplied authority.
++/// Every pixel before updated_prefix has one more sample than completed_passes.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) struct PartialFrontier {
++    pub completed_passes: u32,
++    pub updated_prefix: usize,
++    pub pixels: usize,
++}
++
++/// A partial view never invents a zero sample for a pixel not yet observed.
++/// Sampled linear radiance includes zero contributions from primary misses.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub(crate) enum PartialPixel {
++    Unknown,
++    Sampled { linear_premultiplied: [f64; 3], covered: u32, count: u32 },
+ }
+ 
+ pub(crate) struct PrimaryFilm {
+@@ -121,4 +138,49 @@
+         let samples = u16::try_from(self.samples).map_err(|_| limit("primary sample count exceeds resolve representation"))?;
+         Ok((pixel.sum.map(|sum| sum / f64::from(self.samples)), covered, samples))
+     }
++    /// Inspect only the real committed state. This value does not freeze the film
++    /// or authorize a snapshot. A caller resolving several pixels must keep the
++    /// film immutably borrowed at one completed-pixel frontier, and must charge
++    /// reads/copies and check cancellation against its existing job budget.
++    pub(crate) fn partial_frontier(&self) -> Result<PartialFrontier> {
++        if !self.ready()
++            || self.next_pixel >= self.count
++            || self.samples > self.sample_limit
++            || (self.samples == self.sample_limit && self.next_pixel != 0)
++        {
++            return Err(invalid("primary film has no initialized partial frontier"));
++        }
++        Ok(PartialFrontier { completed_passes: self.samples, updated_prefix: self.next_pixel, pixels: self.count })
++    }
++
++    /// Bounded allocation-free read, separate from the strict complete-pass pixel().
++    /// Counts come from this film, never from a supplied frontier or sample count.
++    /// Unknown means count0/covered0; a sampled miss has count>0 and covered0.
++    /// No exposure, tone mapping, background, work lease or publication occurs here.
++    /// The caller owes cancellation checks and work charges for each read/copy;
++    /// this accessor creates no independent budget and never advances an ordinal.
++    pub(crate) fn partial_pixel(&self, index: usize) -> Result<PartialPixel> {
++        let frontier = self.partial_frontier()?;
++        let pixel = self.pixels.get(index).ok_or_else(|| invalid("primary film partial index out of range"))?;
++        let count = frontier
++            .completed_passes
++            .checked_add(u32::from(index < frontier.updated_prefix))
++            .filter(|count| *count <= self.sample_limit)
++            .ok_or_else(|| limit("primary partial sample count exceeded"))?;
++        if pixel.covered > count {
++            return Err(invalid("primary partial coverage exceeds its committed count"));
++        }
++        if count == 0 {
++            if pixel.covered != 0 || pixel.sum != [0.0; 3] {
++                return Err(invalid("unobserved primary pixel has accumulated data"));
++            }
++            return Ok(PartialPixel::Unknown);
++        }
++        Ok(PartialPixel::Sampled {
++            linear_premultiplied: pixel.sum.map(|sum| sum / f64::from(count)),
++            covered: pixel.covered,
++            count,
++        })
++    }
++
+ }
+--- a/crates/render/src/film_tests.rs
++++ b/crates/render/src/film_tests.rs
+@@ -275,3 +275,167 @@
+     assert!(film.add(0, 512, [0.0; 3], true, &cancel, &mut || Ok(())).is_err());
+     assert_eq!(film.samples(), 512);
+ }
++
++
++#[cfg(feature = "raytrace-cpu")]
++mod partial_camera_passes {
++    use super::primary::{PartialFrontier, PartialPixel, PrimaryFilm};
++    use super::*;
++    use crate::job::{CpuBudget, CpuProgressiveOptions};
++
++    fn uninitialized(samples: u32, seed: u32) -> PrimaryFilm {
++        let options = CpuProgressiveOptions { samples_per_pixel: samples, seed };
++        let bytes = PrimaryFilm::required_bytes(4, 1, options, CpuBudget::Compact).unwrap();
++        PrimaryFilm::new(4, 1, options, bytes, &CancelToken::default(), CpuBudget::Compact).unwrap()
++    }
++
++    fn ready(samples: u32, seed: u32) -> PrimaryFilm {
++        let mut film = uninitialized(samples, seed);
++        while !film.ready() {
++            film.initialize_one(&CancelToken::default(), &mut || Ok(())).unwrap();
++        }
++        film
++    }
++
++    fn observe(film: &PrimaryFilm) -> (PartialFrontier, Vec<PartialPixel>) {
++        (film.partial_frontier().unwrap(), (0..4).map(|index| film.partial_pixel(index).unwrap()).collect())
++    }
++
++    fn sampled(mean: [f64; 3], covered: u32, count: u32) -> PartialPixel {
++        PartialPixel::Sampled { linear_premultiplied: mean, covered, count }
++    }
++
++    #[test]
++    fn partial_frontier_distinguishes_first_prefix_miss_and_unobserved_pixels() {
++        let mut film = ready(2, 7);
++        assert_eq!(observe(&film), (
++            PartialFrontier { completed_passes: 0, updated_prefix: 0, pixels: 4 },
++            vec![PartialPixel::Unknown; 4],
++        ));
++        film.add(0, 0, [2.0, 0.0, 0.0], true, &CancelToken::default(), &mut || Ok(())).unwrap();
++        film.add(1, 0, [0.0; 3], false, &CancelToken::default(), &mut || Ok(())).unwrap();
++        assert_eq!(observe(&film), (
++            PartialFrontier { completed_passes: 0, updated_prefix: 2, pixels: 4 },
++            vec![sampled([2.0, 0.0, 0.0], 1, 1), sampled([0.0; 3], 0, 1), PartialPixel::Unknown, PartialPixel::Unknown],
++        ));
++        assert!(film.pixel(0).is_err(), "legacy whole-pass reader still rejects the partial pass");
++        assert!(film.pixel(1).is_err(), "a sampled miss does not imply a uniform pass");
++    }
++
++    #[test]
++    fn partial_counts_and_means_follow_real_interior_and_full_pass_frontiers() {
++        let mut film = ready(2, 0);
++        let cancel = CancelToken::default();
++        for (index, value, covered) in [
++            (0, [2.0, 0.0, 0.0], true), (1, [0.0; 3], false),
++            (2, [0.0, 0.0, 4.0], true), (3, [0.0; 3], false),
++        ] {
++            film.add(index, 0, value, covered, &cancel, &mut || Ok(())).unwrap();
++        }
++        assert_eq!(film.partial_frontier().unwrap(), PartialFrontier { completed_passes: 1, updated_prefix: 0, pixels: 4 });
++        assert_eq!(film.partial_pixel(3).unwrap(), sampled([0.0; 3], 0, 1));
++        assert_eq!(film.pixel(0).unwrap(), ([2.0, 0.0, 0.0], 1, 1));
++
++        film.add(0, 1, [4.0, 0.0, 0.0], true, &cancel, &mut || Ok(())).unwrap();
++        film.add(1, 1, [0.0, 2.0, 0.0], true, &cancel, &mut || Ok(())).unwrap();
++        assert_eq!(observe(&film), (
++            PartialFrontier { completed_passes: 1, updated_prefix: 2, pixels: 4 },
++            vec![sampled([3.0, 0.0, 0.0], 2, 2), sampled([0.0, 1.0, 0.0], 1, 2),
++                sampled([0.0, 0.0, 4.0], 1, 1), sampled([0.0; 3], 0, 1)],
++        ));
++        assert!(film.pixel(0).is_err());
++
++        film.add(2, 1, [0.0, 0.0, 8.0], true, &cancel, &mut || Ok(())).unwrap();
++        assert_eq!(film.partial_frontier().unwrap().updated_prefix, 3);
++        film.add(3, 1, [0.0; 3], false, &cancel, &mut || Ok(())).unwrap();
++        assert_eq!(observe(&film), (
++            PartialFrontier { completed_passes: 2, updated_prefix: 0, pixels: 4 },
++            vec![sampled([3.0, 0.0, 0.0], 2, 2), sampled([0.0, 1.0, 0.0], 1, 2),
++                sampled([0.0, 0.0, 6.0], 2, 2), sampled([0.0; 3], 0, 2)],
++        ));
++        assert_eq!(film.pixel(2).unwrap(), ([0.0, 0.0, 6.0], 2, 2));
++        assert!(film.add(0, 2, [0.0; 3], false, &cancel, &mut || Ok(())).is_err());
++        assert_eq!(film.partial_frontier().unwrap().completed_passes, 2);
++    }
++
++    #[test]
++    fn partial_access_refuses_uninitialized_storage_and_invalid_indices() {
++        let mut film = uninitialized(2, 7);
++        assert!(film.partial_frontier().is_err());
++        assert!(film.partial_pixel(0).is_err());
++        film.initialize_one(&CancelToken::default(), &mut || Ok(())).unwrap();
++        assert!(film.partial_frontier().is_err(), "allocated prefix is not an initialized film");
++        assert!(film.partial_pixel(0).is_err());
++        while !film.ready() {
++            film.initialize_one(&CancelToken::default(), &mut || Ok(())).unwrap();
++        }
++        assert_eq!(film.partial_pixel(0).unwrap(), PartialPixel::Unknown);
++        assert!(film.partial_pixel(4).is_err());
++        assert!(film.partial_pixel(usize::MAX).is_err());
++        assert_eq!(film.partial_frontier().unwrap().updated_prefix, 0);
++    }
++
++    #[test]
++    fn failed_or_cancelled_updates_preserve_the_observed_partial_frontier() {
++        let mut film = ready(2, 7);
++        film.add(0, 0, [2.0, 0.0, 0.0], true, &CancelToken::default(), &mut || Ok(())).unwrap();
++        let before = observe(&film);
++        for (index, ordinal, value, covered) in [
++            (0, 0, [0.0; 3], false), (2, 0, [0.0; 3], false), (1, 1, [0.0; 3], false),
++            (1, 0, [f64::NAN; 3], true), (1, 0, [1.0; 3], false),
++        ] {
++            assert!(film.add(index, ordinal, value, covered, &CancelToken::default(), &mut || Ok(())).is_err());
++            assert_eq!(observe(&film), before);
++        }
++        assert_eq!(film.add(1, 0, [4.0; 3], true, &CancelToken::default(), &mut || Err(limit("existing job exhausted"))).unwrap_err().code,
++            ErrorCode::LimitExceeded);
++        assert_eq!(observe(&film), before);
++        let cancel = CancelToken::default();
++        let observer = cancel.clone();
++        assert_eq!(film.add(1, 0, [4.0; 3], true, &cancel, &mut || {
++            observer.cancel();
++            Ok(())
++        }).unwrap_err().code, ErrorCode::Cancelled);
++        assert_eq!(observe(&film), before);
++        film.add(1, 0, [4.0; 3], true, &CancelToken::default(), &mut || Ok(())).unwrap();
++        assert_eq!(film.partial_frontier().unwrap().updated_prefix, 2, "failed updates did not consume the next ordinal");
++    }
++
++    #[test]
++    fn reading_partial_pixels_preserves_default_sum_order_bits_and_charge_count() {
++        for seed in [0, 7, u32::MAX] {
++            let mut observed = ready(4, seed);
++            let mut control = ready(4, seed);
++            let mut observed_charges = 0;
++            let mut control_charges = 0;
++            for ordinal in 0..4 {
++                let red = if ordinal == 0 { 1e12 } else { 2.0_f64.powi(-15) };
++                for index in 0..4 {
++                    let value = [red, red * 0.5, 2.0];
++                    observed.add(index, ordinal, value, true, &CancelToken::default(), &mut || {
++                        observed_charges += 1;
++                        Ok(())
++                    }).unwrap();
++                    // These uncharged O(1) reads model only the accessor. A future
++                    // snapshot caller still owes its own per-read/copy work charge.
++                    let _ = observe(&observed);
++                    control.add(index, ordinal, value, true, &CancelToken::default(), &mut || {
++                        control_charges += 1;
++                        Ok(())
++                    }).unwrap();
++                }
++            }
++            assert_eq!((observed_charges, control_charges), (16, 16));
++            assert_eq!(observed.samples(), 4);
++            for index in 0..4 {
++                let (actual, covered, count) = observed.pixel(index).unwrap();
++                let (expected, expected_covered, expected_count) = control.pixel(index).unwrap();
++                assert_eq!(actual.map(f64::to_bits), expected.map(f64::to_bits));
++                assert_eq!(actual.map(f64::to_bits), [2.5e11_f64, 1.25e11_f64, 2.0_f64].map(f64::to_bits),
++                    "ordered additions keep each sub-half-ULP contribution rounded at its original addition");
++                assert_eq!((covered, count), (expected_covered, expected_count));
++                assert_eq!(observed.partial_pixel(index).unwrap(), sampled(actual, 4, 4));
++            }
++        }
++    }
++}

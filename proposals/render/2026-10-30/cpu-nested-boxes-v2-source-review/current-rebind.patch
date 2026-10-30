@@ -1,0 +1,1021 @@
+--- a/crates/render/src/raytrace/dielectric.rs
++++ b/crates/render/src/raytrace/dielectric.rs
+@@ -241,6 +241,160 @@
+     lo.x <= hi.x && lo.y <= hi.y && lo.z <= hi.z
+ }
+ 
++/// Immediate parents of already-certified axis-aligned boxes. Strict containment
++/// is sufficient for this exact box subset; touching and partial overlap refuse.
++/// Eight overrides bound this to at most 64 comparisons, without allocation.
++pub(super) fn parents(
++    certificates: &[Option<Certificate>; MAX_OVERRIDES],
++    nested: bool,
++) -> Result<[Option<usize>; MAX_OVERRIDES]> {
++    let mut result = [None; MAX_OVERRIDES];
++    for (child, certificate) in certificates.iter().enumerate() {
++        let Some(Certificate::ClosedBox(bounds)) = certificate else { continue };
++        for (candidate, certificate) in certificates.iter().enumerate() {
++            let Some(Certificate::ClosedBox(container)) = certificate else { continue };
++            if candidate == child || !overlaps(*bounds, *container) {
++                continue;
++            }
++            if !nested {
++                return Err(TraceError::InvalidInput("nested, touching or overlapping dielectric volumes are unsupported"));
++            }
++            if strictly_contains(*container, *bounds) {
++                let parent = result.get_mut(child).ok_or(TraceError::Internal("dielectric child index"))?;
++                let replace = match *parent {
++                    None => true,
++                    Some(previous) => match certificates.get(previous).copied().flatten() {
++                        Some(Certificate::ClosedBox(old)) => strictly_contains(old, *container),
++                        _ => return Err(TraceError::Internal("dielectric parent certificate")),
++                    },
++                };
++                if replace {
++                    *parent = Some(candidate);
++                }
++            } else if !strictly_contains(*bounds, *container) {
++                return Err(TraceError::InvalidInput("dielectric boxes must be disjoint or strictly nested; touching and overlap are unsupported"));
++            }
++        }
++    }
++    Ok(result)
++}
++
++fn strictly_contains(outer: Bounds, inner: Bounds) -> bool {
++    let lo = outer.min();
++    let hi = outer.max();
++    let a = inner.min();
++    let b = inner.max();
++    lo.x < a.x && lo.y < a.y && lo.z < a.z && hi.x > b.x && hi.y > b.y && hi.z > b.z
++}
++
++/// A certified axis-aligned face point, shared by propagation and Beer intervals.
++/// This is used only by the explicit nested-box path, never by general spawn.
++#[derive(Clone, Copy)]
++pub(super) struct ExactBoxFace {
++    pub point: Vec3,
++    axis: usize,
++    outward: f64,
++    entering: bool,
++}
++
++impl ExactBoxFace {
++    pub fn spawn(self, direction: Vec3, reflected: bool) -> Result<super::Ray> {
++        let ray = super::Ray::new(self.point, direction, 0.0_f64.next_up(), super::MAX_DISTANCE_MM)?;
++        let side = super::component(ray.direction(), self.axis) * self.outward;
++        let exterior = if reflected { self.entering } else { !self.entering };
++        if (exterior && side <= 0.0) || (!exterior && side >= 0.0) {
++            return Err(TraceError::InvalidInput("nested box continuation is tangent or on the wrong side"));
++        }
++        Ok(ray)
++    }
++}
++
++/// Recover the exact constant-axis coordinate from the actual certified face.
++/// Tangential coordinates are validated, never clamped or displaced. Equal
++/// ray/other-face depths conservatively refuse independently of ordinal ties.
++pub(super) fn exact_box_face(
++    bounds: Bounds,
++    vertices: [Vec3; 3],
++    normal: Vec3,
++    position: Vec3,
++    incoming: super::Ray,
++) -> Result<ExactBoxFace> {
++    let mut face = None;
++    for axis in 0..3 {
++        let [a, b, c] = vertices.map(|v| super::component(v, axis));
++        if a == b && b == c {
++            if face.is_some() {
++                return Err(TraceError::InvalidInput("nested box face has ambiguous constant axes"));
++            }
++            face = Some((axis, a));
++        }
++    }
++    let (axis, plane) = face.ok_or(TraceError::InvalidInput("nested box face is not axis aligned"))?;
++    let lo = bounds.min();
++    let hi = bounds.max();
++    let outward = if plane == super::component(lo, axis) {
++        -1.0
++    } else if plane == super::component(hi, axis) {
++        1.0
++    } else {
++        return Err(TraceError::InvalidInput("nested box face disagrees with its certificate"));
++    };
++    let axis_vector = match axis {
++        0 => Vec3::X,
++        1 => Vec3::Y,
++        2 => Vec3::Z,
++        _ => return Err(TraceError::Internal("nested box face axis")),
++    };
++    if normal != axis_vector * outward || Triangle::new(vertices)?.geometric_normal() != Some(normal) {
++        return Err(TraceError::InvalidInput("nested box outward normal disagrees with its certified face"));
++    }
++    for vertex in vertices {
++        for a in 0..3 {
++            let coordinate = super::component(vertex, a);
++            if coordinate != super::component(lo, a) && coordinate != super::component(hi, a) {
++                return Err(TraceError::InvalidInput("nested box face vertex is not a certified corner"));
++            }
++        }
++    }
++    let point = match axis {
++        0 => Vec3::new(plane, position.y, position.z),
++        1 => Vec3::new(position.x, plane, position.z),
++        2 => Vec3::new(position.x, position.y, plane),
++        _ => return Err(TraceError::Internal("nested box point axis")),
++    };
++    if !point.is_finite() {
++        return Err(TraceError::InvalidInput("nested box reconstructed point is not finite"));
++    }
++    let direction = super::component(incoming.direction(), axis);
++    if direction == 0.0 {
++        return Err(TraceError::InvalidInput("nested box incident ray is tangent"));
++    }
++    let depth = (plane - super::component(incoming.origin(), axis)) / direction;
++    let [min, max] = incoming.interval();
++    if !depth.is_finite() || depth < min || depth > max {
++        return Err(TraceError::InvalidInput("nested box face is outside the incident ray interval"));
++    }
++    for a in 0..3 {
++        if a == axis {
++            continue;
++        }
++        let coordinate = super::component(point, a);
++        if coordinate <= super::component(lo, a) || coordinate >= super::component(hi, a) {
++            return Err(TraceError::InvalidInput("nested box edge, corner or outside-face point is ambiguous"));
++        }
++        let d = super::component(incoming.direction(), a);
++        if d != 0.0 {
++            for plane in [super::component(lo, a), super::component(hi, a)] {
++                let other = (plane - super::component(incoming.origin(), a)) / d;
++                if other == depth {
++                    return Err(TraceError::InvalidInput("nested box simultaneous face depths are ambiguous"));
++                }
++            }
++        }
++    }
++    Ok(ExactBoxFace { point, axis, outward, entering: direction * outward < 0.0 })
++}
++
+ #[cfg(test)]
+ #[path = "dielectric_tests.rs"]
+ pub(super) mod tests;
+--- a/crates/render/src/raytrace/image.rs
++++ b/crates/render/src/raytrace/image.rs
+@@ -80,22 +80,16 @@
+ }
+ type Look = PreparedPrimitive;
+ 
+-fn certificates(scene: &ProductScene, options: &RaytraceOptions) -> job::Result<[Option<Certificate>; MAX_OVERRIDES]> {
++fn certificates(
++    scene: &ProductScene,
++    options: &RaytraceOptions,
++    nested: bool,
++) -> job::Result<([Option<Certificate>; MAX_OVERRIDES], [Option<usize>; MAX_OVERRIDES])> {
+     let mut result = [None; MAX_OVERRIDES];
+     for (slot, input) in result.iter_mut().zip(&options.dielectrics) {
+         *slot = Some(dielectric::certify(scene, input).map_err(error)?);
+     }
+-    for (i, left) in result.iter().enumerate() {
+-        if let Some(Certificate::ClosedBox(a)) = left {
+-            for right in result.iter().skip(i + 1) {
+-                if let Some(Certificate::ClosedBox(b)) = right
+-                    && dielectric::overlaps(*a, *b)
+-                {
+-                    return Err(invalid("nested, touching or overlapping dielectric volumes are unsupported"));
+-                }
+-            }
+-        }
+-    }
++    let parents = dielectric::parents(&result, nested).map_err(error)?;
+     // Sheets within volumes are unsupported. Conservatively use the admitted
+     // tiny sheet's bounds, rather than pretending to resolve medium nesting.
+     for (i, certificate) in result.iter().enumerate() {
+@@ -112,10 +106,19 @@
+             }
+         }
+     }
+-    Ok(result)
++    Ok((result, parents))
+ }
+ 
+ pub fn admit(scene: &ProductScene, request: &ImageRequest, options: &RaytraceOptions) -> job::Result<Admission> {
++    admit_with_nested(scene, request, options, false)
++}
++
++pub(crate) fn admit_with_nested(
++    scene: &ProductScene,
++    request: &ImageRequest,
++    options: &RaytraceOptions,
++    nested: bool,
++) -> job::Result<Admission> {
+     options.validate()?;
+     if let Some(original) = &request.raytrace {
+         original.validate()?;
+@@ -161,7 +164,7 @@
+         }
+     }
+     anisotropic_faces::prepare(scene, options, || Ok(()))?;
+-    certificates(scene, options)?;
++    certificates(scene, options, nested)?;
+     for input in &options.dielectrics {
+         if options.reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|v| v.body == input.body_name))
+             || options.anisotropic_faces.iter().flatten().any(|v| v.body_index == input.body_index)
+@@ -376,6 +379,8 @@
+ /// lighting state, encode pixels, or allocate outside the existing job reservation.
+ struct OpticalTask {
+     certificates: [Option<Certificate>; MAX_OVERRIDES],
++    parents: [Option<usize>; MAX_OVERRIDES],
++    nested: bool,
+     pending: Option<DielectricPixel>,
+ }
+ 
+@@ -515,16 +520,27 @@
+         options: RaytraceOptions,
+         input: Option<crate::lighting::environment_input::EnvironmentInput>,
+     ) -> job::Result<Self> {
++        Self::new_with_environment_and_nested(scene, request, cancel, options, input, false)
++    }
++
++    pub(crate) fn new_with_environment_and_nested(
++        scene: ProductScene,
++        request: ImageRequest,
++        cancel: CancelToken,
++        options: RaytraceOptions,
++        input: Option<crate::lighting::environment_input::EnvironmentInput>,
++        nested: bool,
++    ) -> job::Result<Self> {
+         cancel.check()?;
+-        let mut admission = admit(&scene, &request, &options)?;
++        let mut admission = admit_with_nested(&scene, &request, &options, nested)?;
+         let mut optical = Vec::new();
+         if !options.dielectrics.is_empty() {
+-            let certificates = certificates(&scene, &options)?;
++            let (certificates, parents) = certificates(&scene, &options, nested)?;
+             optical.try_reserve_exact(1).map_err(|_| error(TraceError::AllocationFailed))?;
+             if optical.capacity() != 1 {
+                 return Err(error(TraceError::MemoryLimit));
+             }
+-            optical.push(OpticalTask { certificates, pending: None });
++            optical.push(OpticalTask { certificates, parents, nested, pending: None });
+         }
+         if input.is_some() {
+             options.validate_environment_reflections(&scene)?;
+@@ -1299,7 +1315,19 @@
+         let scene = PreparedScene { bvh, primitives: &self.looks, source: &self.scene };
+         // Optics always uses the certified geometric boundary, before optional opaque
+         // shading-normal effects. Distance starts before the numerical spawn offset.
+-        let shared = scene.resolve_hit(pending.ray, hit).map_err(error)?;
++        let mut shared = scene.resolve_hit(pending.ray, hit).map_err(error)?;
++        let exact_face = if optical.nested {
++            match state.selected.and_then(|index| optical.certificates.get(index).copied().flatten()) {
++                Some(Certificate::ClosedBox(bounds)) => {
++                    let face = dielectric::exact_box_face(bounds, shared.vertices, shared.geometric_normal, shared.position, pending.ray).map_err(error)?;
++                    shared.position = face.point;
++                    Some(face)
++                }
++                _ => None,
++            }
++        } else {
++            None
++        };
+         if let Some(index) = state.path.medium {
+             let medium = self.options.dielectrics.get(index).ok_or_else(|| invalid("active dielectric medium"))?;
+             let distance = shared.position.dist(state.path.segment_start);
+@@ -1363,16 +1391,21 @@
+                 if boundary_axes > 1 {
+                     return Err(invalid("dielectric box edge or corner has an ambiguous interface normal"));
+                 }
++                let parent = optical.parents.get(index).copied().ok_or_else(|| invalid("missing dielectric parent"))?;
++                let parent_ior = match parent {
++                    Some(parent) => self.options.dielectrics.get(parent).ok_or_else(|| invalid("missing parent optical material"))?.ior,
++                    None => 1.0,
++                };
+                 let (incident, transmitted, next_medium) = if shared.front_face {
+-                    if state.path.medium.is_some() {
+-                        return Err(invalid("nested dielectric entry"));
++                    if state.path.medium != parent {
++                        return Err(invalid("dielectric entry does not match certified parent"));
+                     }
+-                    (1.0, medium.ior, Some(index))
++                    (parent_ior, medium.ior, Some(index))
+                 } else {
+                     if state.path.medium != Some(index) {
+                         return Err(invalid("dielectric exit without matching entry"));
+                     }
+-                    (medium.ior, 1.0, None)
++                    (medium.ior, parent_ior, parent)
+                 };
+                 let optics = dielectric::interface(direction, normal, incident, transmitted).map_err(error)?;
+                 let f = optics.reflectance;
+@@ -1380,8 +1413,14 @@
+                 (optics, Vec3::new(f, f, f), Vec3::new(t, t, t), next_medium)
+             }
+         };
++        let spawn = |direction, reflected| {
++            match exact_face {
++                Some(face) => face.spawn(direction, reflected).map_err(error),
++                None => shared.spawn(direction).map_err(error),
++            }
++        };
+         state.push(OpticalPath {
+-            ray: shared.spawn(optics.reflected).map_err(error)?,
++            ray: spawn(optics.reflected, true)?,
+             throughput: dielectric::multiply(state.path.throughput, reflected_weight),
+             medium: state.path.medium,
+             segment_start: shared.position,
+@@ -1390,7 +1429,7 @@
+         })?;
+         if let Some(direction) = optics.transmitted {
+             state.push(OpticalPath {
+-                ray: shared.spawn(direction).map_err(error)?,
++                ray: spawn(direction, false)?,
+                 throughput: dielectric::multiply(state.path.throughput, transmitted_weight),
+                 medium: next_medium,
+                 segment_start: shared.position,
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -624,15 +624,16 @@
+         request: ImageRequest,
+         cancel: CancelToken,
+         environment: Option<crate::lighting::environment_input::EnvironmentInput>,
++        job_options: JobOptions,
+     ) -> Result<Self> {
+-        let _ = &environment;
++        let _ = (&environment, &job_options);
+         match request.integrator {
+             Integrator::Raster => ImageTask::new(scene, request, cancel).and_then(TaskSlot::new).map(Self::Raster),
+             Integrator::Raytrace => {
+                 #[cfg(feature = "raytrace-cpu")]
+                 {
+                     let options = request.raytrace.clone().unwrap_or_default();
+-                    crate::raytrace::image::ImageTask::new_with_environment(scene, request, cancel, options, environment)
++                    crate::raytrace::image::ImageTask::new_with_environment_and_nested(scene, request, cancel, options, environment, job_options.nested_media)
+                         .and_then(TaskSlot::new)
+                         .map(Self::Raytrace)
+                 }
+@@ -695,7 +696,13 @@
+                 let request = work.request.ok_or_else(|| JobError::new(ErrorCode::Internal, "missing registered executor request"))?;
+                 executor.begin(work.scene, request, work.handle.0.options, work.handle.0.cancel.clone()).map(WorkTask::Registered)
+             } else {
+-                WorkTask::new(work.scene, work.handle.0.request.clone(), work.handle.0.cancel.clone(), work.environment)
++                WorkTask::new(
++                    work.scene,
++                    work.handle.0.request.clone(),
++                    work.handle.0.cancel.clone(),
++                    work.environment,
++                    work.handle.0.options,
++                )
+             }
+         }))
+         .unwrap_or_else(|_| Err(JobError::new(ErrorCode::Internal, "image executor failed while preparing the job")));
+@@ -1104,10 +1111,27 @@
+             Ok(admission)
+         } else {
+             request.cpu_budget().validate_execution()?;
+-            if options != JobOptions::default() {
++            // Only the existing nesting opt-in is admitted on the CPU raytrace path.
++            // Every other JobOptions field retains its exact default-only contract.
++            if (JobOptions { nested_media: false, ..options }) != JobOptions::default() {
+                 return Err(JobError::new(ErrorCode::InvalidRequest, "CPU images use raytrace options, not progressive sampling controls"));
+             }
+-            admit(scene, request)
++            if !options.nested_media {
++                return admit(scene, request);
++            }
++            if request.integrator != Integrator::Raytrace || request.environment.is_some() || request.textures.is_some() || scene.has_transmission() {
++                return Err(JobError::new(ErrorCode::InvalidRequest, "CPU nested media require explicit raytrace dielectric overrides"));
++            }
++            #[cfg(feature = "raytrace-cpu")]
++            {
++                let defaults = super::RaytraceOptions::default();
++                let raytrace = request.raytrace.as_ref().unwrap_or(&defaults);
++                crate::raytrace::image::admit_with_nested(scene, request, raytrace, true)
++            }
++            #[cfg(not(feature = "raytrace-cpu"))]
++            {
++                Err(JobError::new(ErrorCode::HostUnavailable, "CPU raytracing is not compiled in; enable raytrace-cpu"))
++            }
+         }
+     }
+ 
+--- a/crates/render/src/raytrace/dielectric_tests.rs
++++ b/crates/render/src/raytrace/dielectric_tests.rs
+@@ -514,3 +514,212 @@
+     // maps to 98, so this also detects a consumer still using the old series.
+     assert_eq!(pixel.expect("Brewster sheet fixture must finish"), [95, 95, 95, 255]);
+ }
++
++#[test]
++fn strict_box_parent_selection_is_order_independent_and_opt_in() {
++    let bounds = |lo: f64, hi: f64| Bounds::new(Vec3::new(lo, lo, lo), Vec3::new(hi, hi, hi)).unwrap();
++    let mut certificates = [None; MAX_OVERRIDES];
++    certificates[0] = Some(Certificate::ClosedBox(bounds(2.0, 3.0)));
++    certificates[1] = Some(Certificate::ClosedBox(bounds(0.0, 5.0)));
++    certificates[2] = Some(Certificate::ClosedBox(bounds(1.0, 4.0)));
++    assert!(parents(&certificates, false).is_err());
++    assert_eq!(parents(&certificates, true).unwrap(), [Some(2), None, Some(1), None, None, None, None, None]);
++    certificates.swap(0, 1);
++    assert_eq!(parents(&certificates, true).unwrap(), [None, Some(2), Some(0), None, None, None, None, None]);
++}
++
++#[test]
++fn nesting_opt_in_still_refuses_touching_equal_and_partially_overlapping_boxes() {
++    let outer = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)).unwrap();
++    for (lo, hi) in [
++        (Vec3::new(0.0, 1.0, 1.0), Vec3::new(3.0, 3.0, 3.0)),
++        (Vec3::new(4.0, 1.0, 1.0), Vec3::new(5.0, 3.0, 3.0)),
++        (Vec3::new(4.0, 4.0, 1.0), Vec3::new(5.0, 5.0, 3.0)),
++        (Vec3::new(4.0, 4.0, 4.0), Vec3::new(5.0, 5.0, 5.0)),
++        (Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)),
++        (Vec3::new(3.0, 1.0, 1.0), Vec3::new(5.0, 3.0, 3.0)),
++    ] {
++        let mut certificates = [None; MAX_OVERRIDES];
++        certificates[0] = Some(Certificate::ClosedBox(outer));
++        certificates[1] = Some(Certificate::ClosedBox(Bounds::new(lo, hi).unwrap()));
++        assert!(parents(&certificates, true).is_err());
++    }
++}
++
++pub(in crate::raytrace) fn nested_fixture(reverse: bool) -> (ProductScene, RaytraceOptions) {
++    let mut outer = box_body(4.0);
++    outer.name = "Outer".into();
++    let mut inner = box_body(2.0);
++    inner.name = "Inner".into();
++    for p in &mut Arc::make_mut(&mut inner.mesh).positions {
++        *p = Vec3::new(p.x * 0.5, p.y * 0.5, p.z + 1.0);
++    }
++    let mut scene = scene(outer);
++    scene.meshes.push(inner);
++    if reverse {
++        scene.meshes.reverse();
++    }
++    let dielectrics = scene.meshes.iter().enumerate().map(|(body_index, body)| DielectricOptions {
++        body_index,
++        body_name: body.name.clone(),
++        boundary: DielectricBoundary::ClosedBox,
++        ior: 1.0,
++        absorption_per_mm: if body.name == "Outer" { [0.1, 0.2, 0.0] } else { [0.3, 0.4, 0.0] },
++        thickness_mm: 0.0,
++    }).collect();
++    (scene, RaytraceOptions {
++        dielectrics,
++        environment: environment(),
++        lights: Some(Vec::new()),
++        shadows: false,
++        ..Default::default()
++    })
++}
++
++#[test]
++fn actual_nested_png_uses_parent_only_outside_the_inner_interval() {
++    for reverse in [false, true] {
++        let (scene, options) = nested_fixture(reverse);
++        assert!(super::super::image::admit(&scene, &request(options.clone()), &options).is_err());
++        let mut task = super::super::image::ImageTask::new_with_environment_and_nested(
++            scene, request(options.clone()), CancelToken::default(), options, None, true,
++        ).unwrap();
++        let mut completed = false;
++        for _ in 0..100_000 {
++            if let TaskPoll::Complete(png) = task.step(16384).unwrap() {
++                let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
++                // Outer length2, inner length2; Beer radiance (exp(-.8), exp(-1.2), 1).
++                // Reinhard then IEC sRGB encoding gives these independently fixed bytes.
++                assert_eq!(image.get_pixel(0, 0).0, [151, 132, 188, 255]);
++                completed = true;
++                break;
++            }
++        }
++        assert!(completed, "nested final image did not complete");
++    }
++}
++
++#[test]
++fn nested_opt_in_does_not_enable_dielectric_progressive_or_interactive() {
++    let (_, mut options) = nested_fixture(false);
++    options.progressive = Some(Default::default());
++    assert!(options.validate().is_err());
++    let (_, options) = nested_fixture(false);
++    assert!(crate::job::interactive::cpu_request(&request(options)).is_err());
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn native_host_forwards_only_the_existing_nested_media_exception() {
++    use crate::job::{CpuHost, ErrorCode, JobId, JobOptions, Phase};
++    let host = CpuHost::for_platform().unwrap();
++    let (scene, options) = nested_fixture(false);
++    let request = request(options);
++    let nested = JobOptions { nested_media: true, ..Default::default() };
++    assert!(host.admit(&scene, &request, JobOptions::default()).is_err());
++    assert!(host.admit(&scene, &request, nested).is_ok());
++    for bad in [
++        JobOptions { samples: 2, ..nested },
++        JobOptions { max_depth: 2, ..nested },
++        JobOptions { seed: 7, ..nested },
++        JobOptions { exposure_ev: 1.0, ..nested },
++        JobOptions { transmission_samples: 2, ..nested },
++        JobOptions { denoise: true, ..nested },
++        JobOptions { linear_exr: true, ..nested },
++    ] {
++        assert_eq!(host.admit(&scene, &request, bad).unwrap_err().code, ErrorCode::InvalidRequest);
++    }
++    let mut raster = request.clone();
++    raster.integrator = Integrator::Raster;
++    raster.raytrace = None;
++    assert!(host.admit(&scene, &raster, nested).is_err());
++    let handle = host.submit_with_options(
++        JobId { session: 6302, serial: 1, generation: 1 }, 1, scene, request, nested,
++    ).unwrap();
++    assert_eq!(handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap().progress.phase, Phase::Completed);
++    assert_eq!(handle.status().unwrap().options.nested_media, true);
++    let frame = handle.frame().unwrap().unwrap();
++    let image = ::image::load_from_memory(frame.png()).unwrap().to_rgba8();
++    assert_eq!(image.get_pixel(0, 0).0, [151, 132, 188, 255]);
++}
++
++fn face_fixture(axis: usize, positive: bool) -> (Bounds, [Vec3; 3], Vec3, Vec3) {
++    let point = |a: f64, u: f64, v: f64| match axis {
++        0 => Vec3::new(a, u, v),
++        1 => Vec3::new(v, a, u),
++        2 => Vec3::new(u, v, a),
++        _ => panic!("test axis"),
++    };
++    let bounds = Bounds::new(Vec3::new(1.0, 1.0, 1.0), Vec3::new(4.0, 4.0, 4.0)).unwrap();
++    let plane = if positive { 4.0 } else { 1.0 };
++    let mut vertices = [point(plane, 1.0, 1.0), point(plane, 4.0, 1.0), point(plane, 4.0, 4.0)];
++    if !positive {
++        vertices.swap(1, 2);
++    }
++    let normal = match axis { 0 => Vec3::X, 1 => Vec3::Y, 2 => Vec3::Z, _ => panic!("test axis") } * if positive { 1.0 } else { -1.0 };
++    (bounds, vertices, normal, point(plane, 2.5, 2.5))
++}
++
++#[test]
++fn exact_face_excludes_own_zero_depth_and_retains_one_ulp_neighbour_on_every_axis_and_side() {
++    use super::super::Ray;
++    for axis in 0..3 {
++        for positive in [false, true] {
++            let (bounds, vertices, normal, position) = face_fixture(axis, positive);
++            for entering in [false, true] {
++                let direction = if entering { -normal } else { normal };
++                let incoming = Ray::new(position - direction, direction, 0.0, 10.0).unwrap();
++                let face = exact_box_face(bounds, vertices, normal, position, incoming).unwrap();
++                assert_eq!(face.point, position, "face diagonal is valid interior");
++                let optics = interface(direction, -direction, if entering { 1.0 } else { 1.5 }, if entering { 1.5 } else { 1.0 }).unwrap();
++                let reflected = face.spawn(optics.reflected, true).unwrap();
++                let transmitted = face.spawn(optics.transmitted.unwrap(), false).unwrap();
++                let triangle = Triangle::new(vertices).unwrap();
++                assert!(triangle.intersect(&reflected).is_none(), "own reflected face at t0 must be excluded");
++                assert!(triangle.intersect(&transmitted).is_none(), "own transmitted face at t0 must be excluded");
++                assert_eq!(reflected.origin(), face.point);
++                assert_eq!(transmitted.origin(), face.point);
++                assert_eq!(transmitted.interval()[0], 0.0_f64.next_up());
++                let plane = super::super::component(position, axis);
++                let next = if super::super::component(direction, axis) > 0.0 { plane.next_up() } else { plane.next_down() };
++                let neighbour = vertices.map(|v| match axis {
++                    0 => Vec3::new(next, v.y, v.z),
++                    1 => Vec3::new(v.x, next, v.z),
++                    2 => Vec3::new(v.x, v.y, next),
++                    _ => panic!("test axis"),
++                });
++                let hit = Triangle::new(neighbour).unwrap().intersect(&transmitted).expect("one-ULP positive face must remain ahead");
++                assert_eq!(hit.distance, (next - plane).abs());
++            }
++        }
++    }
++}
++
++#[test]
++fn exact_face_recovers_certified_plane_without_clamping_or_blessing_ties() {
++    use super::super::Ray;
++    let (bounds, vertices, normal, point) = face_fixture(2, false);
++    let incoming = Ray::new(point - Vec3::Z, Vec3::Z, 0.0, 10.0).unwrap();
++    let rounded = Vec3::new(point.x, point.y, point.z.next_up());
++    let face = exact_box_face(bounds, vertices, normal, rounded, incoming).unwrap();
++    assert_eq!(face.point, point);
++    for bad in [
++        Vec3::new(1.0, 2.5, 1.0), Vec3::new(1.0, 1.0, 1.0),
++        Vec3::new(1.0_f64.next_down(), 2.5, 1.0), Vec3::new(f64::NAN, 2.5, 1.0),
++    ] {
++        assert!(exact_box_face(bounds, vertices, normal, bad, incoming).is_err());
++    }
++    let tied = Ray::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0), 0.0, 10.0).unwrap();
++    // Even if rounded tangential reconstruction claims interior, independently
++    // equal actual ray/face depths cannot inherit the BVH ordinal's blessing.
++    let uncertain = Vec3::new(1.0_f64.next_up(), 1.0_f64.next_up(), 1.0);
++    assert!(exact_box_face(bounds, vertices, normal, uncertain, tied).is_err());
++    assert!(exact_box_face(bounds, vertices, -normal, point, incoming).is_err());
++    let other_bounds = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)).unwrap();
++    assert!(exact_box_face(other_bounds, vertices, normal, point, incoming).is_err());
++    let tangent = Ray::new(point - Vec3::X, Vec3::X, 0.0, 10.0).unwrap();
++    assert!(exact_box_face(bounds, vertices, normal, point, tangent).is_err());
++    assert!(face.spawn(Vec3::X, true).is_err());
++    assert!(face.spawn(-Vec3::Z, false).is_err());
++    assert!(face.spawn(Vec3::Z, true).is_err());
++}
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -1421,3 +1421,241 @@
+     cancel.cancel();
+     assert_eq!(PendingPixelSlot::new(&cancel).err().unwrap().code, ErrorCode::Cancelled);
+ }
++
++fn nested_optical_task() -> ImageTask {
++    let (scene, mut options) = dielectric::tests::nested_fixture(false);
++    for medium in &mut options.dielectrics {
++        medium.ior = if medium.body_name == "Outer" { 1.5 } else { 2.0 };
++        medium.absorption_per_mm = [0.0; 3];
++    }
++    ImageTask::new_with_environment_and_nested(
++        scene, dielectric::tests::request(options.clone()), CancelToken::default(), options, None, true,
++    ).unwrap()
++}
++
++#[test]
++fn nested_image_interfaces_use_actual_parent_ior_and_restore_it_on_exit() {
++    let mut task = nested_optical_task();
++    let outer_entry = 0.96 / 2.25;
++    let inner_entry = outer_entry * (27.0 / 49.0);
++    let inner_exit = inner_entry * (256.0 / 147.0);
++    let expected = [
++        (1, Some(0), outer_entry),
++        (2, Some(1), inner_entry),
++        (3, Some(0), inner_exit),
++        (4, None, inner_exit * 2.16),
++    ];
++    let mut next = 0;
++    for _ in 0..100_000 {
++        assert!(matches!(task.step(1).unwrap(), TaskPoll::Pending(_)));
++        if let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref()) {
++            let (depth, medium, throughput) = expected[next];
++            if state.path.boundaries == depth && state.path.medium == medium {
++                assert!((state.path.throughput.x - throughput).abs() < 1e-12);
++                assert!((state.path.throughput.y - throughput).abs() < 1e-12);
++                assert!((state.path.throughput.z - throughput).abs() < 1e-12);
++                next += 1;
++                if next == expected.len() {
++                    return;
++                }
++            }
++        }
++    }
++    panic!("nested first transmitted path did not cross all four interfaces");
++}
++
++#[test]
++fn nested_paths_keep_one_unit_work_cancellation_and_total_budget_contracts() {
++    for cancel in [false, true] {
++        let mut task = nested_optical_task();
++        let mut observed = false;
++        for _ in 0..100_000 {
++            let before = task.work.used();
++            assert!(matches!(task.step(1).unwrap(), TaskPoll::Pending(_)));
++            assert!(task.work.used() - before <= 1, "one-unit continuation overspent its quantum");
++            if task.optical.first().and_then(|optical| optical.pending.as_ref()).is_some_and(|state| state.path.medium == Some(1)) {
++                if cancel {
++                    task.cancel.cancel();
++                } else {
++                    task.work.limit = task.work.used();
++                }
++                assert_eq!(task.step(1).err().unwrap().code, if cancel { ErrorCode::Cancelled } else { ErrorCode::LimitExceeded });
++                assert!(!task.done);
++                observed = true;
++                break;
++            }
++        }
++        assert!(observed, "nested interior was never reached");
++    }
++}
++
++#[test]
++fn nested_admission_bills_parent_table_and_keeps_geometry_and_camera_refusals() {
++    let (scene, options) = dielectric::tests::nested_fixture(false);
++    let request = dielectric::tests::request(options.clone());
++    let admitted = admit_with_nested(&scene, &request, &options, true).unwrap();
++    let original = options.retained_dielectric_bytes().unwrap()
++        + request.raytrace.as_ref().unwrap().retained_dielectric_bytes().unwrap()
++        + std::mem::size_of::<OpticalTask>() as u64;
++    assert!(admitted.preparation_bytes >= original);
++    assert!(std::mem::size_of::<OpticalTask>() >= std::mem::size_of::<[Option<usize>; MAX_OVERRIDES]>());
++
++    let mut invalid = scene.clone();
++    std::sync::Arc::make_mut(&mut invalid.meshes[1].mesh).triangles.pop();
++    assert!(admit_with_nested(&invalid, &request, &options, true).is_err());
++
++    let mut inside = request.clone();
++    inside.camera.distance = 0.1;
++    inside.camera.target = Vec3::new(0.0, 0.0, 2.0);
++    let mut task = ImageTask::new_with_environment_and_nested(scene, inside, CancelToken::default(), options, None, true).unwrap();
++    for _ in 0..100_000 {
++        match task.step(1) {
++            Err(error) => {
++                assert_eq!(error.code, ErrorCode::InvalidScene);
++                assert!(error.message.contains("inside a dielectric"));
++                return;
++            }
++            Ok(TaskPoll::Pending(_)) => {}
++            Ok(TaskPoll::Complete(_)) => panic!("inside camera must not publish"),
++        }
++    }
++    panic!("inside camera was not refused");
++}
++
++fn close_gap_nested_task(gap: f64, positive: bool) -> ImageTask {
++    use std::sync::Arc;
++    let mut outer = dielectric::tests::box_body(3.0);
++    outer.name = "OuterGap".into();
++    for p in &mut Arc::make_mut(&mut outer.mesh).positions {
++        *p = Vec3::new(p.x * 0.2, p.y * 0.2, p.z + 1.0);
++    }
++    let mut inner = dielectric::tests::box_body(2.0);
++    inner.name = "InnerGap".into();
++    for p in &mut Arc::make_mut(&mut inner.mesh).positions {
++        *p = Vec3::new(p.x * 0.1, p.y * 0.1, if p.z == 0.0 { 1.0 + gap } else { 3.0 });
++    }
++    let mut scene = dielectric::tests::scene(outer);
++    scene.meshes.push(inner);
++    let options = RaytraceOptions {
++        dielectrics: scene.meshes.iter().enumerate().map(|(body_index, body)| job::DielectricOptions {
++            body_index, body_name:body.name.clone(), boundary:job::DielectricBoundary::ClosedBox,
++            ior:1.0, absorption_per_mm:[0.0;3], thickness_mm:0.0,
++        }).collect(),
++        lights:Some(Vec::new()), shadows:false,
++        environment:Some(job::RaytraceEnvironmentOptions { color:[1.0;3], intensity:1.0 }),
++        ..Default::default()
++    };
++    let mut request = dielectric::tests::request(options.clone());
++    request.camera.set_view(if positive { crate::StandardView::Bottom } else { crate::StandardView::Top });
++    request.camera.target = Vec3::new(0.0,0.0,2.5);
++    request.camera.fov = 0.0;
++    ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap()
++}
++
++#[test]
++fn positive_one_ulp_nested_gap_and_separated_control_visit_every_real_interface() {
++    for gap in [f64::EPSILON, 0.25] {
++        for positive in [false, true] {
++            let mut task = close_gap_nested_task(gap, positive);
++            let points = if positive { [1.0,1.0+gap,3.0,4.0] } else { [4.0,3.0,1.0+gap,1.0] };
++            let media = [Some(0),Some(1),Some(0),None];
++            let mut next = 0;
++            let mut completed = false;
++            for _ in 0..100_000 {
++                match task.step(1).unwrap() {
++                    TaskPoll::Pending(_) => {
++                        if next < points.len()
++                            && let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref())
++                            && state.path.boundaries == next as u8 + 1
++                        {
++                            assert_eq!(state.path.medium, media[next]);
++                            assert_eq!(state.path.segment_start.z, points[next]);
++                            assert_eq!(state.path.ray.origin(), state.path.segment_start, "propagation and Beer start share one physical point");
++                            assert_eq!(state.path.throughput, Vec3::new(1.0,1.0,1.0));
++                            next += 1;
++                        }
++                    }
++                    TaskPoll::Complete(png) => {
++                        assert_eq!(next, 4, "an admitted interface was skipped");
++                        let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
++                        assert_eq!(image.get_pixel(0,0).0, [188,188,188,255]);
++                        completed = true;
++                        break;
++                    }
++                }
++            }
++            assert!(completed, "close-gap image failed to complete");
++        }
++    }
++}
++
++#[test]
++fn nested_reflected_route_keeps_child_beer_then_restores_parent_from_both_sides() {
++    for positive in [false, true] {
++        let (scene, mut options) = dielectric::tests::nested_fixture(false);
++        for medium in &mut options.dielectrics {
++            medium.ior = if medium.body_name == "Outer" { 1.5 } else { 2.0 };
++        }
++        let mut request = dielectric::tests::request(options.clone());
++        request.camera.set_view(if positive { crate::StandardView::Bottom } else { crate::StandardView::Top });
++        request.camera.target = Vec3::new(0.0,0.0,2.0);
++        request.camera.fov = 0.0;
++        let mut task = ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap();
++        let (near, far) = if positive { (1.0,3.0) } else { (3.0,1.0) };
++        let factor = (0.96 / 2.25) * (27.0 / 49.0) / 49.0;
++        let reflected = Vec3::new(factor * (-0.1_f64 - 0.3*2.0).exp(), factor * (-0.2_f64 - 0.4*2.0).exp(), factor);
++        let returned = dielectric::multiply(reflected, Vec3::new((-0.3_f64*2.0).exp(),(-0.4_f64*2.0).exp(),1.0)) * (256.0/147.0);
++        let mut saw_reflected = false;
++        let mut restored = false;
++        for _ in 0..1_000_000 {
++            if let TaskPoll::Complete(_) = task.step(1).unwrap() {
++                break;
++            }
++            let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref()) else { continue };
++            let path = state.path;
++            if path.boundaries == 3 && path.medium == Some(1) && path.segment_start.z == far {
++                assert!((path.throughput - reflected).len() < 1e-12);
++                assert_eq!(path.ray.origin(), path.segment_start);
++                assert!(path.ray.direction().z * if positive { -1.0 } else { 1.0 } > 0.0);
++                saw_reflected = true;
++            }
++            if saw_reflected && path.boundaries == 4 && path.medium == Some(0) && path.segment_start.z == near {
++                assert!((path.throughput - returned).len() < 1e-12);
++                assert_eq!(path.ray.origin(), path.segment_start);
++                restored = true;
++                break;
++            }
++        }
++        assert!(saw_reflected && restored, "actual reflected child route never restored its parent");
++    }
++}
++
++#[test]
++fn exact_box_launch_is_opt_in_and_legacy_default_origin_is_preserved() {
++    for nested in [false, true] {
++        let mut material = dielectric::tests::input(job::DielectricBoundary::ClosedBox);
++        material.ior = 1.0;
++        let options = RaytraceOptions { dielectrics:vec![material], lights:Some(Vec::new()), shadows:false, ..Default::default() };
++        let request = dielectric::tests::request(options.clone());
++        let mut task = ImageTask::new_with_environment_and_nested(
++            dielectric::tests::scene(dielectric::tests::box_body(2.0)), request, CancelToken::default(), options, None, nested,
++        ).unwrap();
++        let mut observed = false;
++        for _ in 0..100_000 {
++            assert!(matches!(task.step(1).unwrap(), TaskPoll::Pending(_)));
++            if let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref())
++                && state.path.boundaries == 1 && state.path.medium == Some(0)
++            {
++                assert_eq!(state.path.segment_start.z, 2.0);
++                if nested {
++                    assert_eq!(state.path.ray.origin(), state.path.segment_start);
++                } else {
++                    assert!(state.path.ray.origin().z < state.path.segment_start.z, "default must retain its original inward offset");
++                }
++                observed = true;
++                break;
++            }
++        }
++        assert!(observed, "first box entry was not observed");
++    }
++}
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -11,6 +11,7 @@
+ #[derive(Default, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ struct Start {
++    nested_media: bool,
+     studio_weights: Option<[f64; 3]>,
+     progressive: bool,
+     denoise: bool,
+@@ -381,6 +382,119 @@
+         assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty()));
+         assert_eq!(wire["settings"]["width"], 3840);
+     }
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    fn nested_command_fixture() -> (Session, Value) {
++        let mut s = Session::default();
++        for (name, length, width, height) in [("Outer", 20, 20, 4), ("Inner", 10, 10, 2)] {
++            s.execute("solid.box", &json!({
++                "length":length,"width":width,"height":height,"center":[0,0,2],
++                "operation":"new","body_name":name,
++            })).unwrap();
++        }
++        s.execute("render.scene", &json!({})).unwrap();
++        let scene = crate::product_scene::extract(&s).unwrap();
++        assert_eq!(scene.meshes.len(), 2);
++        let dielectrics: Vec<_> = scene.meshes.iter().enumerate().map(|(index, body)| {
++            assert!(matches!(body.name.as_str(), "Outer" | "Inner"));
++            json!({
++                "body_index":index,"body_name":body.name,"boundary":"closed_box","ior":1.0,
++                "absorption_per_mm":if body.name == "Outer" { [0.1,0.2,0.0] } else { [0.3,0.4,0.0] },
++                "thickness_mm":0.0,
++            })
++        }).collect();
++        let mut camera = solidcraft_render::Camera { distance:50.0, fov:0.0, ..Default::default() };
++        camera.set_view(solidcraft_render::StandardView::Top);
++        camera.target = solidcraft_geom::Vec3::new(0.0,0.0,2.0);
++        let host = solidcraft_render::job::CpuHost::for_platform().unwrap();
++        assert_eq!(host.kind(), solidcraft_render::job::HostKind::NativeWorker);
++        assert!(host.is_available(), "this native test requires an available real CPU worker");
++        s.set_render_job_host(Some(host)).unwrap();
++        let wire = json!({
++            "integrator":"raytrace","nested_media":true,
++            "settings":{"width":1,"height":1,"camera":camera,"background":[255,255,255],"job":null},
++            "raytrace":{"dielectrics":dielectrics,"lights":[],"shadows":false,
++                "environment":{"color":[1,1,1],"intensity":1}},
++        });
++        (s, wire)
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn command_nested_opt_in_reaches_retained_job_options_and_real_beer_transport() {
++        use solidcraft_render::job::{JobId, Phase};
++        let (mut s, wire) = nested_command_fixture();
++        let before = (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty());
++        let document = s.doc.clone();
++        for value in [None, Some(false)] {
++            let mut default = wire.clone();
++            if let Some(value) = value {
++                default["nested_media"] = json!(value);
++            } else {
++                default.as_object_mut().unwrap().remove("nested_media");
++            }
++            for command in ["render.preflight", "render.start"] {
++                let error = s.execute(command, &default).unwrap_err().to_string();
++                assert!(error.contains("nested, touching or overlapping dielectric volumes are unsupported"), "{command}: {error}");
++            }
++        }
++        let checked = s.execute("render.preflight", &wire).unwrap();
++        assert_eq!(checked["resolved"]["executor"], "cpu-raytrace");
++        assert_eq!(checked["request"]["raytrace"]["dielectrics"], wire["raytrace"]["dielectrics"]);
++        let started = s.execute("render.start", &wire).unwrap();
++        let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++        let handle = s.render_job_handle(id).unwrap();
++        let status = handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap();
++        assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
++        assert_eq!(status.options, solidcraft_render::job::JobOptions { nested_media:true, ..Default::default() });
++        let retained = s.execute("render.status", &json!({"job":id})).unwrap();
++        assert_eq!(retained["options"]["nested_media"], true);
++        let frame = handle.frame().unwrap().unwrap();
++        let image = image::load_from_memory(frame.png()).unwrap().to_rgba8();
++        // Independent Beer oracle: outer2mm + inner2mm, replacing the parent
++        // interval, yields exp(-.8), exp(-1.2),1 -> Reinhard+sRGB [151,132,188].
++        assert_eq!(image.get_pixel(0,0).0, [151,132,188,255]);
++        assert!(std::sync::Arc::ptr_eq(&document, &s.doc));
++        assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty()));
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn command_nesting_keeps_default_false_and_rejects_other_gpu_controls_and_progressive_glass() {
++        use solidcraft_render::job::{JobId, JobOptions, Phase};
++        let (mut s, wire) = nested_command_fixture();
++        for (key, value) in [
++            ("samples", json!(2)), ("max_depth", json!(2)), ("seed", json!(7)),
++            ("denoise", json!(true)), ("lens", json!({})),
++        ] {
++            let mut invalid = wire.clone();
++            invalid[key] = value;
++            for command in ["render.preflight", "render.start"] {
++                assert!(s.execute(command, &invalid).is_err(), "{command} accepted unrelated control {key}");
++            }
++        }
++        let mut progressive = wire.clone();
++        progressive["raytrace"]["progressive"] = json!({"samples_per_pixel":2,"seed":0});
++        let refusal = "InvalidRequest: CPU progressive currently supports isotropic opaque surfaces; use fixed sampling for dielectric or anisotropic inputs";
++        for command in ["render.preflight", "render.start"] {
++            assert_eq!(s.execute(command, &progressive).unwrap_err().to_string(), refusal);
++        }
++        assert_eq!(interactive_params(&wire).unwrap_err().to_string(), refusal);
++
++        // Ordinary CPU requests retain the exact default JobOptions; omission is
++        // not silently promoted to nesting by adding this explicit opt-in.
++        let mut opaque = wire;
++        opaque.as_object_mut().unwrap().remove("nested_media");
++        opaque["raytrace"].as_object_mut().unwrap().remove("dielectrics");
++        s.execute("render.preflight", &opaque).unwrap();
++        let started = s.execute("render.start", &opaque).unwrap();
++        let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++        let status = s.render_job_handle(id).unwrap().wait_timeout(std::time::Duration::from_secs(60)).unwrap();
++        assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
++        assert_eq!(status.options, JobOptions::default());
++        let retained = s.execute("render.status", &json!({"job":id})).unwrap();
++        assert_eq!(retained["options"]["nested_media"], false);
++    }
++
+ }
+ 
+ /// Resolve portable intent before choosing an executor. Legacy requests are left intact;
+@@ -677,7 +791,8 @@
+         background: settings.background,
+         transparent_background: input.transparent_background,
+     };
+-    let mut admission = solidcraft_render::job::admit(&scene, &request).map_err(job_error)?;
++    let options = solidcraft_render::job::JobOptions { nested_media: input.nested_media, ..Default::default() };
++    let mut admission = host.admit(&scene, &request, options).map_err(job_error)?;
+     let environment_bytes = environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| bad(command, e.to_string()))?;
+     let retained_lights = request.raytrace.as_ref().map_or(Ok(0), |o| o.retained_bytes()).map_err(job_error)?;
+     let retained_environment =
+@@ -698,7 +813,7 @@
+         Integrator::Raytrace => "opaque_only",
+     };
+     let reply = json!({"ignored_controls":ignored,"stage_panels":settings.stage.len(),"stage_transport":"CPU direct/specular only; no diffuse interreflection", "cpu_budget":budget,"cpu_limits":budget.limits(),"environment":environment_info,"retained_request_bytes":retained_request_bytes,"resolved":resolved,"admission":admission,"request":request,"scene_generation":s.revision,"host":host.kind(),"transparency":transparency,"refraction":refraction,"dielectric_boundaries":if refraction {vec!["thin_sheet","closed_box"]} else {Vec::<&str>::new()}});
+-    Ok(Prepared { replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options: Default::default() })
++    Ok(Prepared { replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options })
+ }
+ 
+ fn prepare_progressive(
+--- a/crates/engine/src/cmd/render.rs
++++ b/crates/engine/src/cmd/render.rs
+@@ -124,7 +124,7 @@
+ CommandSpec::new("render.settings.capture_hdr", "Save Render Settings with HDR", resources::capture_settings).icon("settings").doc_only()
+     .params("name, set: typed CPU/GPU setup patch with hdr/environment unset; path: scoped HDR; expected_sha256?: digest returned by render.hdr.inspect (changed sources refuse); rotation_rad?:0, intensity?:1; samples?:1/4/16/64 for CPU only (default16); assume_linear_srgb?:false for GPU only. Captures immutable bytes and saves resource plus setup atomically in one undo, without a host; returns name/setup/resource metadata, never source bytes"),
+ CommandSpec::new("render.preflight", "Check Render Request", jobs::preflight).icon("inspect").noundo().doc_only()
+-    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace and transient studio_weights may accompany it. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy and dielectrics require fixed sampling. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
++    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace and transient studio_weights may accompany it. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy and dielectrics require fixed sampling. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; dielectric progressive and Interactive requests still refuse. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
+ CommandSpec::new("render.start", "Render Image", jobs::start).key("R").noundo().doc_only().at("RENDER", "IMAGE").icon("render_image")
+     .params("Same request as render.preflight. Captures an immutable product scene and queues a bounded image job. Returns its session-scoped job identity, captured scene_generation and progress. Does not change the design. See docs/render-jobs.md"),
+ CommandSpec::new("render.status", "Render Progress", jobs::status).icon("list").noundo().doc_only()

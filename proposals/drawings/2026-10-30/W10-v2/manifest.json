@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-30",
+  "authority": "https://github.com/tangency-labs/solidcraft/issues/4890#issuecomment-6518014281",
+  "status": "PRIVATE_SOURCE_CANDIDATE_NOT_COMPILED_NOT_RUN",
+  "geometry_receiver": {
+    "repo": "tangency-labs/solidcraft",
+    "commit": "fefca6bfa0c295408f66c4859bb8204ab0560552",
+    "test_path": "crates/geom/src/paper_tests.rs",
+    "test_blob": "88eda91c45d133ced5fa390eadfe525c76db4e39",
+    "helper_path": "crates/geom/src/paper/cubics.rs",
+    "source_hash": "a5d84ad3c4ee69599b8b2290bfd5c6248c86da559efb4d4393ddfdea86d100bc",
+    "test_hash": "e7b5bae343981fe7905f3804f71ee808880589d0505a15733412c4d39072dd37",
+    "patch_sha256": "ab73449432ba5f92791d6668f1129e5969cf03cf031ca0d04cd45343c6d80086"
+  },
+  "pdf_test_receiver": {
+    "repo": "CamWight/solidcraft",
+    "pr": 7626,
+    "head": "506d419084a1cd6463c3117ea34d15f805a6ce37",
+    "path": "crates/io/src/paper/pdf_tests.rs",
+    "base_blob": "44a839a0a24d6db894d465e265a74a6ff3d2f755",
+    "writer_blob": "6ee0e8b1783822014dd096a6af5a0f2ec5e991ca",
+    "grid_blob": "28415627394ce94da1e1c7238ec580baccf2a76b",
+    "patch_sha256": "2f02736a7d2204a0c6c8f12450b71de02caecd1ec4b0573d4c908ba80ad1c40e",
+    "candidate_sha256": "4fe8ae467669f132b4309f3d865e3a3477e8163c65b7ed70c3539bc0387b22b6"
+  },
+  "original_v1_preserved": {
+    "helper_sha256": "22e634fd8380f80fcdec09cccba52d45d309c44ab2f614bceab79f557da4e0e7",
+    "original11tests_patch_sha256": "ad6912aa3f89ed778737828d9a60d2d1cdb0054d7a59c1af0400c4ba7699b100",
+    "older_three_boundary_packet_untouched": true
+  },
+  "source_observations": {
+    "generic_radius_finite_above_zero": true,
+    "finite_center": true,
+    "no_authored_mm_limits": true,
+    "start_bounded_by_PI": true,
+    "nonzero_sweep_bounded_by_PI": true,
+    "error_same_arc_units": true,
+    "cap_1_to_64": true,
+    "output_is_Seg2_Cubic": true,
+    "interval_radial_Taylor_arithmetic_bodies_unchanged": true,
+    "writer_adapter_not_included": true,
+    "production_module_registration_not_included": true
+  },
+  "written_tests": {
+    "existing_geom_unchanged": 11,
+    "new_geom": 13,
+    "existing_pdf_unchanged": 25,
+    "new_pdf": 2,
+    "executed": 0
+  },
+  "static_validation": [
+    "string comparison of original arithmetic bodies",
+    "original receiver retained as complete prefix",
+    "all new cases in existing test files",
+    "hash inventory of actual saved files",
+    "old v1 package retained"
+  ],
+  "blockers": [
+    "independent reviewer plus sole builder qualification",
+    "no completed shared production module/API registration",
+    "actual writer grid/end-replacement bound and adapter not implemented",
+    "off-grid writer premise/export tests unexecuted and may expose actual writer failure",
+    "new sources inherit no D8/W21/v1 historical results"
+  ],
+  "mutations": "Only new private packet; no shared source/index/Git/Cargo/formatter/runtime/application changes"
+}

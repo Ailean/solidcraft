@@ -1,0 +1,54 @@
+diff --git a/crates/io/src/paper/pdf_tests.rs b/crates/io/src/paper/pdf_tests.rs
+--- a/crates/io/src/paper/pdf_tests.rs
++++ b/crates/io/src/paper/pdf_tests.rs
+@@ -786,3 +786,50 @@
+         assert!(super::content_with_limit(&grid.groups, prefix + tail.len() - 1).is_err());
+     }
+ }
++
++fn off_grid_circle_case(center: Vec2, radius: f64, start: f64) {
++    let sheet = scene(
++        p(100.0, 100.0),
++        vec![stroke(vec![Seg2::Arc { center, radius, start, sweep: TAU }], true, 0.2, None)],
++    );
++    let prepared = sheet.prepare().unwrap();
++    let on = prepared.on_grid(Grid::TEN_NANOMETRES).unwrap();
++    let GridItem::Stroke { path, .. } = &on.groups[0].items[0] else { panic!("expected the original circle stroke") };
++    let (mut at, mut rebuilt, mut over_quarter) = (path.start, 0usize, false);
++    for piece in &path.pieces {
++        if let Piece::Arc { .. } = piece {
++            let Seg2::Arc { radius, sweep, .. } = piece.seg(at) else { panic!("expected an arc reconstruction") };
++            assert!(radius.is_finite() && radius > 0.0);
++            rebuilt += 1;
++            over_quarter |= sweep.abs() > FRAC_PI_2 + 1e-9;
++        }
++        at = piece.to();
++    }
++    assert_eq!(rebuilt, 4, "one full circle split into its four quarter pieces");
++    assert!(over_quarter, "check Cam's stated reconstruction premise in the actual walk");
++    assert!(path.closed);
++    assert_eq!(at, path.start);
++    let (bytes, report) = paper_pdf(&prepared, &NONE).expect("an ordinary off-grid circle must export");
++    assert_eq!(report, on.report);
++    let drawing = content(&bytes);
++    assert!(check_number_grid(&drawing).is_ok());
++    assert!(check_xref(&bytes).is_ok());
++    let curves = cubics(&drawing);
++    assert!(!curves.is_empty());
++    for curve in &curves {
++        assert!(curve.iter().all(|p| p.is_finite()));
++    }
++    assert!(curves.first().unwrap()[0].dist(curves.last().unwrap()[3]) <= 1e-12);
++    assert!(ops(&drawing).iter().any(|(op, _)| op == "h"), "closed circle remains a closed path");
++    // No sampled-radial certificate or writer-output-derived reference is introduced.
++}
++
++#[test]
++fn off_grid_one_mm_circle_exports_after_real_quarter_reconstruction() {
++    off_grid_circle_case(p(10.0001234, 20.0009876), 1.0, 0.3);
++}
++
++#[test]
++fn off_grid_half_mm_circle_exports_after_real_quarter_reconstruction() {
++    off_grid_circle_case(p(50.0000033, 40.0000071), 0.5, 1.1);
++}

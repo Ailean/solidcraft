@@ -160,3 +160,7 @@ explicit. Source review and replay are not compilation, full CI or GPU parity.
 ## 2026-10-31: minimal carried image-test recovery
 
 [Minimal image test recovery](../2026-10-31/minimal-image-test-recovery/README.md) archives two exact call-site repairs in the existing Render image tests, both RAW snapshots, the unchanged delta and portable bindings. 23 original declarations / 0 new; all original oracles remain. C20 compiler failure is preserved; C21 is source-adopted only, with 0 executed cases and the 349-case/60-marker selection still UNRUN. No PASS/full-CI/GPU/desktop readiness is inferred.
+
+## 2026-10-31: Raster local runtime consumer — source only
+
+[Bounded Raster local-light consumer](../2026-10-31/raster-local-runtime/README.md) preserves exact before/candidate source for 34 existing paths, a single combined delta and portable bindings. It connects transient point/spot/rectangle schematic lights through request admission and execution, with bounded resource accounting and corrected weighted-work progress. Four receivers retain the current formatting and two test-compilation repairs. The 37 new cases remain unrun; the actual GPU Model case is excluded from native-only validation. This proposal is outside C21 and supplies no saved-light authoring, shadows, physical/material parity, CI or installed-app acceptance.

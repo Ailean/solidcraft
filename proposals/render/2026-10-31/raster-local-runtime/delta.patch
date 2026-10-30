@@ -1,0 +1,1899 @@
+--- a/assets/shaders/viewport.wgsl
++++ b/assets/shaders/viewport.wgsl
+@@ -507,6 +507,10 @@
+     var weight=1.0;
+     if source.w > 0.5 {
+         let delta=source.xyz-p;
++        // Exact coincidence has no defined source direction: no incident contribution.
++        if all(delta == vec3<f32>(0.0)) {
++            return mat2x3<f32>(vec3<f32>(0.0),vec3<f32>(0.0));
++        }
+         let distance=max(length(delta),falloff.y);
+         direction=product_light_unit(delta);
+         weight=falloff.x/max(distance*distance,0.000001);
+--- a/crates/engine/src/cmd/render.rs
++++ b/crates/engine/src/cmd/render.rs
+@@ -124,7 +124,7 @@
+ CommandSpec::new("render.settings.capture_hdr", "Save Render Settings with HDR", resources::capture_settings).icon("settings").doc_only()
+     .params("name, set: typed CPU/GPU setup patch with hdr/environment unset; path: scoped HDR; expected_sha256?: digest returned by render.hdr.inspect (changed sources refuse); rotation_rad?:0, intensity?:1; samples?:1/4/16/64 for CPU only (default16); assume_linear_srgb?:false for GPU only. Captures immutable bytes and saves resource plus setup atomically in one undo, without a host; returns name/setup/resource metadata, never source bytes"),
+ CommandSpec::new("render.preflight", "Check Render Request", jobs::preflight).icon("inspect").noundo().doc_only()
+-    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace, transient studio_weights, raster_lights and progressive_feedback may accompany it. raster_lights?: transient null (legacy studio) or 0..8 directional sources {direction:[x,y,z],color:[linear r,g,b],intensity:0..64}; empty array is dark direct lighting. Requires builtin Raster without studio_weights, raytrace, HDR, transmission or other method controls; existing RenderSetup.exposure_ev is captured for Raster within -32..32. Directions are finite/nonzero and bounded by 1e9; RGB is 0..1. Not saved; no shadows or physical glass. progressive_feedback?: false; transient protected display updates during CPU progressive rendering only; true refuses raster, GPU and fixed CPU requests. Omission preserves legacy admission/submission. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy requires fixed sampling; certified smooth thin-sheet/box dielectrics support fixed or progressive sampling under the same certificates and bounded optical transport. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed or progressive CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; progressive/Interactive optics retain primary_samples:1 and selected reflections.samples:1 limits and never drop unsupported intent. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
++    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace, transient studio_weights, raster_lights and progressive_feedback may accompany it. raster_lights?: transient null (legacy studio) or 0..8 directional sources {direction:[x,y,z],color:[linear r,g,b],intensity:0..64}; empty array is dark direct lighting. Requires builtin Raster without studio_weights, raytrace, HDR, transmission or other method controls; existing RenderSetup.exposure_ev is captured for Raster within -32..32. Directions are finite/nonzero and bounded by 1e9; RGB is 0..1. Not saved; no shadows or physical glass. raster_punctual_lights?: transient null or 0..8 shared point/spot sources {position_mm:[x,y,z],color:[linear r,g,b],intensity:0..64,reference_distance_mm:0.001..1000000,minimum_distance_mm:0.001..reference_distance_mm,cone?:{emitted_axis:[x,y,z],inner_half_angle_radians,outer_half_angle_radians}}. Spot angles require 0<=inner<outer<=pi/2 and a finite nonzero emitted axis. raster_area_lights?: transient null or 0..4 rectangles {center_mm:[x,y,z],edge_u_mm:[x,y,z],edge_v_mm:[x,y,z],color:[linear r,g,b],intensity:0..64}; full perpendicular side lengths 0.000001..1000000mm, corners within +/-1000000000mm, U cross V emits. Local sources require a runtime request with settings.job:null or an untyped setup; saved typed jobs refuse them. All three absent/null collections preserve the legacy studio; any explicit local array, even empty, disables implicit sources, and absent raster_lights then means no directionals. Local images use unshadowed point/spot falloff and a one-point projected-area rectangle approximation; no finite footprint, soft shadows, environment, area_samples, softness or seed. Local light evaluations count within the existing projected-work limit; caps are 8directional+8shared point/spot+4rectangle, with the existing Raster memory envelope and one captured exposure. Positions and spot-axis components are finite and bounded by1e9; RGB0..1. No saved/UI local-light authoring yet. progressive_feedback?: false; transient protected display updates during CPU progressive rendering only; true refuses raster, GPU and fixed CPU requests. Omission preserves legacy admission/submission. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy requires fixed sampling; certified smooth thin-sheet/box dielectrics support fixed or progressive sampling under the same certificates and bounded optical transport. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed or progressive CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; progressive/Interactive optics retain primary_samples:1 and selected reflections.samples:1 limits and never drop unsupported intent. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
+ CommandSpec::new("render.start", "Render Image", jobs::start).key("R").noundo().doc_only().at("RENDER", "IMAGE").icon("render_image")
+     .params("Same request as render.preflight. Captures an immutable product scene and queues a bounded image job. Returns its session-scoped job identity, captured scene_generation and progress. Does not change the design. See docs/render-jobs.md"),
+ CommandSpec::new("render.status", "Render Progress", jobs::status).icon("list").noundo().doc_only()
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -13,6 +13,10 @@
+ struct Start {
+     #[serde(default, deserialize_with = "solidcraft_render::job::deserialize_raster_lights")]
+     raster_lights: Option<Vec<solidcraft_render::job::DirectionalLightOptions>>,
++    #[serde(default, deserialize_with = "solidcraft_render::job::deserialize_raster_punctual_lights")]
++    raster_punctual_lights: Option<Vec<solidcraft_render::job::PunctualLightOptions>>,
++    #[serde(default, deserialize_with = "solidcraft_render::job::deserialize_raster_area_lights")]
++    raster_area_lights: Option<Vec<solidcraft_render::job::RectangleLightOptions>>,
+     progressive_feedback: bool,
+     nested_media: bool,
+     studio_weights: Option<[f64; 3]>,
+@@ -114,7 +118,7 @@
+     if object.contains_key("setup") || object.contains_key("replace") {
+         return Err(bad(command, "Interactive requires an explicit settings snapshot without setup or replace"));
+     }
+-    if input.raster_lights.is_some() {
++    if input.raster_lights.is_some() || input.raster_punctual_lights.is_some() || input.raster_area_lights.is_some() {
+         return Err(bad(command, "Interactive does not accept explicit Raster lights"));
+     }
+     if input.integrator != Integrator::Raytrace || input.progressive || input.transparent_background {
+@@ -151,6 +155,8 @@
+         }
+     }
+     let final_request = ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         camera: settings.camera,
+@@ -197,6 +203,98 @@
+ 
+ #[cfg(test)]
+ mod union_lowering_tests {
++
++    #[cfg(not(target_arch = "wasm32"))]
++    fn raster_local_command_fixture() -> (Session,Value) {
++        let mut s = Session::default();
++        s.execute("solid.box",&json!({"length":20,"width":20,"height":4,"center":[0,0,0],"operation":"new","body_name":"Raster local command fixture"})).unwrap();
++        s.execute("render.scene",&json!({})).unwrap();
++        s.set_render_job_host(Some(solidcraft_render::job::CpuHost::for_platform().unwrap())).unwrap();
++        let mut camera = solidcraft_render::Camera { distance:50.0,..Default::default() };
++        camera.set_view(solidcraft_render::StandardView::Top);
++        let wire = json!({"settings":{"width":8,"height":8,"camera":camera,"background":[20,40,60],"exposure_ev":1.25,"job":null},
++            "raster_punctual_lights":[{"position_mm":[0.0,0.0,20.0],"color":[0.25,0.5,1.0],"intensity":2.0,"reference_distance_mm":20.0,"minimum_distance_mm":0.001}],
++            "raster_area_lights":[{"center_mm":[0.0,0.0,20.0],"edge_u_mm":[4.0,0.0,0.0],"edge_v_mm":[0.0,-4.0,0.0],"color":[1.0,0.5,0.25],"intensity":2.0}]});
++        (s,wire)
++    }
++
++    #[cfg(not(target_arch = "wasm32"))]
++    #[test]
++    fn raster_local_public_preflight_start_status_and_real_png_keep_both_sources_and_one_ev() {
++        use solidcraft_render::job::{JobId,Phase};
++        let (mut s,wire) = raster_local_command_fixture();
++        let original = wire.clone();
++        let checked = s.execute("render.preflight",&wire).unwrap();
++        assert_eq!(checked["request"]["raster_punctual_lights"],wire["raster_punctual_lights"]);
++        assert_eq!(checked["request"]["raster_area_lights"],wire["raster_area_lights"]);
++        assert_eq!(checked["request"]["raster_exposure_ev"],1.25);
++        assert!(checked["request"].get("raster_lights").is_none(),"no implicit directionals added");
++        let started = s.execute("render.start",&wire).unwrap();
++        let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++        let handle = s.render_job_handle(id).unwrap();
++        let status = handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap();
++        assert_eq!(status.progress.phase,Phase::Completed,"{:?}",status.error);
++        assert_eq!(status.request.raster_exposure_ev,1.25);
++        assert_eq!(serde_json::to_value(&status.request.raster_punctual_lights).unwrap(),wire["raster_punctual_lights"]);
++        assert_eq!(serde_json::to_value(&status.request.raster_area_lights).unwrap(),wire["raster_area_lights"]);
++        let frame = handle.frame().unwrap().unwrap();
++        let bright = image::load_from_memory(frame.png()).unwrap().to_rgba8();
++        assert_eq!(bright.dimensions(),(8,8));
++        let mut empty = wire.clone();
++        empty["raster_punctual_lights"] = json!([]);
++        empty["raster_area_lights"] = json!([]);
++        let started = s.execute("render.start",&empty).unwrap();
++        let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++        let dark_handle = s.render_job_handle(id).unwrap();
++        assert_eq!(dark_handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap().progress.phase,Phase::Completed);
++        let dark_frame = dark_handle.frame().unwrap().unwrap();
++        let dark = image::load_from_memory(dark_frame.png()).unwrap().to_rgba8();
++        assert_ne!(bright,dark,"actual local lights must change the real producer output");
++        assert_eq!(wire,original,"input intent is immutable");
++    }
++
++    #[cfg(not(target_arch = "wasm32"))]
++    #[test]
++    fn raster_local_public_commands_refuse_saved_and_foreign_controls_without_reservation() {
++        let (mut s,wire) = raster_local_command_fixture();
++        let before_revision = s.revision;
++        let mut saved = wire.clone();
++        saved["settings"]["job"] = serde_json::to_value(RenderJob::Raster {transparent_background:false,lights:None}).unwrap();
++        for command in ["render.preflight","render.start"] {
++            let error = s.execute(command,&saved).unwrap_err().to_string();
++            assert!(error.contains("saved local-light authoring"),"{error}");
++        }
++        for (key,value) in [("integrator",json!("raytrace")),("studio_weights",json!([1,1,1])),("raytrace",json!({})),
++            ("environment",json!({"path":"must-not-be-opened.hdr"})),("nested_media",json!(true)),("progressive_feedback",json!(true)),
++            ("progressive",json!(true)),("samples",json!(1)),("seed",json!(0)),("denoise",json!(true))] {
++            let mut invalid = wire.clone();
++            invalid[key] = value;
++            for command in ["render.preflight","render.start"] {
++                assert!(s.execute(command,&invalid).is_err(),"{command} accepted {key}");
++                assert_eq!(s.render_job_host().unwrap().admitted_bytes(),0,"no failed request reserved work");
++            }
++        }
++        let mut interactive = wire;
++        interactive["integrator"] = json!("raytrace");
++        assert!(interactive_params(&interactive).is_err());
++        assert_eq!(s.revision,before_revision);
++    }
++
++    #[test]
++    fn raster_local_public_command_caps_refuse_before_host_lookup_or_scene_capture() {
++        let point = json!({"position_mm":[0,0,20],"color":[1,1,1],"intensity":1,"reference_distance_mm":20,"minimum_distance_mm":0.001});
++        let area = json!({"center_mm":[0,0,20],"edge_u_mm":[4,0,0],"edge_v_mm":[0,-4,0],"color":[1,1,1],"intensity":1});
++        let mut s = Session::default();
++        for (key,value,reason) in [("raster_punctual_lights",json!(vec![point;9]),"at most eight"),("raster_area_lights",json!(vec![area;5]),"at most four")] {
++            let mut wire = json!({});
++            wire[key] = value;
++            for command in ["render.preflight","render.start"] {
++                let error = s.execute(command,&wire).unwrap_err().to_string();
++                assert!(error.contains(reason),"bound must fail before absent host: {error}");
++            }
++        }
++    }
++
+     use super::*;
+     #[test]
+     fn led_lowering_keeps_hdr_reflection_aa_and_anisotropy_inputs_without_reading_hdr() {
+@@ -565,6 +663,21 @@
+         .get("raster_lights")
+         .map(|value| solidcraft_render::job::deserialize_raster_lights(value).map_err(|e| bad(command, e.to_string())))
+         .transpose()?;
++    // Validate both local arrays by reference before any saved setup or JSON clone.
++    if let Some(value) = params.get("raster_punctual_lights") {
++        let _ = solidcraft_render::job::deserialize_raster_punctual_lights(value).map_err(|e| bad(command, e.to_string()))?;
++    }
++    if let Some(value) = params.get("raster_area_lights") {
++        let _ = solidcraft_render::job::deserialize_raster_area_lights(value).map_err(|e| bad(command, e.to_string()))?;
++    }
++    let local_intent = ["raster_punctual_lights", "raster_area_lights"].into_iter().any(|key| params.get(key).is_some_and(|v| !v.is_null()));
++    if local_intent {
++        let inline_saved = params.get("settings").and_then(|v| v.get("job")).is_some_and(|v| !v.is_null());
++        let named_saved = params.get("setup").and_then(Value::as_str).and_then(|name| s.doc.render.setups.get(name)).is_some_and(|v| v.job.is_some());
++        if inline_saved || named_saved {
++            return Err(bad(command, "runtime Raster local lights require settings.job: null; saved local-light authoring is not supported yet"));
++        }
++    }
+     let Some(object) = params.as_object() else {
+         return Ok(None);
+     };
+@@ -589,7 +702,7 @@
+     };
+     if let Some(key) = object
+         .keys()
+-        .find(|key| !matches!(key.as_str(), "setup" | "settings" | "replace" | "studio_weights" | "progressive_feedback" | "raster_lights"))
++        .find(|key| !matches!(key.as_str(), "setup" | "settings" | "replace" | "studio_weights" | "progressive_feedback" | "raster_lights" | "raster_punctual_lights" | "raster_area_lights"))
+     {
+         return Err(bad(
+             command,
+@@ -688,7 +801,9 @@
+     }
+     let mut input = Start::deserialize(params).map_err(|e| bad(command, e.to_string()))?;
+     solidcraft_render::job::validate_raster_lights(&input.raster_lights).map_err(job_error)?;
+-    if input.raster_lights.is_some()
++    solidcraft_render::job::validate_raster_punctual_lights(&input.raster_punctual_lights).map_err(job_error)?;
++    solidcraft_render::job::validate_raster_area_lights(&input.raster_area_lights).map_err(job_error)?;
++    if (input.raster_lights.is_some() || input.raster_punctual_lights.is_some() || input.raster_area_lights.is_some())
+         && (input.integrator != Integrator::Raster
+             || input.progressive
+             || input.progressive_feedback
+@@ -828,7 +943,7 @@
+     }
+     // Raster captures the existing exposure authority. Legacy environment controls
+     // still have no transport here and are reported/refused under their old policy.
+-    if input.raster_lights.is_some() && (settings.environment_rotation != 0.0 || settings.environment_intensity != 1.0) {
++    if (input.raster_lights.is_some() || input.raster_punctual_lights.is_some() || input.raster_area_lights.is_some()) && (settings.environment_rotation != 0.0 || settings.environment_intensity != 1.0) {
+         return Err(bad(command, "explicit Raster lights do not implement environment controls"));
+     }
+     let ignored = if input.integrator == Integrator::Raster { ignored_controls(&settings) } else { Vec::new() };
+@@ -871,6 +986,8 @@
+         return Err(bad(command, "resolved executor is not installed as an image job host"));
+     }
+     let request = ImageRequest {
++        raster_punctual_lights: input.raster_punctual_lights.take(),
++        raster_area_lights: input.raster_area_lights.take(),
+         raster_exposure_ev: if input.integrator == Integrator::Raster { settings.exposure_ev } else { 0.0 },
+         raster_lights: input.raster_lights.take(),
+         studio_weights: validate_studio_weights(input.studio_weights, command)?,
+@@ -1102,6 +1219,8 @@
+         return Err(bad(command, "image host is unavailable"));
+     }
+     let request = ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: validate_studio_weights(input.studio_weights, command)?,
+--- a/crates/engine/src/render_jobs.rs
++++ b/crates/engine/src/render_jobs.rs
+@@ -800,6 +800,8 @@
+         use solidcraft_render::job::{CpuProgressiveOptions, ImageRequest, JobOptions, RaytraceOptions};
+         let (session, host) = native().unwrap();
+         let request = ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+             raster_lights: None,
+             integrator: Integrator::Raytrace,
+--- a/crates/gpu/src/path/denoise_tests.rs
++++ b/crates/gpu/src/path/denoise_tests.rs
+@@ -157,6 +157,8 @@
+     let mut camera = Camera { distance: 4.0, ..Default::default() };
+     camera.set_view(StandardView::Top);
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/gpu/src/path/mod.rs
++++ b/crates/gpu/src/path/mod.rs
+@@ -318,7 +318,7 @@
+ }
+ 
+ fn admission(scene: &ProductScene, request: &ImageRequest, options: JobOptions) -> Result<Admission> {
+-    if request.raster_lights.is_some() || request.raster_exposure_ev != 0.0 {
++    if request.has_explicit_raster_lights() || request.raster_exposure_ev != 0.0 {
+         return Err(JobError::new(ErrorCode::InvalidRequest, "GPU path rendering does not accept Raster lights or Raster exposure"));
+     }
+     if request.integrator != solidcraft_render::job::Integrator::Raster || request.raytrace.is_some() {
+@@ -477,7 +477,7 @@
+         Ok(value)
+     }
+     fn admit(&self, scene: &ProductScene, request: &ImageRequest, options: JobOptions) -> Result<Admission> {
+-        if request.raster_lights.is_some() || request.raster_exposure_ev != 0.0 {
++        if request.has_explicit_raster_lights() || request.raster_exposure_ev != 0.0 {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "GPU path rendering does not accept Raster lights or Raster exposure"));
+         }
+         self.context.ensure_available()?;
+--- a/crates/gpu/src/path/tests.rs
++++ b/crates/gpu/src/path/tests.rs
+@@ -21,6 +21,8 @@
+     let mut camera = Camera { distance: 4.0, ..Default::default() };
+     camera.set_view(StandardView::Top);
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+@@ -432,6 +434,8 @@
+     let bounds = meshes.iter().fold(Aabb3::EMPTY, |a, m| a.union(&m.mesh.bounds()));
+     let camera = Camera { target: Vec3::new(0.0, 0.0, 1.0), yaw: -0.45, pitch: 0.5, distance: 13.0, fov: 0.65, ..Default::default() };
+     let request = ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/gpu/src/view.rs
++++ b/crates/gpu/src/view.rs
+@@ -5456,4 +5456,62 @@
+         }
+         eprintln!("U17_PRODUCT_SRGB supported=true formats=2 ssaa=2 materials=2 sources=2 palettes=2 exposures=3");
+     }
++
++    /// In this existing orthographic fixture, pixel(32,32) is exactly
++    /// (5/32,-5/32,0): clip edges are +/-1/2 at integer screen16 and48.
++    /// The source shares that representable point. No epsilon weakens delta0.
++    #[cfg(not(target_arch = "wasm32"))]
++    #[test]
++    fn raster_local_model_exact_coincidence_is_black_then_positive_source_repaints_both_formats() {
++        let (_,device,queue) = match crate::open_headless() {
++            Ok(device) => device,
++            Err(error) if std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none() => {
++                eprintln!("RASTER_LOCAL_MODEL_ZERO supported=false reason={error}");
++                return;
++            }
++            Err(error) => panic!("required GPU adapter unavailable: {error}"),
++        };
++        for format in [wgpu::TextureFormat::Rgba8Unorm,wgpu::TextureFormat::Rgba8UnormSrgb] {
++            for pbr in [false,true] {
++                let mut scene = GpuScene::default();
++                let rgb = [94,128,160];
++                let colour = scene.color([rgb[0],rgb[1],rgb[2],255]);
++                let linear = rgb.map(solidcraft_geom::srgb::decode8);
++                let surface = solidcraft_render::surface::OpaqueSurface::new(solidcraft_geom::Vec3::new(linear[0],linear[1],linear[2]),0.0,1.0,1.0).unwrap();
++                for p in [[-5.0,-5.0,0.0],[5.0,-5.0,0.0],[5.0,5.0,0.0],[-5.0,-5.0,0.0],[5.0,5.0,0.0],[-5.0,5.0,0.0]] {
++                    if pbr { scene.pbr_tri(p,[0.0,0.0,1.0],surface); }
++                    else { scene.tri(p,[0.0,0.0,1.0],colour); }
++                }
++                let depth = crate::depth_format(&device,true);
++                let mut renderer = Renderer::new(&device,GpuTarget {format,depth:Some(depth),samples:1,tess:false,oit:false},None);
++                let mut frame = test_frame(scene,1.0);
++                let design = render_frame_format(&mut renderer,&device,&queue,&frame,true,format);
++                frame.product = true;
++                let at = (32*64+32)*4;
++                for kind in [1.0,2.0,3.0] {
++                    let pi = std::f32::consts::PI;
++                    let source = [0.15625,-0.15625,0.0,kind,pi,pi,pi,0.8,0.0,0.0,-1.0,1.0,1.0,0.001,0.0,0.0];
++                    frame.product_lights = Some(vec![source]);
++                    let zero = render_frame_format(&mut renderer,&device,&queue,&frame,true,format);
++                    assert_eq!(zero.len(),64*64*4);
++                    assert_eq!(&zero[at..at+4],&[0,0,0,255],"{format:?} pbr={pbr} kind={kind}");
++                    frame.product_lights.as_mut().unwrap()[0][2]=1.0;
++                    let positive = render_frame_format(&mut renderer,&device,&queue,&frame,true,format);
++                    // Unit distance/cosines, reference^2 or projected area1:
++                    // source PI cancels Lambert /PI for every source family.
++                    for channel in 0..3 {
++                        let radiance = linear[channel]*f64::from(pi)/std::f64::consts::PI;
++                        let expected = solidcraft_geom::srgb::encode8(radiance/(1.0+radiance));
++                        assert!(positive[at+channel].abs_diff(expected)<=1,"{format:?} pbr={pbr} kind={kind} channel={channel}: {} != {expected}",positive[at+channel]);
++                    }
++                    assert_eq!(positive[at+3],255);
++                    assert_eq!(&positive[..4],&[255;4]);
++                }
++                frame.product=false;
++                frame.product_lights=None;
++                assert_eq!(render_frame_format(&mut renderer,&device,&queue,&frame,true,format),design,"legacy Design restored exactly");
++            }
++        }
++        eprintln!("RASTER_LOCAL_MODEL_ZERO supported=true formats=2 materials=2 sources=3");
++    }
+ }
+--- a/crates/render/examples/cpu_resource_smoke.rs
++++ b/crates/render/examples/cpu_resource_smoke.rs
+@@ -31,6 +31,8 @@
+     let mut camera = Camera { distance: 65.0, ..Default::default() };
+     camera.set_view(StandardView::Top);
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -188,6 +188,8 @@
+             strip.append_to(&mut options, 64)?;
+         }
+         Ok(ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+             raster_lights: None,
+             studio_weights: None,
+@@ -261,6 +263,72 @@
+         drop(fill);
+         assert_eq!(host.admitted_bytes(), 0);
+     }
++
++    fn raster_local_pair() -> (ImageRequest, ProductScene) {
++        let mut input = request().unwrap();
++        input.integrator = Integrator::Raster;
++        input.raytrace = None;
++        let mut points = Vec::with_capacity(8);
++        points.push(PunctualLightOptions { position_mm:[0.0,0.0,10.0],color:[1.0;3],intensity:1.0,reference_distance_mm:10.0,minimum_distance_mm:0.001,cone:None });
++        let mut areas = Vec::with_capacity(4);
++        areas.push(super::super::RectangleLightOptions { center_mm:[0.0,0.0,10.0],edge_u_mm:[2.0,0.0,0.0],edge_v_mm:[0.0,-2.0,0.0],color:[1.0;3],intensity:1.0 });
++        input.raster_punctual_lights = Some(points);
++        input.raster_area_lights = Some(areas);
++        let mesh = solidcraft_geom::Mesh {
++            positions:vec![solidcraft_geom::Vec3::new(-2.0,-2.0,0.0),solidcraft_geom::Vec3::new(2.0,-2.0,0.0),solidcraft_geom::Vec3::new(0.0,2.0,0.0)],
++            normals:vec![solidcraft_geom::Vec3::Z;3],triangles:vec![[0,1,2]],tri_face:vec![0],..Default::default()
++        };
++        let bounds = mesh.bounds();
++        let scene = ProductScene { meshes:vec![crate::ProductMesh { name:"Raster local lease fixture".into(),mesh:Arc::new(mesh),color:[160;3],opacity:1.0,surface:None,transmission:None,faces:Vec::new() }],bounds };
++        (input,scene)
++    }
++
++    #[test]
++    fn raster_local_record_keeps_original_capacity_lease_after_real_completion_and_frame_drop() {
++        let mut host = CpuHost::for_platform().unwrap();
++        let budget = host.0.shared.budget.clone();
++        let (input,scene) = raster_local_pair();
++        let capacities = (input.raster_punctual_lights.as_ref().unwrap().capacity(),input.raster_area_lights.as_ref().unwrap().capacity());
++        let bytes = (capacities.0*std::mem::size_of::<PunctualLightOptions>()+capacities.1*std::mem::size_of::<super::super::RectangleLightOptions>()) as u64;
++        assert_eq!(retained_request_bytes(&input).unwrap(),bytes);
++        let job = host.submit(JobId {session:1725,serial:1,generation:1},1,scene,input).unwrap();
++        assert_eq!(job.wait_timeout(std::time::Duration::from_secs(60)).unwrap().progress.phase,Phase::Completed);
++        host.0.shared.stop.store(true,Ordering::Release);
++        host.0.shared.wake.notify_all();
++        Arc::get_mut(&mut host.0).unwrap()._worker.take().unwrap().join().unwrap();
++        assert_eq!(job.0.request.raster_punctual_lights.as_ref().unwrap().capacity(),capacities.0);
++        assert_eq!(job.0.request.raster_area_lights.as_ref().unwrap().capacity(),capacities.1);
++        assert!(Arc::ptr_eq(&job.0._request_reservation.as_ref().unwrap().budget,&budget));
++        assert_eq!(job.0._request_reservation.as_ref().unwrap().bytes,bytes);
++        let copied = job.status().unwrap().request;
++        assert_eq!(copied.raster_punctual_lights,job.0.request.raster_punctual_lights);
++        assert_eq!(copied.raster_area_lights,job.0.request.raster_area_lights);
++        drop(copied);
++        let frame = job.frame().unwrap().unwrap();
++        job.0.data.lock().unwrap().frame=None;
++        drop(frame);
++        assert_eq!(host.admitted_bytes(),bytes);
++        let held = job.clone();
++        drop(job);
++        assert_eq!(host.admitted_bytes(),bytes);
++        drop(held);
++        assert_eq!(budget.used.load(Ordering::Acquire),0);
++    }
++
++    #[test]
++    fn raster_local_metadata_reservation_failure_releases_work_without_enqueuing() {
++        let host = CpuHost::for_platform().unwrap();
++        let (input,scene) = raster_local_pair();
++        let work = host.admit(&scene,&input,JobOptions::default()).unwrap().estimated_total_bytes;
++        let fill = host.0.shared.budget.reserve(host.pool_limit_bytes()-work).unwrap();
++        let before = host.admitted_bytes();
++        let failed = host.submit(JobId {session:1725,serial:2,generation:1},1,scene,input);
++        assert_eq!(failed.err().unwrap().code,ErrorCode::LimitExceeded);
++        assert_eq!(host.admitted_bytes(),before);
++        assert!(host.0.shared.queue.lock().unwrap().is_empty());
++        drop(fill);
++        assert_eq!(host.admitted_bytes(),0);
++    }
+ }
+ 
+ fn admit_request_sum(work_bytes: u64, request_bytes: u64) -> Result<()> {
+@@ -1352,7 +1420,7 @@
+         partial: Option<CpuPreviewPolicy>,
+     ) -> Result<Admission> {
+         request.validate_raster_request()?;
+-        if self.0.executor.is_some() && (request.raster_lights.is_some() || request.raster_exposure_ev != 0.0) {
++        if self.0.executor.is_some() && (request.has_explicit_raster_lights() || request.raster_exposure_ev != 0.0) {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "registered executors do not accept Raster-only lights or exposure"));
+         }
+         if let Some(policy) = partial {
+@@ -1791,6 +1859,8 @@
+         )
+         .map_err(|e| JobError::new(ErrorCode::InvalidRequest, e.to_string()))?;
+         let request = ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+             raster_lights: None,
+             studio_weights: None,
+@@ -2019,6 +2089,8 @@
+         let mut lights = Vec::with_capacity(8);
+         lights.push(super::super::DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 1.0 });
+         ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+             raster_lights: None,
+             studio_weights: None,
+@@ -2091,6 +2163,8 @@
+         let mut host = CpuHost::for_platform().unwrap();
+         let budget = host.0.shared.budget.clone();
+         let request = ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+             raster_lights: None,
+             studio_weights: None,
+@@ -2206,6 +2280,8 @@
+ 
+     fn request() -> ImageRequest {
+         ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+             raster_lights: None,
+             studio_weights: None,
+--- a/crates/render/src/job/host_regrade_tests.rs
++++ b/crates/render/src/job/host_regrade_tests.rs
+@@ -47,6 +47,8 @@
+     let begins = Arc::new(AtomicUsize::new(0));
+     let host = ImageHost::cooperative_with(Arc::new(FixtureExecutor(begins.clone())));
+     let request = ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/job/host_tests.rs
++++ b/crates/render/src/job/host_tests.rs
+@@ -655,6 +655,8 @@
+ 
+ fn request() -> ImageRequest {
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/job/image.rs
++++ b/crates/render/src/job/image.rs
+@@ -108,7 +108,7 @@
+ /// pixel/codec allowance, then let the ray tracer charge its actual BVH and film.
+ #[cfg(feature = "raytrace-cpu")]
+ pub(crate) fn admit_raytrace_source(scene: &ProductScene, request: &ImageRequest, budget: super::CpuBudget) -> Result<Admission> {
+-    if request.raster_lights.is_some() || request.raster_exposure_ev != 0.0 {
++    if request.has_explicit_raster_lights() || request.raster_exposure_ev != 0.0 {
+         return Err(invalid("Raster-only lighting and exposure cannot enter CPU ray tracing"));
+     }
+     budget.validate_execution()?;
+@@ -167,7 +167,7 @@
+     image_limits: crate::RenderLimits,
+ ) -> Result<Source> {
+     request.validate_raster_request()?;
+-    if request.raster_lights.is_some() && scene.has_transmission() {
++    if request.has_explicit_raster_lights() && scene.has_transmission() {
+         return Err(invalid("explicit Raster lights do not implement physical transmission"));
+     }
+     if !request.camera.is_valid() {
+@@ -356,7 +356,10 @@
+     sort_dst: usize,
+     pixels: Vec<[u8; 4]>,
+     depth: Vec<f32>,
++    // Weighted projected light work for the existing work ceiling.
+     pixel_tests: u64,
++    // Unweighted bounding-box pixel visits, matching pixel_done Running units.
++    pixel_progress_tests: u64,
+     pixel_done: u64,
+     draw: usize,
+     triangle: Option<Triangle>,
+@@ -409,6 +412,7 @@
+             pixels,
+             depth,
+             pixel_tests: 0,
++            pixel_progress_tests: 0,
+             pixel_done: 0,
+             draw: 0,
+             triangle: None,
+@@ -427,7 +431,7 @@
+             Stage::Clear | Stage::Opaque | Stage::Glass | Stage::Downsample => Progress {
+                 phase: Phase::Running,
+                 done: self.pixel_done,
+-                total: self.pixel_tests + (self.sw * self.sh) as u64 + u64::from(self.request.width) * u64::from(self.request.height),
++                total: self.pixel_progress_tests + (self.sw * self.sh) as u64 + u64::from(self.request.width) * u64::from(self.request.height),
+             },
+             Stage::Encode => Progress {
+                 phase: Phase::Encoding,
+@@ -583,10 +587,12 @@
+         if let Some(triangle) = self.project(draw)? {
+             let [x0, x1, y0, y1] = triangle.bounds;
+             let tests = ((x1 - x0 + 1) as u64).checked_mul((y1 - y0 + 1) as u64).ok_or_else(|| limit("pixel work overflow"))?;
+-            self.pixel_tests = self.pixel_tests.checked_add(tests).ok_or_else(|| limit("pixel work overflow"))?;
++            let weighted_tests = tests.checked_mul(self.request.raster_light_work_factor()?).ok_or_else(|| limit("pixel work overflow"))?;
++            self.pixel_tests = self.pixel_tests.checked_add(weighted_tests).ok_or_else(|| limit("pixel work overflow"))?;
+             if self.pixel_tests > MAX_PIXEL_TESTS {
+                 return Err(limit("projected product exceeds 128000000 pixel tests"));
+             }
++            self.pixel_progress_tests = self.pixel_progress_tests.checked_add(tests).ok_or_else(|| limit("pixel progress overflow"))?;
+             draw.depth = triangle.centre_depth;
+             if triangle.opacity >= 1.0 {
+                 self.opaque.push(draw);
+@@ -679,9 +685,7 @@
+             self.sw,
+             self.back,
+             eye,
+-            self.request.studio_weights,
+-            self.request.raster_lights.as_deref(),
+-            self.request.raster_exposure_ev,
++            &self.request,
+             &mut self.pixels,
+             &mut self.depth,
+         )?;
+@@ -743,18 +747,18 @@
+     }
+ }
+ 
+-#[allow(clippy::too_many_arguments)]
+ fn raster_pixel(
+     t: &Triangle,
+     width: usize,
+     back: Vec3,
+     eye: Option<Vec3>,
+-    studio_weights: Option<[f64; 3]>,
+-    raster_lights: Option<&[super::DirectionalLightOptions]>,
+-    raster_exposure_ev: f64,
++    request: &ImageRequest,
+     pixels: &mut [[u8; 4]],
+     depth: &mut [f32],
+ ) -> Result<()> {
++    let studio_weights = request.studio_weights;
++    let raster_lights = request.raster_lights.as_deref();
++    let raster_exposure_ev = request.raster_exposure_ev;
+     let [a, b, c] = t.points;
+     let (x, y) = (t.x as f64 + 0.5, t.y as f64 + 0.5);
+     let w0 = ((b[0] - x) * (c[1] - y) - (b[1] - y) * (c[0] - x)) / t.area;
+@@ -787,7 +791,8 @@
+         return Ok(());
+     }
+     let n = t.normals.iter().zip(weights).fold(Vec3::ZERO, |v, (n, w)| v + *n * (w / sum)).normalized().unwrap_or(Vec3::Z);
+-    let colour = if let Some(lights) = raster_lights {
++    let colour = if request.has_explicit_raster_lights() {
++        let lights = raster_lights.unwrap_or(&[]);
+         let surface = if let Some(surface) = t.surface {
+             surface
+         } else {
+@@ -796,7 +801,14 @@
+         };
+         let world = t.world.iter().zip(weights).fold(Vec3::ZERO, |p, (v, w)| p + *v * (w / sum));
+         let view = eye.map_or(back, |eye| eye - world);
+-        let radiance = crate::studio::shade_directional(surface, n, view, lights).map_err(|e| invalid(&e.to_string()))?;
++        let radiance = if request.has_local_raster_lights() {
++            crate::studio::shade_schematic(
++                surface, n, view, world, lights, request.raster_punctual_lights.as_deref().unwrap_or(&[]),
++                request.raster_area_lights.as_deref().unwrap_or(&[]),
++            )
++        } else {
++            crate::studio::shade_directional(surface, n, view, lights)
++        }.map_err(|e| invalid(&e.to_string()))?;
+         let mapped = crate::studio::tone_map(expose_raster(radiance, raster_exposure_ev)?).map_err(|e| invalid(&e.to_string()))?;
+         [mapped.x, mapped.y, mapped.z]
+     } else if let Some(surface) = t.surface {
+--- a/crates/render/src/job/image_tests.rs
++++ b/crates/render/src/job/image_tests.rs
+@@ -98,6 +98,8 @@
+     let mut camera = Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(StandardView::Front);
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+@@ -594,5 +596,220 @@
+         } else {
+             dark_png = Some(png);
+         }
++    }
++}
++
++fn raster_local_triangle() -> Triangle {
++    let surface = crate::surface::OpaqueSurface::new(Vec3::new(0.8,0.5,0.25),0.0,1.0,1.0).unwrap();
++    Triangle {
++        points:[[-1.0,-1.0,0.5],[3.0,-1.0,0.5],[-1.0,3.0,0.5]],
++        world:[Vec3::new(-1.0,0.0,1.0),Vec3::new(3.0,0.0,1.0),Vec3::new(-1.0,0.0,-3.0)],
++        normals:[-Vec3::Y;3], inv_w:[1.0;3], colour:[0.0;3], opacity:1.0, surface:Some(surface),
++        centre_depth:0.0, area:16.0, bounds:[0,0,0,0], x:0, y:0,
++    }
++}
++
++fn raster_local_point() -> crate::job::PunctualLightOptions {
++    crate::job::PunctualLightOptions { position_mm:[0.5,-10.0,-0.5],color:[0.25,0.5,1.0],intensity:2.0,reference_distance_mm:10.0,minimum_distance_mm:0.001,cone:None }
++}
++
++fn raster_local_area() -> crate::job::RectangleLightOptions {
++    crate::job::RectangleLightOptions { center_mm:[0.5,-10.0,-0.5],edge_u_mm:[2.0,0.0,0.0],edge_v_mm:[0.0,0.0,-2.0],color:[0.25,0.5,1.0],intensity:2.0 }
++}
++
++fn raster_local_pixel(triangle: &Triangle, input: &ImageRequest) -> [u8;4] {
++    let mut pixels = [[0;4]];
++    let mut depth = [f32::INFINITY];
++    raster_pixel(triangle,1,-Vec3::Y,None,input,&mut pixels,&mut depth).unwrap();
++    pixels[0]
++}
++
++fn raster_local_expected(numerators: [f64;3]) -> [u8;4] {
++    let rgb = numerators.map(|n| { let linear=n/std::f64::consts::PI; solidcraft_geom::srgb::encode8(linear/(1.0+linear)) });
++    [rgb[0],rgb[1],rgb[2],255]
++}
++
++#[test]
++fn raster_local_point_pixel_matches_independent_lambert_and_single_exposure_oracles() {
++    // Affine barycentrics (1/4,3/8,3/8) put this sample at(.5,0,-.5).
++    // Point is10mm along the normal, at its10mm reference: RGB*rho*I/pi.
++    let mut input = request();
++    input.raster_punctual_lights = Some(vec![raster_local_point()]);
++    for (ev,expected) in [(-1.0,[69,77,77,255]),(0.0,[94,104,104,255]),(1.0,[124,135,135,255])] {
++        input.raster_exposure_ev = ev;
++        assert_eq!(raster_local_pixel(&raster_local_triangle(),&input),expected);
++    }
++    input.raster_exposure_ev = 0.0;
++    input.raster_punctual_lights.as_mut().unwrap()[0].position_mm[1] = -20.0;
++    assert_eq!(raster_local_pixel(&raster_local_triangle(),&input),raster_local_expected([0.1,0.125,0.125]));
++}
++
++#[test]
++fn raster_local_spot_area_and_mixed_pixels_have_original_closed_form_contributions() {
++    let mut point = raster_local_point();
++    point.cone = Some(crate::job::SpotConeOptions { emitted_axis:[3.0_f64.sqrt(),1.0,0.0],inner_half_angle_radians:0.8_f64.acos(),outer_half_angle_radians:0.2_f64.acos() });
++    let mut input = request();
++    input.raster_punctual_lights = Some(vec![point]);
++    // Axis cosine1/2 lies halfway between(4/5,1/5), so smoothstep=1/2.
++    assert_eq!(raster_local_pixel(&raster_local_triangle(),&input),raster_local_expected([0.2,0.25,0.25]));
++    input.raster_punctual_lights = None;
++    input.raster_area_lights = Some(vec![raster_local_area()]);
++    // Area4 * I2 / r^2(100) =.08 before rho*colour/pi.
++    assert_eq!(raster_local_pixel(&raster_local_triangle(),&input),raster_local_expected([0.016,0.02,0.02]));
++    input.raster_lights = Some(vec![crate::job::DirectionalLightOptions { direction:[0.0,-1.0,0.0],color:[1.0;3],intensity:1.0 }]);
++    input.raster_punctual_lights = Some(vec![raster_local_point()]);
++    assert_eq!(raster_local_pixel(&raster_local_triangle(),&input),raster_local_expected([1.216,1.02,0.77]));
++    input.raster_lights = None;
++    input.raster_punctual_lights = None;
++    input.raster_area_lights.as_mut().unwrap()[0].edge_v_mm = [0.0,0.0,2.0];
++    assert_eq!(raster_local_pixel(&raster_local_triangle(),&input),[0,0,0,255]);
++}
++
++#[test]
++fn raster_local_pixel_uses_reciprocal_w_world_position_and_zero_coincidence_policy() {
++    let mut triangle = raster_local_triangle();
++    triangle.inv_w = [1.0,2.0,8.0];
++    // Weighted world=(-1/4,0,-2), not the affine(.5,0,-.5).
++    let mut point = raster_local_point();
++    point.position_mm = [-0.25,-1.0,-2.0];
++    point.reference_distance_mm = 1.0;
++    point.color = [1.0;3];
++    let mut input = request();
++    input.raster_punctual_lights = Some(vec![point]);
++    assert_eq!(raster_local_pixel(&triangle,&input),raster_local_expected([1.6,1.0,0.5]));
++    input.raster_punctual_lights.as_mut().unwrap()[0].position_mm = [-0.25,0.0,-2.0];
++    assert_eq!(raster_local_pixel(&triangle,&input),[0,0,0,255]);
++}
++
++#[test]
++fn raster_local_real_task_empty_rig_is_dark_and_null_keeps_exact_legacy_png() {
++    let part = scene(vec![square("opaque",[200,180,160],1.0,Vec3::ZERO)]);
++    let mut input = request();
++    input.transparent_background = false;
++    let legacy = finish(ImageTask::new(part.clone(),input.clone(),CancelToken::default()).unwrap());
++    let mut wire = serde_json::to_value(&input).unwrap();
++    wire["raster_punctual_lights"] = serde_json::Value::Null;
++    wire["raster_area_lights"] = serde_json::Value::Null;
++    let decoded: ImageRequest = serde_json::from_value(wire).unwrap();
++    assert_eq!(finish(ImageTask::new(part.clone(),decoded,CancelToken::default()).unwrap()),legacy);
++    for family in [0,1] {
++        let mut explicit = input.clone();
++        if family == 0 { explicit.raster_punctual_lights=Some(Vec::new()); }
++        else { explicit.raster_area_lights=Some(Vec::new()); }
++        let png = finish(ImageTask::new(part.clone(),explicit,CancelToken::default()).unwrap());
++        let image = image::load_from_memory(&png).unwrap().to_rgba8();
++        assert_eq!(image.get_pixel(32,32).0,[0,0,0,255]);
++        assert_eq!(image.get_pixel(0,0).0,[20,40,60,255]);
++        assert_ne!(png,legacy);
++    }
++}
++
++#[test]
++fn raster_local_real_task_admits_spare_capacity_and_refuses_physical_transmission() {
++    let part = scene(vec![square("opaque",[200;3],1.0,Vec3::ZERO)]);
++    let mut input = request();
++    let legacy_bytes = admit(&part,&input).unwrap().estimated_total_bytes;
++    input.raster_punctual_lights = Some(Vec::with_capacity(8));
++    input.raster_area_lights = Some(Vec::with_capacity(4));
++    let fee = (8*std::mem::size_of::<crate::job::PunctualLightOptions>()+4*std::mem::size_of::<crate::job::RectangleLightOptions>()) as u64;
++    assert_eq!(admit(&part,&input).unwrap().estimated_total_bytes,legacy_bytes+fee);
++    let capacities = (input.raster_punctual_lights.as_ref().unwrap().capacity(),input.raster_area_lights.as_ref().unwrap().capacity());
++    let task = ImageTask::new(part,input,CancelToken::default()).unwrap();
++    assert_eq!(task.request.raster_punctual_lights.as_ref().unwrap().capacity(),capacities.0);
++    assert_eq!(task.request.raster_area_lights.as_ref().unwrap().capacity(),capacities.1);
++    assert_eq!(task.admission.estimated_total_bytes,legacy_bytes+fee);
++    let mut physical = square("physical",[200;3],1.0,Vec3::ZERO);
++    physical.transmission = Some(crate::transmission::Transmission::new(Vec3::ZERO,None).unwrap());
++    assert_eq!(admit(&scene(vec![physical]),&task.request).unwrap_err().code,ErrorCode::InvalidRequest);
++}
++
++#[test]
++fn raster_local_light_work_remains_inside_original_cap_and_step_cancellation() {
++    let part = scene(vec![square("opaque",[200;3],1.0,Vec3::ZERO)]);
++    let mut legacy = request();
++    legacy.raster_lights = Some(vec![crate::job::DirectionalLightOptions { direction:[0.0,-1.0,0.0],color:[1.0;3],intensity:1.0 }]);
++    let mut local = legacy.clone();
++    local.raster_punctual_lights = Some(vec![raster_local_point()]);
++    local.raster_area_lights = Some(vec![raster_local_area()]);
++    let cancel = CancelToken::default();
++    let mut task = ImageTask::new(part.clone(),local,cancel.clone()).unwrap();
++    let triangle = task.project(Draw { body:0,triangle:0,depth:0.0 }).unwrap().unwrap();
++    let [x0,x1,y0,y1] = triangle.bounds;
++    let pixels = ((x1-x0+1)*(y1-y0+1)) as u64;
++    task.pixel_tests = MAX_PIXEL_TESTS - pixels*3 + 1;
++    assert_eq!(task.prepare_step().unwrap_err().code,ErrorCode::LimitExceeded);
++    let mut old_task = ImageTask::new(part,legacy,CancelToken::default()).unwrap();
++    old_task.pixel_tests = MAX_PIXEL_TESTS - pixels*3 + 1;
++    old_task.prepare_step().unwrap();
++    assert_eq!(old_task.pixel_tests,MAX_PIXEL_TESTS-pixels*2+1,"directional-only budget is unchanged");
++    cancel.cancel();
++    assert_eq!(task.step(1).err().unwrap().code,ErrorCode::Cancelled);
++}
++
++#[test]
++fn raster_local_running_progress_counts_pixel_visits_and_reaches_total_before_encoding() {
++    // Cost is1 for unchanged implicit/directional-only routes,3 for the minimal
++    // mixed rig and20 for8D+8 shared point/spot+4area. Progress counts actual
++    // clear/draw/downsample visits, never BRDF evaluations or light intensity.
++    for (factor,directional_count,punctual_count,area_count) in [(1u64,0usize,0usize,0usize),(1,1,0,0),(3,1,1,1),(20,8,8,4)] {
++        let mut input = request();
++        input.width=8;
++        input.height=8;
++        if directional_count>0 { input.raster_lights=Some(vec![crate::job::DirectionalLightOptions {direction:[0.0,-1.0,0.0],color:[1.0;3],intensity:1.0};directional_count]); }
++        if punctual_count>0 {
++            let mut points=vec![raster_local_point();punctual_count];
++            points[punctual_count-1].cone=Some(crate::job::SpotConeOptions {emitted_axis:[0.0,1.0,0.0],inner_half_angle_radians:0.2,outer_half_angle_radians:0.5});
++            input.raster_punctual_lights=Some(points);
++        }
++        if area_count>0 { input.raster_area_lights=Some(vec![raster_local_area();area_count]); }
++        let back=input.camera.back();
++        let part=scene(vec![square("opaque",[160;3],1.0,Vec3::ZERO),square("alpha far",[160;3],0.5,back*-5.0),square("alpha nearer",[160;3],0.5,back*-3.0)]);
++        let mut task=ImageTask::new(part,input,CancelToken::default()).unwrap();
++        for _ in 0..100_000 {
++            if task.stage==Stage::Clear { break; }
++            assert!(matches!(task.stage,Stage::Looks|Stage::Prepare|Stage::Sort));
++            assert!(matches!(task.step(1).unwrap(),TaskPoll::Pending(_)));
++        }
++        assert!(task.stage==Stage::Clear,"bounded fixture must finish preparation");
++        let mut bbox_visits=0u64;
++        for draw in task.opaque.iter().chain(&task.glass) {
++            let triangle=task.project(*draw).unwrap().unwrap();
++            let [x0,x1,y0,y1]=triangle.bounds;
++            bbox_visits+=((x1-x0+1)*(y1-y0+1)) as u64;
++        }
++        assert!(bbox_visits>0);
++        assert_eq!(task.pixel_tests,bbox_visits*factor,"weighted128M work guard remains authoritative");
++        let clear_visits=(task.sw*task.sh) as u64;
++        let output_visits=u64::from(task.request.width)*u64::from(task.request.height);
++        let expected_total=clear_visits+bbox_visits+output_visits;
++        let mut last_done=0;
++        let mut saw_opaque=false;
++        let mut saw_downsample=false;
++        let mut saw_running_complete=false;
++        for _ in 0..100_000 {
++            if task.stage==Stage::Encode { break; }
++            let progress=task.progress();
++            assert_eq!(progress.phase,Phase::Running);
++            assert_eq!(progress.total,expected_total,"total must not scale with {factor} lights");
++            assert!(progress.done>=last_done&&progress.done<=progress.total);
++            if !saw_opaque&&task.stage==Stage::Opaque {
++                assert_eq!(progress.done,clear_visits,"clear units unchanged");
++                saw_opaque=true;
++            }
++            if !saw_downsample&&task.stage==Stage::Downsample {
++                assert_eq!(progress.done,clear_visits+bbox_visits,"every projected visit completed before downsample");
++                saw_downsample=true;
++            }
++            if progress.done==progress.total { saw_running_complete=true; }
++            last_done=progress.done;
++            assert!(matches!(task.step(1).unwrap(),TaskPoll::Pending(_)));
++        }
++        assert!(task.stage==Stage::Encode);
++        assert!(saw_opaque&&saw_downsample&&saw_running_complete,"Running must reach its boundary before Encoding");
++        assert_eq!(last_done,expected_total);
++        assert_eq!(task.pixel_done,expected_total);
++        assert_eq!(task.progress().phase,Phase::Encoding);
++        let png=finish(task);
++        assert_eq!(image::load_from_memory(&png).unwrap().to_rgba8().dimensions(),(8,8));
+     }
+ }
+--- a/crates/render/src/job/led_strip/tests.rs
++++ b/crates/render/src/job/led_strip/tests.rs
+@@ -192,6 +192,8 @@
+         let mut camera = Camera { distance: 50.0, ..Default::default() };
+         camera.set_view(StandardView::Top);
+         ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+             raster_lights: None,
+             studio_weights: None,
+--- a/crates/render/src/job/mod.rs
++++ b/crates/render/src/job/mod.rs
+@@ -52,7 +52,11 @@
+ pub use lighting::{AreaLight, AreaLights, MAX_AREA_LIGHTS, StudioLighting, Sun, ToneMap};
+ pub use png::PngTask;
+ pub use punctual::{PunctualDiagnostics, PunctualLightOptions, SpotConeOptions};
+-pub use raster_lights::{deserialize as deserialize_raster_lights, validate as validate_raster_lights};
++pub use raster_lights::{
++    deserialize as deserialize_raster_lights, deserialize_areas as deserialize_raster_area_lights,
++    deserialize_punctual as deserialize_raster_punctual_lights, validate as validate_raster_lights,
++    validate_areas as validate_raster_area_lights, validate_punctual as validate_raster_punctual_lights,
++};
+ 
+ /// Native path-tracing ceilings, further restricted by the actual device.
+ /// Kept in the device-independent layer so saved intent and UI agree with execution.
+@@ -429,6 +433,38 @@
+     pub intensity: f64,
+ }
+ 
++impl RectangleLightOptions {
++    /// Canonical numerical domain shared by CPU transport and schematic Raster.
++    pub(crate) fn validate(&self) -> Result<()> {
++        use solidcraft_geom::Vec3;
++        let vec = |v: [f64; 3]| Vec3::new(v[0], v[1], v[2]);
++        let c = vec(self.center_mm);
++        let u = vec(self.edge_u_mm);
++        let v = vec(self.edge_v_mm);
++        if !c.is_finite()
++            || !u.is_finite()
++            || !v.is_finite()
++            || !self.color.iter().all(|x| x.is_finite() && (0.0..=1.0).contains(x))
++            || !self.intensity.is_finite()
++            || !(0.0..=64.0).contains(&self.intensity)
++            || !(1e-6..=1e6).contains(&u.len())
++            || !(1e-6..=1e6).contains(&v.len())
++            || (u.dot(v) / (u.len() * v.len())).abs() > 1e-10
++        {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "invalid finite rectangular light"));
++        }
++        for a in [-0.5, 0.5] {
++            for b in [-0.5, 0.5] {
++                let p = c + u * a + v * b;
++                if !p.is_finite() || [p.x, p.y, p.z].into_iter().any(|x| x.abs() > 1e9) {
++                    return Err(JobError::new(ErrorCode::InvalidRequest, "rectangular light corner exceeds world bounds"));
++                }
++            }
++        }
++        Ok(())
++    }
++}
++
+ /// Explicit visual rotation about a certified planar face's outward normal.
+ #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(rename_all = "snake_case")]
+@@ -782,6 +818,12 @@
+                 if lights.len() == 4 {
+                     return Err(serde::de::Error::custom("at most four rectangular lights"));
+                 }
++                if lights.is_empty() {
++                    lights.try_reserve_exact(4).map_err(serde::de::Error::custom)?;
++                    if lights.capacity() > 4 {
++                        return Err(serde::de::Error::custom("rectangular light capacity exceeds four"));
++                    }
++                }
+                 lights.push(light);
+             }
+             Ok(lights)
+@@ -988,31 +1030,7 @@
+         }
+         if let Some(lights) = &self.area_lights {
+             for light in lights {
+-                use solidcraft_geom::Vec3;
+-                let vec = |v: [f64; 3]| Vec3::new(v[0], v[1], v[2]);
+-                let c = vec(light.center_mm);
+-                let u = vec(light.edge_u_mm);
+-                let v = vec(light.edge_v_mm);
+-                if !c.is_finite()
+-                    || !u.is_finite()
+-                    || !v.is_finite()
+-                    || !light.color.iter().all(|x| x.is_finite() && (0.0..=1.0).contains(x))
+-                    || !light.intensity.is_finite()
+-                    || !(0.0..=64.0).contains(&light.intensity)
+-                    || !(1e-6..=1e6).contains(&u.len())
+-                    || !(1e-6..=1e6).contains(&v.len())
+-                    || (u.dot(v) / (u.len() * v.len())).abs() > 1e-10
+-                {
+-                    return Err(JobError::new(ErrorCode::InvalidRequest, "invalid finite rectangular light"));
+-                }
+-                for a in [-0.5, 0.5] {
+-                    for b in [-0.5, 0.5] {
+-                        let p = c + u * a + v * b;
+-                        if !p.is_finite() || [p.x, p.y, p.z].into_iter().any(|x| x.abs() > 1e9) {
+-                            return Err(JobError::new(ErrorCode::InvalidRequest, "rectangular light corner exceeds world bounds"));
+-                        }
+-                    }
+-                }
++                light.validate()?;
+             }
+         }
+         if let Some(lights) = &self.punctual_lights {
+@@ -1084,6 +1102,11 @@
+     /// Explicit transient opaque Raster rig; None keeps the original implicit studio.
+     #[serde(default, deserialize_with = "deserialize_raster_lights", skip_serializing_if = "Option::is_none")]
+     pub raster_lights: Option<Vec<DirectionalLightOptions>>,
++    /// Runtime-only local rig. Any explicit local collection suppresses implicit studio lights.
++    #[serde(default, deserialize_with = "deserialize_raster_punctual_lights", skip_serializing_if = "Option::is_none")]
++    pub raster_punctual_lights: Option<Vec<PunctualLightOptions>>,
++    #[serde(default, deserialize_with = "deserialize_raster_area_lights", skip_serializing_if = "Option::is_none")]
++    pub raster_area_lights: Option<Vec<RectangleLightOptions>>,
+     /// Transient visibility of the three implicit studio lights; never saved in a design.
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub studio_weights: Option<[f64; 3]>,
+@@ -1116,6 +1139,28 @@
+ }
+ 
+ impl ImageRequest {
++    pub fn has_local_raster_lights(&self) -> bool {
++        self.raster_punctual_lights.is_some() || self.raster_area_lights.is_some()
++    }
++
++    pub fn has_explicit_raster_lights(&self) -> bool {
++        self.raster_lights.is_some() || self.has_local_raster_lights()
++    }
++
++    /// Only the new local-rig route charges each bounded light evaluation.
++    /// Existing directional and implicit routes retain their original pixel budget.
++    pub(super) fn raster_light_work_factor(&self) -> Result<u64> {
++        if !self.has_local_raster_lights() {
++            return Ok(1);
++        }
++        self.validate_raster_request()?;
++        let count = self.raster_lights.as_ref().map_or(0, Vec::len)
++            .checked_add(self.raster_punctual_lights.as_ref().map_or(0, Vec::len))
++            .and_then(|n| n.checked_add(self.raster_area_lights.as_ref().map_or(0, Vec::len)))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "Raster light work overflow"))?;
++        u64::try_from(count.max(1)).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "Raster light work overflow"))
++    }
++
+     /// Reject explicit Raster intent before allocating or entering another producer.
+     pub fn validate_raster_request(&self) -> Result<()> {
+         if !self.raster_exposure_ev.is_finite() || !(-32.0..=32.0).contains(&self.raster_exposure_ev) {
+@@ -1127,7 +1172,9 @@
+             return Err(JobError::new(ErrorCode::InvalidRequest, "Raster exposure cannot enter another integrator or captured GPU resources"));
+         }
+         raster_lights::validate(&self.raster_lights)?;
+-        if self.raster_lights.is_some()
++        raster_lights::validate_punctual(&self.raster_punctual_lights)?;
++        raster_lights::validate_areas(&self.raster_area_lights)?;
++        if self.has_explicit_raster_lights()
+             && (self.integrator != Integrator::Raster
+                 || self.raytrace.is_some()
+                 || self.studio_weights.is_some()
+@@ -1143,23 +1190,29 @@
+     }
+ 
+     pub fn raster_lights_retained_bytes(&self) -> Result<u64> {
+-        raster_lights::retained_bytes(&self.raster_lights)
++        raster_lights::retained_bytes(&self.raster_lights)?
++            .checked_add(raster_lights::local_retained_bytes(&self.raster_punctual_lights, &self.raster_area_lights)?)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "Raster light retained size overflow"))
+     }
+ 
+     pub(super) fn raster_lights_task_bytes(&self) -> Result<u64> {
+-        raster_lights::task_bytes(&self.raster_lights)
++        raster_lights::task_bytes(&self.raster_lights)?
++            .checked_add(raster_lights::local_task_bytes(&self.raster_punctual_lights, &self.raster_area_lights)?)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "Raster task light size overflow"))
+     }
+ 
+     /// Internal status/task copy: the new Vec allocation is bounded and fallible.
+     pub(super) fn try_clone_for_host(&self) -> Result<Self> {
+         self.validate_raster_request()?;
+         // Preserve the old path, including existing unrelated payload semantics.
+-        if self.raster_lights.is_none() {
++        if !self.has_explicit_raster_lights() {
+             return Ok(self.clone());
+         }
+         Ok(Self {
+             raster_exposure_ev: self.raster_exposure_ev,
+             raster_lights: raster_lights::try_copy(&self.raster_lights)?,
++            raster_punctual_lights: raster_lights::try_copy_punctual(&self.raster_punctual_lights)?,
++            raster_area_lights: raster_lights::try_copy_areas(&self.raster_area_lights)?,
+             studio_weights: self.studio_weights,
+             environment: self.environment.clone(),
+             textures: self.textures.clone(),
+@@ -1211,6 +1264,133 @@
+ }
+ #[cfg(test)]
+ mod runtime_request_roundtrip_tests {
++
++    fn raster_local_test_request() -> ImageRequest {
++        serde_json::from_value(serde_json::json!({"camera":crate::Camera::default(),"width":8,"height":8,"background":[0,0,0],"transparent_background":false})).unwrap()
++    }
++
++    fn raster_local_test_point() -> PunctualLightOptions {
++        PunctualLightOptions { position_mm:[0.0,0.0,10.0], color:[1.0;3], intensity:2.0, reference_distance_mm:10.0, minimum_distance_mm:0.001, cone:None }
++    }
++
++    fn raster_local_test_rectangle() -> RectangleLightOptions {
++        RectangleLightOptions { center_mm:[0.0,0.0,10.0], edge_u_mm:[2.0,0.0,0.0], edge_v_mm:[0.0,-2.0,0.0], color:[1.0;3], intensity:2.0 }
++    }
++
++    #[test]
++    fn raster_local_wire_omission_null_empty_and_host_copy_keep_distinct_intent() {
++        let legacy = raster_local_test_request();
++        let wire = serde_json::to_value(&legacy).unwrap();
++        assert!(wire.get("raster_punctual_lights").is_none());
++        assert!(wire.get("raster_area_lights").is_none());
++        assert!(!legacy.has_explicit_raster_lights());
++        let mut null = wire.clone();
++        null["raster_punctual_lights"] = serde_json::Value::Null;
++        null["raster_area_lights"] = serde_json::Value::Null;
++        let decoded: ImageRequest = serde_json::from_value(null).unwrap();
++        assert_eq!(serde_json::to_value(decoded).unwrap(), wire);
++        for key in ["raster_punctual_lights", "raster_area_lights"] {
++            let mut explicit = wire.clone();
++            explicit[key] = serde_json::json!([]);
++            let input: ImageRequest = serde_json::from_value(explicit).unwrap();
++            assert!(input.has_explicit_raster_lights() && input.has_local_raster_lights());
++            assert!(input.raster_lights.is_none(), "no implicit directional materialisation");
++            assert_eq!(input.raster_light_work_factor().unwrap(), 1);
++            let copy = input.try_clone_for_host().unwrap();
++            assert_eq!(serde_json::to_value(copy).unwrap(), serde_json::to_value(input).unwrap());
++        }
++    }
++
++    #[test]
++    fn raster_local_eight_shared_point_spot_four_areas_and_directional_caps_are_independent() {
++        let mut input = raster_local_test_request();
++        let point = raster_local_test_point();
++        let mut spot = point;
++        spot.cone = Some(SpotConeOptions { emitted_axis:[0.0,0.0,-1.0], inner_half_angle_radians:0.2, outer_half_angle_radians:0.5 });
++        input.raster_lights = Some(vec![DirectionalLightOptions { direction:[0.0,0.0,1.0], color:[1.0;3], intensity:1.0 };8]);
++        assert_eq!(input.raster_light_work_factor().unwrap(), 1, "old directional work path unchanged");
++        input.raster_punctual_lights = Some(vec![point,spot,point,spot,point,spot,point,spot]);
++        input.raster_area_lights = Some(vec![raster_local_test_rectangle();4]);
++        input.validate_raster_request().unwrap();
++        assert_eq!(input.raster_light_work_factor().unwrap(), 20);
++        input.raster_punctual_lights.as_mut().unwrap().push(point);
++        assert_eq!(input.validate_raster_request().unwrap_err().code, ErrorCode::InvalidRequest);
++        assert!(serde_json::from_value::<ImageRequest>(serde_json::to_value(&input).unwrap()).is_err());
++        input.raster_punctual_lights = Some(vec![point]);
++        input.raster_area_lights.as_mut().unwrap().push(raster_local_test_rectangle());
++        assert!(input.validate_raster_request().is_err());
++        assert!(serde_json::from_value::<ImageRequest>(serde_json::to_value(input).unwrap()).is_err());
++    }
++
++    #[test]
++    fn raster_local_spare_capacities_refuse_before_copy_or_task_reservation() {
++        let mut input = raster_local_test_request();
++        input.raster_punctual_lights = Some(Vec::with_capacity(9));
++        assert!(input.try_clone_for_host().is_err());
++        assert!(input.raster_lights_retained_bytes().is_err());
++        assert!(input.raster_lights_task_bytes().is_err());
++        input.raster_punctual_lights = None;
++        input.raster_area_lights = Some(Vec::with_capacity(5));
++        assert!(input.try_clone_for_host().is_err());
++        assert!(input.raster_lights_retained_bytes().is_err());
++        assert!(input.raster_lights_task_bytes().is_err());
++    }
++
++    #[test]
++    fn raster_local_fallible_fixed_dto_copy_preserves_values_and_accounts_both_families() {
++        let mut input = raster_local_test_request();
++        input.raster_punctual_lights = Some(vec![raster_local_test_point()]);
++        input.raster_area_lights = Some(vec![raster_local_test_rectangle()]);
++        let expected = (input.raster_punctual_lights.as_ref().unwrap().capacity()*std::mem::size_of::<PunctualLightOptions>()
++            + input.raster_area_lights.as_ref().unwrap().capacity()*std::mem::size_of::<RectangleLightOptions>()) as u64;
++        assert_eq!(input.raster_lights_retained_bytes().unwrap(), expected);
++        let task_fee = (8*std::mem::size_of::<PunctualLightOptions>()+4*std::mem::size_of::<RectangleLightOptions>()) as u64;
++        assert_eq!(input.raster_lights_task_bytes().unwrap(), task_fee);
++        let copy = input.try_clone_for_host().unwrap();
++        assert_eq!(copy.raster_punctual_lights, input.raster_punctual_lights);
++        assert_eq!(copy.raster_area_lights, input.raster_area_lights);
++        assert!(copy.raster_lights_retained_bytes().unwrap() <= task_fee);
++        input.raster_punctual_lights.as_mut().unwrap()[0].intensity = 0.0;
++        input.raster_area_lights.as_mut().unwrap()[0].intensity = 0.0;
++        assert_eq!(copy.raster_punctual_lights.as_ref().unwrap()[0].intensity, 2.0);
++        assert_eq!(copy.raster_area_lights.as_ref().unwrap()[0].intensity, 2.0);
++    }
++
++    #[test]
++    fn raster_local_empty_intent_still_refuses_other_producers_and_implicit_weights() {
++        for family in [0,1] {
++            let mut input = raster_local_test_request();
++            if family == 0 { input.raster_punctual_lights = Some(Vec::new()); }
++            else { input.raster_area_lights = Some(Vec::new()); }
++            input.studio_weights = Some([0.0;3]);
++            assert!(input.validate_raster_request().is_err());
++            input.studio_weights = None;
++            input.raytrace = Some(Default::default());
++            assert!(input.validate_raster_request().is_err());
++            input.raytrace = None;
++            input.integrator = Integrator::Raytrace;
++            assert!(input.validate_raster_request().is_err());
++            assert!(super::interactive::cpu_request(&input).is_err());
++        }
++    }
++
++    #[test]
++    fn raster_local_shared_rectangle_validator_preserves_canonical_bounds_and_error_order() {
++        let mut rectangle = raster_local_test_rectangle();
++        rectangle.color = [0.0;3];
++        rectangle.intensity = 0.0;
++        rectangle.edge_u_mm = [1.0,1.0,0.0];
++        assert_eq!(rectangle.validate().unwrap_err().message, "invalid finite rectangular light");
++        rectangle = raster_local_test_rectangle();
++        rectangle.center_mm = [1e9,0.0,0.0];
++        assert_eq!(rectangle.validate().unwrap_err().message, "rectangular light corner exceeds world bounds");
++        let mut input = raster_local_test_request();
++        input.raster_area_lights = Some(vec![rectangle.clone()]);
++        assert!(input.validate_raster_request().is_err());
++        let options = RaytraceOptions { area_lights:Some(vec![rectangle]), ..Default::default() };
++        assert_eq!(options.validate().unwrap_err().message, "rectangular light corner exceeds world bounds");
++    }
++
+ 
+     #[test]
+     fn raster_light_wire_is_nullable_bounded_strict_and_fallibly_copied() {
+--- a/crates/render/src/job/png.rs
++++ b/crates/render/src/job/png.rs
+@@ -104,6 +104,8 @@
+ 
+     fn request(width: u32, height: u32) -> ImageRequest {
+         ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+             raster_lights: None,
+             width,
+--- a/crates/render/src/job/raster_lights.rs
++++ b/crates/render/src/job/raster_lights.rs
+@@ -122,3 +122,96 @@
+     }
+     deserializer.deserialize_option(Nullable)
+ }
++
++/// New local families share the real DTO validators with CPU transport.
++pub fn validate_punctual(lights: &Option<Vec<super::PunctualLightOptions>>) -> Result<()> {
++    if let Some(lights) = lights {
++        if lights.len() > 8 || lights.capacity() > 8 {
++            return Err(invalid("Raster point/spot length and capacity must be at most eight"));
++        }
++        for light in lights {
++            light.validate()?;
++        }
++    }
++    Ok(())
++}
++
++pub fn validate_areas(lights: &Option<Vec<super::RectangleLightOptions>>) -> Result<()> {
++    if let Some(lights) = lights {
++        if lights.len() > 4 || lights.capacity() > 4 {
++            return Err(invalid("Raster rectangular length and capacity must be at most four"));
++        }
++        for light in lights {
++            light.validate()?;
++        }
++    }
++    Ok(())
++}
++
++pub fn deserialize_punctual<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Option<Vec<super::PunctualLightOptions>>, D::Error> {
++    let lights = super::punctual::bounded_punctual(deserializer)?;
++    validate_punctual(&lights).map_err(serde::de::Error::custom)?;
++    Ok(lights)
++}
++
++pub fn deserialize_areas<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Option<Vec<super::RectangleLightOptions>>, D::Error> {
++    let lights = super::bounded_area_lights(deserializer)?;
++    validate_areas(&lights).map_err(serde::de::Error::custom)?;
++    Ok(lights)
++}
++
++pub(super) fn try_copy_punctual(lights: &Option<Vec<super::PunctualLightOptions>>) -> Result<Option<Vec<super::PunctualLightOptions>>> {
++    validate_punctual(lights)?;
++    let Some(source) = lights else { return Ok(None) };
++    if source.is_empty() {
++        return Ok(Some(Vec::new()));
++    }
++    let mut copy = Vec::new();
++    copy.try_reserve_exact(8).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "could not reserve Raster point/spot lights"))?;
++    if copy.capacity() > 8 {
++        return Err(invalid("Raster point/spot allocation exceeded its bounded capacity"));
++    }
++    // Fixed-size DTO: the admitted reserve covers every push, without hidden allocation.
++    copy.extend(source.iter().copied());
++    Ok(Some(copy))
++}
++
++pub(super) fn try_copy_areas(lights: &Option<Vec<super::RectangleLightOptions>>) -> Result<Option<Vec<super::RectangleLightOptions>>> {
++    validate_areas(lights)?;
++    let Some(source) = lights else { return Ok(None) };
++    if source.is_empty() {
++        return Ok(Some(Vec::new()));
++    }
++    let mut copy = Vec::new();
++    copy.try_reserve_exact(4).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "could not reserve Raster rectangular lights"))?;
++    if copy.capacity() > 4 {
++        return Err(invalid("Raster rectangular allocation exceeded its bounded capacity"));
++    }
++    // RectangleLightOptions contains only fixed arrays and a scalar.
++    copy.extend(source.iter().cloned());
++    Ok(Some(copy))
++}
++
++pub(super) fn local_retained_bytes(punctual: &Option<Vec<super::PunctualLightOptions>>, areas: &Option<Vec<super::RectangleLightOptions>>) -> Result<u64> {
++    validate_punctual(punctual)?;
++    validate_areas(areas)?;
++    let p = punctual.as_ref().map_or(0, Vec::capacity);
++    let a = areas.as_ref().map_or(0, Vec::capacity);
++    p.checked_mul(std::mem::size_of::<super::PunctualLightOptions>())
++        .and_then(|n| a.checked_mul(std::mem::size_of::<super::RectangleLightOptions>()).and_then(|m| n.checked_add(m)))
++        .and_then(|n| u64::try_from(n).ok())
++        .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "Raster local retained size overflow"))
++}
++
++pub(super) fn local_task_bytes(punctual: &Option<Vec<super::PunctualLightOptions>>, areas: &Option<Vec<super::RectangleLightOptions>>) -> Result<u64> {
++    validate_punctual(punctual)?;
++    validate_areas(areas)?;
++    // Covers the original public-task Vec capacity even for Some(empty), and
++    // the bounded fallible host-copy capacity. No allocation occurs here on valid input.
++    let p = if punctual.is_some() { 8usize } else { 0 };
++    let a = if areas.is_some() { 4usize } else { 0 };
++    p.checked_mul(std::mem::size_of::<super::PunctualLightOptions>())
++        .and_then(|n| a.checked_mul(std::mem::size_of::<super::RectangleLightOptions>()).and_then(|m| n.checked_add(m)))
++        .and_then(|n| u64::try_from(n).ok())
++        .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "Raster local task size overflow"))
++}
+--- a/crates/render/src/job/regrade.rs
++++ b/crates/render/src/job/regrade.rs
+@@ -94,6 +94,8 @@
+                 return self.pending(done, total);
+             }
+             let request = ImageRequest {
++                raster_punctual_lights: None,
++                raster_area_lights: None,
+                 raster_exposure_ev: 0.0,
+                 raster_lights: None,
+                 studio_weights: None,
+@@ -178,6 +180,8 @@
+         }
+         self.linear = None;
+         let request = ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+             raster_lights: None,
+             studio_weights: None,
+--- a/crates/render/src/job/rt2_tests.rs
++++ b/crates/render/src/job/rt2_tests.rs
+@@ -6,6 +6,8 @@
+ 
+ fn request(integrator: Integrator) -> ImageRequest {
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/raytrace/anisotropic_faces_tests.rs
++++ b/crates/render/src/raytrace/anisotropic_faces_tests.rs
+@@ -146,6 +146,8 @@
+ fn decoded_cpu_png_rotates_only_the_two_explicit_planar_targets() {
+     fn render(scene: ProductScene, camera: Camera, options: RaytraceOptions) -> ::image::RgbaImage {
+         let request = ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+             raster_lights: None,
+             studio_weights: None,
+--- a/crates/render/src/raytrace/anisotropic_reflection_image_tests.rs
++++ b/crates/render/src/raytrace/anisotropic_reflection_image_tests.rs
+@@ -64,6 +64,8 @@
+         ..Default::default()
+     };
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/raytrace/deterministic_primary_tests.rs
++++ b/crates/render/src/raytrace/deterministic_primary_tests.rs
+@@ -64,6 +64,8 @@
+         ..Default::default()
+     };
+     let request = ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+@@ -231,6 +233,8 @@
+         ..Default::default()
+     };
+     let request = ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/raytrace/dielectric_tests.rs
++++ b/crates/render/src/raytrace/dielectric_tests.rs
+@@ -43,6 +43,8 @@
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Top);
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/raytrace/environment_image_tests.rs
++++ b/crates/render/src/raytrace/environment_image_tests.rs
+@@ -35,6 +35,8 @@
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Top);
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/raytrace/environment_reflection_tests.rs
++++ b/crates/render/src/raytrace/environment_reflection_tests.rs
+@@ -40,6 +40,8 @@
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Top);
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -176,6 +176,8 @@
+ }
+ fn request() -> ImageRequest {
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/raytrace/primary_aa_tests.rs
++++ b/crates/render/src/raytrace/primary_aa_tests.rs
+@@ -174,6 +174,8 @@
+         ..Default::default()
+     };
+     let request = ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+@@ -759,6 +761,8 @@
+         ..Default::default()
+     };
+     let request = ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/raytrace/punctual_image_tests.rs
++++ b/crates/render/src/raytrace/punctual_image_tests.rs
+@@ -44,6 +44,8 @@
+         ..Default::default()
+     };
+     let request = ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/raytrace/reflection_image_tests.rs
++++ b/crates/render/src/raytrace/reflection_image_tests.rs
+@@ -183,6 +183,8 @@
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Front);
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/render/src/studio.rs
++++ b/crates/render/src/studio.rs
+@@ -76,6 +76,124 @@
+     Ok(radiance)
+ }
+ 
++/// Shared slots for points and spots, independently of directional slots.
++pub const MAX_SCHEMATIC_PUNCTUAL_LIGHTS: usize = 8;
++pub const MAX_SCHEMATIC_RECTANGLE_LIGHTS: usize = 4;
++
++/// Unshadowed numerical response for the bounded opaque Raster consumer.
++///
++/// Valid inputs use borrowed slices without new containers or retained allocations.
++/// Invalid DTOs may allocate the existing validator's bounded error String.
++/// The caller must separately admit the
++/// retained capacities/copies and charge up to twenty BRDF evaluations per
++/// sample; these slice bounds are not a memory or cancellation admission.
++/// An empty rig is dark. No implicit studio, exposure or display transfer.
++///
++/// Points use reference-distance inverse-square falloff with the authored
++/// minimum distance. Spots use a cubic smoothstep in cosine space (an interval
++/// <= 1e-6 uses the outer-cosine step). Rectangles use ONLY the centre, projected
++/// area and emitting U-cross-V normal; aspect ratio at fixed area has no effect.
++/// No finite-footprint integration, soft shadows, sampling seed or environment.
++/// Coincident source/sample contributes zero, as in the paired Model helper.
++/// Source alignment is not executed f64/f32 image or physical-parity acceptance.
++pub fn shade_schematic(
++    surface: OpaqueSurface,
++    normal: Vec3,
++    view: Vec3,
++    position_mm: Vec3,
++    directional: &[crate::job::DirectionalLightOptions],
++    punctual: &[crate::job::PunctualLightOptions],
++    rectangles: &[crate::job::RectangleLightOptions],
++) -> Result<Vec3, SurfaceError> {
++    if directional.len() > MAX_SCHEMATIC_DIRECTIONAL_LIGHTS
++        || punctual.len() > MAX_SCHEMATIC_PUNCTUAL_LIGHTS
++        || rectangles.len() > MAX_SCHEMATIC_RECTANGLE_LIGHTS
++        || !schematic_world_point(position_mm)
++    {
++        return Err(SurfaceError::Radiance);
++    }
++    // Reuse the real public DTO validator; no shadow parser or CPU feature gate.
++    // Check all local inputs before visibility, colour or intensity can skip one.
++    for light in punctual {
++        light.validate().map_err(|_| SurfaceError::Radiance)?;
++    }
++    for light in rectangles {
++        schematic_rectangle_geometry(light)?;
++    }
++    let n = unit_direction(normal)?;
++    let v = unit_direction(view)?;
++    // Keep the existing directional implementation and its validation intact.
++    let mut radiance = shade_directional(surface, n, v, directional)?;
++    for light in punctual {
++        let [x, y, z] = light.position_mm;
++        let delta = Vec3::new(x, y, z) - position_mm;
++        if delta == Vec3::ZERO {
++            continue;
++        }
++        let direction = unit_direction(delta)?;
++        let distance_squared = delta.dot(delta).max(light.minimum_distance_mm * light.minimum_distance_mm).max(1e-6);
++        let mut weight = light.reference_distance_mm * light.reference_distance_mm / distance_squared;
++        if let Some(cone) = light.cone {
++            let [x, y, z] = cone.emitted_axis;
++            let cosine = unit_direction(Vec3::new(x, y, z))?.dot(-direction);
++            let inner = cone.inner_half_angle_radians.cos();
++            let outer = cone.outer_half_angle_radians.cos();
++            let profile = if inner - outer > 1e-6 {
++                let t = ((cosine - outer) / (inner - outer)).clamp(0.0, 1.0);
++                t * t * (3.0 - 2.0 * t)
++            } else if cosine >= outer {
++                1.0
++            } else {
++                0.0
++            };
++            weight *= profile;
++        }
++        radiance += schematic_contribution(surface, n, v, direction, light.color, light.intensity * weight)?;
++    }
++    for light in rectangles {
++        let (center, emitting_normal, area) = schematic_rectangle_geometry(light)?;
++        let delta = center - position_mm;
++        if delta == Vec3::ZERO {
++            continue;
++        }
++        let direction = unit_direction(delta)?;
++        let weight = area * emitting_normal.dot(-direction).max(0.0) / delta.dot(delta).max(1e-6);
++        radiance += schematic_contribution(surface, n, v, direction, light.color, light.intensity * weight)?;
++    }
++    if !radiance.is_finite() || radiance.x < 0.0 || radiance.y < 0.0 || radiance.z < 0.0 {
++        return Err(SurfaceError::Radiance);
++    }
++    Ok(radiance)
++}
++
++fn schematic_world_point(point: Vec3) -> bool {
++    point.is_finite() && [point.x, point.y, point.z].into_iter().all(|c| c.abs() <= 1e9)
++}
++
++// The crate-local rectangle validator is shared with CPU transport and admission.
++// This geometry projection does not parse or admit retained containers.
++fn schematic_rectangle_geometry(light: &crate::job::RectangleLightOptions) -> Result<(Vec3, Vec3, f64), SurfaceError> {
++    light.validate().map_err(|_| SurfaceError::Radiance)?;
++    let [x, y, z] = light.center_mm;
++    let center = Vec3::new(x, y, z);
++    let [x, y, z] = light.edge_u_mm;
++    let u = Vec3::new(x, y, z);
++    let [x, y, z] = light.edge_v_mm;
++    let v = Vec3::new(x, y, z);
++    let cross = u.cross(v);
++    Ok((center, unit_direction(cross)?, cross.len()))
++}
++
++fn schematic_contribution(surface: OpaqueSurface, normal: Vec3, view: Vec3, direction: Vec3, color: [f64; 3], incident: f64) -> Result<Vec3, SurfaceError> {
++    let brdf = surface.brdf(normal, view, direction)?;
++    let [r, g, b] = color;
++    let value = Vec3::new(brdf.x * r, brdf.y * g, brdf.z * b) * (incident * normal.dot(direction).max(0.0));
++    if !value.is_finite() || value.x < 0.0 || value.y < 0.0 || value.z < 0.0 {
++        return Err(SurfaceError::Radiance);
++    }
++    Ok(value)
++}
++
+ /// Per-channel Reinhard preview tone map, still in linear sRGB.
+ /// Consumers encode exactly once after applying this to nonnegative finite radiance.
+ pub fn tone_map(radiance: Vec3) -> Result<Vec3, SurfaceError> {
+@@ -208,6 +326,255 @@
+             let old = shade(surface, Vec3::Z, Vec3::Z).unwrap();
+             let new = shade_directional(surface, Vec3::Z, Vec3::Z, &explicit).unwrap();
+             assert!((old - new).len() < 1e-14);
++        }
++    }
++
++    fn local_surface() -> OpaqueSurface {
++        OpaqueSurface::new(Vec3::new(0.8, 0.5, 0.25), 0.0, 1.0, 1.0).unwrap()
++    }
++
++    fn local_point() -> crate::job::PunctualLightOptions {
++        crate::job::PunctualLightOptions {
++            position_mm: [0.0, 0.0, 10.0],
++            color: [1.0; 3],
++            intensity: 2.0,
++            reference_distance_mm: 10.0,
++            minimum_distance_mm: 0.001,
++            cone: None,
++        }
++    }
++
++    fn local_rectangle() -> crate::job::RectangleLightOptions {
++        crate::job::RectangleLightOptions {
++            center_mm: [0.0, 0.0, 10.0],
++            edge_u_mm: [2.0, 0.0, 0.0],
++            edge_v_mm: [0.0, -2.0, 0.0],
++            color: [1.0; 3],
++            intensity: 2.0,
++        }
++    }
++
++    fn assert_lambert(value: Vec3, incident_cosine: f64) {
++        // Closed-form rho/pi, independent of the production light helper.
++        let expected = Vec3::new(0.8, 0.5, 0.25) * (incident_cosine / PI);
++        assert!((value - expected).len() < 1e-12 * expected.len().max(1.0), "{value:?} != {expected:?}");
++    }
++
++    #[test]
++    fn schematic_local_point_reference_and_double_distance_match_closed_form() {
++        let mut point = local_point();
++        assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[]).unwrap(), 2.0);
++        point.position_mm = [0.0, 0.0, 20.0];
++        assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[]).unwrap(), 0.5);
++    }
++
++    #[test]
++    fn schematic_local_point_colour_and_receiver_cosine_are_linear() {
++        let mut point = local_point();
++        point.position_mm = [0.0, 6.0, 8.0];
++        point.color = [0.25, 0.5, 1.0];
++        let value = shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[]).unwrap();
++        let expected = Vec3::new(0.32, 0.4, 0.4) * (1.0 / PI);
++        assert!((value - expected).len() < 1e-13);
++    }
++
++    #[test]
++    fn schematic_local_world_translation_preserves_point_spot_and_rectangle_response() {
++        let mut point = local_point();
++        point.cone = Some(crate::job::SpotConeOptions { emitted_axis: [0.0, 0.0, -1.0], inner_half_angle_radians: 0.2, outer_half_angle_radians: 0.5 });
++        let mut rectangle = local_rectangle();
++        let first = shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[rectangle.clone()]).unwrap();
++        point.position_mm = [123.0, -45.0, 77.0];
++        rectangle.center_mm = point.position_mm;
++        let moved = shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::new(123.0, -45.0, 67.0), &[], &[point], &[rectangle]).unwrap();
++        assert!((first - moved).len() < 1e-13);
++    }
++
++    #[test]
++    fn schematic_local_minimum_distance_and_tiny_nonzero_delta_remain_finite() {
++        let mut point = local_point();
++        point.position_mm = [0.0, 0.0, 1.0];
++        point.minimum_distance_mm = 2.0;
++        assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[]).unwrap(), 50.0);
++        point.position_mm = [0.0, 0.0, 1e-200];
++        point.minimum_distance_mm = 0.001;
++        assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[]).unwrap(), 2e8);
++    }
++
++    #[test]
++    fn schematic_local_spot_inner_outer_and_cosine_midpoint_match_cubic_profile() {
++        // Source at +Z: these axes have cosine 1, -1 or 1/2 with -Z.
++        // cos(inner)=4/5 and cos(outer)=1/5, so cosine1/2 gives t=1/2.
++        for (axis, expected) in [([0.0, 0.0, -1.0], 2.0), ([0.0, 0.0, 1.0], 0.0), ([3.0_f64.sqrt(), 0.0, -1.0], 1.0)] {
++            let mut point = local_point();
++            point.cone = Some(crate::job::SpotConeOptions {
++                emitted_axis: axis,
++                inner_half_angle_radians: 0.8_f64.acos(),
++                outer_half_angle_radians: 0.2_f64.acos(),
++            });
++            assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[]).unwrap(), expected);
++        }
++    }
++
++    #[test]
++    fn schematic_local_spot_narrow_interval_uses_explicit_step_policy() {
++        for (axis, expected) in [([0.0, 0.0, -1.0], 2.0), ([1.0, 0.0, 0.0], 0.0)] {
++            let mut point = local_point();
++            point.cone = Some(crate::job::SpotConeOptions { emitted_axis: axis, inner_half_angle_radians: 0.0, outer_half_angle_radians: 0.001 });
++            assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[]).unwrap(), expected);
++        }
++    }
++
++    #[test]
++    fn schematic_local_area_centroid_matches_area_over_squared_distance() {
++        let mut rectangle = local_rectangle();
++        assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[rectangle.clone()]).unwrap(), 0.08);
++        rectangle.edge_u_mm = [4.0, 0.0, 0.0];
++        assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[rectangle.clone()]).unwrap(), 0.16);
++        rectangle.center_mm = [0.0, 0.0, 20.0];
++        assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[rectangle]).unwrap(), 0.04);
++    }
++
++    #[test]
++    fn schematic_local_area_emitting_side_and_projected_cosine_are_explicit() {
++        let mut rectangle = local_rectangle();
++        rectangle.edge_v_mm = [0.0, -1.6, -1.2];
++        assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[rectangle.clone()]).unwrap(), 0.064);
++        rectangle.edge_v_mm = [0.0, 2.0, 0.0];
++        assert_eq!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[rectangle]).unwrap(), Vec3::ZERO);
++    }
++
++    #[test]
++    fn schematic_local_area_same_area_different_aspect_is_documented_approximation() {
++        let rectangle = local_rectangle();
++        let mut thin = rectangle.clone();
++        thin.edge_u_mm = [4.0, 0.0, 0.0];
++        thin.edge_v_mm = [0.0, -1.0, 0.0];
++        let first = shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[rectangle]).unwrap();
++        let second = shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[thin]).unwrap();
++        assert_eq!(first, second);
++    }
++
++    #[test]
++    fn schematic_local_coincident_point_spot_and_area_are_zero_without_fallback_axis() {
++        let mut point = local_point();
++        point.position_mm = [0.0; 3];
++        let mut rectangle = local_rectangle();
++        rectangle.center_mm = [0.0; 3];
++        for cone in [None, Some(crate::job::SpotConeOptions { emitted_axis: [0.0, 0.0, -1.0], inner_half_angle_radians: 0.2, outer_half_angle_radians: 0.5 })] {
++            point.cone = cone;
++            assert_eq!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[rectangle.clone()]).unwrap(), Vec3::ZERO);
++        }
++    }
++
++    #[test]
++    fn schematic_local_empty_back_facing_and_back_view_have_no_ambient() {
++        assert_eq!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[]).unwrap(), Vec3::ZERO);
++        let point = local_point();
++        for (n, v) in [(-Vec3::Z, Vec3::Z), (Vec3::Z, -Vec3::Z)] {
++            assert_eq!(shade_schematic(local_surface(), n, v, Vec3::ZERO, &[], &[point], &[]).unwrap(), Vec3::ZERO);
++        }
++    }
++
++    #[test]
++    fn schematic_local_three_families_superpose_without_display_transfer() {
++        let d = directional([0.0, 0.0, 1.0], [1.0; 3], 1.0);
++        let value = shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[d], &[local_point()], &[local_rectangle()]).unwrap();
++        assert_lambert(value, 3.08);
++        assert_ne!(value, tone_map(value).unwrap());
++    }
++
++    #[test]
++    fn schematic_local_counts_eight_shared_punctual_and_four_rectangles_separately() {
++        let d: [_; 8] = std::array::from_fn(|_| directional([0.0, 0.0, 1.0], [1.0; 3], 1.0));
++        let mut p = [local_point(); 8];
++        p[7].cone = Some(crate::job::SpotConeOptions { emitted_axis: [0.0, 0.0, -1.0], inner_half_angle_radians: 0.2, outer_half_angle_radians: 0.5 });
++        let a: [_; 4] = std::array::from_fn(|_| local_rectangle());
++        assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &d, &p, &a).unwrap(), 24.32);
++        assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &d, &[local_point(); 9], &a).is_err());
++        let five: [_; 5] = std::array::from_fn(|_| local_rectangle());
++        assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &d, &p, &five).is_err());
++        let nine: [_; 9] = std::array::from_fn(|_| directional([0.0, 0.0, 1.0], [1.0; 3], 1.0));
++        assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &nine, &p, &a).is_err());
++    }
++
++    #[test]
++    fn schematic_local_dark_coincident_inputs_still_validate_every_punctual_property() {
++        let mut dark = local_point();
++        dark.color = [0.0; 3];
++        dark.intensity = 0.0;
++        dark.position_mm = [0.0; 3];
++        for bad in [f64::NAN, f64::INFINITY, 0.0, 1e6 + 1.0] {
++            let mut point = dark;
++            point.reference_distance_mm = bad;
++            assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[]).is_err());
++        }
++        let mut point = dark;
++        point.cone = Some(crate::job::SpotConeOptions { emitted_axis: [0.0; 3], inner_half_angle_radians: 0.2, outer_half_angle_radians: 0.5 });
++        assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[]).is_err());
++        point = dark;
++        point.position_mm = [f64::NAN, 0.0, 0.0];
++        assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[]).is_err());
++    }
++
++    #[test]
++    fn schematic_local_dark_rectangles_refuse_bad_lengths_axes_corners_and_radiance() {
++        let mut dark = local_rectangle();
++        dark.color = [0.0; 3];
++        dark.intensity = 0.0;
++        for edge in [[0.0; 3], [f64::NAN, 0.0, 0.0], [f64::INFINITY, 0.0, 0.0], [1e-7, 0.0, 0.0], [1e6 + 1.0, 0.0, 0.0], [1.0, 1.0, 0.0]] {
++            let mut rectangle = dark.clone();
++            rectangle.edge_u_mm = edge;
++            assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[rectangle]).is_err());
++        }
++        for bad in [f64::NAN, f64::INFINITY, -1.0, 64.01] {
++            let mut rectangle = dark.clone();
++            rectangle.intensity = bad;
++            assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[rectangle]).is_err());
++        }
++        let mut rectangle = dark;
++        rectangle.center_mm = [1e9, 0.0, 0.0];
++        assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[rectangle]).is_err());
++    }
++
++    #[test]
++    fn schematic_local_rejects_bad_sample_position_and_directions_even_when_empty() {
++        for p in [Vec3::new(f64::NAN, 0.0, 0.0), Vec3::new(f64::INFINITY, 0.0, 0.0), Vec3::new(1e9 + 1.0, 0.0, 0.0)] {
++            assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, p, &[], &[], &[]).is_err());
++        }
++        assert!(shade_schematic(local_surface(), Vec3::ZERO, Vec3::Z, Vec3::ZERO, &[], &[], &[]).is_err());
++        assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::ZERO, Vec3::ZERO, &[], &[], &[]).is_err());
++        let bad = directional([0.0; 3], [0.0; 3], 0.0);
++        assert!(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[bad], &[], &[]).is_err());
++    }
++
++    #[test]
++    fn schematic_local_finite_maximum_authored_scales_are_not_silently_clipped() {
++        let mut point = local_point();
++        point.position_mm = [0.0, 0.0, 0.001];
++        point.reference_distance_mm = 1e6;
++        point.intensity = 64.0;
++        let mut rectangle = local_rectangle();
++        rectangle.center_mm = point.position_mm;
++        rectangle.edge_u_mm = [1e6, 0.0, 0.0];
++        rectangle.edge_v_mm = [0.0, -1e6, 0.0];
++        rectangle.intensity = 64.0;
++        assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[rectangle]).unwrap(), 1.28e20);
++    }
++
++    #[test]
++    fn schematic_local_area_floor_and_spot_cosine_endpoints_are_explicit() {
++        let mut rectangle = local_rectangle();
++        rectangle.center_mm = [0.0, 0.0, 0.0001];
++        assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[], &[rectangle]).unwrap(), 8e6);
++        for (cosine, expected) in [(0.8_f64, 2.0), (0.2_f64, 0.0)] {
++            let mut point = local_point();
++            point.cone = Some(crate::job::SpotConeOptions {
++                emitted_axis: [(1.0 - cosine * cosine).sqrt(), 0.0, -cosine],
++                inner_half_angle_radians: 0.8_f64.acos(),
++                outer_half_angle_radians: 0.2_f64.acos(),
++            });
++            assert_lambert(shade_schematic(local_surface(), Vec3::Z, Vec3::Z, Vec3::ZERO, &[], &[point], &[]).unwrap(), expected);
+         }
+     }
+ }
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -1211,6 +1211,8 @@
+         let mut task = ImageTask::new(
+             scene,
+             ImageRequest {
++                raster_punctual_lights: None,
++                raster_area_lights: None,
+                 raster_exposure_ev: 0.0,
+                 raster_lights: None,
+                 studio_weights: None,
+@@ -3620,6 +3622,8 @@
+ fn large_image_display_uses_captured_profile_and_keeps_export_pixels_unchanged() {
+     use solidcraft_engine::render::job::{CpuBudget, ImageRequest, RaytraceOptions};
+     let request = ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+@@ -8609,6 +8613,8 @@
+ fn partial_png_contract_request() -> solidcraft_engine::render::job::ImageRequest {
+     use solidcraft_engine::render::job::{CpuProgressiveOptions, ImageRequest, RaytraceOptions};
+     ImageRequest {
++        raster_punctual_lights: None,
++        raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         studio_weights: None,
+--- a/crates/ui-egui/src/render_workspace_thumbnails.rs
++++ b/crates/ui-egui/src/render_workspace_thumbnails.rs
+@@ -138,6 +138,8 @@
+         let permit = WorkerPermit;
+         let Some(setup) = app.session.doc.render.setups.get(&key.name) else { return };
+         let request = solidcraft_engine::render::job::ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+             raster_lights: None,
+             studio_weights: None,
+--- a/tools/render-library/native_smoke.rs
++++ b/tools/render-library/native_smoke.rs
+@@ -57,7 +57,7 @@
+ fn request(root: &Path) -> Result<ImageRequest, Box<dyn Error>> {
+     let hdr = HdrSource::new(fs::read(root.join("assets/render/starter/environments/exports/neutral-side-softbox.hdr"))?)?;
+     let environment = EnvironmentSource::from_hdr(hdr, std::f64::consts::PI, 1.0, false)?;
+-    Ok(ImageRequest { raster_exposure_ev: 0.0, raster_lights: None,
++    Ok(ImageRequest { raster_punctual_lights: None, raster_area_lights: None, raster_exposure_ev: 0.0, raster_lights: None, studio_weights: None,
+         camera: Camera { distance: 220.0, ..Default::default() },
+         width: 320,
+         height: 240,

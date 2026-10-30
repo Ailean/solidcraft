@@ -1,0 +1,42 @@
+{
+  "status": "SOURCE_PROPOSAL_UNFORMATTED_UNCOMPILED_UNRUN_UNADOPTED",
+  "base_working_source_manifest_sha256": "e70ee3bb9a68fdeeee921ca338b6c1a9e08c8198fe5f07a114166a3af87b446d",
+  "source_review_sha256": "65e6f4c52aa5237a85fc3a5d8e5f964d3d73d8f42d462a6421b72b5e232c3160",
+  "patch_sha256": "604c45993eee8b5ee5409132f4bd5a4663599bb40ef39658781e7da305093c9d",
+  "files": [
+    {
+      "path": "assets/shaders/viewport.wgsl",
+      "before_sha256": "ef1073ade9cef7c69157eed6f4a5146852df004511dad5007274123586deb134",
+      "candidate_sha256": "a4faec5492b81299bff8f88233962288130e82c05576af2d163379f37a4e83cd",
+      "before_bytes": 32637,
+      "candidate_bytes": 32685
+    },
+    {
+      "path": "crates/gpu/src/view.rs",
+      "before_sha256": "88c55a04a4b2405bd53dea8cebfb48782d31e287a9a8c855aa586da3e1fb89b2",
+      "candidate_sha256": "b53ce49f2db9e4efce9776e920ff6dcd9a611e2e1f6028d4424d4ca8cd5eb71e",
+      "before_bytes": 271521,
+      "candidate_bytes": 276014
+    }
+  ],
+  "production_paths": [
+    "assets/shaders/viewport.wgsl"
+  ],
+  "test_only_paths": [
+    "crates/gpu/src/view.rs"
+  ],
+  "new_test_declarations": 1,
+  "planned_renders_inside_one_test": 96,
+  "render_dimensions": [
+    64,
+    64
+  ],
+  "oracle_max_abs_code_difference": 1,
+  "compiled": false,
+  "Naga_validated": false,
+  "tests_run": 0,
+  "physical_GPU_qualified": false,
+  "adoption_authorized": false,
+  "preservation_limit": "Explicit shader flag is Some(lights), not an independent Frame.product identity. Ordinary Design/implicit routes remain source-unchanged; inconsistent Design+Some constructions enter the changed explicit branch.",
+  "PBR_source_unchanged_sha256": "d072e328a2a83c404c76b430efe2eb374c94abca779fbd266322be08669781f6"
+}

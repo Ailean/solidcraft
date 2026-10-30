@@ -1,0 +1,41 @@
+{
+  "status": "SOURCE_ONLY_V2_DOCS_UNADOPTED_NOT_RUNTIME_QUALIFIED",
+  "base_working_source_manifest_sha256": "3e93e75e4d6382a04cb1d005d3331ca250fd84fded53d8d99f215e8d8c944628",
+  "source_packet_manifest_sha256": "f4e0e57726a45febf20ab194e5fc7c9019b5366ab6b36dd2c141a0f1bfc6068c",
+  "patch_sha256": "31e5651f6a521e0ab52dbe140a498939bd13e9ba2e88c688075ca068720ca0ea",
+  "patch_bytes": 10542,
+  "application_mode": "cumulative_from_exact_C19_RAW_CRLF",
+  "files": [
+    {
+      "path": "docs/render-interactive.md",
+      "before_sha256": "14cf4b47d453c6de0f0c835eac63a98b6f8445fdeb7b5c65d3de538b091577a2",
+      "candidate_sha256": "f98decbcdb5d91568e103c794a0b785b31d127d6dc439eb8911270534b13be82",
+      "before_bytes": 4349,
+      "candidate_bytes": 8333,
+      "encoding": "UTF-8 without BOM",
+      "candidate_EOL": "CRLF",
+      "candidate_CRLF": 130,
+      "candidate_LF_only": 0
+    },
+    {
+      "path": "docs/render-shot-scene.md",
+      "before_sha256": "d5df48d1f256a2c878812e619a7d3bc07b6fd76c090d7fcc2e44ae9955ae83aa",
+      "candidate_sha256": "3258f084d6d4f3b1b87771693018505e2405848ac99063d06bb840d2016c1188",
+      "before_bytes": 3126,
+      "candidate_bytes": 4931,
+      "encoding": "UTF-8 without BOM",
+      "candidate_EOL": "CRLF",
+      "candidate_CRLF": 72,
+      "candidate_LF_only": 0
+    }
+  ],
+  "alternative_v1_bridge_not_included_sha256": "5b46c565fcafb2413bfbafe1f309d740a075b519cb8c0a1462448b1d9d2be0a9",
+  "never_apply_both_patches_sequentially": true,
+  "do_not_normalize_patch_or_endpoints": true,
+  "source_code_changed": false,
+  "new_tests": 0,
+  "adopted": false,
+  "runtime_qualified": false,
+  "C19_build_results_transfer": false,
+  "glass_scope": "Dielectric intent retained for capture/transport certification; unsupported progressive combinations including anisotropy refuse. No general glass guarantee."
+}

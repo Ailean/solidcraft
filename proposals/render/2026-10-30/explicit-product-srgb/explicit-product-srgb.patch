@@ -1,0 +1,106 @@
+--- a/assets/shaders/viewport.wgsl
++++ b/assets/shaders/viewport.wgsl
+@@ -480,8 +480,9 @@
+     return radiance * exp2(u.product_lights_meta.z);
+ }
+ 
+-// Convert the current legacy display response, after its lighting, to linear
+-// light for exposure. This does not replace its albedo decoder or lighting model.
++// Exact product sRGB decode: explicit-light albedo, and the legacy display
++// response before exposure on Unorm targets. Design keeps its historical
++// to_linear transfer; the implicit-light exposure route remains unchanged.
+ fn product_exposure_decode(c: vec3<f32>) -> vec3<f32> {
+     return select(c / 12.92, pow((c + vec3<f32>(0.055)) / vec3<f32>(1.055), vec3<f32>(2.4)), c > vec3<f32>(0.04045));
+ }
+@@ -537,14 +538,14 @@
+     if u.product_lights_meta.x>0.0 {
+         var radiance=vec3<f32>(0.0);
+         for (var k=0u;k<min(u32(u.product_lights_meta.y),21u);k+=1u) {
+-            if u.product_lights[k*4u].w == 4.0 {radiance+=to_linear(base.rgb)*u.product_lights[k*4u+1u].xyz/3.141592653589793;continue;}
++            if u.product_lights[k*4u].w == 4.0 {radiance+=product_exposure_decode(base.rgb)*u.product_lights[k*4u+1u].xyz/3.141592653589793;continue;}
+             let sample=product_light_sample(k,i.wp);
+-            radiance+=to_linear(base.rgb)*sample[1]*(max(dot(n,sample[0]),0.0)/3.141592653589793);
++            radiance+=product_exposure_decode(base.rgb)*sample[1]*(max(dot(n,sample[0]),0.0)/3.141592653589793);
+         }
+         if (u.product_lights_meta.z != 0.0) { radiance = product_exposed_radiance(radiance); }
+         let mapped=radiance/(vec3<f32>(1.0)+radiance);
+-        let encoded=select(mapped*12.92,1.055*pow(mapped,vec3<f32>(1.0/2.4))-vec3<f32>(0.055),mapped>vec3<f32>(0.0031308));
+-        return out_color(vec4<f32>(encoded,base.a));
++        if (u.back.w > 0.5) { return vec4<f32>(mapped,base.a); }
++        return vec4<f32>(product_exposure_encode(mapped),base.a);
+     }
+     let key = normalize(v * 0.8 + vec3<f32>(-0.3, 0.2, 0.6));
+     let diff = max(dot(n, key), 0.0);
+--- a/crates/gpu/src/view.rs
++++ b/crates/gpu/src/view.rs
+@@ -5381,4 +5381,69 @@
+         eprintln!("PRODUCT_EXPOSURE_GPU supported=true formats=2 materials=2 lights=2");
+     }
+ 
+-}
++
++    /// Original Lambert oracle: one unit-cosine source of PI radiance cancels
++    /// diffuse / PI. Decode the authored byte, expose in linear light, Reinhard,
++    /// then encode once. Never derive expected pixels from the viewport shader.
++    #[cfg(not(target_arch = "wasm32"))]
++    #[test]
++    fn explicit_product_dark_channels_follow_one_srgb_transfer_in_both_targets() {
++        let (_, device, queue) = match crate::open_headless() {
++            Ok(device) => device,
++            Err(error) if std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none() => {
++                eprintln!("U17_PRODUCT_SRGB supported=false reason={error}");
++                return;
++            }
++            Err(error) => panic!("required GPU adapter unavailable: {error}"),
++        };
++        for format in [wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::Rgba8UnormSrgb] {
++            for ssaa in [1.0, 2.0] {
++                for pbr in [false, true] {
++                    for ambient in [false, true] {
++                        for rgb in [[0u8, 1, 10], [11, 128, 255]] {
++                            let mut scene = GpuScene::default();
++                            let color = scene.color([rgb[0], rgb[1], rgb[2], 255]);
++                            let linear = rgb.map(solidcraft_geom::srgb::decode8);
++                            // Index matched, nonmetallic: the PBR directional
++                            // control is Lambert too, with no Fresnel/specular.
++                            let surface = solidcraft_render::surface::OpaqueSurface::new(
++                                solidcraft_geom::Vec3::new(linear[0], linear[1], linear[2]),
++                                0.0, 0.6, 1.0,
++                            ).unwrap();
++                            for p in [[-5.0, -5.0, 0.0], [5.0, -5.0, 0.0], [5.0, 5.0, 0.0], [-5.0, -5.0, 0.0], [5.0, 5.0, 0.0], [-5.0, 5.0, 0.0]] {
++                                if pbr { scene.pbr_tri(p, [0.0, 0.0, 1.0], surface); }
++                                else { scene.tri(p, [0.0, 0.0, 1.0], color); }
++                            }
++                            let depth = crate::depth_format(&device, true);
++                            let mut renderer = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false }, None);
++                            let mut frame = test_frame(scene, ssaa);
++                            frame.product = true;
++                            let pi = std::f32::consts::PI;
++                            frame.product_lights = Some(vec![
++                                [0.0, 0.0, 1.0, if ambient { 4.0 } else { 0.0 }, pi, pi, pi, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
++                            ]);
++                            for ev in [-8.0, 0.0, 1.0] {
++                                frame.product_exposure_ev = ProductExposureEv::from_ev(ev).unwrap();
++                                let image = render_frame_format(&mut renderer, &device, &queue, &frame, true, format);
++                                assert_eq!(image.len(), 64 * 64 * 4);
++                                if ssaa == 2.0 { assert!(renderer.ss_ready, "exercise cached supersampling"); }
++                                // Away from every edge and the diagonal, with
++                                // constant radiance over all supersample taps.
++                                let at = (30 * 64 + 32) * 4;
++                                for channel in 0..3 {
++                                    let radiance = linear[channel] * f64::from(pi) / std::f64::consts::PI * f64::from(ev).exp2();
++                                    let expected = solidcraft_geom::srgb::encode8(radiance / (1.0 + radiance));
++                                    assert!(image[at + channel].abs_diff(expected) <= 1,
++                                        "{format:?} ssaa={ssaa} pbr={pbr} ambient={ambient} rgb={rgb:?} ev={ev} channel={channel}: got={} expected={expected}", image[at + channel]);
++                                }
++                                assert_eq!(image[at + 3], 255, "transfer never grades coverage");
++                                assert_eq!(&image[..4], &[255; 4], "white backplate is unchanged");
++                            }
++                        }
++                    }
++                }
++            }
++        }
++        eprintln!("U17_PRODUCT_SRGB supported=true formats=2 ssaa=2 materials=2 sources=2 palettes=2 exposures=3");
++    }
++}

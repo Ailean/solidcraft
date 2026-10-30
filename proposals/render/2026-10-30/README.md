@@ -106,3 +106,19 @@ See the [unit index](reviewed-followups/README.md) and each portable bindings fi
 preserve the full reviewed-source assembly for saved Raster lights, common
 Model/CPU/Raster exposure, captured-image boundaries and paused framing.
 This archive is not adoption, a test pass or production readiness.
+
+## Explicit product sRGB source proposal
+
+[Two-file shader proposal and unrun original GPU test](explicit-product-srgb/README.md)
+preserve the narrow explicit-light color-transfer correction against exact C19
+source. One test proposes 96 renders; none has run. Ordinary Design/implicit
+preservation is source-scoped, and Some(lights) selects the changed branch.
+This archive does not authorize adoption or execution.
+
+## Connected Render documentation v2 source proposal
+
+[Two reviewed CRLF documentation deltas](connected-render-docs-v2/README.md)
+record the Interactive/Shot source contracts and corrected bounded dielectric
+wording. Only the cumulative patch from exact C19 RAW endpoints is included.
+The docs are unadopted; C19 build results and the separate U17 proposal do not
+qualify these edits or authorize runtime/adoption.

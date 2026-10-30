@@ -1,0 +1,171 @@
+diff --git a/docs/render-interactive.md b/docs/render-interactive.md
+--- a/docs/render-interactive.md
++++ b/docs/render-interactive.md
+@@ -1,10 +1,51 @@
+-# CPU Interactive core
++# CPU Interactive preview
+ 
+-First slice of #8936 under #6201. `job::interactive` prepares bounded CPU
+-progressive requests and coordinates their lifetime. **It is not yet connected
+-to the workspace UI.** Entering Render does not start a job. No default,
+-document format, final export, panel or gizmo is changed by this slice.
++The workspace adapter connects `job::interactive` to the Render canvas and the
++Interactive card. Select **CPU ray tracing** in Output and use **On** to enable
++the provisional native CPU preview. Entering Render or changing stages does not
++enable it or start a final image. The registered `render.interactive` command
++uses explicit on, pause, resume and off actions.
+ 
++Interactive requires an available native worker host supporting CPU ray tracing;
++it is not the web/cooperative Raster path or a GPU path-tracing preview. An
++unsupported method, host or request reports a reason rather than changing
++methods or discarding settings. The final renderer's settings, document format
++and export registry remain separate.
++
++## Workspace behavior
++
++After On, committed camera, appearance, visibility, lighting and request edits
++invalidate the current preview automatically. Capture groups edits after 200 ms
++without a newer change; this is a scheduling rule, not a promised display
++latency. The card exposes Updating, Refining preview, Sample target reached,
++Pause/Resume and Off. A completed Interactive image is still labelled
++Provisional preview; reaching its target does not make it a final result.
++
++Pause cancels owned preview work and may retain accepted pixels as a reference.
++Edits mark that reference Out of date. Resume uses the latest input identity.
++An appearance or lighting edit alone does not prohibit repeated aligned
++selection/material editing. Geometry targets require the accepted image's
++camera, authored aspect, visibility, evaluated world and placement metadata to
++match the current view. A changed camera, hidden body or changed geometry must
++not authorize picking or Paint from stale pixels, including after a navigation
++button is released. Unknown source pixels also cannot claim geometry targets.
++A missing alignment certificate fails closed; painting a retained image does
++not certify its geometry.
++
++The image is fitted without stretching; painting and geometry input share its
++actual pixel rectangle. Empty letterbox space is not a geometry target.
++Navigation and release/Escape handling remain available when geometry input is
++blocked. While an enabled preview awaits its current image, the canvas reserves
++that route rather than painting the fast Model preview as current CPU pixels.
++
++Off, leaving Render or changing documents disables/cancels the owned preview
++context. A manual final temporarily suspends preview capture; it does not
++export an Interactive image or cancel the final job. Result has canvas priority.
++A failed capture waits for a relevant edit or explicit Resume instead of
++starting an unbounded retry loop.
++
++## Preview envelope
++
+ `cpu_request` clones an immutable final request. It preserves the camera,
+ background, shadows, exposure, lighting, resources and transport. Only preview
+ dimensions and camera/reflection sampling change: maximum 1024 pixels along the
+@@ -16,8 +57,31 @@
+ The existing profile and host still enforce geometry, traversal and memory limits.
+ Rectangle/LED direct-light inputs, their emitter-sample count and area-pattern
+ seed survive preview lowering unchanged. Only camera/reflection sampling uses
+-the preview envelope; dielectric and anisotropic overrides still fail explicitly.
++the preview envelope; dielectric intent is retained for capture and transport
++certification, while unsupported progressive combinations, including anisotropy,
++still fail explicitly. This is not a promise of general glass support.
++See [CPU progressive sampling](render-cpu-progressive.md) and
++[CPU resource profiles](render-cpu-resource-profiles.md) for the separate final
++request and admission contracts.
+ 
++## Exposure and image ownership
++
++The saved setup's common exposure is finite and bounded to -32..32 EV.
++With Interactive Off, Model uses that exposure in its fast product preview for
++all final-method choices: CPU ray tracing, GPU path tracing and Raster. Editing
++it does not require Start or enable the selected final executor. This Model
++path still requires its viewport device and retains its current environment
++restriction (rotation 0, intensity 1); it is not a promise of Model/final pixel
++parity or of every final effect being represented.
++
++Interactive receives exposure through its captured CPU request. Retained Result
++and Interactive PNGs return through their own image-display routes before the
++live Model exposure is applied. Editing the current draft must not grade those
++captured pixels a second time. An explicit Effects/regrade action is a separate
++operation. Design's viewport does not inherit product exposure. See
++[Scene and Shot editors](render-shot-scene.md) for active versus selected setup
++semantics and the saved Exposure control.
++
+ ## Adapter contract
+ 
+ - Allocate a distinct transient job session for each document's Interactive
+@@ -56,7 +120,11 @@
+   final finishes; an enabled, unpaused controller then groups the latest edits
+   again. No method here cancels a final job or exports an image.
+ 
+-The UI adapter, registered activation/pause commands, current-request identity
+-capture, retained paused texture and visual acceptance remain a following slice
+-coordinated with #8000/#7375. This is not a claim that those integration gates or
+-the installed application's shadow defect are fixed.
++## Validation scope
++
++These routes describe the current source contract, including the connected UI;
++they are not a statement that native visual acceptance or GPU qualification has
++passed on this revision. Core/headless regression coverage does not replace a
++supported native build and admitted runtime checks. Pending integration gates,
++Model/final numeric parity and the installed application's reported shadow
++defect are not declared resolved by this document.
+diff --git a/docs/render-shot-scene.md b/docs/render-shot-scene.md
+--- a/docs/render-shot-scene.md
++++ b/docs/render-shot-scene.md
+@@ -3,7 +3,9 @@
+ The Scene overview replaces the old Scene page. Entering Render with no selection,
+ clearing the selection, or selecting nothing opens Scene. Selecting a saved shot
+ opens its Shot editor; the other editors retain their existing adapters during the
+-selection-based Inspector migration.
++selection-based Inspector migration. Browser selection alone does not activate
++that setup. Clicking its thumbnail in the Shots strip switches the active setup;
++the active highlight identifies the draft used by Model and the next render.
+ 
+ Scene follows E1: Stages (Look, Light, Frame, Output), Ready to render, Reminders.
+ Each stage row summarises current state and navigates through the view commands.
+@@ -25,12 +27,32 @@
+ 
+ Lens values are saved to the selected shot's GPU job while retaining its other
+ options. Depth of field needs GPU path tracing and perspective; aperture and focus
+-distance remain visible when disabled. Raster exposure and orthographic FOV stay
+-faded with reasons. Changing to orthographic while saved depth of field is enabled
++distance remain visible when disabled. Orthographic FOV stays faded with its
++reason. Changing to orthographic while saved depth of field is enabled
+ is rejected by the existing settings validation; disable depth of field first.
+-Frame retains aspect presets and transient composition guides. Size is read-only;
+-Edit in Output selects Output, the home of image dimensions.
++Exposure is enabled for Raster, CPU and GPU setups and edits the selected saved
++shot's common finite -32..32 EV value. A slider drag commits on release as one
++undoable settings command. Editing the active shot also updates its live exposure
++draft; editing an inactive selected shot leaves the active setup's draft and
++camera unchanged. Selecting a different final method does not reset exposure.
++With Interactive Off, the fast Model preview uses common exposure for all three
++methods, without starting a render. Interactive applies it through its captured
++CPU request; retained Interactive and Result pixels are not graded again when
++the live draft changes. Model and final renderers need not produce identical
++pixels. Design's viewport remains independent. See
++[CPU Interactive preview](render-interactive.md) for ownership, support and
++paused-input rules.
+ 
++Frame retains aspect presets and transient composition guides. A preset changes
++the selected shot's saved dimensions, not just a crop: for example, 16:9 authors
++1920 × 1080 and 4:5 authors 864 × 1080. Current method/profile validation can
++refuse a preset; it does not silently lower dimensions or samples. Custom follows
++the saved dimensions. The aspect selector/guides are transient view state, so
++undoing a saved size edit and selecting Custom are distinct operations. The
++preview fits its painted frame without stretching and uses those same pixel
++bounds for geometry input. Size is read-only in Shot; Edit in Output selects
++Output, the home of image dimensions.
++
+ These two editors use the shared workspace header without the old setup form,
+ page switcher or pinned job footer. Explicit native-studio resource reviews remain
+ in the library card, keeping Scene limited to orientation and readiness. The
+@@ -43,5 +65,8 @@
+ regression coverage checks every editor widget at 350 and 320 points of content
+ width, including disabled controls, equal Target cells and untruncated labels.
+ 
+-Validation uses headless egui harnesses and focused render tests. No running-app
+-visual review or GPU-device verification is claimed by this change.
++The source includes headless egui and focused render regression cases for these
++contracts. Their presence does not claim a completed native visual review,
++GPU-device verification or Model/final pixel parity on the revision being
++reviewed. The connected Interactive/common-exposure behavior still requires
++qualification against the exact supported native build.

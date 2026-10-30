@@ -1,0 +1,13 @@
+SOURCE ONLY - one new native GPU test declaration; NOT RUN.
+
+crates/gpu/src/view.rs :: view::tests::explicit_product_dark_channels_follow_one_srgb_transfer_in_both_targets
+
+96 proposed 64 x 64 renders inside that single declaration, not 96 process cases or
+96 PASS results. Two RGBA8 formats x 2 SSAA x 2 material controls x 2 source kinds
+x 2 RGB triples x 3 EV (-8,0,+1). Fixed independent geom transfer oracle: one 8-bit code.
+
+Strict future GPU acceptance requires SOLIDCRAFT_REQUIRE_GPU, the actual completed
+test result and the final U17_PRODUCT_SRGB supported=true marker. A no-adapter
+supported=false optional return and source/parse/compile checks do not qualify.
+No physical GPU, BGRA, float attachment, fractional-alpha/OIT or visual-quality
+result exists for this candidate. Existing 31 GPU-view tests remain source-intact.

@@ -24,3 +24,7 @@ All links below refer directly to branches in **tangency-labs/solidcraft**. Exis
 - [W38d acceptance cases](W38d/README.md): original source-bound identity fixtures, not an implemented saved-fill pipeline.
 
 These folders deliberately remain outside production module registration. Each README binds the actual source/base and distinguishes full-file copies, incremental patches and alternative implementations. Do not apply every alternative together. No compilation or runtime was performed for this preservation branch. Repository licensing, notices, original authorship and contributor scopes remain in force. Private operational launchers, grants, receipts, credentials, caches and binaries are excluded.
+
+### P2/B1 typed text-plan preservation — 30 October
+
+[Source-only adapter packet](2026-10-30/P2-B1-text-plan/README.md): actual B1a `8da9e989` / B1b `df3eff1c`, original typed helper and thirteen unrun cases. Unformatted, uncompiled and unregistered; a compatibility scaffold, with final B1 width-provider migration, DW policy and Cam-owned content/allocator integration still pending. The older P2 52-case appendix remains separate and must be preserved. [Bounded positive multi-glyph acceptance gap](2026-10-30/P2-B1-text-plan/multi-glyph-acceptance-next.md).

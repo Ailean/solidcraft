@@ -1,0 +1,176 @@
+{
+  "format_version": 1,
+  "repository": "tangency-labs/solidcraft",
+  "status": "SOURCE_ONLY_UNFORMATTED_UNCOMPILED_UNRUN_UNREGISTERED",
+  "purpose": "Portable preservation of an original typed B1-to-P2 text-plan compatibility scaffold; no production integration or extraction qualification.",
+  "actual_upstream_sources": [
+    {
+      "pr": 9512,
+      "head": "8da9e9893d7dcf2c4b3584f6334b91352dc31dcb",
+      "path": "crates/geom/src/paper/text.rs",
+      "blob": "24e4e18a6584c58a97151b90d63e177ff7a6466d",
+      "sha256": "ef4ff4758b167dc380fb783355fc46225445515794c03238ba2425abe6b2bc31",
+      "bytes": 14489
+    },
+    {
+      "pr": 9512,
+      "head": "8da9e9893d7dcf2c4b3584f6334b91352dc31dcb",
+      "path": "crates/geom/src/paper.rs",
+      "blob": "4af6d5399d6e87c5a4c05e2223a892acff3d0928",
+      "sha256": "deef0c4a343cf3390e445f77be002e3dea2e09e8e7ee29264429c85317c356b7",
+      "bytes": 10602
+    },
+    {
+      "pr": 9513,
+      "head": "df3eff1ce9768c1d2cab3ed7cdb91471dd30e95f",
+      "path": "crates/sketch/src/paper_text.rs",
+      "blob": "549d9dbd1f4f63182e3608d8312dc3b291f6ec8b",
+      "sha256": "1cb380a323b6c623ea6c45fd6d64d935dd3af2532bdc4d38eb9014a5b885e9a7",
+      "bytes": 10821
+    },
+    {
+      "pr": 9513,
+      "head": "df3eff1ce9768c1d2cab3ed7cdb91471dd30e95f",
+      "path": "crates/sketch/src/paper_text_tests.rs",
+      "blob": "d309c01099a777385e67e735e1360a951b2ea520",
+      "sha256": "4ef6cf1d7f562a306bea23888f75f39e047eff3db2278418b5ff2164803fd613",
+      "bytes": 8936
+    },
+    {
+      "pr": 7626,
+      "head": "506d419084a1cd6463c3117ea34d15f805a6ce37",
+      "path": "crates/io/src/paper/pdf.rs",
+      "blob": "6ee0e8b1783822014dd096a6af5a0f2ec5e991ca",
+      "sha256": "c416234e22414f10951f79c75b42ae3dc6128294312ace35ac5559113ab1af96",
+      "bytes": 17306
+    },
+    {
+      "pr": 9513,
+      "head": "df3eff1ce9768c1d2cab3ed7cdb91471dd30e95f",
+      "path": "crates/sketch/src/fonts.rs",
+      "blob": "4b104ec49eac9516dc2f69aa56fff779eccdb7f2",
+      "sha256": "f497592266ef11a4071d550277cf61c75ce4d2e6e40e4e0e3b8da6e06969c3d0",
+      "bytes": 22385
+    }
+  ],
+  "existing_P2_checkpoint": {
+    "branch": "codex/drawings-pdf-p2-wip-20261029",
+    "head": "bf2a6fd567b03e1d25dcb66624e719a0cec109fc",
+    "helper_sources": [
+      {
+        "path": "crates/io/src/paper/pdf/font_admission.rs",
+        "blob": "632d21b81d25626dd5fe6e3b28d274a96a640382",
+        "sha256": "a8abc3b4aaef9325694ec404512c228f9973b82006b5718eb304ef57d5c30b23",
+        "bytes": 4170
+      },
+      {
+        "path": "crates/io/src/paper/pdf/font_admission_tests.rs",
+        "blob": "6b36605906398d7211f97fb181eacf96e6d8eaf4",
+        "sha256": "b58637cf322658d93a3abb61acf2c3a970c466a7401edf69a3a0594e38c9da7a",
+        "bytes": 3642
+      },
+      {
+        "path": "crates/io/src/paper/pdf/font_objects.rs",
+        "blob": "0c235bebaeb2c85120445c1f77aa300f4b30584b",
+        "sha256": "aef06369bad659706b1a30ebedfce1b2d8e89eaa4849e98d618bd3cf9ecb1eb1",
+        "bytes": 37811
+      },
+      {
+        "path": "crates/io/src/paper/pdf/glyph_closure.rs",
+        "blob": "677135bf60bcd8ef4ce464304803a52073a3cf08",
+        "sha256": "a8d94c9996a5c718346e66d1983e6d2f2edb224286d3f45e92d731ab0013f1d8",
+        "bytes": 38397
+      },
+      {
+        "path": "crates/io/src/paper/pdf/subset_font.rs",
+        "blob": "cef7bd532639faf95f5ec5f9ea7451b79b03c688",
+        "sha256": "a9808063f2223fd9e86e208d55092b6b9e9a5ae7ba0eaba2dce5d557a7fd5f26",
+        "bytes": 8941
+      },
+      {
+        "path": "crates/io/src/paper/pdf/to_unicode.rs",
+        "blob": "b043073e4ec292b5c89ca0aad8b66571a3c3a2b5",
+        "sha256": "ba60e39cf6ed9a27475b12258b0979aa8f8659d482b5246e32ee6df3abe50d49",
+        "bytes": 15674
+      }
+    ],
+    "matches_preserved_helper_bytes": true,
+    "existing_tests": {
+      "P1_declarations": 25,
+      "P2_declarations": 52,
+      "total_declarations": 77,
+      "executed_by_this_packet": false,
+      "P2_declarations_in_existing_pdf_tests_suffix": 6,
+      "P2_declarations_in_helper_modules": 46
+    },
+    "registration": "Prototype test-only; not production PDF text support.",
+    "dependency": "subsetter 0.2.6 with default-features=false remains a separately reviewed dependency; candidate lock resolution and production dependency placement are pending.",
+    "existing_test_file": {
+      "path": "crates/io/src/paper/pdf_tests.rs",
+      "blob": "39c6a6767d73866c3b59f5417bbf4a27794ddaf3",
+      "sha256": "d711a39b40568b0245ddf2e83908cfbcfb23614acadc951396ba0d6443d25401",
+      "bytes": 48267,
+      "test_declarations": 31,
+      "P1_raw_prefix_unchanged": true,
+      "literal_appendix_present_once": true,
+      "appendix_declarations": 6
+    }
+  },
+  "new_patch": {
+    "path": "text-plan-and-original-tests.patch",
+    "sha256": "1b7c6442993abc6b63c375ef4ef76facda25584c0106dc23ca7b3aed07150b85",
+    "bytes": 27456,
+    "endpoints": [
+      {
+        "path": "crates/io/src/paper/pdf/text_plan.rs",
+        "before": null,
+        "after_sha256": "b9e94d50d10fd13e163b7ac8cd6dd6867fc0842569a7e9a762ff9d1b4c68f902",
+        "after_bytes": 16282
+      },
+      {
+        "path": "crates/io/src/paper/pdf_tests.rs",
+        "before_head": "506d419084a1cd6463c3117ea34d15f805a6ce37",
+        "before_blob": "44a839a0a24d6db894d465e265a74a6ff3d2f755",
+        "before_sha256": "19d9685bb5431fef9e643eb18dc8269106d693df053a901a8d93ca2e85c1d338",
+        "before_bytes": 41918,
+        "after_sha256": "d5fcbddcc2619a2d5484b758c8101940cc2dea0cbd9e5ecdbdb174fbf60606df",
+        "after_bytes": 52099,
+        "old_declarations": 25,
+        "added_declarations": 13,
+        "after_declarations": 38,
+        "line_endings": "LF; complete raw before prefix retained"
+      }
+    ],
+    "original_test_suffix": {
+      "path": "original-tests.rs",
+      "sha256": "da4954af11a65e8bac65aed22eabf766f5ff05e8a9cf89b15d95a3494d909188",
+      "bytes": 10181,
+      "declarations": 13
+    },
+    "application_constraint": "The patch is based on the 25-case P1 test file, not the current P2 source. Do not replace the current 31-case pdf_tests.rs: preserve its original six-case P2 suffix when appending the new 13 cases, and preserve all 46 existing helper-module cases. No automatic application or registration is supplied."
+  },
+  "font_source": {
+    "head": "df3eff1ce9768c1d2cab3ed7cdb91471dd30e95f",
+    "blob": "328ef8be272813fa4864b1c2405491049dd3a7a3",
+    "bytes": 410820,
+    "raw_sha256": "075e71be4c58beda172ecb574a799308f04c3d054c6a5b7434954d3b0f1b28d8",
+    "policy": "Only the already admitted bundled regular Liberation Sans face 0; no font bytes are included in this packet. Existing attribution and OFL remain applicable.",
+    "B1_identity": "SHA256(font bytes followed by little-endian face index); separate from raw resource SHA256.",
+    "path": "assets/fonts/liberation-sans/LiberationSans-Regular.ttf"
+  },
+  "static_review": {
+    "kind": "Independent source review; not compiler, test, PDF or reader evidence.",
+    "review_sha256": "93b67a3b2ccb8504ac6f8b7eaaecd703696edd7528f5c370b18086f122254e2a",
+    "finding_closed_in_source": "Exact font-byte envelope is admitted before digest/table work; original twelve cases retained and a thirteenth original refusal case added.",
+    "patch_literal_replay": "Both LF endpoints reconstructed by literal unified-hunk replay; no Git operation or execution of Rust code."
+  },
+  "remaining_constraints": [
+    "Single glyph per logical cluster only; multi-glyph clusters explicitly refuse. No repeated full logical text per glyph, silent split, normalization, or unsupported extraction claim.",
+    "This compatibility scaffold checks original hmtx provenance and reuses the legacy MetricView font-object helper. It does not implement the final B1-owned intrinsic-width provider or remove the emitter-local parser.",
+    "DW/.notdef policy, exact emitted-CID width coverage and remaining legacy validation duties must be settled before final width-provider migration.",
+    "Cam owns the many-page parent, collect_layers, content, global object allocator and page-resource integration. No fixed ref/font tag assumptions or shared edits are supplied.",
+    "B1a/B1b and PDF snapshots are separate draft branches, not a composed validated source.",
+    "No parent registration, production dependency/lock resolution, compiler/formatter/test result, runtime PDF extraction, whole-project gate, readiness or merge is supplied."
+  ],
+  "authorship": "Original adapter and acceptance cases by the Engineer team for 0xlillith; referenced B1 and PDF work retains its existing contributor authorship. No external implementation code or new asset is copied."
+}

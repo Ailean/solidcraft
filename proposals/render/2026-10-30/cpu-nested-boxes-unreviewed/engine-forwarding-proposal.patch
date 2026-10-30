@@ -1,0 +1,29 @@
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -11,6 +11,7 @@
+ #[derive(Default, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ struct Start {
++    nested_media: bool,
+     studio_weights: Option<[f64; 3]>,
+     progressive: bool,
+     denoise: bool,
+@@ -677,7 +678,8 @@
+         background: settings.background,
+         transparent_background: input.transparent_background,
+     };
+-    let mut admission = solidcraft_render::job::admit(&scene, &request).map_err(job_error)?;
++    let options = solidcraft_render::job::JobOptions { nested_media: input.nested_media, ..Default::default() };
++    let mut admission = host.admit(&scene, &request, options).map_err(job_error)?;
+     let environment_bytes = environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| bad(command, e.to_string()))?;
+     let retained_lights = request.raytrace.as_ref().map_or(Ok(0), |o| o.retained_bytes()).map_err(job_error)?;
+     let retained_environment =
+@@ -698,7 +700,7 @@
+         Integrator::Raytrace => "opaque_only",
+     };
+     let reply = json!({"ignored_controls":ignored,"stage_panels":settings.stage.len(),"stage_transport":"CPU direct/specular only; no diffuse interreflection", "cpu_budget":budget,"cpu_limits":budget.limits(),"environment":environment_info,"retained_request_bytes":retained_request_bytes,"resolved":resolved,"admission":admission,"request":request,"scene_generation":s.revision,"host":host.kind(),"transparency":transparency,"refraction":refraction,"dielectric_boundaries":if refraction {vec!["thin_sheet","closed_box"]} else {Vec::<&str>::new()}});
+-    Ok(Prepared { replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options: Default::default() })
++    Ok(Prepared { replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options })
+ }
+ 
+ fn prepare_progressive(

@@ -1,0 +1,300 @@
+diff --git a/assets/locales/ar.json b/assets/locales/ar.json
+--- a/assets/locales/ar.json
++++ b/assets/locales/ar.json
+@@ -2296,7 +2296,7 @@
+   "render.cpu_point_help": "حتى ثمانية أضواء نقطية تُضاف إلى الإضاءة الاتجاهية المختارة. المسافات بالمليمتر؛ ويجب ألا يتجاوز الحد الأدنى المسافة المرجعية.",
+   "render.cpu_primary_samples": "عيّنات الحواف لكل بكسل",
+   "render.cpu_progressive": "CPU تدريجي",
+-  "render.cpu_progressive_help": "يُراكم مُكامل CPU الحالي على تمريرات من عيّنة أساسية واحدة. الانعكاسات المختارة تتطلب عيّنة واحدة؛ والأضواء المساحية والعوازل وتباين الخواص تتطلب «صورة واحدة».",
++  "render.cpu_progressive_help": "يُراكم مُكامل CPU الحالي على تمريرات من عيّنة أساسية واحدة. الانعكاسات المختارة تتطلب عيّنة واحدة؛ والعوازل وتباين الخواص تتطلب «صورة واحدة».",
+   "render.cpu_progressive_limits": "بحد أقصى 1,048,576 بكسل و16,777,216 عملية تقييم بكسل × عيّنة. تغيير العيّنات لا يغيّر حجم الصورة تلقائيًا أبدًا.",
+   "render.cpu_progressive_seed": "بذرة عيّنات CPU",
+   "render.cpu_progressive_spp": "عيّنات لكل بكسل",
+diff --git a/assets/locales/bs.json b/assets/locales/bs.json
+--- a/assets/locales/bs.json
++++ b/assets/locales/bs.json
+@@ -2159,7 +2159,7 @@
+   "render.cpu_point_help": "Do osam tačkastih svjetala, dodanih izabranom usmjerenom osvjetljenju. Udaljenosti su u mm; minimalna ne smije premašiti referentnu udaljenost.",
+   "render.cpu_primary_samples": "Uzorci ivica po pikselu",
+   "render.cpu_progressive": "CPU progresivno",
+-  "render.cpu_progressive_help": "Akumulira postojeći CPU integrator u prolazima od po jednog primarnog uzorka. Izabrane refleksije zahtijevaju jedan uzorak; površinska svjetla, dielektrici i anizotropija zahtijevaju Jedna slika.",
++  "render.cpu_progressive_help": "Akumulira postojeći CPU integrator u prolazima od po jednog primarnog uzorka. Izabrane refleksije zahtijevaju jedan uzorak; dielektrici i anizotropija zahtijevaju Jedna slika.",
+   "render.cpu_progressive_limits": "Najviše 1.048.576 piksela i 16.777.216 izračunavanja piksel × uzorak. Promjena uzoraka nikad automatski ne mijenja veličinu slike.",
+   "render.cpu_progressive_seed": "CPU sjeme uzorkovanja",
+   "render.cpu_progressive_spp": "uzoraka po pikselu",
+diff --git a/assets/locales/cs.json b/assets/locales/cs.json
+--- a/assets/locales/cs.json
++++ b/assets/locales/cs.json
+@@ -2144,7 +2144,7 @@
+   "render.cpu_point_help": "Nejvýše osm bodových světel, přidaných k vybranému směrovému osvětlení. Vzdálenosti jsou v mm; minimum nesmí překročit referenční vzdálenost.",
+   "render.cpu_primary_samples": "Vzorky hran na pixel",
+   "render.cpu_progressive": "Progresivní CPU",
+-  "render.cpu_progressive_help": "Akumuluje stávající integrátor CPU v průchodech po jednom primárním vzorku. Vybrané odrazy vyžadují jeden vzorek; plošná světla, dielektrika a anizotropie vyžadují režim Jeden obrázek.",
++  "render.cpu_progressive_help": "Akumuluje stávající integrátor CPU v průchodech po jednom primárním vzorku. Vybrané odrazy vyžadují jeden vzorek; dielektrika a anizotropie vyžadují režim Jeden obrázek.",
+   "render.cpu_progressive_limits": "Nejvýše 1 048 576 pixelů a 16 777 216 vyhodnocení pixel × vzorek. Změna počtu vzorků nikdy automaticky nezmění velikost obrázku.",
+   "render.cpu_progressive_seed": "Náhodné semeno vzorkování CPU",
+   "render.cpu_progressive_spp": "vzorků na pixel",
+diff --git a/assets/locales/en.json b/assets/locales/en.json
+--- a/assets/locales/en.json
++++ b/assets/locales/en.json
+@@ -2296,7 +2296,7 @@
+   "render.cpu_point_help": "Up to eight point lights, added to the selected directional lighting. Distances are in mm; the minimum must not exceed the reference distance.",
+   "render.cpu_primary_samples": "Edge samples per pixel",
+   "render.cpu_progressive": "CPU progressive",
+-  "render.cpu_progressive_help": "Accumulate the existing CPU integrator in passes of one primary sample. Selected reflections require one sample; area lights, dielectrics and anisotropy require Single image.",
++  "render.cpu_progressive_help": "Accumulate the existing CPU integrator in passes of one primary sample. Selected reflections require one sample; dielectrics and anisotropy require Single image.",
+   "render.cpu_progressive_limits": "At most 1,048,576 pixels and 16,777,216 pixel × sample evaluations. Changing samples never resizes the image automatically.",
+   "render.cpu_progressive_seed": "CPU sampling seed",
+   "render.cpu_progressive_spp": "samples per pixel",
+diff --git a/assets/locales/es.json b/assets/locales/es.json
+--- a/assets/locales/es.json
++++ b/assets/locales/es.json
+@@ -1954,7 +1954,7 @@
+   "render.cpu_point_help": "Hasta ocho luces puntuales, añadidas a la iluminación direccional elegida. Las distancias están en mm; la mínima no puede superar la de referencia.",
+   "render.cpu_primary_samples": "Muestras de borde por píxel",
+   "render.cpu_progressive": "CPU progresivo",
+-  "render.cpu_progressive_help": "Acumula el integrador CPU actual en pasadas de una muestra primaria. Los reflejos seleccionados requieren una muestra; luces de área, dieléctricos y anisotropía requieren Imagen fija.",
++  "render.cpu_progressive_help": "Acumula el integrador CPU actual en pasadas de una muestra primaria. Los reflejos seleccionados requieren una muestra; dieléctricos y anisotropía requieren Imagen fija.",
+   "render.cpu_progressive_limits": "Máximo de 1.048.576 píxeles y 16.777.216 evaluaciones de píxel × muestra. Cambiar las muestras nunca redimensiona la imagen automáticamente.",
+   "render.cpu_progressive_seed": "Semilla de muestreo CPU",
+   "render.cpu_progressive_spp": "muestras por píxel",
+diff --git a/assets/locales/fr.json b/assets/locales/fr.json
+--- a/assets/locales/fr.json
++++ b/assets/locales/fr.json
+@@ -2169,7 +2169,7 @@
+   "render.cpu_point_help": "Jusqu'à huit lumières ponctuelles, ajoutées à l'éclairage directionnel choisi. Les distances sont en mm ; la distance minimale ne doit pas dépasser la distance de référence.",
+   "render.cpu_primary_samples": "Échantillons de bord par pixel",
+   "render.cpu_progressive": "CPU progressif",
+-  "render.cpu_progressive_help": "Accumuler l'intégrateur CPU existant par passes d'un échantillon primaire. Les réflexions sélectionnées exigent un échantillon ; les lumières surfaciques, les diélectriques et l'anisotropie exigent Image unique.",
++  "render.cpu_progressive_help": "Accumuler l'intégrateur CPU existant par passes d'un échantillon primaire. Les réflexions sélectionnées exigent un échantillon ; les diélectriques et l'anisotropie exigent Image unique.",
+   "render.cpu_progressive_limits": "Au plus 1 048 576 pixels et 16 777 216 évaluations pixel × échantillon. Changer le nombre d'échantillons ne redimensionne jamais l'image automatiquement.",
+   "render.cpu_progressive_seed": "Graine d'échantillonnage CPU",
+   "render.cpu_progressive_spp": "échantillons par pixel",
+diff --git a/assets/locales/gl.json b/assets/locales/gl.json
+--- a/assets/locales/gl.json
++++ b/assets/locales/gl.json
+@@ -2144,7 +2144,7 @@
+   "render.cpu_point_help": "Ata oito luces puntuais, engadidas á iluminación direccional seleccionada. As distancias están en mm; a mínima non pode superar a distancia de referencia.",
+   "render.cpu_primary_samples": "Mostras de bordo por píxel",
+   "render.cpu_progressive": "Progresivo da CPU",
+-  "render.cpu_progressive_help": "Acumula o integrador da CPU existente en pasadas dunha mostra primaria. As reflexións seleccionadas requiren unha mostra; as luces de área, os dieléctricos e a anisotropía requiren Imaxe única.",
++  "render.cpu_progressive_help": "Acumula o integrador da CPU existente en pasadas dunha mostra primaria. As reflexións seleccionadas requiren unha mostra; os dieléctricos e a anisotropía requiren Imaxe única.",
+   "render.cpu_progressive_limits": "Como máximo 1.048.576 píxeles e 16.777.216 avaliacións de píxel × mostra. Cambiar as mostras nunca redimensiona a imaxe automaticamente.",
+   "render.cpu_progressive_seed": "Semente de mostraxe da CPU",
+   "render.cpu_progressive_spp": "mostras por píxel",
+diff --git a/assets/locales/he.json b/assets/locales/he.json
+--- a/assets/locales/he.json
++++ b/assets/locales/he.json
+@@ -2296,7 +2296,7 @@
+   "render.cpu_point_help": "עד שמונה אורות נקודתיים, המתווספים לתאורה הכיוונית שנבחרה. המרחקים במילימטרים; המינימום אינו יכול לעלות על מרחק הייחוס.",
+   "render.cpu_primary_samples": "דגימות קצה לכל פיקסל",
+   "render.cpu_progressive": "CPU הדרגתי",
+-  "render.cpu_progressive_help": "צבירה של אינטגרטור ה־CPU הקיים במעברים של דגימה ראשית אחת. החזרות שנבחרו דורשות דגימה אחת; אורות שטח, דיאלקטריים ואנאיזוטרופיה דורשים תמונה בודדת.",
++  "render.cpu_progressive_help": "צבירה של אינטגרטור ה־CPU הקיים במעברים של דגימה ראשית אחת. החזרות שנבחרו דורשות דגימה אחת; דיאלקטריים ואנאיזוטרופיה דורשים תמונה בודדת.",
+   "render.cpu_progressive_limits": "לכל היותר 1,048,576 פיקסלים ו־16,777,216 הערכות פיקסל × דגימה. שינוי הדגימות לעולם אינו משנה את גודל התמונה אוטומטית.",
+   "render.cpu_progressive_seed": "זרע דגימה ב־CPU",
+   "render.cpu_progressive_spp": "דגימות לכל פיקסל",
+diff --git a/assets/locales/hr.json b/assets/locales/hr.json
+--- a/assets/locales/hr.json
++++ b/assets/locales/hr.json
+@@ -2159,7 +2159,7 @@
+   "render.cpu_point_help": "Do osam točkastih svjetala, dodanih odabranom usmjerenom osvjetljenju. Udaljenosti su u mm; minimalna ne smije premašiti referentnu udaljenost.",
+   "render.cpu_primary_samples": "Uzorci rubova po pikselu",
+   "render.cpu_progressive": "CPU progresivno",
+-  "render.cpu_progressive_help": "Akumulira postojeći CPU integrator u prolazima od po jednog primarnog uzorka. Odabrane refleksije zahtijevaju jedan uzorak; površinska svjetla, dielektrici i anizotropija zahtijevaju Jedna slika.",
++  "render.cpu_progressive_help": "Akumulira postojeći CPU integrator u prolazima od po jednog primarnog uzorka. Odabrane refleksije zahtijevaju jedan uzorak; dielektrici i anizotropija zahtijevaju Jedna slika.",
+   "render.cpu_progressive_limits": "Najviše 1.048.576 piksela i 16.777.216 izračuna piksel × uzorak. Promjena uzoraka nikad automatski ne mijenja veličinu slike.",
+   "render.cpu_progressive_seed": "CPU sjeme uzorkovanja",
+   "render.cpu_progressive_spp": "uzoraka po pikselu",
+diff --git a/assets/locales/hu.json b/assets/locales/hu.json
+--- a/assets/locales/hu.json
++++ b/assets/locales/hu.json
+@@ -2144,7 +2144,7 @@
+   "render.cpu_point_help": "Legfeljebb nyolc pontfény, amelyek a kijelölt irányított megvilágításhoz adódnak hozzá. A távolságok mm-ben értendők; a minimum nem haladhatja meg a referenciatávolságot.",
+   "render.cpu_primary_samples": "Élminták pixelenként",
+   "render.cpu_progressive": "Progresszív CPU",
+-  "render.cpu_progressive_help": "A meglévő CPU-integrátor eredményeinek felhalmozása egy elsődleges mintából álló menetekben. A kijelölt tükröződésekhez egy minta szükséges; a területi fényekhez, a dielektrikumokhoz és az anizotrópiához az Egyetlen kép mód kell.",
++  "render.cpu_progressive_help": "A meglévő CPU-integrátor eredményeinek felhalmozása egy elsődleges mintából álló menetekben. A kijelölt tükröződésekhez egy minta szükséges; a dielektrikumokhoz és az anizotrópiához az Egyetlen kép mód kell.",
+   "render.cpu_progressive_limits": "Legfeljebb 1 048 576 képpont és 16 777 216 képpont × minta kiértékelés. A minták módosítása sosem méretezi át automatikusan a képet.",
+   "render.cpu_progressive_seed": "CPU-mintavételi kezdőérték",
+   "render.cpu_progressive_spp": "minta pixelenként",
+diff --git a/assets/locales/id.json b/assets/locales/id.json
+--- a/assets/locales/id.json
++++ b/assets/locales/id.json
+@@ -2144,7 +2144,7 @@
+   "render.cpu_point_help": "Hingga delapan lampu titik, ditambahkan ke pencahayaan arah yang dipilih. Jarak dalam mm; minimum tidak boleh melebihi jarak referensi.",
+   "render.cpu_primary_samples": "Sampel tepi per piksel",
+   "render.cpu_progressive": "CPU progresif",
+-  "render.cpu_progressive_help": "Akumulasikan integrator CPU yang ada dalam pass berisi satu sampel primer. Pantulan yang dipilih memerlukan satu sampel; lampu area, dielektrik, dan anisotropi memerlukan Gambar tunggal.",
++  "render.cpu_progressive_help": "Akumulasikan integrator CPU yang ada dalam pass berisi satu sampel primer. Pantulan yang dipilih memerlukan satu sampel; dielektrik dan anisotropi memerlukan Gambar tunggal.",
+   "render.cpu_progressive_limits": "Paling banyak 1.048.576 piksel dan 16.777.216 evaluasi piksel × sampel. Mengubah sampel tidak pernah mengubah ukuran gambar secara otomatis.",
+   "render.cpu_progressive_seed": "Seed sampling CPU",
+   "render.cpu_progressive_spp": "sampel per piksel",
+diff --git a/assets/locales/it.json b/assets/locales/it.json
+--- a/assets/locales/it.json
++++ b/assets/locales/it.json
+@@ -2150,7 +2150,7 @@
+   "render.cpu_point_help": "Fino a otto luci puntiformi, aggiunte all'illuminazione direzionale selezionata. Le distanze sono in mm; il minimo non deve superare la distanza di riferimento.",
+   "render.cpu_primary_samples": "Campioni dei bordi per pixel",
+   "render.cpu_progressive": "CPU progressiva",
+-  "render.cpu_progressive_help": "Accumula l'integratore CPU esistente in passate di un campione primario. Le riflessioni selezionate richiedono un solo campione; luci d'area, dielettrici e anisotropia richiedono Immagine singola.",
++  "render.cpu_progressive_help": "Accumula l'integratore CPU esistente in passate di un campione primario. Le riflessioni selezionate richiedono un solo campione; dielettrici e anisotropia richiedono Immagine singola.",
+   "render.cpu_progressive_limits": "Al massimo 1,048,576 pixel e 16,777,216 valutazioni pixel × campione. Cambiare i campioni non ridimensiona mai automaticamente l'immagine.",
+   "render.cpu_progressive_seed": "Seme di campionamento CPU",
+   "render.cpu_progressive_spp": "campioni per pixel",
+diff --git a/assets/locales/ja.json b/assets/locales/ja.json
+--- a/assets/locales/ja.json
++++ b/assets/locales/ja.json
+@@ -2296,7 +2296,7 @@
+   "render.cpu_point_help": "選択した平行光に最大8個の点光源を追加できます。距離はmmで、最小距離は基準距離以下にしてください。",
+   "render.cpu_primary_samples": "輪郭サンプル数／ピクセル",
+   "render.cpu_progressive": "CPUプログレッシブ",
+-  "render.cpu_progressive_help": "既存のCPU積分器を、一次サンプル1個ずつのパスで累積します。選択した反射は1サンプルが必要です。面光源、誘電体、異方性には固定画像を使用してください。",
++  "render.cpu_progressive_help": "既存のCPU積分器を、一次サンプル1個ずつのパスで累積します。選択した反射は1サンプルが必要です。誘電体、異方性には固定画像を使用してください。",
+   "render.cpu_progressive_limits": "最大1,048,576ピクセル、ピクセル×サンプルの合計は16,777,216以下です。サンプル数を変えても画像サイズは自動変更されません。",
+   "render.cpu_progressive_seed": "CPUサンプリングシード",
+   "render.cpu_progressive_spp": "サンプル／ピクセル",
+diff --git a/assets/locales/ms.json b/assets/locales/ms.json
+--- a/assets/locales/ms.json
++++ b/assets/locales/ms.json
+@@ -2144,7 +2144,7 @@
+   "render.cpu_point_help": "Sehingga lapan lampu titik, ditambah pada pencahayaan berarah yang dipilih. Jarak dalam mm; jarak minimum tidak boleh melebihi jarak rujukan.",
+   "render.cpu_primary_samples": "Sampel tepi setiap piksel",
+   "render.cpu_progressive": "CPU progresif",
+-  "render.cpu_progressive_help": "Kumpulkan hasil penyepadu CPU sedia ada dalam pas satu sampel utama. Pantulan yang dipilih memerlukan satu sampel; lampu kawasan, dielektrik dan anisotropi memerlukan Imej tunggal.",
++  "render.cpu_progressive_help": "Kumpulkan hasil penyepadu CPU sedia ada dalam pas satu sampel utama. Pantulan yang dipilih memerlukan satu sampel; dielektrik dan anisotropi memerlukan Imej tunggal.",
+   "render.cpu_progressive_limits": "Paling banyak 1,048,576 piksel dan 16,777,216 penilaian piksel × sampel. Menukar sampel tidak mengubah saiz imej secara automatik.",
+   "render.cpu_progressive_seed": "Benih pensampelan CPU",
+   "render.cpu_progressive_spp": "sampel setiap piksel",
+diff --git a/assets/locales/nb.json b/assets/locales/nb.json
+--- a/assets/locales/nb.json
++++ b/assets/locales/nb.json
+@@ -2144,7 +2144,7 @@
+   "render.cpu_point_help": "Opptil åtte punktlys, lagt til i den valgte retningsbelysningen. Avstander er i mm; minimumsavstanden må ikke overstige referanseavstanden.",
+   "render.cpu_primary_samples": "Kantprøver per piksel",
+   "render.cpu_progressive": "Progressiv CPU",
+-  "render.cpu_progressive_help": "Akkumuler den eksisterende CPU-integratoren i omganger på én primærprøve. Valgte refleksjoner krever én prøve; arealys, dielektriske materialer og anisotropi krever Enkeltbilde.",
++  "render.cpu_progressive_help": "Akkumuler den eksisterende CPU-integratoren i omganger på én primærprøve. Valgte refleksjoner krever én prøve; dielektriske materialer og anisotropi krever Enkeltbilde.",
+   "render.cpu_progressive_limits": "Maksimalt 1 048 576 piksler og 16 777 216 evalueringer av piksel × prøve. Endring av antall prøver endrer aldri bildestørrelsen automatisk.",
+   "render.cpu_progressive_seed": "Startverdi for CPU-prøvetaking",
+   "render.cpu_progressive_spp": "prøver per piksel",
+diff --git a/assets/locales/nl.json b/assets/locales/nl.json
+--- a/assets/locales/nl.json
++++ b/assets/locales/nl.json
+@@ -2148,7 +2148,7 @@
+   "render.cpu_point_help": "Maximaal acht puntlichten, toegevoegd aan de gekozen richtingsverlichting. Afstanden zijn in mm; het minimum mag de referentieafstand niet overschrijden.",
+   "render.cpu_primary_samples": "Randsamples per pixel",
+   "render.cpu_progressive": "CPU progressief",
+-  "render.cpu_progressive_help": "Accumuleert de bestaande CPU-integrator in passes van één primaire sample. Gekozen reflecties vereisen één sample; vlaklichten, diëlektrica en anisotropie vereisen Enkele afbeelding.",
++  "render.cpu_progressive_help": "Accumuleert de bestaande CPU-integrator in passes van één primaire sample. Gekozen reflecties vereisen één sample; diëlektrica en anisotropie vereisen Enkele afbeelding.",
+   "render.cpu_progressive_limits": "Maximaal 1.048.576 pixels en 16.777.216 evaluaties van pixel × sample. Het wijzigen van samples verandert de afbeeldingsgrootte nooit automatisch.",
+   "render.cpu_progressive_seed": "Seed voor CPU-sampling",
+   "render.cpu_progressive_spp": "samples per pixel",
+diff --git a/assets/locales/ro.json b/assets/locales/ro.json
+--- a/assets/locales/ro.json
++++ b/assets/locales/ro.json
+@@ -2144,7 +2144,7 @@
+   "render.cpu_point_help": "Până la opt lumini punctiforme, adăugate la iluminarea direcțională selectată. Distanțele sunt în mm; minimul nu trebuie să depășească distanța de referință.",
+   "render.cpu_primary_samples": "Eșantioane de margine per pixel",
+   "render.cpu_progressive": "CPU progresiv",
+-  "render.cpu_progressive_help": "Acumulează cu integratorul CPU existent, în treceri de câte un eșantion primar. Reflexiile selectate necesită un singur eșantion; luminile de arie, dielectricii și anizotropia necesită modul Imagine unică.",
++  "render.cpu_progressive_help": "Acumulează cu integratorul CPU existent, în treceri de câte un eșantion primar. Reflexiile selectate necesită un singur eșantion; dielectricii și anizotropia necesită modul Imagine unică.",
+   "render.cpu_progressive_limits": "Cel mult 1.048.576 de pixeli și 16.777.216 de evaluări pixel × eșantion. Modificarea eșantioanelor nu redimensionează niciodată automat imaginea.",
+   "render.cpu_progressive_seed": "Sămânță de eșantionare CPU",
+   "render.cpu_progressive_spp": "eșantioane per pixel",
+diff --git a/assets/locales/ru.json b/assets/locales/ru.json
+--- a/assets/locales/ru.json
++++ b/assets/locales/ru.json
+@@ -2111,7 +2111,7 @@
+   "render.cpu_point_help": "До восьми точечных источников света в дополнение к выбранному направленному освещению. Расстояния в мм; минимальное не должно превышать опорное.",
+   "render.cpu_primary_samples": "Сэмплов краёв на пиксель",
+   "render.cpu_progressive": "Прогрессивный CPU",
+-  "render.cpu_progressive_help": "Накопление существующим интегратором CPU проходами по одному основному сэмплу. Выбранные отражения требуют одного сэмпла; площадные источники света, диэлектрики и анизотропия требуют режима «Одно изображение».",
++  "render.cpu_progressive_help": "Накопление существующим интегратором CPU проходами по одному основному сэмплу. Выбранные отражения требуют одного сэмпла; диэлектрики и анизотропия требуют режима «Одно изображение».",
+   "render.cpu_progressive_limits": "Не более 1 048 576 пикселей и 16 777 216 вычислений «пиксель × сэмпл». Изменение числа сэмплов никогда не меняет размер изображения автоматически.",
+   "render.cpu_progressive_seed": "Начальное значение сэмплирования CPU",
+   "render.cpu_progressive_spp": "сэмплов на пиксель",
+diff --git a/assets/locales/sr.json b/assets/locales/sr.json
+--- a/assets/locales/sr.json
++++ b/assets/locales/sr.json
+@@ -2159,7 +2159,7 @@
+   "render.cpu_point_help": "До осам тачкастих светала, додатих изабраном усмереном осветљењу. Растојања су у mm; минимално не сме премашити референтно растојање.",
+   "render.cpu_primary_samples": "Узорци ивица по пикселу",
+   "render.cpu_progressive": "CPU прогресивно",
+-  "render.cpu_progressive_help": "Акумулира постојећи CPU интегратор у пролазима од по једног примарног узорка. Изабране рефлексије захтевају један узорак; површинска светла, диелектрици и анизотропија захтевају Једна слика.",
++  "render.cpu_progressive_help": "Акумулира постојећи CPU интегратор у пролазима од по једног примарног узорка. Изабране рефлексије захтевају један узорак; диелектрици и анизотропија захтевају Једна слика.",
+   "render.cpu_progressive_limits": "Највише 1.048.576 пиксела и 16.777.216 израчунавања пиксел × узорак. Промена узорака никад аутоматски не мења величину слике.",
+   "render.cpu_progressive_seed": "CPU семе узорковања",
+   "render.cpu_progressive_spp": "узорака по пикселу",
+diff --git a/assets/locales/sv.json b/assets/locales/sv.json
+--- a/assets/locales/sv.json
++++ b/assets/locales/sv.json
+@@ -2144,7 +2144,7 @@
+   "render.cpu_point_help": "Upp till åtta punktljus, som läggs till den valda riktade belysningen. Avstånd anges i mm; minimiavståndet får inte överstiga referensavståndet.",
+   "render.cpu_primary_samples": "Kantprov per pixel",
+   "render.cpu_progressive": "Progressiv CPU",
+-  "render.cpu_progressive_help": "Ackumulera den befintliga CPU-integratorn i omgångar om ett primärt prov. Valda reflektioner kräver ett prov; ytljus, dielektrika och anisotropi kräver Enstaka bild.",
++  "render.cpu_progressive_help": "Ackumulera den befintliga CPU-integratorn i omgångar om ett primärt prov. Valda reflektioner kräver ett prov; dielektrika och anisotropi kräver Enstaka bild.",
+   "render.cpu_progressive_limits": "Högst 1 048 576 pixlar och 16 777 216 utvärderingar av pixel × prov. Ändrat antal prov ändrar aldrig bildens storlek automatiskt.",
+   "render.cpu_progressive_seed": "Startvärde för CPU-sampling",
+   "render.cpu_progressive_spp": "prov per pixel",
+diff --git a/assets/locales/tr.json b/assets/locales/tr.json
+--- a/assets/locales/tr.json
++++ b/assets/locales/tr.json
+@@ -2163,7 +2163,7 @@
+   "render.cpu_point_help": "Seçili yönlü aydınlatmaya eklenen en fazla sekiz nokta ışık. Mesafeler mm cinsindendir; en az mesafe referans mesafeyi aşmamalıdır.",
+   "render.cpu_primary_samples": "Piksel başına kenar örneği",
+   "render.cpu_progressive": "CPU artımlı",
+-  "render.cpu_progressive_help": "Mevcut CPU tümleştiricisini tek birincil örnekli geçişlerde biriktirin. Seçili yansımalar tek örnek gerektirir; alan ışıkları, dielektrikler ve anizotropi Tek görüntü gerektirir.",
++  "render.cpu_progressive_help": "Mevcut CPU tümleştiricisini tek birincil örnekli geçişlerde biriktirin. Seçili yansımalar tek örnek gerektirir; dielektrikler ve anizotropi Tek görüntü gerektirir.",
+   "render.cpu_progressive_limits": "En fazla 1.048.576 piksel ve 16.777.216 piksel × örnek değerlendirmesi. Örnekleri değiştirmek görüntüyü asla otomatik yeniden boyutlandırmaz.",
+   "render.cpu_progressive_seed": "CPU örnekleme tohumu",
+   "render.cpu_progressive_spp": "piksel başına örnek",
+diff --git a/assets/locales/uk.json b/assets/locales/uk.json
+--- a/assets/locales/uk.json
++++ b/assets/locales/uk.json
+@@ -2144,7 +2144,7 @@
+   "render.cpu_point_help": "До восьми точкових джерел світла, що додаються до вибраного напрямленого освітлення. Відстані — у мм; мінімум не має перевищувати опорну відстань.",
+   "render.cpu_primary_samples": "Вибірок краю на піксель",
+   "render.cpu_progressive": "Прогресивний CPU",
+-  "render.cpu_progressive_help": "Накопичувати наявний інтегратор CPU проходами по одній первинній вибірці. Вибрані відбиття потребують однієї вибірки; площинні джерела світла, діелектрики та анізотропія потребують режиму «Одне зображення».",
++  "render.cpu_progressive_help": "Накопичувати наявний інтегратор CPU проходами по одній первинній вибірці. Вибрані відбиття потребують однієї вибірки; діелектрики та анізотропія потребують режиму «Одне зображення».",
+   "render.cpu_progressive_limits": "Не більше 1,048,576 пікселів і 16,777,216 обчислень «піксель × вибірка». Зміна кількості вибірок ніколи не змінює розмір зображення автоматично.",
+   "render.cpu_progressive_seed": "Початкове значення вибірки CPU",
+   "render.cpu_progressive_spp": "вибірок на піксель",
+diff --git a/assets/locales/vi.json b/assets/locales/vi.json
+--- a/assets/locales/vi.json
++++ b/assets/locales/vi.json
+@@ -2296,7 +2296,7 @@
+   "render.cpu_point_help": "Tối đa tám nguồn sáng điểm, được bổ sung vào ánh sáng định hướng đã chọn. Khoảng cách tính bằng mm; khoảng cách tối thiểu không được vượt quá khoảng cách tham chiếu.",
+   "render.cpu_primary_samples": "Số mẫu cạnh trên mỗi pixel",
+   "render.cpu_progressive": "Kết xuất lũy tiến trên CPU",
+-  "render.cpu_progressive_help": "Tích lũy bộ tích phân CPU hiện có theo từng lượt một mẫu chính. Các phản xạ đã chọn yêu cầu một mẫu; nguồn sáng vùng, chất điện môi và bất đẳng hướng yêu cầu chế độ 'Hình ảnh đơn'.",
++  "render.cpu_progressive_help": "Tích lũy bộ tích phân CPU hiện có theo từng lượt một mẫu chính. Các phản xạ đã chọn yêu cầu một mẫu; chất điện môi và bất đẳng hướng yêu cầu chế độ 'Hình ảnh đơn'.",
+   "render.cpu_progressive_limits": "Tối đa 1.048.576 pixel và tổng số tính toán (pixel × mẫu) không quá 16.777.216. Thay đổi số mẫu không bao giờ tự động đổi kích thước ảnh.",
+   "render.cpu_progressive_seed": "Hạt giống lấy mẫu CPU",
+   "render.cpu_progressive_spp": "Mẫu trên mỗi pixel",
+diff --git a/assets/locales/zh-TW.json b/assets/locales/zh-TW.json
+--- a/assets/locales/zh-TW.json
++++ b/assets/locales/zh-TW.json
+@@ -2144,7 +2144,7 @@
+   "render.cpu_point_help": "最多八個點光源，疊加於所選的方向光照明之上。距離單位為 mm；最小距離不得超過參考距離。",
+   "render.cpu_primary_samples": "每像素邊緣取樣數",
+   "render.cpu_progressive": "CPU 漸進式",
+-  "render.cpu_progressive_help": "以每輪一個主取樣為單位，累積現有的 CPU 積分器。所選反射需使用一個取樣；面光源、介電質和各向異性需使用「單張影像」。",
++  "render.cpu_progressive_help": "以每輪一個主取樣為單位，累積現有的 CPU 積分器。所選反射需使用一個取樣；介電質和各向異性需使用「單張影像」。",
+   "render.cpu_progressive_limits": "最多 1,048,576 像素和 16,777,216 次像素 × 取樣評估。變更取樣數不會自動調整影像大小。",
+   "render.cpu_progressive_seed": "CPU 取樣種子",
+   "render.cpu_progressive_spp": "取樣/像素",
+diff --git a/assets/locales/zh.json b/assets/locales/zh.json
+--- a/assets/locales/zh.json
++++ b/assets/locales/zh.json
+@@ -2296,7 +2296,7 @@
+   "render.cpu_point_help": "最多可在所选平行光照明基础上添加8个点光源。距离单位为mm，最小距离不得大于参考距离。",
+   "render.cpu_primary_samples": "每像素边缘采样",
+   "render.cpu_progressive": "CPU渐进渲染",
+-  "render.cpu_progressive_help": "使用现有CPU积分器，每轮累积一个主采样。所选反射需要单采样；面光源、电介质和各向异性需要固定图像模式。",
++  "render.cpu_progressive_help": "使用现有CPU积分器，每轮累积一个主采样。所选反射需要单采样；电介质和各向异性需要固定图像模式。",
+   "render.cpu_progressive_limits": "最多1,048,576像素，像素×采样总数不超过16,777,216。更改采样数不会自动调整图像尺寸。",
+   "render.cpu_progressive_seed": "CPU采样种子",
+   "render.cpu_progressive_spp": "每像素采样数",

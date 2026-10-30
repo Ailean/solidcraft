@@ -1,0 +1,12 @@
+diff --git a/crates/geom/src/paper/cubics.rs b/crates/geom/src/paper/cubics.rs
+--- a/crates/geom/src/paper/cubics.rs
++++ b/crates/geom/src/paper/cubics.rs
+@@ -91,7 +91,7 @@
+         // Numerical uncertainty is part of the error, never an excuse to use a
+         // looser tolerance. A later n may qualify; at the caller cap refuse all.
+     }
+-    Err(Invalid("cubic arc candidate: cannot certify the requested mm error within the piece cap"))
++    Err(Invalid("cubic arc candidate: cannot certify the requested error allowance within the piece cap"))
+ }
+ 
+ /// The exact-real radial bound with sin(beta)<=beta and

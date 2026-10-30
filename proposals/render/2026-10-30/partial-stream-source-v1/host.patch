@@ -1,0 +1,978 @@
+--- a/crates/render/src/job/mod.rs
++++ b/crates/render/src/job/mod.rs
+@@ -44,7 +44,7 @@
+ pub(crate) use host::Reservation;
+ pub use host::{
+     CpuHost, HostKind, ImageHost, JobEnvironmentInfo, JobHandle, JobStatus, LinearAlphaConvention, LinearColourEncoding, LinearMasterInfo,
+-    PreviewInfo, RenderFrame, RenderPreview,
++    PartialPreviewInfo, PartialPreviewProjection, PreviewInfo, RenderFrame, RenderPartialPreview, RenderPreview,
+ };
+ pub use image::{Admission, ImageTask, TaskPoll, admit, admit_geometry, admit_geometry_with_limits};
+ pub use lens::ThinLens;
+@@ -1282,3 +1282,73 @@
+         }
+     }
+ }
++
++/// Fixed representative presentation plan; fitting never grants source admission.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct PartialPreviewPlan {
++    source_width: u32,
++    source_height: u32,
++    width: u32,
++    height: u32,
++}
++impl PartialPreviewPlan {
++    pub fn source_width(&self) -> u32 { self.source_width }
++    pub fn source_height(&self) -> u32 { self.source_height }
++    pub fn width(&self) -> u32 { self.width }
++    pub fn height(&self) -> u32 { self.height }
++    pub fn new(source_width: u32, source_height: u32) -> Result<Self> {
++        if source_width == 0 || source_height == 0 {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview source dimensions must be positive"));
++        }
++        let edge = source_width.max(source_height);
++        let fit = |side: u32| {
++            if edge <= 1024 { side } else { ((u64::from(side) * 1024 + u64::from(edge) / 2) / u64::from(edge)).max(1) as u32 }
++        };
++        Ok(Self { source_width, source_height, width: fit(source_width), height: fit(source_height) })
++    }
++    pub fn validate(&self) -> Result<()> {
++        if *self != Self::new(self.source_width, self.source_height)? {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview dimensions differ from the fixed plan"));
++        }
++        Ok(())
++    }
++    pub fn pixels(&self) -> u64 {
++        u64::from(self.width) * u64::from(self.height)
++    }
++    pub fn source_index(&self, preview_index: usize) -> Result<usize> {
++        self.validate()?;
++        let index = u64::try_from(preview_index).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "partial preview index overflow"))?;
++        if index >= self.pixels() {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview index outside its plan"));
++        }
++        let x = (index % u64::from(self.width)) * u64::from(self.source_width) / u64::from(self.width);
++        let y = (index / u64::from(self.width)) * u64::from(self.source_height) / u64::from(self.height);
++        let source = y.checked_mul(u64::from(self.source_width)).and_then(|v| v.checked_add(x))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial source index overflow"))?;
++        usize::try_from(source).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "partial source index exceeds address space"))
++    }
++    pub fn encoded_limit(&self) -> Result<u64> {
++        self.validate()?;
++        self.pixels().checked_mul(8).and_then(|v| v.checked_add(65_536))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial PNG capacity overflow"))
++    }
++    pub fn covered_bytes(&self) -> Result<u64> {
++        self.validate()?;
++        self.pixels().checked_mul(2).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial coverage capacity overflow"))
++    }
++    pub fn snapshot_work(&self) -> Result<u64> {
++        self.validate()?;
++        self.pixels().checked_mul(12).and_then(|v| v.checked_add(65_538))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial work bound overflow"))
++    }
++    /// Two retained payload slots; existing admitted RGBA/encoder scratch is reused.
++    #[cfg(feature = "raytrace-cpu")]
++    pub(crate) fn additional_bytes(&self) -> Result<u64> {
++        self.slot_bytes()?.checked_mul(2).and_then(|v| v.checked_add(1024))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial preview admission overflow"))
++    }
++    pub(crate) fn slot_bytes(&self) -> Result<u64> {
++        self.encoded_limit()?.checked_add(self.covered_bytes()?).and_then(|v| v.checked_add(2048))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial retained slot overflow"))
++    }
++}
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -107,6 +107,17 @@
+     }
+ }
+ impl Reservation {
++    /// Merge unique portions of one admission without a second pool debit.
++    fn merge_from(&mut self, donor: &mut Self) -> Result<()> {
++        if !Arc::ptr_eq(&self.budget, &donor.budget) {
++            return Err(JobError::new(ErrorCode::WrongOwner, "cannot merge different image admission pools"));
++        }
++        let bytes = self.bytes.checked_add(donor.bytes).filter(|v| *v <= self.budget.limit)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "image reservation merge overflow"))?;
++        self.bytes = bytes;
++        donor.bytes = 0;
++        Ok(())
++    }
+     /// Transfer an already admitted portion without changing the pool's total.
+     /// CPU progressive admission includes every possible checkpoint up front.
+     fn split(&mut self, bytes: u64) -> Result<Self> {
+@@ -362,6 +373,7 @@
+ }
+ 
+ struct Data {
++    partial_preview: Option<Arc<RenderPartialPreview>>,
+     punctual_diagnostics: Option<super::PunctualDiagnostics>,
+     sampling: Option<super::adaptive::SamplingReport>,
+     progress: Progress,
+@@ -370,6 +382,7 @@
+     preview: Option<Arc<RenderPreview>>,
+ }
+ struct Record {
++    partial: Option<Arc<PartialCredits>>,
+     presentation: Option<Arc<RetainedPresentation>>,
+     textures: Option<super::textures::TextureSummary>,
+     options: JobOptions,
+@@ -425,14 +438,18 @@
+         })
+     }
+     pub fn cancel(&self) -> Result<JobStatus> {
++        if let Some(credits) = &self.0.partial { credits.close(); }
++        let mut released_partial = None;
+         {
+             let mut data = self.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render status lock poisoned"))?;
+             if !data.progress.phase.terminal() {
+                 self.0.cancel.cancel();
++                released_partial = data.partial_preview.take();
+                 data.preview = None;
+                 data.progress.phase = if data.progress.phase == Phase::Queued { Phase::Cancelled } else { Phase::Cancelling };
+             }
+         }
++        drop(released_partial);
+         self.0.notify();
+         self.status()
+     }
+@@ -472,6 +489,14 @@
+     }
+ }
+ 
++struct Submission {
++    id: JobId,
++    scene_generation: u64,
++    scene: ProductScene,
++    request: ImageRequest,
++    options: JobOptions,
++    environment: Option<crate::lighting::environment_input::EnvironmentInput>,
++}
+ struct Work {
+     regrade: Option<(Arc<RenderFrame>, super::presentation::Presentation)>,
+     request: Option<ImageRequest>,
+@@ -551,6 +576,8 @@
+     handle: JobHandle,
+     reservation: Option<Reservation>,
+     next_preview_sequence: u32,
++    // Task/PNG allocations above die before the in-flight credit below.
++    partial: Option<TaskSlot<PartialRunning>>,
+ }
+ 
+ /// One fallibly allocated task, keeping the dispatch enum small in either build.
+@@ -582,6 +609,8 @@
+ }
+ 
+ enum WorkPoll {
++    #[cfg(feature = "raytrace-cpu")]
++    Partial { png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64 },
+     Existing(TaskPoll),
+     #[cfg(feature = "raytrace-cpu")]
+     Preview {
+@@ -591,6 +620,37 @@
+ }
+ 
+ impl WorkTask {
++    fn partial_ready(&mut self, plan: super::PartialPreviewPlan) -> Result<bool> {
++        let _ = &plan;
++        match self {
++            #[cfg(feature = "raytrace-cpu")]
++            Self::Raytrace(task) => task.get_mut()?.partial_preview_ready(plan),
++            _ => Ok(false),
++        }
++    }
++    fn begin_partial(&mut self, plan: super::PartialPreviewPlan) -> Result<bool> {
++        let _ = &plan;
++        match self {
++            #[cfg(feature = "raytrace-cpu")]
++            Self::Raytrace(task) => match task.get_mut()?.begin_partial_preview(plan)? {
++                crate::raytrace::image::PartialBegin::Started => Ok(true),
++                crate::raytrace::image::PartialBegin::Exhausted => Ok(false),
++            },
++            _ => Err(JobError::new(ErrorCode::InvalidRequest, "partial presentation requires the builtin CPU task")),
++        }
++    }
++    fn step_partial(&mut self, units: usize) -> Result<WorkPoll> {
++        let _ = &units;
++        match self {
++            #[cfg(feature = "raytrace-cpu")]
++            Self::Raytrace(task) => Ok(match task.get_mut()?.step_with_partial_previews(units)? {
++                crate::raytrace::image::PartialImagePoll::Pending(progress) => WorkPoll::Existing(TaskPoll::Pending(progress)),
++                crate::raytrace::image::PartialImagePoll::Complete(png) => WorkPoll::Existing(TaskPoll::Complete(png)),
++                crate::raytrace::image::PartialImagePoll::Preview { png, covered, completed_passes, updated_prefix } => WorkPoll::Partial { png, covered, completed_passes, updated_prefix },
++            }),
++            _ => Err(JobError::new(ErrorCode::InvalidRequest, "partial presentation requires the builtin CPU task")),
++        }
++    }
+     fn punctual_diagnostics(&self) -> Option<super::PunctualDiagnostics> {
+         match self {
+             #[cfg(feature = "raytrace-cpu")]
+@@ -625,15 +685,21 @@
+         cancel: CancelToken,
+         environment: Option<crate::lighting::environment_input::EnvironmentInput>,
+         job_options: JobOptions,
++        partial: Option<super::PartialPreviewPlan>,
+     ) -> Result<Self> {
+-        let _ = (&environment, &job_options);
++        let _ = (&environment, &job_options, &partial);
+         match request.integrator {
+             Integrator::Raster => ImageTask::new(scene, request, cancel).and_then(TaskSlot::new).map(Self::Raster),
+             Integrator::Raytrace => {
+                 #[cfg(feature = "raytrace-cpu")]
+                 {
+                     let options = request.raytrace.clone().unwrap_or_default();
+-                    crate::raytrace::image::ImageTask::new_with_environment_and_nested(scene, request, cancel, options, environment, job_options.nested_media)
++                    let task = if let Some(plan) = partial {
++                        crate::raytrace::image::ImageTask::new_with_environment_and_nested_and_partial(scene, request, cancel, options, environment, job_options.nested_media, plan)
++                    } else {
++                        crate::raytrace::image::ImageTask::new_with_environment_and_nested(scene, request, cancel, options, environment, job_options.nested_media)
++                    };
++                    task
+                         .and_then(TaskSlot::new)
+                         .map(Self::Raytrace)
+                 }
+@@ -661,6 +727,8 @@
+ }
+ 
+ fn terminal(handle: &JobHandle, error: JobError) {
++    if let Some(credits) = &handle.0.partial { credits.close(); }
++    let mut released_partial = None;
+     if let Ok(mut data) = handle.0.data.lock() {
+         if data.progress.phase == Phase::Completed {
+             return;
+@@ -674,7 +742,9 @@
+         }
+         data.frame = None;
+         data.preview = None;
++        released_partial = data.partial_preview.take();
+     }
++    drop(released_partial);
+     handle.0.notify();
+ }
+ 
+@@ -702,12 +772,16 @@
+                     work.handle.0.cancel.clone(),
+                     work.environment,
+                     work.handle.0.options,
++                    work.handle.0.partial.as_ref().map(|credits| credits.plan),
+                 )
+             }
+         }))
+         .unwrap_or_else(|_| Err(JobError::new(ErrorCode::Internal, "image executor failed while preparing the job")));
++        let partial = work.handle.0.partial.as_ref().map(|credits| TaskSlot::new(PartialRunning::new(credits.clone()))).transpose();
++        let task = task.and_then(|task| partial.map(|partial| (task, partial)));
+         match task {
+-            Ok(task) => Some(Self {
++            Ok((task, partial)) => Some(Self {
++                partial,
+                 source_master: None,
+                 task: Some(task),
+                 pending_png: None,
+@@ -727,7 +801,22 @@
+         if self.pending_png.is_some() {
+             return self.advance_png(units);
+         }
+-        let result = self.task.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing render task"))?.step(units)?;
++        if let Some(partial) = self.partial.as_mut() {
++            let partial = partial.get_mut()?;
++            if partial.lease.is_none() && partial.credits.requested.load(Ordering::Acquire) && !partial.credits.exhausted.load(Ordering::Acquire) {
++                let task = self.task.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial CPU task"))?;
++                if task.partial_ready(partial.credits.plan)? && let Some(lease) = partial.credits.acquire()? {
++                        // Keep the lease past any producer error until task buffers drop.
++                        partial.lease = Some(lease);
++                        if !task.begin_partial(partial.credits.plan)? {
++                            partial.credits.exhaust();
++                            drop(partial.lease.take());
++                        }
++                }
++            }
++        }
++        let task = self.task.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing render task"))?;
++        let result = if self.partial.is_some() { task.step_partial(units)? } else { task.step(units)? };
+         let mut data = self.handle.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render status lock poisoned"))?;
+         data.punctual_diagnostics = self.task.as_ref().and_then(WorkTask::punctual_diagnostics);
+         // The final publication check is under the same lock as cancellation.
+@@ -735,10 +824,20 @@
+             data.progress.phase = Phase::Cancelled;
+             data.frame = None;
+             data.preview = None;
++            let released = data.partial_preview.take();
++            drop(data);
++            if let Some(credits) = &self.handle.0.partial { credits.close(); }
++            drop(released);
+             self.handle.0.notify();
+             return Ok(false);
+         }
+         match result {
++            #[cfg(feature = "raytrace-cpu")]
++            WorkPoll::Partial { png, covered, completed_passes, updated_prefix } => {
++                drop(data);
++                self.capture_partial(png, covered, completed_passes, updated_prefix)?;
++                Ok(true)
++            }
+             WorkPoll::Existing(TaskPoll::Pending(progress)) => {
+                 data.progress = progress;
+                 Ok(true)
+@@ -789,6 +888,9 @@
+         }
+         let PendingPng { png, digest, preview_samples, exr, exr_digest, .. } =
+             self.pending_png.take().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing completed PNG digest"))?;
++        if self.partial.as_ref().and_then(|slot| slot.0.first()).is_some_and(|partial| partial.pending.is_some()) {
++            return self.publish_partial(png, digest);
++        }
+         let info = FrameInfo {
+             job: self.handle.0.id,
+             scene_generation: self.handle.0.scene_generation,
+@@ -872,7 +974,11 @@
+             _reservation: reservation,
+         }));
+         data.preview = None;
++        let released = data.partial_preview.take();
+         data.progress = Progress { phase: Phase::Completed, done: 1, total: 1 };
++        drop(data);
++        if let Some(credits) = &self.handle.0.partial { credits.close(); }
++        drop(released);
+         self.handle.0.notify();
+         Ok(false)
+     }
+@@ -880,6 +986,7 @@
+     fn guarded_step(&mut self, units: usize) -> bool {
+         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.advance(units)));
+         match result {
++
+             Ok(Ok(more)) => more,
+             Ok(Err(e)) => {
+                 terminal(&self.handle, e);
+@@ -1064,6 +1171,17 @@
+     }
+ 
+     pub fn admit(&self, scene: &ProductScene, request: &ImageRequest, options: JobOptions) -> Result<Admission> {
++        self.admit_with_policy(scene, request, options, None)
++    }
++    fn admit_with_policy(&self, scene: &ProductScene, request: &ImageRequest, options: JobOptions, partial: Option<super::PartialPreviewPlan>) -> Result<Admission> {
++        if let Some(plan) = partial {
++            if self.0.executor.is_some() || request.integrator != Integrator::Raytrace || request.transparent_background
++                || request.environment.is_some() || request.textures.is_some()
++                || request.raytrace.as_ref().and_then(|v| v.progressive).is_none()
++                || plan != super::PartialPreviewPlan::new(request.width, request.height)? {
++                return Err(JobError::new(ErrorCode::InvalidRequest, "partial previews require the canonical builtin CPU progressive request"));
++            }
++        }
+         let scatter = |t: Option<crate::transmission::Transmission>| t.and_then(|v| v.subsurface()).is_some_and(|s| s.active());
+         if scene.meshes.iter().any(|b| scatter(b.transmission) || b.faces.iter().any(|f| scatter(f.transmission)))
+             && !self.0.executor.as_ref().is_some_and(|executor| executor.supports_subsurface())
+@@ -1116,6 +1234,18 @@
+             if (JobOptions { nested_media: false, ..options }) != JobOptions::default() {
+                 return Err(JobError::new(ErrorCode::InvalidRequest, "CPU images use raytrace options, not progressive sampling controls"));
+             }
++            if let Some(plan) = partial {
++                #[cfg(feature = "raytrace-cpu")]
++                {
++                    let raytrace = request.raytrace.as_ref().ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "partial previews require CPU progressive options"))?;
++                    return crate::raytrace::image::admit_with_partial_preview(scene, request, raytrace, options.nested_media, plan);
++                }
++                #[cfg(not(feature = "raytrace-cpu"))]
++                {
++                    let _ = plan;
++                    return Err(JobError::new(ErrorCode::HostUnavailable, "CPU raytracing is not compiled in; enable raytrace-cpu"));
++                }
++            }
+             if !options.nested_media {
+                 return admit(scene, request);
+             }
+@@ -1258,14 +1388,21 @@
+     }
+ 
+     pub fn submit_with_environment_and_options(
+-        &self,
+-        id: JobId,
+-        scene_generation: u64,
+-        scene: ProductScene,
+-        request: ImageRequest,
+-        options: JobOptions,
++        &self, id: JobId, scene_generation: u64, scene: ProductScene, request: ImageRequest, options: JobOptions,
+         environment: Option<crate::lighting::environment_input::EnvironmentInput>,
+     ) -> Result<JobHandle> {
++        self.submit_with_policy(Submission { id, scene_generation, scene, request, options, environment }, None)
++    }
++    /// Transient CPU presentation policy. Final request and legacy observers are unchanged.
++    pub fn submit_cpu_partial_with_environment_and_options(
++        &self, id: JobId, scene_generation: u64, scene: ProductScene, request: ImageRequest, options: JobOptions,
++        environment: Option<crate::lighting::environment_input::EnvironmentInput>,
++    ) -> Result<JobHandle> {
++        let plan = super::PartialPreviewPlan::new(request.width, request.height)?;
++        self.submit_with_policy(Submission { id, scene_generation, scene, request, options, environment }, Some(plan))
++    }
++    fn submit_with_policy(&self, input: Submission, partial_plan: Option<super::PartialPreviewPlan>) -> Result<JobHandle> {
++        let Submission { id, scene_generation, scene, request, options, environment } = input;
+         if self.0.executor.is_some() && environment.is_some() {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "registered image executors do not accept CPU environments"));
+         }
+@@ -1300,7 +1437,7 @@
+         {
+             features.push(crate::RenderFeature::Refraction);
+         }
+-        let Admission { estimated_total_bytes, .. } = self.admit(&scene, &request, options)?;
++        let Admission { estimated_total_bytes, .. } = self.admit_with_policy(&scene, &request, options, partial_plan)?;
+         let environment_bytes =
+             environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| JobError::new(ErrorCode::InvalidRequest, e.to_string()))?;
+         let estimated_total_bytes = estimated_total_bytes
+@@ -1337,8 +1474,9 @@
+             return Err(JobError::new(ErrorCode::QueueFull, "image queue is full"));
+         }
+         self.check_request_sum(estimated_total_bytes, request_bytes, request.cpu_budget())?;
+-        let reservation = self.0.shared.budget.reserve(estimated_total_bytes)?;
++        let mut reservation = self.0.shared.budget.reserve(estimated_total_bytes)?;
+         let request_reservation = if request_bytes == 0 { None } else { Some(self.0.shared.budget.reserve(request_bytes)?) };
++        let partial_credits = partial_plan.map(|plan| PartialCredits::new(plan, &mut reservation)).transpose()?;
+         // Preserve the original CPU option capacities in the retained request and its lease.
+         // Registered executors instead move resource Arcs into work and keep a small public copy.
+         let (public_request, work_request) = if self.0.executor.is_some() {
+@@ -1347,6 +1485,7 @@
+             (request, None)
+         };
+         let handle = JobHandle(Arc::new(Record {
++            partial: partial_credits,
+             presentation: None,
+             textures,
+             options,
+@@ -1358,6 +1497,7 @@
+             resolved,
+             cancel: CancelToken::default(),
+             data: Mutex::new(Data {
++                partial_preview: None,
+                 punctual_diagnostics: None,
+                 sampling: None,
+                 progress: Progress { phase: Phase::Queued, done: 0, total: 1 },
+@@ -1464,6 +1604,7 @@
+         let metadata = self.0.shared.budget.reserve(metadata_bytes)?;
+         let origin = Arc::new(RetainedPresentation { info: origin, _reservation: metadata });
+         let handle = JobHandle(Arc::new(Record {
++            partial: None,
+             presentation: Some(origin),
+             textures: None,
+             options,
+@@ -1475,6 +1616,7 @@
+             resolved,
+             cancel: CancelToken::default(),
+             data: Mutex::new(Data {
++                partial_preview: None,
+                 punctual_diagnostics: None,
+                 sampling: None,
+                 progress: Progress { phase: Phase::Queued, done: 0, total: 1 },
+@@ -1858,3 +2000,236 @@
+         JobId { session: owner, serial, generation: serial }
+     }
+ }
++
++/// Provisional source-film observation, separate from complete-pass previews.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
++#[serde(rename_all = "snake_case")]
++pub enum PartialPreviewProjection { TopLeftRepresentativeV1 }
++#[derive(Clone, Debug, Serialize)]
++pub struct PartialPreviewInfo {
++    pub frame: FrameInfo,
++    pub sequence: u64,
++    pub source_width: u32,
++    pub source_height: u32,
++    pub completed_passes: u32,
++    pub updated_prefix: u64,
++    pub projection: PartialPreviewProjection,
++}
++/// Fields drop in declaration order: payload allocations die before credit return.
++pub struct RenderPartialPreview {
++    pub info: PartialPreviewInfo,
++    png: Vec<u8>,
++    covered: Vec<u16>,
++    _lease: ReturnReservation,
++}
++const _: [(); 1] = [(); (std::mem::size_of::<RenderPartialPreview>() + 2 * crate::MAX_RENDER_ID_BYTES + 256 <= 2048) as usize];
++impl RenderPartialPreview {
++    pub fn png(&self) -> &[u8] { &self.png }
++    pub fn covered(&self) -> &[u16] { &self.covered }
++}
++struct PartialCreditState {
++    free: Reservation,
++    in_flight: bool,
++    closed: bool,
++}
++struct PartialCredits {
++    plan: super::PartialPreviewPlan,
++    state: Mutex<PartialCreditState>,
++    requested: AtomicBool,
++    exhausted: AtomicBool,
++    _metadata: Reservation,
++}
++const _: [(); 1] = [(); (std::mem::size_of::<PartialCredits>() + std::mem::size_of::<PartialRunning>() + std::mem::size_of::<TaskSlot<PartialRunning>>() + 128 <= 1024) as usize];
++impl PartialCredits {
++    fn new(plan: super::PartialPreviewPlan, reservation: &mut Reservation) -> Result<Arc<Self>> {
++        plan.validate()?;
++        let metadata = reservation.split(1024)?;
++        let bytes = plan.slot_bytes()?.checked_mul(2).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial credit overflow"))?;
++        let free = reservation.split(bytes)?;
++        Ok(Arc::new(Self {
++            plan,
++            state: Mutex::new(PartialCreditState { free, in_flight: false, closed: false }),
++            requested: AtomicBool::new(false),
++            exhausted: AtomicBool::new(false),
++            _metadata: metadata,
++        }))
++    }
++    fn request(&self) -> Result<bool> {
++        let state = self.state.lock().map_err(|_| JobError::new(ErrorCode::Internal, "partial credit lock poisoned"))?;
++        if state.closed || self.exhausted.load(Ordering::Acquire) { return Ok(false); }
++        self.requested.store(true, Ordering::Release);
++        Ok(true)
++    }
++    fn acquire(self: &Arc<Self>) -> Result<Option<ReturnReservation>> {
++        let mut state = self.state.lock().map_err(|_| JobError::new(ErrorCode::Internal, "partial credit lock poisoned"))?;
++        let bytes = self.plan.slot_bytes()?;
++        if state.closed || state.in_flight || self.exhausted.load(Ordering::Acquire)
++            || !self.requested.load(Ordering::Acquire) || state.free.bytes < bytes { return Ok(None); }
++        let reservation = state.free.split(bytes)?;
++        state.in_flight = true;
++        self.requested.store(false, Ordering::Release);
++        Ok(Some(ReturnReservation { reservation: Some(reservation), credits: self.clone(), in_flight: true }))
++    }
++    fn exhaust(&self) {
++        self.exhausted.store(true, Ordering::Release);
++        self.requested.store(false, Ordering::Release);
++    }
++    fn close(&self) {
++        let mut state = match self.state.lock() { Ok(state) => state, Err(error) => error.into_inner() };
++        state.closed = true;
++        state.in_flight = false;
++        self.requested.store(false, Ordering::Release);
++        // Atomic release only: no image destruction or user work under this lock.
++        let _ = state.free.shrink(0);
++    }
++}
++/// Unique lease; Arc payload clones never create another independent slot.
++struct ReturnReservation {
++    reservation: Option<Reservation>,
++    credits: Arc<PartialCredits>,
++    in_flight: bool,
++}
++impl ReturnReservation {
++    fn published(&mut self) -> Result<()> {
++        let mut state = self.credits.state.lock().map_err(|_| JobError::new(ErrorCode::Internal, "partial credit lock poisoned"))?;
++        if state.closed || !state.in_flight || !self.in_flight {
++            return Err(JobError::new(ErrorCode::Cancelled, "partial preview credit is no longer current"));
++        }
++        state.in_flight = false;
++        self.in_flight = false;
++        Ok(())
++    }
++}
++impl Drop for ReturnReservation {
++    fn drop(&mut self) {
++        let Some(mut reservation) = self.reservation.take() else { return };
++        let mut state = match self.credits.state.lock() {
++            Ok(state) => state,
++            Err(error) => {
++                let mut state = error.into_inner();
++                state.closed = true;
++                let _ = state.free.shrink(0);
++                state
++            }
++        };
++        if self.in_flight { state.in_flight = false; }
++        if !state.closed {
++            let limit = self.credits.plan.slot_bytes().ok().and_then(|v| v.checked_mul(2));
++            if state.free.bytes.checked_add(reservation.bytes).zip(limit).is_some_and(|(total, limit)| total <= limit) {
++                if state.free.merge_from(&mut reservation).is_err() { state.closed = true; let _ = state.free.shrink(0); }
++            } else { state.closed = true; let _ = state.free.shrink(0); }
++        }
++        drop(state);
++        // A closed sink releases this uniquely held reservation globally.
++    }
++}
++struct PartialPending {
++    covered: Vec<u16>,
++    completed_passes: u32,
++    updated_prefix: u64,
++}
++// Error paths preserve the same payload-before-lease destruction order.
++struct PartialPublication {
++    png: Vec<u8>,
++    pending: PartialPending,
++    lease: ReturnReservation,
++}
++struct PartialRunning {
++    pending: Option<PartialPending>,
++    lease: Option<ReturnReservation>,
++    credits: Arc<PartialCredits>,
++    next_sequence: u64,
++}
++impl PartialRunning {
++    fn new(credits: Arc<PartialCredits>) -> Self { Self { pending: None, lease: None, credits, next_sequence: 1 } }
++}
++impl JobHandle {
++    /// Request presentation only; this is not a visual-authority certificate.
++    pub fn request_partial_preview(&self) -> Result<bool> {
++        let terminal = self.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render status lock poisoned"))?.progress.phase.terminal();
++        if terminal { return Ok(false); }
++        self.0.partial.as_ref().map_or(Ok(false), |credits| credits.request())
++    }
++    pub fn partial_preview_exhausted(&self) -> Result<bool> {
++        Ok(self.0.partial.as_ref().is_some_and(|credits| credits.exhausted.load(Ordering::Acquire)))
++    }
++    pub fn partial_preview(&self) -> Result<Option<Arc<RenderPartialPreview>>> {
++        let data = self.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render partial preview lock poisoned"))?;
++        let preview = data.partial_preview.clone();
++        if preview.as_ref().is_some_and(|p| p.info.frame.job != self.0.id || p.info.frame.scene_generation != self.0.scene_generation) {
++            return Err(JobError::new(ErrorCode::WrongOwner, "partial preview identity does not match its job"));
++        }
++        Ok(preview)
++    }
++}
++impl Running {
++    #[cfg(feature = "raytrace-cpu")]
++    fn capture_partial(&mut self, png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64) -> Result<()> {
++        self.handle.0.cancel.check()?;
++        let partial = self.partial.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "partial output without its policy"))?.get_mut()?;
++        let plan = partial.credits.plan;
++        let source_pixels = u64::from(plan.source_width()) * u64::from(plan.source_height());
++        let target = self.handle.0.request.raytrace.as_ref().and_then(|v| v.progressive)
++            .ok_or_else(|| JobError::new(ErrorCode::Internal, "partial output without progressive intent"))?.samples_per_pixel;
++        let covered_limit = plan.covered_bytes()?;
++        if partial.lease.is_none() || partial.pending.is_some() || completed_passes >= target || updated_prefix >= source_pixels
++            || (completed_passes == 0 && updated_prefix == 0) || covered.len() as u64 != plan.pixels()
++            || (covered.capacity() as u64).checked_mul(2).is_none_or(|v| v > covered_limit)
++            || png.capacity() as u64 > plan.encoded_limit()? {
++            return Err(JobError::new(ErrorCode::LimitExceeded, "partial payload exceeds its admitted frontier or capacities"));
++        }
++        // This sole sidecar verification scan was included in the producer's precharge.
++        for (index, count) in covered.iter().enumerate() {
++            self.handle.0.cancel.check()?;
++            let source = plan.source_index(index)? as u64;
++            let samples = completed_passes.checked_add(u32::from(source < updated_prefix))
++                .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial sample count overflow"))?;
++            if u32::from(*count) > samples {
++                return Err(JobError::new(ErrorCode::Internal, "partial coverage exceeds committed source samples"));
++            }
++        }
++        partial.pending = Some(PartialPending { covered, completed_passes, updated_prefix });
++        self.pending_png = Some(PendingPng::new(png));
++        Ok(())
++    }
++    fn publish_partial(&mut self, png: Vec<u8>, digest: Sha256) -> Result<bool> {
++        self.handle.0.cancel.check()?;
++        let partial = self.partial.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial publication state"))?.get_mut()?;
++        let pending = partial.pending.take().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial metadata"))?;
++        let lease = partial.lease.take().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial publication credit"))?;
++        let mut publication = PartialPublication { png, pending, lease };
++        let sequence = partial.next_sequence;
++        let next = sequence.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial preview sequence exhausted"))?;
++        let plan = partial.credits.plan;
++        let info = FrameInfo {
++            job: self.handle.0.id, scene_generation: self.handle.0.scene_generation,
++            backend: self.handle.0.resolved.backend.clone(), executor: self.handle.0.resolved.executor.clone(),
++            width: plan.width(), height: plan.height(), encoding: ColourEncoding::Srgb, alpha: AlphaConvention::Straight,
++            png_bytes: publication.png.len() as u64, png_sha256: format!("{:x}", digest.finalize()),
++        };
++        let metadata = std::mem::size_of::<RenderPartialPreview>().checked_add(64 + 2 * crate::MAX_RENDER_ID_BYTES)
++            .and_then(|v| v.checked_add(info.png_sha256.capacity()));
++        if metadata.is_none_or(|v| v > 2048) { return Err(JobError::new(ErrorCode::LimitExceeded, "partial payload metadata exceeds its slot")); }
++        // No Data lock while touching the credit coordinator.
++        publication.lease.published()?;
++        let PartialPublication { png, pending, lease } = publication;
++        let preview = Arc::new(RenderPartialPreview {
++            info: PartialPreviewInfo { frame: info, sequence, source_width: plan.source_width(), source_height: plan.source_height(),
++                completed_passes: pending.completed_passes, updated_prefix: pending.updated_prefix, projection: PartialPreviewProjection::TopLeftRepresentativeV1 },
++            png, covered: pending.covered, _lease: lease,
++        });
++        let mut data = self.handle.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render partial publication lock poisoned"))?;
++        if self.handle.0.cancel.is_cancelled() || data.progress.phase.terminal() {
++            drop(data);
++            drop(preview);
++            return Err(JobError::new(ErrorCode::Cancelled, "late partial preview refused"));
++        }
++        let released = data.partial_preview.replace(preview);
++        partial.next_sequence = next;
++        // A demand arriving during encoding remains pending; never clear it here.
++        drop(data);
++        drop(released);
++        self.handle.0.notify();
++        Ok(true)
++    }
++}
+--- a/crates/render/src/job/host_tests.rs
++++ b/crates/render/src/job/host_tests.rs
+@@ -1228,3 +1228,274 @@
+     drop(lease);
+     assert_eq!(host.admitted_bytes(), 0);
+ }
++
++mod partial_preview_contract {
++    use super::*;
++    use crate::job::PartialPreviewPlan;
++
++    fn credits() -> (Arc<Budget>, Reservation, Arc<PartialCredits>) {
++        let plan = PartialPreviewPlan::new(4, 1).unwrap();
++        let total = 2 * plan.slot_bytes().unwrap() + 1024 + 17;
++        let budget = Arc::new(Budget { used: AtomicU64::new(0), limit: total });
++        let mut work = budget.reserve(total).unwrap();
++        let credits = PartialCredits::new(plan, &mut work).unwrap();
++        assert_eq!(work.bytes, 17);
++        (budget, work, credits)
++    }
++    fn take(credits: &Arc<PartialCredits>) -> ReturnReservation {
++        assert!(credits.request().unwrap());
++        credits.acquire().unwrap().unwrap()
++    }
++    fn payload(mut lease: ReturnReservation, sequence: u64) -> Arc<RenderPartialPreview> {
++        lease.published().unwrap();
++        Arc::new(RenderPartialPreview {
++            info: PartialPreviewInfo {
++                frame: FrameInfo { job: id(7724, 1), scene_generation: 19, backend: crate::builtin_backend().id,
++                    executor: ExecutorId::new("cpu-raytrace").unwrap(), width: 4, height: 1,
++                    encoding: ColourEncoding::Srgb, alpha: AlphaConvention::Straight, png_bytes: 4, png_sha256: "unit-lease-fixture".into() },
++                sequence, source_width: 4, source_height: 1, completed_passes: 0, updated_prefix: 1,
++                projection: PartialPreviewProjection::TopLeftRepresentativeV1,
++            },
++            png: vec![1, 2, 3, 4], covered: vec![1, 0, 0, 0], _lease: lease,
++        })
++    }
++    #[test]
++    fn plan_is_canonical_no_upscale_and_maps_top_left_without_source_scan() {
++        for (w, h, expected) in [(16384, 4096, (1024, 256)), (2160, 3840, (576, 1024)), (4, 1, (4, 1)), (u32::MAX, 1, (1024, 1))] {
++            let plan = PartialPreviewPlan::new(w, h).unwrap();
++            assert_eq!((plan.width(), plan.height()), expected);
++            assert_eq!((plan.source_width(), plan.source_height()), (w, h));
++            assert_eq!(plan.source_index(0).unwrap(), 0);
++            assert!(plan.source_index(plan.pixels() as usize).is_err());
++            assert!(plan.pixels() <= 1024 * 1024);
++        }
++        let plan = PartialPreviewPlan::new(16384, 4096).unwrap();
++        assert_eq!(plan.source_index(1025).unwrap(), 16 * 16384 + 16);
++        assert_eq!(plan.snapshot_work().unwrap(), 12 * 1024 * 256 + 65538);
++        assert!(PartialPreviewPlan::new(0, 1).is_err());
++        assert!(PartialPreviewPlan::new(1, 0).is_err());
++    }
++    #[test]
++    fn same_budget_merge_moves_ownership_once_and_wrong_pool_preserves_both() {
++        let a = Arc::new(Budget { used: AtomicU64::new(0), limit: 100 });
++        let b = Arc::new(Budget { used: AtomicU64::new(0), limit: 100 });
++        let mut retained = a.reserve(80).unwrap();
++        let mut donor = retained.split(30).unwrap();
++        let mut foreign = b.reserve(9).unwrap();
++        assert_eq!(retained.merge_from(&mut foreign).unwrap_err().code, ErrorCode::WrongOwner);
++        assert_eq!((retained.bytes, foreign.bytes), (50, 9));
++        retained.merge_from(&mut donor).unwrap();
++        assert_eq!((retained.bytes, donor.bytes, a.used.load(Ordering::Acquire)), (80, 0, 80));
++        assert!(retained.split(81).is_err());
++        assert_eq!(retained.bytes, 80);
++        drop(donor);
++        assert_eq!(a.used.load(Ordering::Acquire), 80);
++        drop(retained);
++        drop(foreign);
++        assert_eq!((a.used.load(Ordering::Acquire), b.used.load(Ordering::Acquire)), (0, 0));
++    }
++    #[test]
++    fn two_total_slots_include_inflight_and_clones_do_not_mint_capacity() {
++        let (budget, work, credits) = credits();
++        let total = budget.used.load(Ordering::Acquire);
++        let first = take(&credits);
++        assert!(credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none(), "one encoder even with another free slot");
++        let first = payload(first, 1);
++        let held = first.clone();
++        let second = payload(take(&credits), 2);
++        assert!(credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none());
++        assert!(credits.requested.load(Ordering::Acquire), "full credit preserves coalesced demand");
++        drop(first);
++        assert!(credits.acquire().unwrap().is_none(), "a clone retains the same first slot");
++        assert_eq!(budget.used.load(Ordering::Acquire), total);
++        drop(held);
++        let third = credits.acquire().unwrap().unwrap();
++        assert_eq!(budget.used.load(Ordering::Acquire), total, "return/transfer does not reserve globally again");
++        assert_eq!(second.png(), &[1, 2, 3, 4]);
++        drop(third);
++        drop(second);
++        credits.close();
++        assert_eq!(budget.used.load(Ordering::Acquire), 17 + 1024);
++        drop(credits);
++        drop(work);
++        assert_eq!(budget.used.load(Ordering::Acquire), 0);
++    }
++    #[test]
++    fn demand_during_inflight_survives_publication_and_terminal_held_frames_stay_billed() {
++        let (budget, work, credits) = credits();
++        let first = take(&credits);
++        assert!(!credits.requested.load(Ordering::Acquire));
++        assert!(credits.request().unwrap());
++        let first = payload(first, 1);
++        assert!(credits.requested.load(Ordering::Acquire));
++        let second = payload(credits.acquire().unwrap().unwrap(), 2);
++        let per_slot = credits.plan.slot_bytes().unwrap();
++        credits.close();
++        assert!(!credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none());
++        drop(work);
++        assert_eq!(budget.used.load(Ordering::Acquire), 2 * per_slot + 1024);
++        drop(credits);
++        assert_eq!(first.covered(), &[1, 0, 0, 0]);
++        drop(first);
++        assert_eq!(budget.used.load(Ordering::Acquire), per_slot + 1024);
++        drop(second);
++        assert_eq!(budget.used.load(Ordering::Acquire), 0);
++    }
++    #[test]
++    fn optional_exhaustion_is_real_and_legacy_request_remains_noop() {
++        let (_, work, credits) = credits();
++        assert!(credits.request().unwrap());
++        credits.exhaust();
++        assert!(credits.exhausted.load(Ordering::Acquire));
++        assert!(!credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none());
++        credits.close();
++        drop(work);
++        let host = CpuHost::cooperative();
++        let job = host.submit(id(7724, 2), 19, empty(), request()).unwrap();
++        let before = serde_json::to_value(job.status().unwrap()).unwrap();
++        assert!(!job.request_partial_preview().unwrap());
++        assert!(!job.partial_preview_exhausted().unwrap());
++        assert!(job.partial_preview().unwrap().is_none());
++        assert_eq!(serde_json::to_value(job.status().unwrap()).unwrap(), before);
++        job.cancel().unwrap();
++        assert!(!job.request_partial_preview().unwrap());
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    fn real_fixture() -> (CpuHost, JobHandle, Running) {
++        let host = ImageHost(Arc::new(Owner {
++            executor: None, shared: CpuHost::shared(MEMORY_LIMIT), kind: HostKind::NativeWorker,
++            running: Mutex::new(None), _worker: None,
++        }));
++        let request = ImageRequest {
++            integrator: Integrator::Raytrace,
++            raytrace: Some(crate::job::RaytraceOptions {
++                progressive: Some(crate::job::CpuProgressiveOptions { samples_per_pixel: 5, seed: 123 }),
++                lights: Some(Vec::new()), ..Default::default()
++            }), width: 16, height: 16, ..request()
++        };
++        let job = host.submit_cpu_partial_with_environment_and_options(id(7724, 3), 19, empty(), request, JobOptions::default(), None).unwrap();
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        let running = Running::begin(work).unwrap();
++        (host, job, running)
++    }
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn real_partial_png_carries_unknown_and_two_held_payloads_do_not_block_final() {
++        let (host, job, mut running) = real_fixture();
++        assert!(job.request_partial_preview().unwrap());
++        let mut during = false;
++        for _ in 0..100_000 {
++            assert!(running.advance(1).unwrap());
++            if !during && running.partial.as_ref().unwrap().0[0].lease.is_some() {
++                assert!(job.request_partial_preview().unwrap());
++                during = true;
++            }
++            if job.partial_preview().unwrap().is_some() { break; }
++        }
++        let first = job.partial_preview().unwrap().unwrap();
++        assert!(during);
++        assert_eq!(first.info.sequence, 1);
++        assert_eq!(first.info.completed_passes, 0);
++        assert!(first.info.updated_prefix > 0 && first.info.updated_prefix < 256);
++        assert!(job.preview().unwrap().is_none(), "partial mode never publishes uncredited legacy snapshots");
++        let decoded = image::load_from_memory(first.png()).unwrap().to_rgba8();
++        assert_eq!(decoded.dimensions(), (16, 16));
++        for (i, rgba) in decoded.pixels().enumerate() {
++            assert_eq!(rgba.0[3], if (i as u64) < first.info.updated_prefix { 255 } else { 0 });
++            assert_eq!(first.covered()[i], 0, "empty scene means a real miss, never a fabricated hit");
++        }
++        let first_hash = Sha256::digest(first.png());
++        for _ in 0..100_000 {
++            if job.partial_preview().unwrap().is_some_and(|p| p.info.sequence == 2) { break; }
++            assert!(running.advance(1).unwrap());
++        }
++        let second = job.partial_preview().unwrap().unwrap();
++        assert_eq!(second.info.sequence, 2, "request issued during encoding must survive first publication");
++        assert!(job.request_partial_preview().unwrap());
++        assert_eq!(job.0.partial.as_ref().unwrap().state.lock().unwrap().free.bytes, 0);
++        for _ in 0..100_000 {
++            if !running.advance(1).unwrap() { break; }
++            assert!(job.partial_preview().unwrap().is_some_and(|p| p.info.sequence == 2));
++            assert!(running.partial.as_ref().unwrap().0[0].lease.is_none());
++            assert!(running.partial.as_ref().unwrap().0[0].pending.is_none());
++        }
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
++        let final_frame = job.frame().unwrap().unwrap();
++        assert_eq!((final_frame.info.width, final_frame.info.height), (16, 16));
++        assert!(job.partial_preview().unwrap().is_none());
++        assert!(!job.request_partial_preview().unwrap());
++        assert_eq!(Sha256::digest(first.png()), first_hash);
++        let per_slot = job.0.partial.as_ref().unwrap().plan.slot_bytes().unwrap();
++        drop(running);
++        let before = host.admitted_bytes();
++        drop(first);
++        assert_eq!(host.admitted_bytes(), before - per_slot);
++        drop(second);
++        assert_eq!(host.admitted_bytes(), before - 2 * per_slot);
++        drop(final_frame);
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++}
++
++#[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++mod partial_preview_terminal_errors {
++    use super::*;
++    use crate::job::{CpuProgressiveOptions, RaytraceOptions};
++
++    #[test]
++    fn cancellation_during_real_partial_hash_closes_slots_and_publishes_nothing() {
++        let host = ImageHost(Arc::new(Owner { executor: None, shared: CpuHost::shared(MEMORY_LIMIT),
++            kind: HostKind::NativeWorker, running: Mutex::new(None), _worker: None }));
++        let request = ImageRequest { integrator: Integrator::Raytrace, raytrace: Some(RaytraceOptions {
++            progressive: Some(CpuProgressiveOptions { samples_per_pixel: 5, seed: 7 }), lights: Some(Vec::new()), ..Default::default()
++        }), width: 8, height: 8, ..request() };
++        let job = host.submit_cpu_partial_with_environment_and_options(id(7725, 1), 19, empty(), request, JobOptions::default(), None).unwrap();
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        let mut running = Running::begin(work).unwrap();
++        assert!(job.request_partial_preview().unwrap());
++        for _ in 0..100_000 {
++            if running.pending_png.is_some() { break; }
++            assert!(running.advance(1).unwrap());
++        }
++        assert!(running.pending_png.is_some());
++        assert!(job.partial_preview().unwrap().is_none());
++        assert!(running.partial.as_ref().unwrap().0[0].pending.is_some());
++        job.cancel().unwrap();
++        assert!(!job.request_partial_preview().unwrap());
++        assert!(!running.guarded_step(1));
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Cancelled);
++        assert!(job.partial_preview().unwrap().is_none());
++        assert!(job.frame().unwrap().is_none());
++        drop(running);
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++}
++
++#[test]
++fn partial_credit_last_drop_fails_closed_after_poison_without_losing_leases() {
++    let plan = crate::job::PartialPreviewPlan::new(1, 1).unwrap();
++    let bytes = 2 * plan.slot_bytes().unwrap() + 1024;
++    let budget = Arc::new(Budget { used: AtomicU64::new(0), limit: bytes });
++    let mut work = budget.reserve(bytes).unwrap();
++    let credits = PartialCredits::new(plan, &mut work).unwrap();
++    credits.request().unwrap();
++    let held = credits.acquire().unwrap().unwrap();
++    let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++        let _state = credits.state.lock().unwrap();
++        panic!("deliberate test-only credit lock poison");
++    }));
++    assert!(poisoned.is_err());
++    drop(held);
++    assert_eq!(budget.used.load(Ordering::Acquire), 1024);
++    credits.close();
++    drop(credits);
++    drop(work);
++    assert_eq!(budget.used.load(Ordering::Acquire), 0);
++}

@@ -13,6 +13,12 @@
 | [Raster perspective candidate](parity-raster-main66bd/README.md) | Source-reviewed against its actual newer main API, not this older frozen candidate. Original perspective/legacy controls, no compiler/runtime claim or permission to overlay it blindly. |
 | [Native observations](native-followups/native-round-one.md) and [remaining EV/HDR/final journeys](native-followups/ev-hdr-final-acceptance-proposal.md) | First older-binary round was partial. Fresh current-source app build and mouse/keyboard acceptance remain pending; source tests do not close native UX. |
 
+## New source packets and original detailed fixture
+
+- [C13 pinned-action correction](c13-pinned-actions/README.md): independently source-reviewed, unrun; original failing assertion retained.
+- [Actual A1/A2 partial producer and host](partial-stream-source-v1/README.md): written source and original tests, unapplied/uncompiled/unrun; combined review and UI receiver still pending.
+- [Original19-body long-render fixture and synthetic HDR](original-long-scene/README.md): privacy-reviewed source subset, attributed; no native creation/render/quality result.
+
 ## Current validation
 
 C12 is terminal: formatter/check, repository lists, strict affected Clippy, default-feature wasm and the combined engine/UI/Render native library-test build exited0. Six inventories also exited0. Selection stopped before any test body because two names used the wrong module prefix (`job::tests` instead of `job::runtime_request_roundtrip_tests`). **Zero test bodies and zero CPU markers ran; this is a preparation error, not a product failure or53 passes.** Independent closure verified the13 exited command roots/empty owned Jobs, source/config/toolchain, the actual three CargoJSON artifacts and physical lease cleanup.

@@ -1,0 +1,92 @@
+diff --git a/crates/ui-egui/src/render_workspace_interactive.rs b/crates/ui-egui/src/render_workspace_interactive.rs
+--- a/crates/ui-egui/src/render_workspace_interactive.rs
++++ b/crates/ui-egui/src/render_workspace_interactive.rs
+@@ -520,13 +520,9 @@
+         |ui| {
+             ui.set_width(width);
+             ui.set_max_width(width);
++            ui.set_max_height(height);
+             ui.set_clip_rect(ui.clip_rect().intersect(bounds));
+-            egui::ScrollArea::vertical()
+-                .id_salt("sc_render_interactive_controls_scroll")
+-                .min_scrolled_height(0.0)
+-                .max_height(height)
+-                .auto_shrink([false, true])
+-                .show(ui, |ui| controls(app, ui));
++            controls(app, ui);
+         },
+     );
+     crate::shell::register_panel(app, "render:interactive-card", Some(card.response.rect.intersect(bounds)), None);
+@@ -551,30 +547,7 @@
+     let dimensions = state.frame.as_ref().map(|frame| (frame.info.width, frame.info.height));
+     let stale = state.frame.as_ref().is_some_and(|frame| frame.stale);
+     let final_active = state.final_active;
+-    ui_kit::text(ui, &label, ui_kit::Text::Inline);
+-    if running {
+-        ui_kit::text(ui, app.tr("render.interactive_provisional"), ui_kit::Text::Note("render.interactive_provisional"));
+-    }
+-    if let Some(samples) = samples {
+-        let label = crate::i18n::format("render.interactive_samples", &[("done", &samples.to_string()), ("total", "16")]);
+-        ui_kit::text(ui, &label, ui_kit::Text::Inline);
+-    }
+-    if let Some((width, height)) = dimensions {
+-        ui_kit::text(ui, &format!("{width} × {height} px"), ui_kit::Text::Inline);
+-    }
+-    if stale {
+-        ui_kit::text(ui, app.tr("render.interactive_stale"), ui_kit::Text::Note("render.interactive_stale"));
+-    }
+-    if final_active {
+-        ui_kit::text(ui, app.tr("render.interactive_final_active"), ui_kit::Text::Note("render.interactive_final_active"));
+-    }
+-    if let Some(error) = error {
+-        ui_kit::text(ui, &error, ui_kit::Text::Error("render.interactive_error"));
+-    }
+     let reason = ready(app).err();
+-    if let Some(reason) = &reason {
+-        ui_kit::text(ui, reason, ui_kit::Text::Note("render.interactive_requires_cpu"));
+-    }
+     let mut action = None;
+     ui.horizontal_wrapped(|ui| {
+         for (action_value, name, key, enabled) in if !running {
+@@ -603,6 +576,41 @@
+             app.set_status(error, true);
+         }
+         ui.ctx().request_repaint();
++    }
++    // Actions remain outside the scroller. In a short free rectangle, status
++    // text may scroll but must not push Pause/Resume/Off below the visible clip.
++    let height = ui.available_height().max(0.0);
++    if height > 0.0 {
++        egui::ScrollArea::vertical()
++            .id_salt("sc_render_interactive_controls_scroll")
++            .min_scrolled_height(0.0)
++            .max_height(height)
++            .auto_shrink([false, true])
++            .show(ui, |ui| {
++                ui_kit::text(ui, &label, ui_kit::Text::Inline);
++                if running {
++                    ui_kit::text(ui, app.tr("render.interactive_provisional"), ui_kit::Text::Note("render.interactive_provisional"));
++                }
++                if let Some(samples) = samples {
++                    let label = crate::i18n::format("render.interactive_samples", &[("done", &samples.to_string()), ("total", "16")]);
++                    ui_kit::text(ui, &label, ui_kit::Text::Inline);
++                }
++                if let Some((width, height)) = dimensions {
++                    ui_kit::text(ui, &format!("{width} × {height} px"), ui_kit::Text::Inline);
++                }
++                if stale {
++                    ui_kit::text(ui, app.tr("render.interactive_stale"), ui_kit::Text::Note("render.interactive_stale"));
++                }
++                if final_active {
++                    ui_kit::text(ui, app.tr("render.interactive_final_active"), ui_kit::Text::Note("render.interactive_final_active"));
++                }
++                if let Some(error) = error {
++                    ui_kit::text(ui, &error, ui_kit::Text::Error("render.interactive_error"));
++                }
++                if let Some(reason) = &reason {
++                    ui_kit::text(ui, reason, ui_kit::Text::Note("render.interactive_requires_cpu"));
++                }
++            });
+     }
+ }
+ pub(super) fn command_ready(app: &SolveApp) -> Result<(), String> {

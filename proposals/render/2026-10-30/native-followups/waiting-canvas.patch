@@ -1,0 +1,233 @@
+diff --git a/crates/ui-egui/src/render_workspace_interactive.rs b/crates/ui-egui/src/render_workspace_interactive.rs
+--- a/crates/ui-egui/src/render_workspace_interactive.rs
++++ b/crates/ui-egui/src/render_workspace_interactive.rs
+@@ -443,6 +443,21 @@
+     refresh(app, ctx, false);
+ }
+ 
++/// Reserve the canvas while an active CPU preview awaits its current pixels.
++/// This never turns a waiting state into a painted image or retains old pixels.
++pub(super) fn awaiting_current_frame(app: &SolveApp) -> bool {
++    let state = &app.render_workspace.interactive;
++    super::active(app)
++        && app.render_workspace.view.method == ImageMethod::CpuRaytrace
++        && !app.render_workspace.view.result
++        && state.context.as_ref().is_some_and(|context| context.is_current(&app.session))
++        && !state.user_paused
++        && !state.final_active
++        && state.error.is_none()
++        && matches!(state.phase, Phase::Updating | Phase::Refining)
++        && state.frame.is_none()
++}
++
+ pub(super) fn paint(app: &SolveApp, ui: &egui::Ui, rect: egui::Rect) -> bool {
+     let state = &app.render_workspace.interactive;
+     if state.context.is_none() || state.final_active || state.error.is_some() {
+diff --git a/crates/ui-egui/src/render_workspace.rs b/crates/ui-egui/src/render_workspace.rs
+--- a/crates/ui-egui/src/render_workspace.rs
++++ b/crates/ui-egui/src/render_workspace.rs
+@@ -2005,7 +2005,7 @@
+     ui.painter().rect_filled(viewport, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
+     // Reobserve after the existing shared navigation path, before any pixel paint.
+     interactive::before_paint(app, ui.ctx());
+-    if interactive::paint(app, ui, rect) {
++    if interactive::paint(app, ui, rect) || interactive::awaiting_current_frame(app) {
+         shot::overlay(app, ui, viewport);
+         crate::viewport::axis_view(app, ui, viewport);
+         crate::navigation_bar_view::show(app, ui, viewport);
+diff --git a/crates/ui-egui/src/render_workspace_tests.rs b/crates/ui-egui/src/render_workspace_tests.rs
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -7451,3 +7451,192 @@
+     output.textures_delta.clear();
+     h.app.run("render.interactive", json!({"action":"off"})).unwrap();
+ }
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_waiting_show_text(h: &mut Harness, time: f64) -> String {
++    let mut output = h.ctx.run_ui(
++        egui::RawInput {
++            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0))),
++            time: Some(time),
++            ..Default::default()
++        },
++        |ui| show(&mut h.app, ui),
++    );
++    let text = crate::test_support::text_shapes(&output).map(|shape| shape.galley.job.text.clone()).collect::<Vec<_>>().join("\n");
++    output.textures_delta.clear();
++    text
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_waiting_canvas_uses_real_show_and_keeps_off_pause_error_and_result_routes() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_waiting_canvas_uses_real_show_and_keeps_off_pause_error_and_result_routes") {
++        return;
++    }
++    assert!(h.app.viewport.gpu.is_none(), "the fallback refusal is the real no-GPU positive control");
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    let fallback = h.app.tr("render.error_gpu_preview").to_string();
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    assert!(interactive_waiting_show_text(&mut h, epoch + 0.01).contains(&fallback));
++
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    let waiting = interactive_waiting_show_text(&mut h, epoch + 0.02);
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Updating");
++    assert!(interactive::awaiting_current_frame(&h.app));
++    assert!(!waiting.contains(&fallback), "real show must not enter the model-preview refusal while waiting");
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(!h.app.render_workspace.interactive.pending(), "show/before_paint must not dispatch");
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.025, false, true);
++    assert!(!painted, "reserving the canvas does not claim an image was painted");
++    output.textures_delta.clear();
++
++    h.app.render_workspace.view.result = true;
++    assert!(!interactive::awaiting_current_frame(&h.app), "the result view keeps priority");
++    h.app.render_workspace.view.result = false;
++    h.app.render_workspace.view.method = ImageMethod::Raster;
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++    h.app.ui.tab = "MODEL".into();
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    h.app.ui.tab = "RENDER".into();
++
++    h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    assert!(interactive_waiting_show_text(&mut h, epoch + 0.03).contains(&fallback), "pause before any image keeps its existing fallback");
++    h.app.run("render.interactive", json!({"action":"resume"})).unwrap();
++    assert!(!interactive_waiting_show_text(&mut h, epoch + 0.04).contains(&fallback));
++    h.app.render_workspace.view.cpu.environment = cpu::Environment::Hdr;
++    h.app.render_workspace.view.cpu.hdr = hdr::Input::FilePending { path: h.dir.join("not-inspected.hdr").to_string_lossy().into_owned() };
++    let error = interactive_waiting_show_text(&mut h, epoch + 0.05);
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Error");
++    assert!(!interactive::inspect(&h.app)["error"].is_null());
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    assert!(error.contains(&fallback), "an input error keeps the existing model-preview route");
++    assert!(!h.app.render_workspace.interactive.pending());
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    assert!(interactive_waiting_show_text(&mut h, epoch + 0.06).contains(&fallback));
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_waiting_canvas_after_supported_edit_drops_old_pixels_and_new_capture_still_publishes() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(
++        &mut h,
++        "interactive_waiting_canvas_after_supported_edit_drops_old_pixels_and_new_capture_still_publishes",
++    ) {
++        return;
++    }
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.render_workspace.view.raytrace.shadows = true;
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    let old = interactive_recovery_require_success(&mut h, epoch + 0.201, epoch + 0.3);
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    let visual = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    let document = h.app.session.doc.clone();
++
++    h.app.render_workspace.view.raytrace.shadows = false;
++    let text = interactive_waiting_show_text(&mut h, epoch + 0.4);
++    assert!(interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap() > visual);
++    assert!(interactive::test_cache(&h.app).is_none(), "the previously accepted image must be dropped");
++    assert!(interactive::awaiting_current_frame(&h.app));
++    assert!(!text.contains(h.app.tr("render.error_gpu_preview")));
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.41, false, true);
++    assert!(!painted, "old pixels cannot become current while the new request waits");
++    output.textures_delta.clear();
++
++    let new = interactive_recovery_require_success(&mut h, epoch + 0.901, epoch + 1.0);
++    assert_ne!(new, old);
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    let job = interactive::test_current(&h.app).unwrap().unwrap();
++    assert_eq!(job.id(), new);
++    assert!(!job.status().unwrap().request.raytrace.as_ref().unwrap().shadows);
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc), "presentation and runtime settings do not author CAD state");
++    interactive_assert_final_export_isolation(&mut h, &job);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_waiting_canvas_preserves_paused_out_of_date_pixels_and_resume_waits_without_fallback() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(
++        &mut h,
++        "interactive_waiting_canvas_preserves_paused_out_of_date_pixels_and_resume_waits_without_fallback",
++    ) {
++        return;
++    }
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.render_workspace.view.raytrace.shadows = true;
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_recovery_require_success(&mut h, epoch + 0.201, epoch + 0.3);
++    let (before, samples, complete, texture) = interactive::test_cache(&h.app).unwrap();
++    h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++    h.app.render_workspace.view.raytrace.shadows = false;
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.4, false, true);
++    assert!(painted, "explicit pause still permits the already displayed image");
++    output.textures_delta.clear();
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Paused");
++    assert_eq!(interactive::inspect(&h.app)["stale"], true);
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    let (after, after_samples, after_complete, after_texture) = interactive::test_cache(&h.app).unwrap();
++    assert_eq!((after.job, after.png_sha256), (before.job, before.png_sha256));
++    assert_eq!((after_samples, after_complete, after_texture), (samples, complete, texture));
++
++    h.app.run("render.interactive", json!({"action":"resume"})).unwrap();
++    let text = interactive_waiting_show_text(&mut h, epoch + 0.5);
++    assert_eq!(interactive::inspect(&h.app)["phase"], "Updating");
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(interactive::awaiting_current_frame(&h.app));
++    assert!(!text.contains(h.app.tr("render.error_gpu_preview")));
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.51, false, true);
++    assert!(!painted);
++    output.textures_delta.clear();
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_waiting_canvas_camera_late_callback_and_document_switch_never_adopt_old_pixels() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_waiting_canvas_camera_late_callback_and_document_switch_never_adopt_old_pixels") {
++        return;
++    }
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch, true);
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let held = interactive_hold_real_completed_callback(&mut h);
++    let visual = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    h.app.cam.yaw += 0.2;
++    let text = interactive_waiting_show_text(&mut h, epoch + 0.3);
++    assert!(interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap() > visual);
++    assert!(interactive::awaiting_current_frame(&h.app));
++    assert!(!text.contains(h.app.tr("render.error_gpu_preview")));
++    held.sender.send(held.reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.4, false, true);
++    assert!(!painted);
++    output.textures_delta.clear();
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(interactive::test_current(&h.app).unwrap().is_none());
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert!(interactive::awaiting_current_frame(&h.app));
++    interactive_assert_final_export_isolation(&mut h, &held.job);
++
++    let old_uid = h.app.session.uid;
++    crate::documents::open_tab(&mut h.app, Session::default()).unwrap();
++    assert_ne!(h.app.session.uid, old_uid);
++    assert!(!interactive::awaiting_current_frame(&h.app), "a foreign context cannot reserve the canvas even before refresh");
++    h.app.ui.tab = "RENDER".into();
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.5, false);
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    assert!(interactive::test_cache(&h.app).is_none());
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.6, false, true);
++    assert!(!painted, "neither the old image nor its waiting presentation belongs to another document");
++    output.textures_delta.clear();
++    assert_eq!(interactive::inspect(&h.app)["enabled"], false);
++    assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
++}
++

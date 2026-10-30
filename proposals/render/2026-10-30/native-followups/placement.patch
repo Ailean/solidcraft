@@ -1,0 +1,255 @@
+--- a/crates/ui-egui/src/render_workspace_interactive.rs
++++ b/crates/ui-egui/src/render_workspace_interactive.rs
+@@ -464,25 +464,58 @@
+     true
+ }
+ 
+-pub(crate) fn overlay(app: &mut SolveApp, ui: &egui::Ui, free: egui::Rect) {
+-    let width = (free.width() - Tokens::get().space_8 * 2.0).min(Tokens::get().form_card_width);
+-    if width < Tokens::get().control_height {
+-        return;
+-    }
+-    let card = ui_kit::Container::navigation_card(
+-        ui.ctx(),
+-        egui::Id::new("sc_render_interactive_controls"),
+-        free.center_top(),
+-        egui::Align2::CENTER_TOP,
+-        |ui| {
+-            ui.set_width(width);
+-            ui.set_max_width(width);
+-            ui.set_clip_rect(ui.clip_rect().intersect(free));
+-            controls(app, ui);
+-        },
+-    );
+-    crate::shell::register_panel(app, "render:interactive-card", Some(card.response.rect.intersect(free)), None);
+-    crate::scenario::publish_rect("render:interactive-card", card.response.rect.intersect(free));
++/// Place only our card in current-frame space; never move another workspace surface.
++pub(super) fn overlay_bounds(app: &SolveApp, free: egui::Rect) -> egui::Rect {
++    if !free.is_finite() || !free.is_positive() {
++        return egui::Rect::NOTHING;
++    }
++    let gap = Tokens::get().space_8;
++    let available = crate::shell::workspace_content(app, free).shrink(gap);
++    let mut obstacles = Vec::new();
++    for (id, (rect, edge)) in &app.shell.workspace_panels {
++        if *id != "render:interactive-card" && edge.is_none() {
++            obstacles.push(rect.expand(gap));
++        }
++    }
++    if let Some(layout) = &app.viewport.layout {
++        obstacles.extend([layout.axis_view, layout.navigation, layout.confirm].map(|rect| rect.expand(gap)));
++    }
++    crate::viewport_layout::free_rect(available, &obstacles)
++}
++
++pub(crate) fn overlay(app: &mut SolveApp, ui: &egui::Ui, free: egui::Rect) {
++    let bounds = overlay_bounds(app, free);
++    let t = Tokens::get();
++    // Match navigation_card's real chrome, including theme-dependent borders.
++    let chrome = ui_kit::Container::new(ui.ctx(), ui_kit::Surface::Navigation)
++        .frame(ui.ctx(), t.overlay, crate::frame::Side::Left)
++        .inner_margin(t.space_4)
++        .total_margin()
++        .sum();
++    let width = (bounds.width() - chrome.x).min(t.form_card_width);
++    let height = bounds.height() - chrome.y;
++    if !bounds.is_finite() || width < t.control_height || height < t.control_height {
++        return;
++    }
++    let card = ui_kit::Container::navigation_card(
++        ui.ctx(),
++        egui::Id::new("sc_render_interactive_controls"),
++        bounds.left_top(),
++        egui::Align2::LEFT_TOP,
++        |ui| {
++            ui.set_width(width);
++            ui.set_max_width(width);
++            ui.set_clip_rect(ui.clip_rect().intersect(bounds));
++            egui::ScrollArea::vertical()
++                .id_salt("sc_render_interactive_controls_scroll")
++                .min_scrolled_height(0.0)
++                .max_height(height)
++                .auto_shrink([false, true])
++                .show(ui, |ui| controls(app, ui));
++        },
++    );
++    crate::shell::register_panel(app, "render:interactive-card", Some(card.response.rect.intersect(bounds)), None);
++    crate::scenario::publish_rect("render:interactive-card", card.response.rect.intersect(bounds));
+ }
+ pub(super) fn controls(app: &mut SolveApp, ui: &mut egui::Ui) {
+     let state = &app.render_workspace.interactive;
+--- a/crates/ui-egui/src/render_ui/mod.rs
++++ b/crates/ui-egui/src/render_ui/mod.rs
+@@ -185,19 +185,19 @@
+     if !free.is_positive() {
+         return;
+     }
+-    crate::shell::register_panel(app, "render:interactive-card", None, None);
+-    if crate::render_workspace::job_busy(app) {
+-        let pill = Container::navigation_card(ui.ctx(), egui::Id::new("sc_render_progress"), free.center_top(), egui::Align2::CENTER_TOP, |ui| {
+-            crate::render_workspace::progress_pill(app, ui);
+-        });
+-        crate::shell::register_panel(app, "render:progress-pill", Some(pill.response.rect), None);
+-        crate::scenario::publish_rect("render:progress-pill", pill.response.rect);
+-    } else {
+-        crate::shell::register_panel(app, "render:progress-pill", None, None);
+-        crate::render_workspace::interactive::overlay(app, ui, free);
+-    }
+-    crate::render_workspace::environment_overlay(app, ui, viewport);
+-    crate::render_workspace::assign::selection_bar(app, ui, free);
++    crate::render_workspace::assign::selection_bar(app, ui, free);
++    crate::shell::register_panel(app, "render:interactive-card", None, None);
++    if crate::render_workspace::job_busy(app) {
++        let pill = Container::navigation_card(ui.ctx(), egui::Id::new("sc_render_progress"), free.center_top(), egui::Align2::CENTER_TOP, |ui| {
++            crate::render_workspace::progress_pill(app, ui);
++        });
++        crate::shell::register_panel(app, "render:progress-pill", Some(pill.response.rect), None);
++        crate::scenario::publish_rect("render:progress-pill", pill.response.rect);
++    } else {
++        crate::shell::register_panel(app, "render:progress-pill", None, None);
++        crate::render_workspace::interactive::overlay(app, ui, free);
++    }
++    crate::render_workspace::environment_overlay(app, ui, viewport);
+     crate::render_workspace::assign::replacement_dialog(app, ui.ctx());
+     crate::navigation_bar_view::show(app, ui, viewport);
+     if !focused(app) {
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -7451,3 +7451,137 @@
+     output.textures_delta.clear();
+     h.app.run("render.interactive", json!({"action":"off"})).unwrap();
+ }
++
++#[test]
++fn interactive_card_bounds_avoid_current_selection_docks_and_navigation_at_wide_and_narrow_sizes() {
++    for (width, height) in [(1600.0, 1000.0), (760.0, 700.0)] {
++        let mut h = Harness::new();
++        h.app.ui.tab = "RENDER".into();
++        h.app.shell.workspace_panels.clear();
++        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
++        let content = egui::Rect::from_min_max(egui::pos2(0.0, 132.0), egui::pos2(width, height - 56.0));
++        let left = egui::Rect::from_min_max(egui::pos2(8.0, 140.0), egui::pos2(274.0, height - 64.0));
++        let right = egui::Rect::from_min_max(egui::pos2(width - 313.0, 140.0), egui::pos2(width - 8.0, height - 64.0));
++        crate::shell::register_panel(&mut h.app, "render:browser", Some(left), Some(crate::ui_kit::Edge::Left));
++        crate::shell::register_panel(&mut h.app, "render:inspector", Some(right), Some(crate::ui_kit::Edge::Right));
++        let centre = (left.right() + right.left()) / 2.0;
++        let navigation = egui::Rect::from_center_size(egui::pos2(centre, content.bottom() - 28.0), egui::vec2(120.0, 40.0));
++        let axis = egui::Rect::from_min_size(egui::pos2(right.left() - 110.0, content.top()), egui::vec2(110.0, 110.0));
++        h.app.viewport.layout = Some(crate::viewport_layout::Layout {
++            viewport,
++            drawable: content,
++            content,
++            axis_view: axis,
++            navigation,
++            confirm: egui::Rect::NOTHING,
++        });
++        // A new measured selection replaces the old one in this very frame.
++        // Both positions cut across the old top-centre status/action region.
++        for y in [content.top() + 90.0, content.top() + 180.0] {
++            let selection = egui::Rect::from_center_size(egui::pos2(centre, y), egui::vec2(180.0, 34.0));
++            crate::shell::register_panel(&mut h.app, "render:selection", Some(selection), None);
++            let available = interactive::overlay_bounds(&h.app, content);
++            assert!(available.is_positive(), "{width}: no space for the Interactive card");
++            assert!(content.contains_rect(available), "{width}: {available:?} outside {content:?}");
++            for occupied in [selection, left, right, navigation, axis] {
++                assert!(!available.intersect(occupied).is_positive(), "{width}: {available:?} overlaps {occupied:?}");
++            }
++            assert!(available.width() >= Tokens::get().control_height + Tokens::get().space_8);
++        }
++        assert!(!interactive::overlay_bounds(&h.app, egui::Rect::NOTHING).is_positive());
++        assert_eq!(h.app.shell.workspace_panels["render:browser"].0, left);
++        assert_eq!(h.app.shell.workspace_panels["render:inspector"].0, right);
++    }
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_overlay_keeps_real_selection_actions_and_pause_off_targets_accessible_without_dispatch() {
++    fn overlay_frame(h: &mut Harness, size: egui::Vec2, events: Vec<egui::Event>) {
++        let mut output = h.ctx.run_ui(
++            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), events, ..Default::default() },
++            |ui| {
++                // The shell clears Render reservations at the start of a real frame.
++                // Keep the already measured docks but never leave a previous selection
++                // rectangle that could make the moved-call regression pass by accident.
++                h.app.shell.workspace_panels.remove("render:selection");
++                crate::render_ui::overlays(&mut h.app, ui);
++            },
++        );
++        output.textures_delta.clear();
++    }
++    for size in [egui::vec2(1600.0, 1000.0), egui::vec2(760.0, 700.0)] {
++        let mut h = interactive_ui_fixture();
++        if !interactive_test_cpu_branch(&mut h, "interactive_overlay_selection_controls") {
++            return;
++        }
++        h.call("ui.resize", json!({"width":size.x as u32,"height":size.y as u32}));
++        h.app.run("appearance.assign", json!({"bodies":["Subject"],"appearance":"ABS - Blue"})).unwrap();
++        h.app.run("select.filter", json!({"mode":"body"})).unwrap();
++        h.app.run("select.set", json!({"items":[solidcraft_engine::Sel::Body {name:"Subject".into()}]})).unwrap();
++        h.frames(4);
++        for _ in 0..3 {
++            overlay_frame(&mut h, size, vec![]);
++        }
++        let selection_before = crate::scenario::rect_of("render:selection").unwrap();
++        let actions_before: Vec<_> = (0..4).map(|index| crate::scenario::rect_of(&format!("selection:action:{index}")).unwrap()).collect();
++        let document = h.app.session.doc.clone();
++        let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len());
++        let camera = h.app.cam;
++        let docks = h.app.shell.workspace_panels.clone();
++        h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++        h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++        // Paint the production overlays, but never tick or run a Snapshot worker.
++        for _ in 0..3 {
++            overlay_frame(&mut h, size, vec![]);
++        }
++        let card = crate::scenario::rect_of("render:interactive-card").unwrap();
++        let selection = crate::scenario::rect_of("render:selection").unwrap();
++        assert_eq!(selection, selection_before, "our card must not move the author's toolbar");
++        assert!(!card.intersect(selection).is_positive());
++        let content = crate::render_ui::canvas(&h.app, h.app.viewport.rect.unwrap());
++        assert!(content.contains_rect(card), "{size:?}: {card:?} outside {content:?}");
++        for (index, before) in actions_before.iter().enumerate() {
++            let action = crate::scenario::rect_of(&format!("selection:action:{index}")).unwrap();
++            assert_eq!(&action, before);
++            assert!(selection.contains_rect(action));
++            assert!(!card.intersect(action).is_positive(), "author action {index} is occluded");
++        }
++        for action in ["pause", "off"] {
++            let target = crate::scenario::rect_of(&format!("render:interactive:{action}")).unwrap();
++            assert!(card.contains_rect(target), "{size:?}: {action} clipped outside {card:?}: {target:?}");
++            assert!(!selection.intersect(target).is_positive());
++        }
++        for action in ["pause", "off"] {
++            let at = crate::scenario::rect_of(&format!("render:interactive:{action}")).unwrap().center();
++            for pressed in [true, false] {
++                overlay_frame(
++                    &mut h,
++                    size,
++                    vec![
++                        egui::Event::PointerMoved(at),
++                        egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE },
++                    ],
++                );
++            }
++            overlay_frame(&mut h, size, vec![]);
++            assert_eq!(interactive::inspect(&h.app)["paused"], action == "pause");
++            assert_eq!(interactive::inspect(&h.app)["enabled"], action != "off");
++            assert!(!h.app.render_workspace.interactive.pending());
++        }
++        assert_eq!(h.app.cam, camera);
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len()), history);
++        assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
++        for id in ["render:browser", "render:inspector", "render:appearances", "render:shots_strip"] {
++            let current = h.app.shell.workspace_panels.get(id).map(|(rect, edge)| (*rect, edge.as_ref().map(std::mem::discriminant)));
++            let before = docks.get(id).map(|(rect, edge)| (*rect, edge.as_ref().map(std::mem::discriminant)));
++            assert_eq!(current, before, "{id}");
++        }
++        // With Interactive Off, the author's real hit target still dispatches.
++        let favorite_count = h.app.preferences.render_library_favorites.len();
++        h.step(&json!({"click":{"handle":"selection:action:2"}})).unwrap();
++        assert_eq!(h.app.preferences.render_library_favorites.len(), favorite_count + 1);
++        assert_eq!(crate::scenario::rect_of("render:selection").unwrap(), selection_before);
++    }
++}

@@ -1,3 +1,5 @@
+> Historical V1: BLOCKED by an omitted ordinary pass-transition work tick. Use the reviewed-source-only [V2 correction](../partial-stream-source-v2/README.md); all execution and long-final work-policy acceptance remain pending.
+
 # Actual partial-film producer and host - source-only proposal
 
 Written source, not applied, formatted, compiled or run. The receiver/engine/UI consumer is still being composed privately and is NOT in this packet. This is not an enabled feature, native acceptance, physical GPU acceptance, FPS claim or full CPU/GPU parity.

@@ -1,0 +1,78 @@
+--- a/crates/render/src/raytrace/image.rs
++++ b/crates/render/src/raytrace/image.rs
+@@ -1687,7 +1687,9 @@
+         progressive.last_partial = Some(frontier);
+         self.encoder = None;
+         self.pixels.clear();
+-        self.pixel = if resume_pixel == frontier.pixels { 0 } else { resume_pixel };
++        // Preserve the complete-pass sentinel too: after host hashing, the
++        // ordinary continuation must still charge its tick before P -> 0.
++        self.pixel = resume_pixel;
+         Ok(Some(ImageAdvance::Partial { png, covered: partial.covered, completed_passes: frontier.completed_passes, updated_prefix }))
+     }
+ 
+--- a/crates/render/src/raytrace/primary_aa_tests.rs
++++ b/crates/render/src/raytrace/primary_aa_tests.rs
+@@ -858,7 +858,7 @@
+     reach_partial_frontier(&mut task,1,0,&mut Vec::new());
+     assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
+     let (png,covered,passes,prefix) = finish_partial_snapshot(&mut task);
+-    assert_eq!((passes,prefix,task.pixel),(1,0,0),"full-pass sentinel resumes the next pass");
++    assert_eq!((passes,prefix,task.pixel),(1,0,4),"snapshot retains the sentinel until the normal charged transition");
+     assert_eq!(covered,[1,0,1,0]);
+     let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
+     assert_eq!(image.get_pixel(2,0).0,[0,0,0,255],"known black is opaque, not Unknown");
+@@ -875,7 +875,7 @@
+             reach_partial_frontier(&mut task,passes,prefix,&mut actual_rays);
+             assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
+             let _ = finish_partial_snapshot(&mut task);
+-            assert_eq!(task.pixel,if prefix==0 {0}else{prefix});
++            assert_eq!(task.pixel,if prefix==0 {4}else{prefix});
+         }
+         let actual = finish_partial_final(&mut task,true,&mut actual_rays);
+         let mut control = partial_four_pixel_task(5,seed,false);
+@@ -1053,3 +1053,44 @@
+     assert_eq!(first,legacy_previews[0].1);
+     assert_eq!(actual,expected,"HDR and rough-reflection sample identity cannot depend on presentation");
+ }
++
++#[test]
++fn partial_full_pass_snapshot_preserves_regular_transition_work_and_final_ledger() {
++    let mut task = partial_four_pixel_task(5,123,true);
++    let mut control = partial_four_pixel_task(5,123,true);
++    let plan = job::PartialPreviewPlan::new(4,1).unwrap();
++    let mut actual_rays = Vec::new();
++    let mut control_rays = Vec::new();
++    reach_partial_frontier(&mut task,1,0,&mut actual_rays);
++    reach_partial_frontier(&mut control,1,0,&mut control_rays);
++    let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++    assert_eq!(frontier,control.progressive.as_ref().unwrap().film.partial_frontier().unwrap());
++    assert_eq!((task.pixel,control.pixel),(4,4));
++    let before = control.work.used();
++    assert_eq!(task.work.used(),before);
++    let cost = plan.snapshot_work().unwrap();
++    assert!(matches!(task.begin_partial_preview(plan).unwrap(),PartialBegin::Started));
++    let (_,_,passes,prefix) = finish_partial_snapshot(&mut task);
++    assert_eq!((passes,prefix,task.pixel),(1,0,4),"snapshot may not consume the ordinary pass transition");
++    assert_eq!(task.work.used(),before+cost);
++    assert_eq!(control.work.used(),before);
++    assert!(!task.partial_preview_ready(plan).unwrap(),"unchanged frontier remains coalesced");
++
++    // The host hashes without stepping this task. On the next producer step,
++    // BOTH tasks owe the same ordinary pass-transition debit before a new ray.
++    assert!(matches!(task.step_with_partial_previews(1).unwrap(),PartialImagePoll::Pending(_)));
++    assert!(matches!(control.step_with_partial_previews(1).unwrap(),PartialImagePoll::Pending(_)));
++    assert_eq!((task.pixel,control.pixel),(0,0));
++    assert!(task.pending.is_none() && control.pending.is_none());
++    assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(),frontier);
++    assert_eq!(control.progressive.as_ref().unwrap().film.partial_frontier().unwrap(),frontier);
++    assert_eq!(control.work.used(),before+1,"the no-snapshot control owes the regular transition tick");
++    assert_eq!(task.work.used(),before+cost+1,"the snapshot must preserve that same tick in addition to W");
++
++    let actual = finish_partial_final(&mut task,true,&mut actual_rays);
++    let expected = finish_partial_final(&mut control,true,&mut control_rays);
++    assert_eq!(actual,expected,"same partial policy: final PNG and linear film bits are exact");
++    assert_eq!(actual_rays,control_rays,"presentation cannot replay or skip a primary sample");
++    assert_eq!(actual_rays.len(),20);
++    assert_eq!(task.work.used(),control.work.used()+cost,"the complete-job optional cost is exactly W, not W-1");
++}

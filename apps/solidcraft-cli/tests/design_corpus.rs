@@ -51,8 +51,9 @@ fn old_designs_open_and_evaluate_as_saved() {
         let name = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
         let want: Value = serde_json::from_slice(&std::fs::read(p.with_extension("expected.json")).unwrap()).unwrap();
         let mut s = open(&p);
+        // A name saved before format 14 finds nothing: its feature asks for it to be picked again.
         for r in &s.model.results {
-            if let Some(e) = &r.error {
+            if let Some(e) = r.error.as_deref().filter(|e| solidcraft_engine::doc::reselect_parts(e).is_none()) {
                 problems.push(format!("{name}: feature {}: {e}", r.id));
             }
         }
@@ -94,23 +95,28 @@ fn old_designs_open_and_evaluate_as_saved() {
 }
 
 /// Names saved before format 14 were worked out from geometry, pieces of a split face numbered by
-/// where their centres lay (`F2:top#2`). They keep naming the faces they named: marked as such,
-/// they are found as the build that saved them found them, without new notes.
+/// where their centres lay (`F2:top#2`). They open marked as such and find no face or edge today:
+/// each feature holding one fails, asking for its reference to be picked again, and the rest of
+/// the design builds.
 #[test]
-fn names_saved_before_exact_history_find_the_faces_they_named() {
+fn names_saved_before_exact_history_ask_for_their_faces_again() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/naming-split-pieces.solidcraft");
     let s = open(&path);
     let feature = |name: &str| s.doc.features.iter().find(|f| f.name == name).unwrap_or_else(|| panic!("{name}"));
     assert_eq!(feature("Round").edge_names, vec!["?F2:side:l2|F2:top#2".to_string()]);
     assert_eq!(feature("Bevel").edge_names, vec!["?F2:side:l4|F2:top#1".to_string()]);
     assert_eq!(feature("Raise").face_names, vec!["?F2:top#1".to_string()]);
-    for r in &s.model.results {
-        assert!(r.error.is_none() && r.warning.is_none(), "{}: {:?} {:?}", r.name, r.error, r.warning);
+    let asked = |name: &str| {
+        let r = s.model.result(feature(name).id).unwrap_or_else(|| panic!("{name}"));
+        r.error.as_deref().and_then(solidcraft_engine::doc::reselect_parts).map(|(f, reference)| (f.to_string(), reference.to_string()))
+    };
+    assert_eq!(asked("Round"), Some(("Round".into(), "?F2:side:l2|F2:top#2".into())));
+    assert_eq!(asked("Bevel"), Some(("Bevel".into(), "?F2:side:l4|F2:top#1".into())));
+    assert_eq!(asked("Raise"), Some(("Raise".into(), "?F2:top#1".into())));
+    for r in s.model.results.iter().filter(|r| !["Round", "Bevel", "Raise"].contains(&r.name.as_str())) {
+        assert!(r.error.is_none(), "{}: {:?}", r.name, r.error);
     }
-    // The raised piece is the left one, as saved (the stored point is on it).
-    let state = s.model.state();
-    let solid = |p: [f64; 3]| state.bodies.iter().any(|b| b.body.contains(solidcraft_engine::geom::Vec3::new(p[0], p[1], p[2])));
-    assert!(solid([7.0, 15.0, 11.0]) && !solid([32.0, 15.0, 11.0]));
+    assert!(!s.model.state().bodies.is_empty());
 }
 
 /// Body names saved before format 14 name the pieces of a split body in the kernel's shell order.
@@ -173,6 +179,7 @@ fn flat_face_attachments() -> Vec<(String, String, usize, Option<(u32, bool)>, O
     for p in corpus() {
         let name = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
         let mut s = open(&p);
+        let failed_on_open: Vec<u64> = s.model.results.iter().filter(|r| r.error.is_some()).map(|r| r.id).collect();
         let state = s.model.state();
         let placed = s.placed_document();
         let mut picks = Vec::new();
@@ -224,7 +231,8 @@ fn flat_face_attachments() -> Vec<(String, String, usize, Option<(u32, bool)>, O
             let known = known_without_attachment(&name, &body, normal, distance);
             out.push((name.clone(), body, index, known, problem));
         }
-        assert!(s.model.results.iter().all(|r| r.error.is_none()), "{name}: left with errors after undo");
+        let failed: Vec<u64> = s.model.results.iter().filter(|r| r.error.is_some()).map(|r| r.id).collect();
+        assert_eq!(failed, failed_on_open, "{name}: undo leaves the features that failed on opening, and only those, failed");
     }
     out
 }

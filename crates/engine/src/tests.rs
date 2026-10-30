@@ -2785,7 +2785,9 @@ mod naming {
         model.evaluate(&reopened);
         assert_eq!(model.state().sketch(reopened.find_feature("Top").unwrap().id).unwrap().plane.origin.z, 10.);
         assert!((model.state().bodies[0].mesh().bounds().max.z - 15.).abs() < 1e-6);
-        // A historical format-10 attachment uses its saved generic face name and no strong anchor.
+        // A format-10 attachment has only the face name that build worked out from geometry, and
+        // no strong anchor: that name finds no face today. The sketch fails, asking for its face
+        // again, and so does the peg on it; the block builds.
         let mut old = (*s.doc).clone();
         let solidcraft_doc::FeatureKind::Sketch { plane: solidcraft_doc::PlaneRef::Face { anchor, name, .. }, sketch } =
             &mut old.features.iter_mut().find(|f| f.name == "Top").unwrap().kind
@@ -2793,6 +2795,7 @@ mod naming {
             panic!("fixture must contain a face sketch");
         };
         *anchor = None;
+        let saved = name.clone().unwrap();
         for link in &mut sketch.links {
             if link.auto_face {
                 link.auto_face = false;
@@ -2800,30 +2803,20 @@ mod naming {
             }
         }
         old.format = "solidcraft/10".into();
-        let mut legacy = Session::new(solidcraft_doc::Document::from_json(&old.to_json()).unwrap());
-        assert_eq!(attached(&legacy), Some(10.));
-        assert!((top(&mut legacy) - 15.).abs() < 1e-6);
+        let legacy = Session::new(solidcraft_doc::Document::from_json(&old.to_json()).unwrap());
+        let error = |s: &Session, name: &str| s.model.results.iter().find(|r| r.id == s.doc.find_feature(name).unwrap().id).unwrap().error.clone();
+        let reference = format!("{}{saved}", solidcraft_doc::naming::LEGACY_MARK);
+        assert_eq!(error(&legacy, "Top").as_deref().and_then(solidcraft_doc::reselect_parts), Some(("Top", reference.as_str())));
+        assert!(error(&legacy, "Peg").is_some());
+        assert!(error(&legacy, "Block").is_none());
         // An upstream join that trims the certified face: the attachment stays on what is left
         // of it and never follows the substitute roof (see face_tests for a face covered whole).
-        for target in [&mut s, &mut legacy] {
-            run(target, "timeline.roll_to", json!({"feature": "Block"}));
-            run(target, "sketch.create", json!({"plane": "XY", "name": "B"}));
-            run(target, "sketch.rectangle.two_point", json!({"p0": [8, -5], "p1": [45, 35]}));
-            run(target, "sketch.finish", json!({}));
-            run(target, "solid.extrude", json!({"sketch": "B", "distance": 20, "operation": "join", "name": "Boss"}));
-            run(target, "timeline.roll_to", json!({}));
-        }
-        assert_eq!(attached(&legacy), Some(10.), "historical weak naming retains its saved geometry behavior");
-        assert!((top(&mut legacy) - 20.).abs() < 1e-6);
-        let legacy_reopened = Session::new(solidcraft_doc::Document::from_json(&legacy.doc.to_json()).unwrap());
-        assert_eq!(attached(&legacy_reopened), Some(10.));
-        assert!((legacy_reopened.model.state().bodies[0].mesh().bounds().max.z - 20.).abs() < 1e-6);
-        let solidcraft_doc::FeatureKind::Sketch { plane: solidcraft_doc::PlaneRef::Face { anchor, .. }, .. } =
-            &legacy_reopened.doc.find_feature("Top").unwrap().kind
-        else {
-            panic!("saved historical face reference must remain present");
-        };
-        assert!(anchor.is_none(), "opening old face references must not infer a strict attachment");
+        run(&mut s, "timeline.roll_to", json!({"feature": "Block"}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "B"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [8, -5], "p1": [45, 35]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"sketch": "B", "distance": 20, "operation": "join", "name": "Boss"}));
+        run(&mut s, "timeline.roll_to", json!({}));
         let failed = |s: &Session, name: &str| s.model.results.iter().find(|r| r.id == s.doc.find_feature(name).unwrap().id).unwrap().error.is_some();
         assert!(!failed(&s, "Top"));
         assert!(!failed(&s, "Peg"));

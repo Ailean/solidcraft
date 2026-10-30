@@ -79,3 +79,8 @@ The original 516-case core result remains bound to its exact unchanged core sour
 ## C16 source: fixture defaults and Result navigation
 
 [C16 exact five-file source](c16-defaults-auto-result/README.md) is independently source-reviewed and adopted by RAW copy; the adjacent12-file C15 formatting bridge makes the Actual19→C15 post-format→C16 lineage explicit. It fixes the four invalid new-fixture calls and adds preference-compliant Result navigation after accepted GUI Start, retaining old behavior with `render_open_result_on_start=false`. Four new declarations remain unrun. C15 stays an actual four-E0599 build failure with0 test bodies/242 cases unrun; no build/test/native PASS transfers. Manifests record exact endpoint hashes/EOL and cumulative alternatives; no private execution files are published.
+
+<!-- render-progress-evidence-20261030T1813 -->
+## Progress by consolidated issue
+
+[Evidence-milestone chart for U01-U17](progress/README.md): 17 open items, partial code in12 and earlier partial native improvements in8; no item fully resolved end to end. These are milestones, not percentages of effort or an ETA. Current C16 stopped at RAM admission before any build/tests.

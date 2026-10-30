@@ -1,0 +1,284 @@
+{
+  "issue": "https://github.com/tangency-labs/solidcraft/issues/6201",
+  "snapshot_utc": "2026-10-30T18:13:20+00:00",
+  "kind": "evidence_milestones_not_effort_or_time_percentages",
+  "scope": "Current consolidated list U01-U17. G01-G04 are sub-findings of U04; G05 is U17. Historical UX/R/AP lists are not counted again.",
+  "milestones": [
+    "diagnosis",
+    "code",
+    "current_candidate_automated_gate",
+    "native_acceptance",
+    "end_to_end_resolution"
+  ],
+  "states": {
+    "done": "Evidence for the stated milestone",
+    "partial": "Partial scope or older tested route; not full resolution",
+    "pending": "Not demonstrated for this consolidated problem"
+  },
+  "current_validation": "C16 stopped at RAM admission before formatter/Cargo/tests: 253 selected cases unrun, 0 CPU markers. C15 separately remains a four-E0599 fixture compile failure. Neither is a current candidate PASS.",
+  "rows": [
+    {
+      "id": "U01",
+      "priority": "P1",
+      "es": "Preview progresivo y render en directo",
+      "en": "Progressive preview and final streaming",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "partial",
+        "pending"
+      ],
+      "next_es": "Validar acumulación y respuesta reales",
+      "next_en": "Validate real accumulation and response"
+    },
+    {
+      "id": "U02",
+      "priority": "P1",
+      "es": "Exposición, sombras, HDR y vidrio en preview",
+      "en": "Preview exposure, shadows, HDR and glass",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "pending",
+        "pending"
+      ],
+      "next_es": "Integrar efectos y medir sus imágenes",
+      "next_en": "Integrate effects and measure their images"
+    },
+    {
+      "id": "U03",
+      "priority": "P1",
+      "es": "Manchas y artefactos de sombras CPU",
+      "en": "CPU final shadow mottling and artifacts",
+      "states": [
+        "done",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ],
+      "next_es": "Aislar causa y reparar la imagen",
+      "next_en": "Isolate the cause and repair the image"
+    },
+    {
+      "id": "U04",
+      "priority": "P1",
+      "es": "GPU: disponibilidad y recuperación",
+      "en": "GPU availability and safe recovery",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "pending",
+        "pending"
+      ],
+      "next_es": "Obtener y validar un render GPU real",
+      "next_en": "Obtain and validate a real GPU render"
+    },
+    {
+      "id": "U05",
+      "priority": "P2",
+      "es": "Raster rechaza la exposición",
+      "en": "Raster exposure refusal",
+      "states": [
+        "done",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ],
+      "next_es": "Implementar respuesta coherente a EV",
+      "next_en": "Implement a coherent EV response"
+    },
+    {
+      "id": "U06",
+      "priority": "P1",
+      "es": "Encuadre, Ajustar y relación de aspecto",
+      "en": "Framing, Fit and aspect ratio",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "pending",
+        "pending"
+      ],
+      "next_es": "Validar encuadre y cámara pausada",
+      "next_en": "Validate framing and paused-camera alignment"
+    },
+    {
+      "id": "U07",
+      "priority": "P2",
+      "es": "Aplicar materiales al objeto correcto",
+      "en": "Apply appearances to the intended target",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "partial",
+        "pending"
+      ],
+      "next_es": "Cubrir mapas y vínculos desactualizados",
+      "next_en": "Cover maps and stale target bindings"
+    },
+    {
+      "id": "U08",
+      "priority": "P2",
+      "es": "Bibliotecas, categorías y miniaturas",
+      "en": "Library categories and thumbnails",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "partial",
+        "pending"
+      ],
+      "next_es": "Separar recursos utilizables y conceptos",
+      "next_en": "Separate usable assets from concepts"
+    },
+    {
+      "id": "U09",
+      "priority": "P2",
+      "es": "Búsqueda práctica de recursos",
+      "en": "Practical asset search",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "partial",
+        "pending"
+      ],
+      "next_es": "Revisar relevancia y biblioteca técnica",
+      "next_en": "Check relevance and the technical library"
+    },
+    {
+      "id": "U10",
+      "priority": "P2",
+      "es": "Presets de calidad y métodos",
+      "en": "Quality presets and method organization",
+      "states": [
+        "done",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ],
+      "next_es": "Activar presets definidos por método",
+      "next_en": "Enable defined per-method presets"
+    },
+    {
+      "id": "U11",
+      "priority": "P2",
+      "es": "Botones, paneles y preparación de escena",
+      "en": "Buttons, panels and scene staging",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "partial",
+        "pending"
+      ],
+      "next_es": "Completar acciones y editores correctos",
+      "next_en": "Complete correct actions and editors"
+    },
+    {
+      "id": "U12",
+      "priority": "P2",
+      "es": "Efectos y cambio de método",
+      "en": "Effects and method recovery",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "partial",
+        "pending"
+      ],
+      "next_es": "Recuperación explícita sin perder ajustes",
+      "next_en": "Explicit recovery without losing settings"
+    },
+    {
+      "id": "U13",
+      "priority": "P2",
+      "es": "Resultado, identidad y comparación",
+      "en": "Results, identity and comparison",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "partial",
+        "pending"
+      ],
+      "next_es": "Probar auto-Resultado, origen y exportación",
+      "next_en": "Test auto-Result, provenance and export"
+    },
+    {
+      "id": "U14",
+      "priority": "P2",
+      "es": "Guardar y recuperar escenas y tomas",
+      "en": "Save and reopen setups and shots",
+      "states": [
+        "done",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ],
+      "next_es": "Reabrir en otro proceso y comparar",
+      "next_en": "Reopen in another process and compare"
+    },
+    {
+      "id": "U15",
+      "priority": "P2",
+      "es": "Ventanas pequeñas, teclado y accesibilidad",
+      "en": "Small windows, keyboard and accessibility",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "partial",
+        "pending"
+      ],
+      "next_es": "Comprobar tamaños y recorridos pendientes",
+      "next_en": "Check remaining sizes and interaction paths"
+    },
+    {
+      "id": "U16",
+      "priority": "P2",
+      "es": "Coste de editar, color y caché del preview",
+      "en": "Preview edit cost, color and scene cache",
+      "states": [
+        "done",
+        "partial",
+        "pending",
+        "pending",
+        "pending"
+      ],
+      "next_es": "Integrar trabajo ajeno y medir el resultado",
+      "next_en": "Integrate contributors' work and measure"
+    },
+    {
+      "id": "U17",
+      "priority": "P2",
+      "es": "Color GPU con iluminación personalizada",
+      "en": "GPU color with custom lighting",
+      "states": [
+        "done",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ],
+      "diagnosis_source_only": true,
+      "next_es": "Corregir transferencia de color y verificar",
+      "next_en": "Repair and verify the color-transfer path"
+    }
+  ],
+  "limits": [
+    "No overall effort percentage, schedule or ETA is inferred from equal-width milestones.",
+    "Partial native evidence describes specific previously observed routes, not acceptance of the changed candidate.",
+    "No full consolidated U01-U17 item is being marked end-to-end resolved in this snapshot.",
+    "Code may belong to our team or other contributors. Source-only proposals are partial implementation, not passing tests.",
+    "Broader CPU/Raster/GPU feature parity is cross-cutting remaining work, not a duplicate historical bar."
+  ]
+}

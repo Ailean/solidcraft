@@ -44,7 +44,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&VALIDATION_CONTRACT)
         .output(crate::schema::output_schema_for::<crate::schema::diagnostics::ValidationReply>)
         .params(
-            "mode?: each_step | each_feature | off (default: leave it). When SMLib's full check runs on the features computed \
+            "mode?: each_step | each_feature | off (default: leave it). When the kernel's full check runs on the features computed \
              from now on: after every sweep, boolean and blend (each_step), once on the bodies each feature makes or changes \
              (each_feature, the default; a body it refuses still fails its feature, with the check's reason), or never (off, \
              experimental). Results already there stand until their features are computed again (timeline.compute_all). \

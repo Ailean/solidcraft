@@ -29,7 +29,7 @@ const REORDER: TypedContract<SheetReorderParams> = TypedContract::new();
 const DELETE: TypedContract<SheetDeleteParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new("drawing.sheet.add", "Add Sheet", crate::checked!("drawing.sheet.add", ADD, add))
+    CommandSpec::new("drawing.sheet.add", "Add Sheet", crate::checked!("drawing.sheet.add", add))
         .icon("new")
         .in_drawing()
         .doc_only()
@@ -41,7 +41,7 @@ pub static COMMANDS: &[CommandSpec] = &[
              component: id (0 the design)}; excluded?: {count?, print?} (none unless given) → sheet: the new sheet's id, sheets. \
              One undo step.",
         ),
-    CommandSpec::new("drawing.sheet.set", "Sheet Settings", crate::checked!("drawing.sheet.set", SET, set))
+    CommandSpec::new("drawing.sheet.set", "Sheet Settings", crate::checked!("drawing.sheet.set", set))
         .icon("settings")
         .in_drawing()
         .doc_only()
@@ -52,14 +52,14 @@ pub static COMMANDS: &[CommandSpec] = &[
              excluded?: {count?, print?} → the drawing's sheets, and after a change of paper `outside`: the sheet's views whose \
              boundary leaves its drawing space (none is moved). One undo step, none when nothing changes.",
         ),
-    CommandSpec::new("drawing.sheet.reorder", "Reorder Sheets", crate::checked!("drawing.sheet.reorder", REORDER, reorder))
+    CommandSpec::new("drawing.sheet.reorder", "Reorder Sheets", crate::checked!("drawing.sheet.reorder", reorder))
         .icon("reorder")
         .in_drawing()
         .doc_only()
         .contract(&REORDER)
         .output(output_schema_for::<SheetsResult>)
         .params("sheets: every sheet's id, in the new order → the drawing's sheets. One undo step, none for the same order."),
-    CommandSpec::new("drawing.sheet.delete", "Delete Sheet", crate::checked!("drawing.sheet.delete", DELETE, delete))
+    CommandSpec::new("drawing.sheet.delete", "Delete Sheet", crate::checked!("drawing.sheet.delete", delete))
         .icon("delete")
         .in_drawing()
         .doc_only()

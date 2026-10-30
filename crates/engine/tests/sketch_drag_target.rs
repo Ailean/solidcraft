@@ -5,6 +5,66 @@ mod four_bar;
 use serde_json::json;
 use solidcraft_geom::Vec2;
 
+#[test]
+fn angular_drag_keeps_the_horizontal_construction_line() {
+    for live in [false, true] {
+        let mut s = solidcraft_engine::Session::default();
+        for (id, params) in [
+            ("sketch.create", json!({"plane":"XY"})),
+            ("sketch.line", json!({"points":[[0,0],[20,0]],"ids":["reference"],"construction":true})),
+            ("sketch.constraint.horizontal_vertical", json!({"line":"reference"})),
+            ("sketch.line", json!({"points":["reference.start",[10,10]],"ids":["arm"],"infer":false})),
+            ("sketch.dimension", json!({"entities":["reference","arm"],"value":45})),
+            ("sketch.drag", json!({"entity":"arm.end","from":[10,10],"to":[10,10.5],"live":live})),
+        ] {
+            s.execute(id, &params).unwrap();
+        }
+        if live {
+            s.execute("sketch.drag_end", &json!({})).unwrap();
+        }
+        let point = |id| four_bar::point(&s, id).unwrap();
+        assert!(point("reference.start").dist(point("reference.end")) > 1.0, "the construction reference must remain visible");
+        let end = point("arm.end");
+        assert!((end.x - end.y).abs() < 1e-5, "the arm must retain its 45 degree angle: {end:?}");
+    }
+}
+
+/// A line held at its midpoint, with an angle to a horizontal line from that point (#8944):
+/// dragging one of its ends off that angle slides the end along the line as far as it can go,
+/// and the horizontal line keeps its length. That line's far end is free only along it, which
+/// can't bring the cursor closer, yet the cursor correction moved it a whole step at a time on
+/// rounding: the line shrank, for the first target to nothing.
+#[test]
+fn a_midpoint_line_dragged_off_its_angle_leaves_the_horizontal_line_alone() {
+    for live in [false, true] {
+        for (end, to, reached) in
+            [("l1.end", [14.0, 3.0], [11.617647, 6.970588]), ("l1.end", [5.0, 12.0], [8.970588, 5.382353]), ("l1.start", [-3.0, -12.0], [-7.5, -4.5])]
+        {
+            let mut s = solidcraft_engine::Session::default();
+            for (id, params) in [
+                ("sketch.create", json!({"plane":"XY"})),
+                ("sketch.line", json!({"points":[[-10,-6],[10,6]],"infer":false})),
+                ("sketch.constraint.midpoint", json!({"line":"l1","point":"origin"})),
+                ("sketch.line", json!({"points":["origin",[15,0]],"infer":false})),
+                ("sketch.constraint.horizontal_vertical", json!({"line":"l2"})),
+                ("sketch.dimension", json!({"entities":["l1","l2"],"type":"angle"})),
+            ] {
+                s.execute(id, &params).unwrap();
+            }
+            let from = four_bar::point(&s, end).unwrap();
+            s.execute("sketch.drag", &json!({"entity":end,"from":[from.x,from.y],"to":to,"live":live})).unwrap();
+            if live {
+                s.execute("sketch.drag_end", &json!({})).unwrap();
+            }
+            let point = |id| four_bar::point(&s, id).unwrap();
+            let at = point(end);
+            assert!(at.dist(Vec2::new(reached[0], reached[1])) < 1e-4, "{end} to {to:?} (live {live}) went to {at:?}");
+            let far = point("l2.end");
+            assert!(far.dist(Vec2::new(15.0, 0.0)) < 1e-6, "{end} to {to:?} (live {live}) moved l2's end to {far:?}");
+        }
+    }
+}
+
 fn drag(s: &mut solidcraft_engine::Session, target: Vec2) {
     let from = four_bar::point(s, "crank.end").unwrap();
     s.execute("sketch.drag", &json!({"entity":"crank.end","from":[from.x,from.y],"to":[target.x,target.y],"live":true})).unwrap();
@@ -260,5 +320,83 @@ fn the_coupler_edge_follows_with_both_ends_free_to_rotate() {
             assert!(four_bar::length_error(&s).unwrap() < 1e-6);
             assert_eq!(four_bar::branch(&s).unwrap(), -1.0);
         }
+    }
+}
+
+/// Two parallelogram linkages, each held parallel and equal on both pairs of sides (two
+/// redundant constraints each), the upper one hanging off the lower one's moving side and tied
+/// to a fixed pivot by a 30 mm rod: one degree of freedom (#4585).
+fn parallelograms() -> solidcraft_engine::Session {
+    let mut s = solidcraft_engine::Session::default();
+    let run = |s: &mut solidcraft_engine::Session, id: &str, p: serde_json::Value| {
+        s.execute(id, &p).unwrap_or_else(|e| panic!("{id} {p}: {e}"));
+    };
+    run(&mut s, "sketch.create", json!({"plane":"XY"}));
+    let at = |deg: f64, r: f64| Vec2::new(deg.to_radians().cos(), deg.to_radians().sin()) * r;
+    let p1 = at(147.7, 80.0);
+    let m = p1 + Vec2::new(0.0, 20.0);
+    let r = m + at(20.0, 80.0);
+    let (c, t) = (m + Vec2::new(0.0, 20.0), r + Vec2::new(0.0, 20.0));
+    let g = r + at(-70.0, 30.0);
+    let xy = |p: Vec2| [p.x, p.y];
+    let (o, q) = (xy(Vec2::ZERO), xy(Vec2::new(0.0, 20.0)));
+    run(&mut s, "sketch.line", json!({"points":[o, xy(p1), xy(m), q, o],"ids":["bot","left","top","right"],"infer":false}));
+    run(&mut s, "sketch.line", json!({"points":["left.end", xy(r), xy(t), xy(c), "left.end"],"ids":["ubot","uright","utop","uleft"],"infer":false}));
+    run(&mut s, "sketch.line", json!({"points":["ubot.end", xy(g)],"ids":["rod"],"infer":false}));
+    run(&mut s, "sketch.constraint.fix", json!({"entities":["bot.start", "rod.end"]}));
+    run(&mut s, "sketch.constraint.horizontal_vertical", json!({"line":"right"}));
+    for (line, value) in [("right", 20.0), ("bot", 80.0), ("ubot", 80.0), ("uleft", 20.0), ("rod", 30.0)] {
+        run(&mut s, "sketch.dimension", json!({"entities":[line],"value":value}));
+    }
+    for (a, b) in [("top", "bot"), ("left", "right"), ("utop", "ubot"), ("uright", "uleft")] {
+        run(&mut s, "sketch.constraint.parallel", json!({"a":a,"b":b}));
+        run(&mut s, "sketch.constraint.equal", json!({"a":a,"b":b}));
+    }
+    run(&mut s, "sketch.constraint.parallel", json!({"a":"uleft","b":"left"}));
+    s
+}
+
+/// The parallelograms' lengths, directions and fixed points, as the largest error.
+fn parallelogram_error(s: &solidcraft_engine::Session) -> f64 {
+    let p = |name: &str| four_bar::point(s, name).unwrap();
+    let side = |line: &str| p(&format!("{line}.end")) - p(&format!("{line}.start"));
+    let mut error = p("bot.start").len().max(p("right.start").dist(Vec2::new(0.0, 20.0)));
+    for (line, value) in [("bot", 80.0), ("ubot", 80.0), ("uleft", 20.0), ("rod", 30.0)] {
+        error = error.max((side(line).len() - value).abs());
+    }
+    for (a, b) in [("top", "bot"), ("left", "right"), ("utop", "ubot"), ("uright", "uleft")] {
+        error = error.max((side(a).len() - side(b).len()).abs()).max(side(a).cross(side(b)).abs() / side(b).len());
+    }
+    error
+}
+
+#[test]
+fn a_linkage_held_by_redundant_parallelograms_follows_the_cursor() {
+    // Each held parallelogram's parallel and equal sides are dependent only at an exact
+    // solution: a pose corrected to the solver's tolerance must still show the linkage's freedom.
+    for live in [true, false] {
+        let mut s = parallelograms();
+        let report = s.execute("sketch.solve", &json!({})).unwrap();
+        assert_eq!((&report["status"], &report["dof"]), (&json!("solved"), &json!(1)), "{report}");
+        // The lower parallelogram's free corner, its moving sides and the upper one's side, each
+        // dragged in turn from where the last drag left the linkage, follows most of the way
+        // (the rest is off the path the linkage allows).
+        for (entity, along) in [("bot.end", None), ("bot", Some(0.5)), ("left", Some(0.5)), ("ubot", Some(0.5)), ("bot.end", None)] {
+            let from = along.map_or_else(|| four_bar::point(&s, entity).unwrap(), |f| grab(&s, entity, f));
+            let to = from + Vec2::new(2.0, 2.0);
+            let r = s.execute("sketch.drag", &json!({"entity":entity,"from":[from.x,from.y],"to":[to.x,to.y],"live":live})).unwrap();
+            let reached = r["reached"].as_f64().unwrap();
+            assert!(reached > 0.8, "live {live}: {entity} reached {reached}: {r}");
+            assert!(parallelogram_error(&s) < 1e-6, "live {live}: {entity}: {}", parallelogram_error(&s));
+            assert_eq!(r["sketch"]["solved"], json!(true));
+        }
+        // The lower parallelogram's free corner lands on its 80 mm circle, as close to the
+        // cursor as the circle allows.
+        let from = four_bar::point(&s, "bot.end").unwrap();
+        let to = from + Vec2::new(1.0, 2.0);
+        s.execute("sketch.drag", &json!({"entity":"bot.end","from":[from.x,from.y],"to":[to.x,to.y],"live":live})).unwrap();
+        let at = four_bar::point(&s, "bot.end").unwrap();
+        assert!(at.dist(to * (80.0 / to.len())) < 1e-4, "live {live}: {at:?}");
+        assert!(parallelogram_error(&s) < 1e-6);
     }
 }

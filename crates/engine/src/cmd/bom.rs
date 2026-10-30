@@ -1,7 +1,8 @@
 //! Part properties and the bill of materials. `component.metadata` and
 //! `component.metadata.set` read and change a component definition's part number, description,
-//! revision and free properties (shared by every occurrence, saved with the component);
-//! `occurrence.bom_type` lets one occurrence count as another bill of materials type.
+//! revision and free properties (shared by every occurrence, saved with the component; the keys
+//! and their checks are `solidcraft_doc::metadata`'s `KEYS` and `PART_ONLY`, the rows a component
+//! takes); `occurrence.bom_type` lets one occurrence count as another bill of materials type.
 //!
 //! `assembly.bom` presents the rows of a bill of materials view of the design, or of one
 //! component, as JSON, optionally written to a CSV or JSON file. `assembly.bom.renumber` and
@@ -13,7 +14,7 @@
 use serde_json::{Map, Value, json};
 use solidcraft_doc::BomType;
 use solidcraft_doc::bom::{self, Bom, Group, MAX_ITEM, Mass, Numbering, Order, Quantity, Request, Row, Tree, Uncounted, View};
-use solidcraft_doc::metadata::{BOM_QUANTITY, BOM_TYPE, DESCRIPTION, MATERIAL, MAX_KEYS, MAX_TEXT_BYTES, PART_NUMBER, REVISION, VIRTUAL, WELL_KNOWN};
+use solidcraft_doc::metadata::{BOM_KEYS, BOM_QUANTITY, BOM_TYPE, MATERIAL, MAX_KEYS, Owner, PART_ONLY, VIRTUAL, check_text, key_list};
 
 use super::CommandSpec;
 use crate::params::{bad, str_};
@@ -37,12 +38,11 @@ pub static COMMANDS: &[CommandSpec] = &[
          number of pieces (\"4\") or a length (\"2.5 m\", \"2 * span + 50 mm\"), evaluated with the design's parameters, above \
          0 (empty or null removes it: one piece); virtual?: true|false (a component with no geometry, such as grease or a \
          label: it can't be the active component or hold bodies, sketches or components); values?: {key: value} (SolidCraft's \
-         keys project, part_number, revision, author, organization, description, license, bom_type, material, bom_quantity, \
-         virtual, or a reverse-DNS key holding an object); properties?: \
-         {name: text, …} (free properties; empty or null removes). All or nothing, one undo step → component, metadata, \
+         keys, as document.metadata's properties lists them, bom_type, material, bom_quantity, virtual, or a reverse-DNS key \
+         holding an object); properties?: {name: text, …} (free properties; empty or null removes). All or nothing, one undo step → component, metadata, \
          properties, changed: [keys]",
     ),
-    CommandSpec::new("occurrence.bom_type", "Bill of Materials Type", crate::checked!("occurrence.bom_type", OCCURRENCE_BOM_TYPE_CONTRACT, occurrence_type))
+    CommandSpec::new("occurrence.bom_type", "Bill of Materials Type", crate::checked!("occurrence.bom_type", occurrence_type))
         .icon("bom")
         .doc_only()
         .contract(&OCCURRENCE_BOM_TYPE_CONTRACT)
@@ -120,16 +120,30 @@ fn component_id(s: &Session, p: &Value, cmd: &str) -> Result<u64> {
 fn read(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "component.metadata";
     let id = component_id(s, p, cmd)?;
-    if id == 0 {
-        let m = &s.doc.metadata;
-        return Ok(json!({"component": 0, "name": s.doc.name, "part_number": m.part_number(), "description": m.description(),
-            "revision": m.revision(), "metadata": m, "properties": {}}));
+    // The root is the design: its own properties, and no free ones.
+    let (name, m, properties) = if id == 0 {
+        (&s.doc.name, &s.doc.metadata, json!({}))
+    } else {
+        let c = s.doc.components.iter().find(|c| c.id == id).ok_or_else(|| bad(cmd, format!("no component `{id}`")))?;
+        (&c.name, &c.metadata, json!(c.properties))
+    };
+    let mut out = Map::new();
+    out.insert("component".into(), json!(id));
+    out.insert("name".into(), json!(name));
+    for k in BOM_KEYS {
+        out.insert(k.to_string(), json!(m.text(k)));
     }
-    let c = s.doc.components.iter().find(|c| c.id == id).ok_or_else(|| bad(cmd, format!("no component `{id}`")))?;
-    let m = &c.metadata;
-    Ok(json!({"component": id, "name": c.name, "part_number": m.part_number(), "description": m.description(),
-        "revision": m.revision(), "bom_type": m.bom_type().as_str(), "material": m.material(), "bom_quantity": m.bom_quantity(),
-        "virtual": m.is_virtual(), "metadata": m, "properties": c.properties}))
+    // A bill of materials type, static material, quantity and virtual flag are a component's;
+    // the design has none.
+    if id != 0 {
+        out.insert(BOM_TYPE.into(), json!(m.bom_type().as_str()));
+        out.insert(MATERIAL.into(), json!(m.material()));
+        out.insert(BOM_QUANTITY.into(), json!(m.bom_quantity()));
+        out.insert(VIRTUAL.into(), json!(m.is_virtual()));
+    }
+    out.insert("metadata".into(), json!(m));
+    out.insert("properties".into(), properties);
+    Ok(Value::Object(out))
 }
 
 /// A free property as it may be saved (`None`: remove it), or why not.
@@ -146,12 +160,8 @@ fn property(name: &str, value: &Value, cmd: &str) -> Result<Option<String>> {
         Value::Bool(b) => b.to_string(),
         _ => return Err(bad(cmd, format!("property `{shown}` takes text"))),
     };
-    if text.len() > MAX_TEXT_BYTES {
-        return Err(bad(cmd, format!("property `{shown}` is longer than {MAX_TEXT_BYTES} bytes")));
-    }
-    if text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r')) {
-        return Err(bad(cmd, format!("property `{shown}` has a control character")));
-    }
+    // The same text rule as SolidCraft's keys.
+    check_text(&format!("property `{shown}`"), &text).map_err(|e| bad(cmd, e.to_string()))?;
     Ok(Some(text))
 }
 
@@ -170,8 +180,8 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         Some(Value::Object(_)) => return Err(bad(cmd, format!("`values` can hold at most {MAX_KEYS} keys"))),
         Some(_) => return Err(bad(cmd, "`values` must be an object: {key: value, …}")),
     }
-    for k in [PART_NUMBER, DESCRIPTION, REVISION, BOM_TYPE, MATERIAL, BOM_QUANTITY, VIRTUAL] {
-        if let Some(v) = p.get(k) {
+    for k in BOM_KEYS.iter().chain(PART_ONLY.iter()) {
+        if let Some(v) = p.get(*k) {
             entries.push((k.to_string(), v.clone()));
         }
     }
@@ -184,16 +194,12 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     if entries.is_empty() && props.is_empty() {
         return Err(bad(
             cmd,
-            format!(
-                "give part_number, description, revision, bom_type, material, bom_quantity, virtual, values or properties ({}, {BOM_TYPE}, \
-                 {MATERIAL}, {BOM_QUANTITY}, {VIRTUAL})",
-                WELL_KNOWN.join(", ")
-            ),
+            format!("give {}, {}, values or properties ({})", BOM_KEYS.join(", "), PART_ONLY.join(", "), key_list(Owner::Component)),
         ));
     }
     let mut changed: Vec<String> = Vec::new();
     for (k, v) in entries {
-        if metadata.set(&k, v).map_err(|e| bad(cmd, e.to_string()))? && !changed.contains(&k) {
+        if metadata.set(Owner::Component, &k, v).map_err(|e| bad(cmd, e.to_string()))? && !changed.contains(&k) {
             changed.push(k);
         }
     }

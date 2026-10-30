@@ -36,7 +36,7 @@ const DEFAULT_OFFSET_MM: f64 = 10.0;
 const DEFAULT_DECIMALS: u8 = 2;
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new(ADD, "Add Drawing Dimension", crate::checked!("drawing.dimension.add", ADD_CONTRACT, add))
+    CommandSpec::new(ADD, "Add Drawing Dimension", crate::checked!("drawing.dimension.add", add))
         .icon("dimension")
         .in_drawing()
         .doc_only()
@@ -52,7 +52,7 @@ pub static COMMANDS: &[CommandSpec] = &[
              decimals?: 0..6 (default 2); override_text? → what drawing.dimension.inspect answers for it. Saved by the edges' names, \
              never the points picked; one the view can't measure is refused. One undo step; no model is evaluated.",
         ),
-    CommandSpec::new(EDIT, "Edit Drawing Dimension", crate::checked!("drawing.dimension.edit", EDIT_CONTRACT, edit))
+    CommandSpec::new(EDIT, "Edit Drawing Dimension", crate::checked!("drawing.dimension.edit", edit))
         .icon("dimension")
         .in_drawing()
         .doc_only()
@@ -65,7 +65,7 @@ pub static COMMANDS: &[CommandSpec] = &[
              {dimension, changed: [fields]}. What it measures stays: to measure something else, add a new one. One undo step, none \
              when nothing changes; no model is evaluated.",
         ),
-    CommandSpec::new(INSPECT, "Inspect Drawing Dimension", crate::checked!("drawing.dimension.inspect", INSPECT_CONTRACT, inspect))
+    CommandSpec::new(INSPECT, "Inspect Drawing Dimension", crate::checked!("drawing.dimension.inspect", inspect))
         .icon("inspect")
         .in_drawing()
         .noundo()

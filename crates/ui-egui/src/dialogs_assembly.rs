@@ -59,10 +59,20 @@ const TYPE_LABELS: [&str; 13] = [
     "Point on line",
     "Line on plane",
 ];
+/// A joint type's label, as the Type box lists it ("Pin-slot", "Point on plane").
+pub(crate) fn kind_label(kind: JointKind) -> &'static str {
+    TYPES.iter().position(|t| JointKind::parse(t) == Some(kind)).and_then(|i| TYPE_LABELS.get(i)).copied().unwrap_or("")
+}
+
+/// A joint as the joint lists name it: its name, and its type in the user's language.
+pub(crate) fn joint_choice(name: &str, kind: JointKind) -> String {
+    format!("{name} ({})", crate::i18n::tr_label(kind_label(kind)))
+}
+
 /// What a joint origin input accepts (snaps on faces, edges and vertices).
 pub const SNAPS: u16 = FACES | EDGES | VERTICES;
 /// Commands whose effect is where occurrences sit (previewed on the placed model).
-const MOVES: [&str; 12] = [
+const MOVES: &[&str] = &[
     "joint.create",
     "joint.as_built",
     "joint.drive",
@@ -73,6 +83,7 @@ const MOVES: [&str; 12] = [
     "joint.rack_pinion",
     "joint.screw",
     "joint.cam",
+    "occurrence.align",
     "parts.insert",
     "parts.fastener",
 ];
@@ -139,14 +150,14 @@ pub struct JointForm {
 }
 
 impl JointForm {
-    fn new(as_built: bool) -> JointForm {
+    fn new(as_built: bool, doc: &solidcraft_engine::doc::Document) -> JointForm {
         JointForm {
             as_built,
             editing: None,
             kind: 0,
             flip: false,
             angle: "0 deg".into(),
-            offset: ["0 mm".into(), "0 mm".into(), "0 mm".into()],
+            offset: std::array::from_fn(|_| crate::length_input::default(doc, "0")),
             limits: Vec::new(),
             animate: false,
             phase: 0.0,
@@ -154,17 +165,21 @@ impl JointForm {
         }
     }
 
-    fn joint_kind(&self) -> JointKind {
+    pub(crate) fn joint_kind(&self) -> JointKind {
         TYPES.get(self.kind).and_then(|t| JointKind::parse(t)).unwrap_or(JointKind::Rigid)
     }
 
     /// Limits rows sized to the joint's values.
-    fn fit_limits(&mut self) {
+    fn fit_limits(&mut self, doc: &solidcraft_engine::doc::Document) {
         let k = self.joint_kind();
         let n = k.dofs().len();
         while self.limits.len() < n {
             let i = self.limits.len();
-            self.limits.push(if k.is_angle(i) { (false, "-90 deg".into(), "90 deg".into()) } else { (false, "0 mm".into(), "20 mm".into()) });
+            self.limits.push(if k.is_angle(i) {
+                (false, "-90 deg".into(), "90 deg".into())
+            } else {
+                (false, crate::length_input::default(doc, "0"), crate::length_input::default(doc, "20"))
+            });
         }
         self.limits.truncate(n);
     }
@@ -203,19 +218,20 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let (asm, inputs) = match id {
         "component.create" => (Asm::NewComponent { name: String::new(), activate: true }, vec![SelInput::new("Bodies (optional)", BODIES, true)]),
         "joint.create" => (
-            Asm::Joint(Box::new(JointForm::new(false))),
+            Asm::Joint(Box::new(JointForm::new(false, &app.session.doc))),
             vec![SelInput::new("Component 1", SNAPS, false), SelInput::new("Component 2", SNAPS, false)],
         ),
-        "joint.as_built" => {
-            (Asm::Joint(Box::new(JointForm::new(true))), vec![SelInput::new("Components", BODIES, true), SelInput::new("Position", SNAPS, false)])
-        }
+        "joint.as_built" => (
+            Asm::Joint(Box::new(JointForm::new(true, &app.session.doc))),
+            vec![SelInput::new("Components", BODIES, true), SelInput::new("Position", SNAPS, false)],
+        ),
         "joint.origin" => (Asm::JointOrigin { name: String::new(), hover: None }, vec![SelInput::new("Snap", SNAPS, false)]),
         "joint.rigid_group" => (Asm::RigidGroup, vec![SelInput::new("Components", BODIES, true)]),
         "joint.drive" => {
-            let joint = picked_joint(app);
+            let joint = picked_joint(app, true);
             (Asm::Drive { joint, values: current_values(s, joint), focus: true }, vec![])
         }
-        "motion.trace" => (Asm::Trace(Box::new(trace::form(s, picked_joint(app)))), vec![SelInput::new("Point", SNAPS, false)]),
+        "motion.trace" => (Asm::Trace(Box::new(trace::form(s, picked_joint(app, false)))), vec![SelInput::new("Point", SNAPS, false)]),
         "joint.motion_link" => {
             let b = usize::from(movable(s).len() > 1);
             (Asm::MotionLink { a: 0, b, ia: 0, ib: 0, ratio: "1".into(), offset: "0".into() }, vec![])
@@ -273,13 +289,15 @@ pub fn preset(s: &Session, k: &mut Asm, p: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// The joint picked in the browser, else the first that moves (an index into the design's joints).
-fn picked_joint(app: &SolveApp) -> usize {
+/// The joint picked in the browser, else the first that moves (an index into the design's
+/// joints). With `rigid`, a picked rigid joint comes before the first that moves: Drive Joints
+/// opened on one says why it can't drive it (#6981).
+fn picked_joint(app: &SolveApp, rigid: bool) -> usize {
     let s = &app.session;
     let list = movable(s);
-    let picked =
-        app.tree.picked_joints.iter().find_map(|id| list.iter().copied().find(|i| s.doc.assembly.joints.get(*i).is_some_and(|j| j.id == *id)));
-    picked.or(list.first().copied()).unwrap_or(0)
+    let picked: Vec<usize> = app.tree.picked_joints.iter().filter_map(|id| s.doc.assembly.joints.iter().position(|j| j.id == *id)).collect();
+    let moving = picked.iter().copied().find(|i| list.contains(i));
+    moving.or(picked.first().copied().filter(|_| rigid)).or(list.first().copied()).unwrap_or(0)
 }
 
 /// Indices (into the design's joints) of joints that move (not rigid).
@@ -293,7 +311,7 @@ fn current_values(s: &Session, index: usize) -> Vec<String> {
     (0..j.kind.dofs().len())
         .map(|i| {
             let v = j.values.get(i).copied().unwrap_or(0.0);
-            if j.kind.is_angle(i) { num(v.to_degrees(), "deg") } else { num(v, "mm") }
+            if j.kind.is_angle(i) { num(v.to_degrees(), "deg") } else { crate::length_input::model(&s.doc, v) }
         })
         .collect()
 }
@@ -306,18 +324,18 @@ pub(crate) fn num(v: f64, unit: &str) -> String {
 /// The Edit Joint dialog for a joint (by id).
 pub fn edit_joint(app: &SolveApp, id: u64) -> Option<Dialog> {
     let j = app.session.doc.assembly.joints.iter().find(|j| j.id == id)?;
-    let mut f = JointForm::new(false);
+    let mut f = JointForm::new(false, &app.session.doc);
     f.editing = Some(id);
     f.kind = TYPES.iter().position(|t| JointKind::parse(t) == Some(j.kind)).unwrap_or(0);
     f.flip = j.flip;
     // An offset or angle typed as an expression shows (and is sent back) as that expression, so
     // the joint keeps following its parameters.
     f.angle = j.exprs.angle.clone().unwrap_or_else(|| num(j.angle.to_degrees(), "deg"));
-    f.offset[2] = j.exprs.offset.clone().unwrap_or_else(|| num(j.offset, "mm"));
-    f.fit_limits();
+    f.offset[2] = j.exprs.offset.clone().unwrap_or_else(|| crate::length_input::model(&app.session.doc, j.offset));
+    f.fit_limits(&app.session.doc);
     for (i, l) in f.limits.iter_mut().enumerate() {
         if let Some(Some((lo, hi))) = j.limits.get(i) {
-            let fmt = |v: f64| if j.kind.is_angle(i) { num(v.to_degrees(), "deg") } else { num(v, "mm") };
+            let fmt = |v: f64| if j.kind.is_angle(i) { num(v.to_degrees(), "deg") } else { crate::length_input::model(&app.session.doc, v) };
             *l = (true, fmt(*lo), fmt(*hi));
         }
     }
@@ -386,12 +404,17 @@ pub struct SnapPt {
     pub param: Value,
 }
 
-/// The occurrence placing a body (0: the root design), when the body is its primary instance.
+/// The occurrence placing a world body (0: the root design), the instance its name says.
 pub(crate) fn occurrence_of_body(s: &Session, body: &str) -> Option<u64> {
+    // The world name tells the instance: a further occurrence of a component is not its first.
     let st = s.world_state();
     let b = st.body(body)?;
-    let comp = s.doc.model_body_component(b);
-    if comp == 0 { Some(0) } else { s.doc.occurrence_of(comp).map(|o| o.id) }
+    if s.doc.model_body_component(b) == 0 {
+        return Some(0);
+    }
+    let model = s.model.state();
+    let (_, _, _, path, _) = s.doc.body_frames_with_source(&model).into_iter().find(|(world, ..)| world == body)?;
+    path.last().copied()
 }
 
 /// Centre and unit normal of the circle through a polyline's points, if it lies on one.
@@ -415,6 +438,19 @@ pub fn circle_of(pts: &[Vec3]) -> Option<(Vec3, Vec3)> {
     let tol = (r * 2e-3).max(1e-6);
     let normal = nn.normalized()?;
     pts.iter().all(|p| (p.dist(center) - r).abs() < tol && (*p - center).dot(normal).abs() < tol).then_some((center, normal))
+}
+
+/// Axis of a straight edge. Its largest component points positive so reversing the
+/// tessellation does not reverse a joint's drive direction.
+fn straight_edge_axis(pts: &[Vec3]) -> Option<Vec3> {
+    let (a, b) = (*pts.first()?, *pts.last()?);
+    let dir = (b - a).normalized()?;
+    let tol = 1e-6 * a.dist(b).max(1.0);
+    if !pts.iter().all(|p| (*p - a).cross(dir).len() < tol) {
+        return None;
+    }
+    let leading = [dir.x, dir.y, dir.z].into_iter().max_by(|a, b| a.abs().total_cmp(&b.abs()))?;
+    Some(if leading < 0.0 { -dir } else { dir })
 }
 
 /// Normal of the mesh face `f` near `p`.
@@ -464,16 +500,27 @@ pub fn snap_of(s: &Session, sel: &Sel) -> Option<SnapPt> {
                     let faces = m.edge_faces.get(*index).cloned().unwrap_or_default();
                     let out = faces.iter().filter_map(|f| face_normal_near(&m, *f, *point)).fold(Vec3::ZERO, |a, x| a + x);
                     let z = if out.dot(n) < 0.0 { -n } else { n };
-                    (body, SnapPt { at: c, z, kind: SnapKind::CircleCenter, param: json!({"point": pt(c), "z": pt(z)}) })
+                    // Its round end, kept by name so it follows the hole or boss as the part
+                    // changes (a point where it has none).
+                    (body, SnapPt { at: c, z, kind: SnapKind::CircleCenter, param: json!({"circle": pt(c), "z": pt(z)}) })
                 }
                 None => {
                     let mid = polyline_mid(e);
-                    let z = m.edge_faces.get(*index).and_then(|fs| fs.first()).and_then(|f| face_normal_near(&m, *f, mid)).unwrap_or(Vec3::Z);
-                    (body, SnapPt { at: mid, z, kind: SnapKind::EdgeMid, param: json!({"point": pt(mid), "z": pt(z)}) })
+                    let z = straight_edge_axis(e)
+                        .or_else(|| m.edge_faces.get(*index).and_then(|fs| fs.first()).and_then(|f| face_normal_near(&m, *f, mid)))
+                        .unwrap_or(Vec3::Z);
+                    // Its middle, kept by the edge's name.
+                    (body, SnapPt { at: mid, z, kind: SnapKind::EdgeMid, param: json!({"edge": pt(mid), "z": pt(z)}) })
                 }
             }
         }
-        Sel::Vertex { body, point } => (body, SnapPt { at: *point, z: Vec3::Z, kind: SnapKind::Vertex, param: json!({"point": pt(*point)}) }),
+        Sel::Vertex { body, point } => {
+            // The corner of the edges meeting there, kept by their names, z along the part's +Z
+            // as a point's is.
+            let z = occurrence_of_body(s, body)
+                .map_or(Vec3::Z, |o| solidcraft_engine::doc::apply_vector(&solidcraft_engine::doc::joints::occurrence_world(&s.doc, o), Vec3::Z));
+            (body, SnapPt { at: *point, z: Vec3::Z, kind: SnapKind::Vertex, param: json!({"edge": pt(*point), "corner": pt(*point), "z": pt(z)}) })
+        }
         _ => return None,
     };
     if let (Some(occ), Value::Object(m)) = (occurrence_of_body(s, body), &mut snap.param) {
@@ -513,7 +560,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             // Picks that make no joint say why, under them, and offer the way out (#1239).
             if let Some((why, bodies)) = problem {
                 ui.vertical(|ui| {
-                    ui.add(egui::Label::new(RichText::new(why).color(t.warning)).wrap());
+                    crate::ui_kit::status_line(ui, &why, crate::ui_kit::StatusTone::Warning);
                     if !bodies.is_empty()
                         && crate::ui_kit::button(ui, crate::i18n::tr("cmd.component_from_bodies"), crate::ui_kit::Button::Normal)
                             .on_hover_text(crate::i18n::tr("joint.from_bodies_hint"))
@@ -528,7 +575,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 ui.label("");
             });
             choice_row(ui, "Type", "jt_type", &mut f.kind, &TYPE_LABELS);
-            f.fit_limits();
+            f.fit_limits(&app.session.doc);
             if !f.as_built {
                 enter |= expr_row(ui, "Angle", &mut f.angle);
                 crate::ui_kit::section(ui, "joint_position", "Position", false, |ui| {
@@ -544,8 +591,10 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             let kind = f.joint_kind();
             if kind != JointKind::Rigid {
                 form_row(ui, "Animate", |ui| {
-                    let label = if f.animate { "■ Stop" } else { "▶ Play" };
-                    if crate::ui_kit::button(ui, label, crate::ui_kit::Button::Normal).on_hover_text("Play the joint's motion in the view").clicked()
+                    let label = crate::i18n::tr(if f.animate { "ui.joint_stop" } else { "ui.joint_play" });
+                    if crate::ui_kit::button(ui, label, crate::ui_kit::Button::Normal)
+                        .on_hover_text(crate::i18n::tr_label("Play the joint's motion in the view"))
+                        .clicked()
                     {
                         f.animate = !f.animate;
                     }
@@ -579,23 +628,43 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
         Asm::Drive { joint, values, focus } => {
             let s = &app.session;
             let list = movable(s);
-            if list.is_empty() {
+            // A rigid joint holds its parts still: say so, and offer Edit Joint to change its
+            // type (#6981). Nothing is driven (no preview, OK stays off) until one that moves is chosen.
+            let rigid = s.doc.assembly.joints.get(*joint).filter(|j| j.kind == JointKind::Rigid).map(|j| (j.id, j.name.clone()));
+            if let Some((id, name)) = &rigid {
+                let mut edit = false;
                 ui.vertical(|ui| {
-                    ui.label(RichText::new(crate::i18n::tr_label("no joint that moves yet")).color(t.text_dim));
+                    let why = crate::i18n::format("drive.rigid", &[("joint", name.as_str())]);
+                    crate::ui_kit::status_line(ui, &why, crate::ui_kit::StatusTone::Warning);
+                    let r = crate::ui_kit::button(ui, crate::i18n::tr_label("Edit Joint"), crate::ui_kit::Button::Normal);
+                    crate::scenario::publish_handle("drive:edit_joint", r.rect.center());
+                    edit = r.clicked();
                 });
+                if edit && let Some(Kind::Assembly(e)) = edit_joint(app, *id).map(|d| d.kind) {
+                    *k = e;
+                    return false;
+                }
+            }
+            if list.is_empty() {
+                if rigid.is_none() {
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(crate::i18n::tr_label("no joint that moves yet")).color(t.text_dim));
+                    });
+                }
                 return false;
             }
-            let labels: Vec<String> =
-                list.iter().filter_map(|i| s.doc.assembly.joints.get(*i)).map(|j| format!("{} ({:?})", j.name, j.kind)).collect();
+            let labels: Vec<String> = list.iter().filter_map(|i| s.doc.assembly.joints.get(*i)).map(|j| joint_choice(&j.name, j.kind)).collect();
             let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-            let mut pos = list.iter().position(|i| i == joint).unwrap_or(0);
+            // On a rigid joint the box shows none of the joints that move until one is chosen.
+            let mut pos = list.iter().position(|i| i == joint).unwrap_or(list.len());
             choice_row(ui, "Joint", "drv_joint", &mut pos, &refs);
-            let pick = list.get(pos).copied().unwrap_or(0);
-            if pick != *joint || values.is_empty() {
+            if let Some(&pick) = list.get(pos)
+                && (pick != *joint || values.is_empty())
+            {
                 *joint = pick;
                 *values = current_values(s, pick);
             }
-            let Some(j) = s.doc.assembly.joints.get(*joint).cloned() else { return false };
+            let Some(j) = s.doc.assembly.joints.get(*joint).filter(|j| j.kind != JointKind::Rigid).cloned() else { return false };
             for (i, v) in values.iter_mut().enumerate() {
                 let angle = j.kind.is_angle(i);
                 let unit_kind = if angle { ValueKind::Angle } else { ValueKind::Length };
@@ -627,7 +696,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                     None if angle => (-std::f64::consts::PI, std::f64::consts::PI),
                     None => (-100.0, 100.0),
                 };
-                let cur = s.doc.eval(v, unit_kind).ok().filter(|x| x.is_finite()).unwrap_or(0.0);
+                let cur = crate::length_input::eval(&s.doc, v, unit_kind).ok().filter(|x| x.is_finite()).unwrap_or(0.0);
                 let (mut shown, scale) = if angle { (cur.to_degrees(), 1f64.to_degrees()) } else { (cur, 1.0) };
                 ui.vertical(|ui| {
                     let r = crate::ui_kit::slider(
@@ -638,13 +707,16 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                     );
                     crate::scenario::publish_handle(&format!("drive_slider:{i}"), r.rect.center());
                     if r.changed() {
-                        *v = if angle { format!("{shown:.1} deg") } else { format!("{shown:.2} mm") };
+                        *v = if angle { format!("{shown:.1} deg") } else { crate::length_input::model(&s.doc, shown) };
                     }
                 });
                 // The slider's range: the joint's limits, or the default span when it has none.
                 let limited = j.limits.get(i).copied().flatten().is_some();
                 let fmt = |x: f64| {
-                    let (x, unit) = if angle { (x.to_degrees(), "°") } else { (x, " mm") };
+                    if !angle {
+                        return crate::prefs::show_mm(app, x, 1);
+                    }
+                    let (x, unit) = (x.to_degrees(), "°");
                     if x.fract().abs() < 1e-6 { format!("{x:.0}{unit}") } else { format!("{x:.1}{unit}") }
                 };
                 ui.vertical(|ui| {
@@ -662,14 +734,16 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                     ui.label(RichText::new(why).color(t.warning));
                 });
             }
+            // The moved parts' old place, drawn as a ghost; remembered between uses (#5905).
+            form_row(ui, "Show ghost", |ui| {
+                crate::ui_kit::checkbox(ui, "", &mut app.preferences.drive_joints_ghost);
+            });
         }
         Asm::MotionLink { a, b, ia, ib, ratio, offset } => {
             let s = &app.session;
             let joints = &s.doc.assembly.joints;
             if joints.len() < 2 {
-                form_row(ui, "", |ui| {
-                    ui.label(RichText::new(crate::i18n::tr_label("needs two joints")).color(t.text_dim));
-                });
+                crate::ui_kit::status_line(ui, "needs two joints", crate::ui_kit::StatusTone::Dim);
                 return false;
             }
             let labels: Vec<&str> = joints.iter().map(|j| j.name.as_str()).collect();
@@ -756,9 +830,7 @@ fn interference(app: &mut SolveApp, picked: &[Sel], clearance: &str) -> (Value, 
 fn interference_rows(app: &SolveApp, ui: &mut egui::Ui, r: &Value) {
     let t = Tokens::get();
     if let Some(e) = r.get("error").and_then(Value::as_str) {
-        form_row(ui, "", |ui| {
-            ui.label(RichText::new(e).color(t.error));
-        });
+        crate::ui_kit::status_line(ui, e, crate::ui_kit::StatusTone::Error);
         return;
     }
     let hits = r["overlaps"].as_array().cloned().unwrap_or_default();
@@ -769,9 +841,7 @@ fn interference_rows(app: &SolveApp, ui: &mut egui::Ui, r: &Value) {
     let near = r["near"].as_array().cloned().unwrap_or_default();
     let pair = |h: &Value| format!("{} · {}", h["a"].as_str().unwrap_or(""), h["b"].as_str().unwrap_or(""));
     if hits.is_empty() && unchecked.is_empty() {
-        form_row(ui, "Result", |ui| {
-            ui.label(RichText::new(crate::i18n::tr_label("no interference")).color(t.text_dim));
-        });
+        crate::ui_kit::status_line(ui, "no interference", crate::ui_kit::StatusTone::Dim);
     }
     // Pairs closer than the clearance, nearest first.
     if !near.is_empty() {
@@ -878,7 +948,7 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
         sel_items(inputs, i).first().and_then(|x| snap_of(s, x)).ok_or_else(|| format!("select {what} first"))
     };
     let eval = |e: &str, kind: ValueKind| -> Result<f64, String> {
-        if e.trim().is_empty() { Ok(0.0) } else { s.doc.eval(e, kind).map_err(|e| e.to_string()) }
+        if e.trim().is_empty() { Ok(0.0) } else { crate::length_input::eval(&s.doc, e, kind).map_err(|e| e.to_string()) }
     };
     let cmd = |id: &str, p: Value| vec![(id.to_string(), p)];
     Ok(match k {
@@ -941,14 +1011,25 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
             cmd("joint.origin", p)
         }
         Asm::RigidGroup => {
-            let occs = occurrences(s, sel_items(inputs, 0));
+            let items = sel_items(inputs, 0);
+            let occs = occurrences(s, items);
             if occs.len() < 2 {
-                return Err("select two or more components".into());
+                if occs.len() == 1 && items.len() > 1 && items.iter().all(|x| matches!(x, Sel::Body { .. })) {
+                    return Err(crate::i18n::format(
+                        "joint.rigid_group_one_component",
+                        &[("count", &items.len().to_string()), ("command", crate::i18n::tr("cmd.component_from_bodies"))],
+                    ));
+                }
+                return Err(crate::i18n::tr("joint.rigid_group_select_components").into());
             }
             cmd("joint.rigid_group", json!({ "occurrences": occs }))
         }
         Asm::Drive { joint, values, .. } => {
             let j = s.doc.assembly.joints.get(*joint).ok_or("no joint that moves yet")?;
+            // A rigid joint has nothing to drive: the dialog says why and offers Edit Joint (#6981).
+            if j.kind == JointKind::Rigid {
+                return Err(crate::i18n::format("drive.rigid", &[("joint", &j.name)]));
+            }
             cmd("joint.drive", json!({"joint": j.id, "values": values}))
         }
         Asm::MotionLink { a, b, ia, ib, ratio, offset } => {
@@ -987,7 +1068,9 @@ pub fn animate(app: &SolveApp, k: &Asm, cmds: &mut Vec<(String, Value)>) {
             let limited = f.limits.get(i).filter(|l| l.0);
             let angle = kind.is_angle(i);
             let vk = if angle { ValueKind::Angle } else { ValueKind::Length };
-            match limited.and_then(|(_, lo, hi)| Some((app.session.doc.eval(lo, vk).ok()?, app.session.doc.eval(hi, vk).ok()?))) {
+            match limited.and_then(|(_, lo, hi)| {
+                Some((crate::length_input::eval(&app.session.doc, lo, vk).ok()?, crate::length_input::eval(&app.session.doc, hi, vk).ok()?))
+            }) {
                 // Back and forth between the limits.
                 Some((lo, hi)) => {
                     let v = lo + (hi - lo) * (0.5 - 0.5 * (f.phase * tau).cos());
@@ -1042,6 +1125,9 @@ pub fn world_preview(s: &Session, cmds: &[(String, Value)], colors: Colors) -> O
     let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::preview::build(&before, &after, colors)));
     Some(match built {
         Ok(mut b) => {
+            if !colors.ghost {
+                b.scene.ghost.clear();
+            }
             b.bounds = after.bodies.iter().fold(Aabb3::EMPTY, |acc, x| acc.union(&x.mesh().bounds()));
             b.stopped = stopped;
             Ok(b)
@@ -1159,7 +1245,7 @@ fn glyph(painter: &egui::Painter, proj: &Proj, s: &SnapPt, col: Color32, half_he
 }
 
 /// What a snap is called (the hover label).
-fn snap_name(k: SnapKind) -> &'static str {
+pub(crate) fn snap_name(k: SnapKind) -> &'static str {
     match k {
         SnapKind::FaceCenter => "Face center",
         SnapKind::CircleCenter => "Circle center",
@@ -1197,12 +1283,31 @@ fn joint_menu(
     }
 }
 
+/// Membership is indexed once so a collapsed folder with hundreds of joints stays cheap.
+fn timeline_joint_items(app: &SolveApp, ids: Option<&[u64]>) -> Vec<(u64, String, JointKind, bool)> {
+    let members: std::collections::BTreeSet<u64> = match ids {
+        Some(ids) => ids.iter().copied().collect(),
+        None => app.session.doc.timeline_groups.iter().flat_map(|group| group.joints.iter().copied()).collect(),
+    };
+    app.session
+        .doc
+        .assembly
+        .joints
+        .iter()
+        .filter(|joint| members.contains(&joint.id) == ids.is_some())
+        .map(|joint| (joint.id, joint.name.clone(), joint.kind, joint.suppressed))
+        .collect()
+}
+
 /// Joints after the features in the timeline: double-click edits, the menu drives, suppresses
 /// or deletes. Returns the x after them.
-pub fn timeline_joints(app: &mut SolveApp, ui: &mut egui::Ui, p: &egui::Painter, mut x: f32, r: egui::Rect) -> f32 {
+pub fn timeline_joints(app: &mut SolveApp, ui: &mut egui::Ui, p: &egui::Painter, x: f32, r: egui::Rect) -> f32 {
+    timeline_joint_tiles(app, ui, p, x, r, None)
+}
+
+pub(crate) fn timeline_joint_tiles(app: &mut SolveApp, ui: &mut egui::Ui, p: &egui::Painter, mut x: f32, r: egui::Rect, ids: Option<&[u64]>) -> f32 {
     let t = Tokens::get();
-    let joints: Vec<(u64, String, JointKind, bool)> =
-        app.session.doc.assembly.joints.iter().map(|j| (j.id, j.name.clone(), j.kind, j.suppressed)).collect();
+    let joints = timeline_joint_items(app, ids);
     if joints.is_empty() {
         return x;
     }
@@ -1220,7 +1325,7 @@ pub fn timeline_joints(app: &mut SolveApp, ui: &mut egui::Ui, p: &egui::Painter,
         } else {
             t.timeline_item
         };
-        p.rect(br, 3.0, bg, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+        p.rect(br, t.radius_sm.saturating_sub(1), bg, t.control_border_stroke(t.border), egui::StrokeKind::Inside);
         crate::icons::paint_icon(p, br.shrink(4.0), "joint", f32::from((if suppressed { t.border } else { t.icon }).a()) / 255.0);
         if suppressed {
             p.line_segment([br.left_bottom() + vec2(4.0, -4.0), br.right_top() + vec2(-4.0, 4.0)], Stroke::new(1.5, t.text_dim));
@@ -1253,23 +1358,28 @@ pub fn timeline_joints(app: &mut SolveApp, ui: &mut egui::Ui, p: &egui::Painter,
 
 /// Named joint rows for the vertical feature-history layout.
 pub fn timeline_joints_vertical(app: &mut SolveApp, ui: &mut egui::Ui) {
+    timeline_joint_rows(app, ui, None);
+}
+
+pub(crate) fn timeline_joint_rows(app: &mut SolveApp, ui: &mut egui::Ui, ids: Option<&[u64]>) {
     let t = Tokens::get();
-    let joints: Vec<(u64, String, JointKind, bool)> =
-        app.session.doc.assembly.joints.iter().map(|joint| (joint.id, joint.name.clone(), joint.kind, joint.suppressed)).collect();
+    let joints = timeline_joint_items(app, ids);
     if joints.is_empty() {
         return;
     }
-    ui.add_space(4.0);
-    ui.label(egui::RichText::new("JOINTS").size(crate::theme::Tokens::get().font_micro).semibold().color(t.text_dim));
+    if ids.is_none() {
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("JOINTS").size(crate::theme::Tokens::get().font_micro).semibold().color(t.text_dim));
+    }
     let mut open = None;
     let mut run = None;
     for (id, name, kind, suppressed) in joints {
         let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), egui::Sense::click());
         crate::scenario::publish_handle(&format!("timeline-joint:{name}"), rect.center());
         if app.tree.picked_joints.contains(&id) {
-            ui.painter().rect_filled(rect, 3.0, t.accent_soft);
+            ui.painter().rect_filled(rect, t.radius_sm.saturating_sub(1), t.accent_soft);
         } else if response.hovered() {
-            ui.painter().rect_filled(rect, 3.0, t.hover);
+            ui.painter().rect_filled(rect, t.radius_sm.saturating_sub(1), t.hover);
         }
         let icon = egui::Rect::from_min_size(egui::pos2(rect.left() + 4.0, rect.top() + 4.0), vec2(22.0, 22.0));
         crate::icons::paint_icon(ui.painter(), icon, "joint", f32::from((if suppressed { t.border } else { t.icon }).a()) / 255.0);

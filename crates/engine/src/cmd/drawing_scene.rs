@@ -13,7 +13,7 @@ use crate::{EngineError, Result, Session};
 
 const CONTRACT: TypedContract<SheetSceneParams> = TypedContract::new();
 
-pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new(CMD, "Draw Sheet", crate::checked!("drawing.scene", CONTRACT, scene))
+pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new(CMD, "Draw Sheet", crate::checked!("drawing.scene", scene))
     .icon("export")
     .in_drawing()
     .noundo()

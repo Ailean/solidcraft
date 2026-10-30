@@ -45,7 +45,7 @@ fn plate() -> Drawing {
         excluded: Excluded { count: false, print: true },
     }));
     Arc::make_mut(&mut d.sheets[0]).documents = Some(SheetComponent { source: plate_id, component: 7 });
-    Arc::make_mut(&mut d.properties).set("author", json!("Jane Doe")).unwrap();
+    Arc::make_mut(&mut d.properties).set(crate::metadata::Owner::Design, "author", json!("Jane Doe")).unwrap();
     d.units = Units::Fixed { unit: "in".into() };
     let (assembly, bolt_sheet) = (d.sheets[0].id, d.sheets[1].id);
     let mut add = |d: &mut Drawing, sheet, kind, place, settings, reference_margin_mm| {
@@ -258,7 +258,7 @@ fn a_fixed_unit_is_a_length_unit_of_the_expression_table() {
         read(&v).map(|d| d.units)
     };
     for (unit, kind, _) in expr::UNITS {
-        assert_eq!(units(json!({"fixed": {"unit": unit}})).is_ok(), kind == expr::Kind::Length, "{unit}");
+        assert_eq!(units(json!({"fixed": {"unit": unit}})).is_ok(), *kind == expr::Kind::Length, "{unit}");
     }
     assert_eq!(units(json!({"fixed": {"unit": "in"}})).unwrap(), Units::Fixed { unit: "in".into() });
     assert_eq!(units(json!("follow_model")).unwrap(), Units::FollowModel);

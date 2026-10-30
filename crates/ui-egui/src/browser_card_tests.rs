@@ -3,6 +3,179 @@ use crate::scenario::{Harness, handle_at, rect_of};
 use crate::shell::{LayoutMode, SHELL_GAP};
 
 #[test]
+fn clicked_browser_folders_toggle_visibility_with_v() {
+    for mode in [LayoutMode::Floating, LayoutMode::Docked] {
+        let mut h = Harness::new();
+        h.app.ui.layout = mode;
+        for (name, x) in [("One", 0), ("Two", 20)] {
+            h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"corner":[x,0,0],"operation":"new_body","body_name":name})).unwrap();
+        }
+        let group =
+            h.app.run("browser.group", json!({"component":0,"folder":"bodies","items":["One"],"name":"Group"})).unwrap()["group"].as_u64().unwrap();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.app.run("sketch.circle.center", json!({"center":[0,0],"radius":5})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        h.app.run("construct.plane.offset", json!({"base":"XY","offset":20})).unwrap();
+        h.app.run("browser.visibility", json!({"items":["Two"],"visible":false})).unwrap();
+        h.settle();
+        for (label, key) in [
+            ("Bodies", "c0/bodies".into()),
+            ("Sketches", "c0/sketches".into()),
+            ("Construction", "c0/construction".into()),
+            ("Group (1)", format!("c0/g{group}")),
+        ] {
+            h.app.run("select.set", json!({"items":[Sel::Body {name:"One".into()}]})).unwrap();
+            let before = h.app.session.visibility.clone();
+            let mut hidden = before.clone();
+            hidden.hidden_folders.push(key.clone());
+            h.step(&json!({"click":{"handle":format!("row:{label}")}})).unwrap();
+            h.step(&json!({"key":"V"})).unwrap();
+            assert_eq!(h.app.session.visibility, hidden, "{mode:?}: V hides {label}, leaving individual items alone");
+            h.step(&json!({"key":"V"})).unwrap();
+            assert_eq!(h.app.session.visibility, before, "V shows the same folder again");
+            h.app.run("edit.undo", json!({})).unwrap();
+            assert_eq!(h.app.session.visibility, hidden);
+            h.app.run("edit.redo", json!({})).unwrap();
+            assert_eq!(h.app.session.visibility, before);
+            // Restore expansion so the later group row is still reachable.
+            h.step(&json!({"click":{"handle":format!("row:{label}")}})).unwrap();
+        }
+    }
+}
+
+#[test]
+fn folder_visibility_target_clears_when_the_user_moves_on() {
+    for action in ["body click", "selection command", "empty click", "escape", "design tab", "model edit", "tool"] {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"One"})).unwrap();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        h.app.run("select.set", json!({"items":[Sel::Body {name:"One".into()}]})).unwrap();
+        h.settle();
+        h.step(&json!({"click":{"handle":"row:Sketches"}})).unwrap();
+        match action {
+            "body click" => h.step(&json!({"click":{"handle":"row:One"}})).unwrap(),
+            "selection command" => {
+                // Explicitly picking the same body must also leave the folder target.
+                h.app.run("select.set", json!({"items":[Sel::Body {name:"One".into()}]})).unwrap();
+            }
+            "empty click" => h.step(&json!({"click":[950,650]})).unwrap(),
+            "escape" => h.step(&json!({"key":"Escape"})).unwrap(),
+            "design tab" => {
+                crate::documents::new_tab(&mut h.app);
+                h.settle();
+                crate::documents::switch(&mut h.app, 0);
+                h.settle();
+            }
+            "model edit" => {
+                h.app.run("sketch.create", json!({"plane":"XZ"})).unwrap();
+                h.app.run("sketch.finish", json!({})).unwrap();
+            }
+            "tool" => {
+                h.app.start("file.save_mesh");
+                h.settle();
+            }
+            _ => panic!("unknown test action: {action}"),
+        }
+        h.step(&json!({"key":"V"})).unwrap();
+        assert!(h.app.session.visibility.hidden_folders.is_empty(), "{action}: V must no longer target Sketches");
+        if matches!(action, "body click" | "selection command") {
+            assert!(!h.app.session.body_visible("One"), "{action}: normal selection shortcuts still work");
+        }
+    }
+}
+
+#[test]
+fn folder_visibility_shortcut_does_not_take_dialog_body_picks_or_chevrons() {
+    let mut h = Harness::new();
+    h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"One"})).unwrap();
+    h.settle();
+    h.step(&json!({"click":{"chevron":"Bodies"}})).unwrap();
+    h.step(&json!({"key":"V"})).unwrap();
+    assert!(!h.app.session.folder_hidden("c0/bodies"), "the fold arrow does not pick a visibility target");
+    h.app.start("file.save_mesh");
+    h.settle();
+    h.step(&json!({"click":{"handle":"row:Bodies"}})).unwrap();
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items, vec![Sel::Body { name: "One".into() }]);
+    h.step(&json!({"key":"V"})).unwrap();
+    assert!(!h.app.session.folder_hidden("c0/bodies"), "a body input consumes the folder click");
+}
+
+#[test]
+fn save_mesh_add_all_and_add_visible_bodies_fill_the_bodies_input() {
+    let mut h = Harness::new();
+    for (name, x) in [("One", 0), ("Two", 20), ("Three", 40)] {
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"corner":[x,0,0],"operation":"new_body","body_name":name})).unwrap();
+    }
+    h.app.run("browser.visibility", json!({"items":["Two"],"visible":false})).unwrap();
+    h.app.start("file.save_mesh");
+    h.settle();
+    for (button, expected) in [("Add all bodies", vec!["One", "Two", "Three"]), ("Add visible bodies", vec!["One", "Three"])] {
+        let handle = crate::scenario::handles("dialog:button:").into_iter().find(|(n, _)| n.ends_with(&format!(":{button}")));
+        let (handle, _) = handle.unwrap_or_else(|| panic!("{button} is shown"));
+        h.step(&json!({"click":{"handle":handle}})).unwrap();
+        let d = h.app.dialog.as_ref().unwrap();
+        let crate::dialogs::Kind::SaveMesh(k) = &d.kind else { panic!("Save as Mesh is open") };
+        let commands = crate::dialogs_save_mesh::commands(k, &d.inputs).unwrap();
+        assert_eq!(commands[0].1["bodies"], json!(expected), "{button}");
+        assert!(h.app.session.selection.is_empty(), "the buttons do not change the global selection");
+    }
+}
+
+#[test]
+fn browser_body_clicks_fill_and_toggle_save_mesh_inputs() {
+    for mode in [LayoutMode::Floating, LayoutMode::Docked] {
+        let mut h = Harness::new();
+        h.app.ui.layout = mode;
+        for (name, x) in [("One", 0), ("Two", 20)] {
+            h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"corner":[x,0,0],"operation":"new_body","body_name":name})).unwrap();
+        }
+        h.app.start("file.save_mesh");
+        h.settle();
+        for (clicked, expected) in [("One", vec!["One"]), ("Two", vec!["One", "Two"]), ("One", vec!["Two"])] {
+            h.step(&json!({"click":{"handle":format!("row:{clicked}")}})).unwrap();
+            let d = h.app.dialog.as_ref().unwrap();
+            let crate::dialogs::Kind::SaveMesh(k) = &d.kind else { panic!("Save as Mesh is open") };
+            let commands = crate::dialogs_save_mesh::commands(k, &d.inputs).unwrap();
+            assert_eq!(commands[0].1["bodies"], json!(expected), "{mode:?}: clicked {clicked}");
+            assert!(crate::dialogs_save_mesh::ready(&d.inputs));
+            assert!(h.app.session.selection.is_empty(), "dialog picks do not change the global selection");
+        }
+        h.step(&json!({"click":{"handle":"row:Two"}})).unwrap();
+        assert!(!crate::dialogs_save_mesh::ready(&h.app.dialog.as_ref().unwrap().inputs));
+        h.step(&json!({"key":"Escape"})).unwrap();
+        h.step(&json!({"click":{"handle":"row:One"}})).unwrap();
+        assert_eq!(h.app.session.selection, vec![Sel::Body { name: "One".into() }]);
+    }
+}
+
+#[test]
+fn browser_body_clicks_respect_the_active_dialog_input() {
+    let mut h = Harness::new();
+    for (name, x) in [("One", 0), ("Two", 20)] {
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"corner":[x,0,0],"operation":"new_body","body_name":name})).unwrap();
+    }
+    h.app.start("solid.combine");
+    h.app.dialog.as_mut().unwrap().preview_enabled = false;
+    h.settle();
+    h.step(&json!({"click":{"handle":"row:One"}})).unwrap();
+    assert_eq!(h.app.dialog.as_ref().unwrap().active, 1, "a target pick advances to Tool Bodies");
+    h.step(&json!({"click":{"handle":"row:Two"}})).unwrap();
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(d.inputs[0].items, vec![Sel::Body { name: "One".into() }]);
+    assert_eq!(d.inputs[1].items, vec![Sel::Body { name: "Two".into() }]);
+    h.call("ui.dialogInput", json!({"index":0}));
+    h.step(&json!({"click":{"handle":"row:Two"}})).unwrap();
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items, vec![Sel::Body { name: "Two".into() }], "a single input replaces its pick");
+    h.step(&json!({"key":"Escape"})).unwrap();
+    h.app.start("solid.fillet");
+    h.settle();
+    h.step(&json!({"click":{"handle":"row:One"}})).unwrap();
+    assert!(h.app.dialog.as_ref().unwrap().inputs.iter().all(|i| i.items.is_empty()), "a body is not an edge");
+    assert!(h.app.session.selection.is_empty(), "an incompatible pick does not leak into the global selection");
+}
+
+#[test]
 fn browser_card_shrinks_and_scrolls_without_covering_history() {
     let mut h = Harness::new();
     h.call("ui.resize", json!({"width":1400,"height":900}));
@@ -99,25 +272,181 @@ fn card_and_column_keep_body_eyes_menus_and_group_drops() {
     }
 }
 
+/// A second click on a Document Settings entry closes the window it opened, the way that
+/// window's own × does, and a third opens it again (#4150): the Units menu, Preferences (a change
+/// made there is put back), Parameters (a value typed but not applied is dropped) and Design
+/// Properties (nothing typed there is saved).
+#[test]
+fn a_second_click_on_a_document_settings_entry_closes_its_window() {
+    for mode in [LayoutMode::Floating, LayoutMode::Docked] {
+        let mut h = Harness::new();
+        h.app.ui.layout = mode;
+        h.app.run("parameters.add", json!({"name":"width","expression":"10 mm"})).unwrap();
+        h.settle();
+        h.step(&json!({"click":{"chevron":"Document Settings"}})).unwrap();
+        h.settle();
+        // The Units, Precision and Parameters labels carry their values.
+        let row = |start: &str| {
+            let (_, rect, _, _) = drawn_rows().into_iter().find(|(label, ..)| label.starts_with(start)).unwrap();
+            json!({"click":[rect.center().x, rect.center().y]})
+        };
+
+        h.step(&row("Units")).unwrap();
+        assert!(h.app.viewport.context_menu.is_some() && h.app.menu.target == Target::Units, "{mode:?}: the first click opens the Units menu");
+        h.step(&row("Units")).unwrap();
+        h.frames(2);
+        assert!(h.app.viewport.context_menu.is_none(), "{mode:?}: the second click closes it instead of reopening it");
+        h.step(&row("Units")).unwrap();
+        assert!(h.app.viewport.context_menu.is_some(), "{mode:?}: and a third opens it again");
+        h.step(&json!({"key":"Escape"})).unwrap();
+
+        h.step(&row("Precision")).unwrap();
+        h.frames(2);
+        assert!(h.app.prefs_window.open, "{mode:?}: the first click opens Preferences");
+        let decimals = h.app.preferences.angle_decimals;
+        h.app.preferences.angle_decimals = decimals + 2;
+        h.step(&row("Precision")).unwrap();
+        h.frames(2);
+        assert!(!h.app.prefs_window.open, "{mode:?}: the second click closes it");
+        assert_eq!(h.app.preferences.angle_decimals, decimals, "{mode:?}: and puts back what changed there, as × does");
+        h.step(&row("Precision")).unwrap();
+        h.frames(2);
+        assert!(h.app.prefs_window.open, "{mode:?}: a third opens it again");
+        h.step(&json!({"key":"Escape"})).unwrap();
+
+        h.step(&row("Parameters")).unwrap();
+        h.frames(2);
+        assert!(h.app.params.is_some(), "{mode:?}: the first click opens Parameters");
+        h.step(&json!({"click":{"handle":"param:width"}})).unwrap();
+        h.step(&json!({"key":"A","cmd":true})).unwrap();
+        h.step(&json!({"text":"25 mm"})).unwrap();
+        h.step(&row("Parameters")).unwrap();
+        h.frames(2);
+        assert!(h.app.params.is_none(), "{mode:?}: the second click closes it");
+        assert_eq!(h.app.session.doc.param("width").unwrap().expr, "10 mm", "{mode:?}: and drops a value typed but not applied");
+        h.step(&row("Parameters")).unwrap();
+        assert!(h.app.params.is_some(), "{mode:?}: a third opens it again");
+        h.app.params = None;
+
+        h.step(&row("Design Properties")).unwrap();
+        assert!(h.app.design_properties.is_some(), "{mode:?}: the first click opens Design Properties");
+        h.app.design_properties.as_mut().unwrap().fields[0] = "Typed".into();
+        h.frames(2);
+        h.step(&row("Design Properties")).unwrap();
+        assert!(h.app.design_properties.is_none(), "{mode:?}: the second click closes it");
+        assert_eq!(h.app.session.doc.metadata.project(), None, "{mode:?}: and saves nothing typed there");
+        h.step(&row("Design Properties")).unwrap();
+        assert!(h.app.design_properties.is_some(), "{mode:?}: a third opens it again");
+    }
+}
+
 #[test]
 fn browser_header_folds_the_floating_card_to_its_header_and_back() {
     let mut h = Harness::new();
     h.call("ui.resize", json!({"width":1400,"height":900}));
     h.settle();
     let open = rect_of("browser:card").unwrap();
-    assert!(!h.app.tree.panel_collapsed);
+    assert!(!h.app.preferences.browser_collapsed);
     let at = handle_at("browser:header").unwrap();
     h.call("ui.click", json!({"x":at.x,"y":at.y}));
     h.settle();
     let folded = rect_of("browser:card").unwrap();
-    assert!(h.app.tree.panel_collapsed);
+    assert!(h.app.preferences.browser_collapsed);
     assert!(folded.height() < 60.0 && folded.height() < open.height(), "{folded:?} {open:?}");
     assert_eq!(folded.top(), open.top());
     assert!(drawn_rows().is_empty() || handle_at("row:Plate").is_none());
     h.call("ui.click", json!({"x":at.x,"y":at.y}));
     h.settle();
-    assert!(!h.app.tree.panel_collapsed);
+    assert!(!h.app.preferences.browser_collapsed);
     assert!((rect_of("browser:card").unwrap().height() - open.height()).abs() < 1.0);
+}
+
+/// A folded browser stays folded in the next run, as the toolbar's pins do (#8692).
+#[test]
+fn the_folded_browser_is_remembered_across_runs() {
+    let mut h = Harness::new();
+    h.call("ui.resize", json!({"width":1400,"height":900}));
+    h.settle();
+    let open = rect_of("browser:card").unwrap();
+    let at = handle_at("browser:header").unwrap();
+    h.call("ui.click", json!({"x":at.x,"y":at.y}));
+    h.settle();
+    assert!(h.app.preferences.browser_collapsed);
+    let saved = h.app.prefs();
+
+    let mut next = Harness::new();
+    next.app.load_prefs(&saved);
+    assert!(next.app.preferences.browser_collapsed, "the fold round-trips through the settings");
+    next.call("ui.resize", json!({"width":1400,"height":900}));
+    next.settle();
+    let folded = rect_of("browser:card").unwrap();
+    assert!(folded.height() < 60.0 && folded.height() < open.height(), "the next run starts folded: {folded:?}");
+    let at = handle_at("browser:header").unwrap();
+    next.call("ui.click", json!({"x":at.x,"y":at.y}));
+    next.settle();
+    let mut after = SolveApp::new(Default::default(), Default::default());
+    after.load_prefs(&next.app.prefs());
+    assert!(!after.preferences.browser_collapsed, "unfolding is remembered too");
+}
+
+/// Reveal on hover (#8692): the browser is out of sight until the pointer comes over the strip at
+/// its left edge or its place, stays while the pointer is inside it or its menu is open, and
+/// never folds, even if it was folded before.
+#[test]
+fn a_browser_that_reveals_on_hover_shows_and_hides_with_the_pointer() {
+    for mode in [LayoutMode::Floating, LayoutMode::Docked] {
+        let mut h = Harness::new();
+        h.app.ui.layout = mode;
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"operation":"new_body","body_name":"One"})).unwrap();
+        h.call("ui.resize", json!({"width":1400,"height":900}));
+        h.settle();
+        let shown = rect_of("browser:card").unwrap();
+        h.app.preferences.browser_collapsed = true;
+        h.app.preferences.browser_show = BrowserShow::Hover;
+        let away = json!({"x":900,"y":450});
+        h.call("ui.move", away.clone());
+        h.settle();
+        assert!(h.app.shell.browser_hidden, "{mode:?}: out of sight while the pointer is elsewhere");
+        let card = rect_of("browser:card").unwrap();
+        assert!((card.height() - shown.height()).abs() < 1.0, "{mode:?}: the card keeps its unfolded place: {card:?} {shown:?}");
+
+        let edge = handle_at("browser:edge").unwrap();
+        h.call("ui.move", json!({"x":edge.x,"y":edge.y}));
+        h.settle();
+        assert!(!h.app.shell.browser_hidden, "{mode:?}: the left edge reveals it");
+        let inside = rect_of("browser:card").unwrap().center();
+        h.call("ui.move", json!({"x":inside.x,"y":inside.y}));
+        h.settle();
+        assert!(!h.app.shell.browser_hidden, "{mode:?}: it stays while the pointer is inside");
+        h.call("ui.move", away.clone());
+        h.settle();
+        assert!(h.app.shell.browser_hidden, "{mode:?}: leaving hides it again");
+
+        h.call("ui.move", json!({"x":inside.x,"y":inside.y}));
+        h.settle();
+        let header = handle_at("browser:header").unwrap();
+        h.call("ui.click", json!({"x":header.x,"y":header.y}));
+        h.settle();
+        assert!(rect_of("browser:card").unwrap().height() > 60.0, "{mode:?}: the header does not fold it");
+        h.step(&json!({"click":{"handle":"row:One"},"button":"right"})).unwrap();
+        assert!(h.app.viewport.context_menu.is_some(), "{mode:?}: the row's menu opens");
+        h.call("ui.move", away.clone());
+        h.settle();
+        assert!(!h.app.shell.browser_hidden, "{mode:?}: its menu keeps it shown");
+        h.step(&json!({"key":"Escape"})).unwrap();
+        h.call("ui.move", away.clone());
+        h.settle();
+        assert!(h.app.shell.browser_hidden, "{mode:?}: closing the menu away from it hides it");
+
+        h.app.preferences.browser_show = BrowserShow::Shown;
+        h.settle();
+        assert!(!h.app.shell.browser_hidden);
+        assert!(rect_of("browser:card").unwrap().height() < 60.0, "{mode:?}: Shown folds it again as it was left");
+        let mut restored = SolveApp::new(Default::default(), Default::default());
+        h.app.preferences.browser_show = BrowserShow::Hover;
+        restored.load_prefs(&h.app.prefs());
+        assert_eq!(restored.preferences.browser_show, BrowserShow::Hover);
+    }
 }
 
 /// Tiny or odd window sizes never panic: the cards leave out what cannot fit.
@@ -300,4 +629,70 @@ fn collapsed_rail_shares_header_hover_inset_and_expands_from_its_whole_card() {
         }
     }
     crate::theme::set_dark(previous);
+}
+
+/// #6907: a mesh body's row has its own icon and tooltip, so it can be told from a solid one.
+#[test]
+fn mesh_and_solid_body_rows_have_different_icons_and_tooltips() {
+    use solidcraft_engine::doc::{Document, FeatureKind, MeshData};
+    use solidcraft_engine::geom::Vec3;
+    let solid = solidcraft_engine::kernel::box_solid(Vec3::ZERO, Vec3::new(10., 10., 10.)).unwrap();
+    let mesh = solid.tessellate(0.01).unwrap();
+    let mut doc = Document::default();
+    doc.add_feature(
+        FeatureKind::MeshImport {
+            file: "box.stl".into(),
+            meshes: vec![MeshData {
+                name: "Mesh".into(),
+                positions: mesh.positions.iter().flat_map(|p| [p.x, p.y, p.z]).collect(),
+                triangles: mesh.triangles.iter().flatten().copied().collect(),
+                color: None,
+            }],
+        },
+        Some("Imported mesh"),
+    )
+    .unwrap();
+    let mut h = Harness::new();
+    h.app.session = solidcraft_engine::Session::new(doc);
+    h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"corner":[20,0,0],"operation":"new_body","body_name":"Solid"})).unwrap();
+    h.settle();
+    let rows = entries(&h.app, 0, "bodies");
+    let row = |name: &str| rows.iter().find(|e| e.key == name).unwrap_or_else(|| panic!("no {name} row in {:?}", body_rows(&h.app)));
+    assert_eq!((row("Mesh").icon, row("Mesh").tip), ("mesh_body", Some("ui.body_kind_mesh")));
+    assert_eq!((row("Solid").icon, row("Solid").tip), ("body", Some("ui.body_kind_solid")));
+    assert_eq!(crate::i18n::tr("ui.body_kind_mesh"), "Mesh body");
+    assert_eq!(crate::i18n::tr("ui.body_kind_solid"), "Solid body");
+    // Its own drawing in the mesh colours, not the solid body's grey cube.
+    let icon = crate::icon_svg::resolve("mesh_body");
+    assert!(!icon.placeholder);
+    assert_ne!(icon.master, crate::icon_svg::resolve("body").master);
+    assert_eq!(icon.accent, crate::icon_svg::accent_index("mesh"));
+}
+
+#[test]
+fn browser_occurrence_clicks_fill_align_components_input() {
+    let mut h = Harness::new();
+    let comp = h.app.run("component.create", json!({"name": "Extrusion", "grounded": false})).unwrap()["component"].as_u64().unwrap();
+    h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 40, "body_name": "Beam"})).unwrap();
+    h.app.run("component.activate", json!({"component": "root"})).unwrap();
+    let second = h.app.run("occurrence.copy", json!({"component": comp, "translate": [30, 0, 0]})).unwrap()["occurrence"].as_u64().unwrap();
+
+    h.app.start("solid.align");
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        d.kind = crate::dialogs::Kind::Align { flip: false, components: true };
+        d.inputs[0].label = "Components";
+        d.active = 0;
+    }
+    h.settle();
+
+    let handle = format!("row:occurrence:{second}");
+    h.step(&json!({"click": {"handle": &handle}})).unwrap();
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(d.inputs[0].items, vec![Sel::Occurrence { path: vec![second] }]);
+    assert!(h.app.session.selection.is_empty(), "dialog picks do not change global selection");
+
+    // Clicking the same occurrence row again toggles it off in the multi-select Components input.
+    h.step(&json!({"click": {"handle": &handle}})).unwrap();
+    assert!(h.app.dialog.as_ref().unwrap().inputs[0].items.is_empty());
 }

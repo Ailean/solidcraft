@@ -242,6 +242,120 @@ fn floating(app: &mut SolveApp, ui: &mut egui::Ui) {
     gallery_window(app, &ctx);
 }
 
+/// The most chips one group shows before "+N more".
+const MAX_CHIPS: usize = 6;
+/// A chip's longest label (characters), and what its frame adds to the text's width.
+const CHIP_CHARS: usize = 26;
+const CHIP_PAD: f32 = 13.0;
+/// What a chip's × adds.
+const CHIP_CROSS: f32 = 14.0;
+
+/// One thing in a group's rows: its heading, a chip for an item, or the "+N more" note.
+#[cfg(not(target_arch = "wasm32"))]
+enum ChipPart<'a> {
+    Heading(String),
+    /// An item and its place among all of the context's items.
+    Chip(usize, &'a context::Entry),
+    More(String),
+}
+
+/// What was selected when a message was sent, grouped (elements, features, bodies) with a count
+/// each and a chip per item; hovering a chip tells what is known about it. The rows are filled by
+/// hand: egui wraps plain widgets, not framed ones, and one row wider than the chat would widen
+/// the whole panel.
+#[cfg(not(target_arch = "wasm32"))]
+fn context_chips(ui: &mut egui::Ui, context: &Context, removable: bool) -> Option<usize> {
+    let mut removed = None;
+    if context.is_empty() {
+        return removed;
+    }
+    let t = Tokens::get();
+    let font = egui::FontId::proportional(t.font_small);
+    let (avail, gap) = (ui.available_width(), ui.spacing().item_spacing.x);
+    let text_width = |ui: &egui::Ui, text: &str| ui.painter().layout_no_wrap(text.to_string(), font.clone(), t.text).size().x;
+    let more = |n: usize| trf("ui.agent_chat_ctx_more", &[("n", &n.to_string())]);
+    for kind in context::Kind::ALL {
+        let items: Vec<(usize, &context::Entry)> = context.items.iter().enumerate().filter(|(_, i)| i.kind == kind).collect();
+        if items.is_empty() {
+            continue;
+        }
+        let mut parts = vec![ChipPart::Heading(format!("{} {}", tr(kind.heading()), items.len()))];
+        parts.extend(items.iter().take(MAX_CHIPS).map(|(n, i)| ChipPart::Chip(*n, i)));
+        if items.len() > MAX_CHIPS {
+            parts.push(ChipPart::More(more(items.len() - MAX_CHIPS)));
+        }
+        let widths: Vec<f32> = parts
+            .iter()
+            .map(|p| match p {
+                ChipPart::Heading(s) | ChipPart::More(s) => text_width(ui, s),
+                ChipPart::Chip(_, i) => text_width(ui, &shorten(&i.label, CHIP_CHARS)) + CHIP_PAD + if removable { CHIP_CROSS } else { 0.0 },
+            })
+            .collect();
+        let mut rows: Vec<Vec<usize>> = vec![Vec::new()];
+        let mut used = 0.0_f32;
+        for (n, w) in widths.iter().enumerate() {
+            let fits = used + if used > 0.0 { gap } else { 0.0 } + w <= avail;
+            if !fits && used > 0.0 {
+                rows.push(Vec::new());
+                used = 0.0;
+            }
+            used += if used > 0.0 { gap } else { 0.0 } + w;
+            if let Some(row) = rows.last_mut() {
+                row.push(n);
+            }
+        }
+        for row in rows {
+            ui.horizontal(|ui| {
+                for n in row {
+                    match &parts[n] {
+                        ChipPart::Heading(s) | ChipPart::More(s) => {
+                            ui.label(RichText::new(s).color(t.text_dim).size(t.font_small));
+                        }
+                        ChipPart::Chip(place, item) => {
+                            let chip = egui::Frame::NONE
+                                .stroke(Stroke::new(1.0, t.text_dim.gamma_multiply(0.5)))
+                                .corner_radius(8.0)
+                                .inner_margin(egui::Margin::symmetric(5, 1))
+                                .show(ui, |ui| {
+                                    ui.spacing_mut().item_spacing.x = 3.0;
+                                    ui.horizontal(|ui| {
+                                        let label = ui.add(
+                                            egui::Label::new(RichText::new(shorten(&item.label, CHIP_CHARS)).color(t.text).size(t.font_small))
+                                                .wrap_mode(egui::TextWrapMode::Extend),
+                                        );
+                                        if removable {
+                                            let cross = ui_kit::button(ui, "×", ui_kit::Button::Small);
+                                            crate::scenario::publish_handle(&format!("agent_chat:picked_remove:{place}"), cross.rect.center());
+                                            if cross.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                removed = Some(*place);
+                                            }
+                                        }
+                                        label
+                                    })
+                                    .inner
+                                })
+                                .response;
+                            if !item.detail.is_empty() {
+                                chip.on_hover_text(&item.detail);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+    if context.omitted > 0 {
+        ui.label(RichText::new(more(context.omitted)).color(t.text_dim).size(t.font_small));
+    }
+    removed
+}
+
+/// `s` cut to `max` characters, with an ellipsis.
+#[cfg(not(target_arch = "wasm32"))]
+fn shorten(s: &str, max: usize) -> String {
+    if s.chars().count() <= max { s.to_string() } else { format!("{}…", s.chars().take(max.saturating_sub(1)).collect::<String>()) }
+}
+
 /// The pictures of a message as small thumbnails in a row. Hovering one shows it bigger for as long
 /// as the pointer stays; a click returns its place in the row, to open the viewer there.
 #[cfg(not(target_arch = "wasm32"))]
@@ -265,11 +379,11 @@ fn picture_strip(ui: &mut egui::Ui, n: usize, pictures: &[Picture]) -> Option<us
                 }
             };
             let size = fit(texture.size_vec2(), vec2(THUMB_MAX.0, THUMB_MAX.1));
-            let thumb = ui.add(egui::Image::new((texture.id(), size)).corner_radius(4.0).sense(Sense::click()));
+            let thumb = ui.add(egui::Image::new((texture.id(), size)).corner_radius(t.radius_sm).sense(Sense::click()));
             crate::scenario::publish_handle(&format!("agent_chat:picture:{n}:{i}"), thumb.rect.center());
             let hover_max = (ui.ctx().content_rect().size() * 0.5).min(vec2(PREVIEW_MAX.0, PREVIEW_MAX.1));
             let thumb = thumb.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_ui(|ui| {
-                ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), hover_max))).corner_radius(4.0));
+                ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), hover_max))).corner_radius(t.radius_sm));
                 if !picture.note.is_empty() {
                     ui.label(&picture.note);
                 }
@@ -319,7 +433,7 @@ fn gallery_window(app: &mut SolveApp, ctx: &egui::Context) {
         if let Some(picture) = gallery.pictures.get(gallery.at) {
             match picture.texture(ui.ctx()) {
                 Shown::Ready(texture) => {
-                    let resp = ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), max))).corner_radius(4.0));
+                    let resp = ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), max))).corner_radius(t.radius_sm));
                     crate::scenario::publish_rect("agent_chat:gallery_picture", resp.rect);
                 }
                 Shown::Loading => {
@@ -361,7 +475,7 @@ fn drop_hint(ctx: &egui::Context, area: Rect) {
     let t = Tokens::get();
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new("sc_agent_chat_drop_hint")));
     let zone = area.shrink(6.0);
-    painter.rect(zone, 10.0, t.accent.gamma_multiply(0.16), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
+    painter.rect(zone, t.radius_xl, t.accent.gamma_multiply(0.16), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
     let font = egui::FontId::proportional(Tokens::get().font_heading);
     let text = painter.layout(tr("ui.agent_chat_drop_hint").to_string(), font, t.text, (zone.width() - 24.0).max(40.0));
     let at = zone.center() - text.size() / 2.0;
@@ -472,7 +586,7 @@ fn glyph_button(ui: &mut egui::Ui, kind: &str, tip: &str) -> egui::Response {
     let t = Tokens::get();
     let (r, resp) = ui.allocate_exact_size(vec2(t.form_close_size, t.form_close_size), Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(r, 4.0, t.hover);
+        ui.painter().rect_filled(r, t.radius_sm, t.hover);
     }
     let c = r.center();
     let s = Stroke::new(1.4, t.text);
@@ -520,7 +634,7 @@ fn state_color(state: State) -> Color32 {
     let t = Tokens::get();
     match state {
         State::Ready | State::Busy => t.accent,
-        State::NeedsAuth | State::Exited => t.warning,
+        State::NeedsAuth | State::Exited | State::Failed => t.warning,
         _ => t.text_dim,
     }
 }
@@ -534,7 +648,7 @@ fn strip(app: &mut SolveApp, ui: &mut egui::Ui) {
     let resp = ui.interact(button, Id::new("sc_agent_chat_unfold"), Sense::click());
     crate::scenario::publish_handle("agent_chat:unfold", button.center());
     if resp.hovered() {
-        ui.painter().rect_filled(button, 4.0, t.hover);
+        ui.painter().rect_filled(button, t.radius_sm, t.hover);
     }
     ui_kit::disclosure(ui.painter(), button.center(), false, t.text);
     let state = app.agent_chat.state();
@@ -553,7 +667,7 @@ fn strip(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     ui.painter().line_segment(
         if app.preferences.agent_chat_side == "left" { [r.right_top(), r.right_bottom()] } else { [r.left_top(), r.left_bottom()] },
-        Stroke::new(1.0, t.border),
+        t.primary_border(t.border),
     );
     let tip = format!("{} · {}", tip(), state.label());
     if resp.on_hover_text(tip).clicked() {
@@ -589,7 +703,7 @@ fn header(app: &mut SolveApp, ui: &mut egui::Ui, left: bool) {
                             State::Ready => ui_kit::AssistantTone::Success,
                             State::Busy => ui_kit::AssistantTone::Working,
                             State::NeedsAuth => ui_kit::AssistantTone::Warning,
-                            State::Exited => ui_kit::AssistantTone::Error,
+                            State::Exited | State::Failed => ui_kit::AssistantTone::Error,
                             _ => ui_kit::AssistantTone::Neutral,
                         }
                     },
@@ -728,12 +842,18 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
     } else {
         (false, false)
     };
-    let (mut send_clicked, mut stop_clicked, mut enter) = (false, false, false);
+    let (mut send_clicked, mut stop_clicked, mut enter, mut pick_clicked) = (false, false, false, false);
+    let mut remove_picked_at = None;
     let frame = Container::new(ui.ctx(), Surface::Viewport).edge_frame(egui::Color32::TRANSPARENT);
     let composer = Container::new(ui.ctx(), Surface::Viewport).edge(Id::new("sc_agent_chat_composer"), Edge::Bottom);
     composer.resizable(false).show_separator_line(false).frame(frame).show(ui, |ui| {
         ui_kit::assistant_composer_footer(ui, |ui| {
             ui_kit::assistant_composer(ui, focused, |ui| {
+                // What Pick context chose for this message, each item with an ×.
+                if !app.agent_chat.picked_context.is_empty() {
+                    let tray = app.agent_chat.picked_context.clone();
+                    remove_picked_at = context_chips(ui, &tray, true);
+                }
                 // The files for the next message (#1744), as chips of their own.
                 attachment_chips(app, ui);
                 // Ctrl/Cmd+V: files and pictures on the clipboard attach; text goes to the box below.
@@ -840,11 +960,28 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
                             .on_hover_text(tr("ui.agent_chat_attach_view_tip"))
                             .on_disabled_hover_text(tr("ui.agent_chat_no_images"));
                         crate::scenario::publish_handle("agent_chat:attach", attach.rect.center());
+                        // What is selected in the model goes with the message: text for the agent,
+                        // chips in the conversation.
+                        let selected = selected_count(app);
+                        let label = if selected > 0 {
+                            format!("{} ({selected})", tr("ui.agent_chat_attach_selection"))
+                        } else {
+                            tr("ui.agent_chat_attach_selection").to_string()
+                        };
+                        let pick = ui_kit::checkbox(ui, &label, &mut app.agent_chat.attach_selection)
+                            .on_hover_text(tr("ui.agent_chat_attach_selection_tip"));
+                        crate::scenario::publish_handle("agent_chat:attach_selection", pick.rect.center());
+                        // Choose faces, edges, features and bodies on purpose, then OK.
+                        let picker = ui_kit::button(ui, tr("ui.agent_chat_pick_context"), ui_kit::Button::Enabled(app.dialog.is_none()))
+                            .on_hover_text(tr("ui.agent_chat_pick_context_tip"));
+                        crate::scenario::publish_handle("agent_chat:pick_context", picker.rect.center());
+                        pick_clicked = picker.clicked();
                         if let Some(turn) = &app.agent_chat.turn {
-                            let count = trf(
-                                "ui.agent_chat_changes_of",
-                                &[("n", &turn.changes.to_string()), ("limit", &app.preferences.agent_chat_turn_limit.to_string())],
-                            );
+                            let n = turn.changes.to_string();
+                            let count = match app.preferences.agent_chat_turn_limit {
+                                0 => trf("ui.agent_chat_changes_n", &[("n", &n)]),
+                                limit => trf("ui.agent_chat_changes_of", &[("n", &n), ("limit", &limit.to_string())]),
+                            };
                             ui.label(RichText::new(count).color(Tokens::get().text_dim).size(Tokens::get().font_small));
                         }
                     },
@@ -852,6 +989,12 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
             });
         });
     });
+    if let Some(at) = remove_picked_at {
+        remove_picked(app, at);
+    }
+    if pick_clicked {
+        start_pick(app);
+    }
     egui::ScrollArea::vertical()
         .id_salt("sc_agent_chat_scroll")
         .max_height(ui.available_height())
@@ -896,8 +1039,12 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
             |e| e.name.clone(),
         );
         let models = models_shown(app);
-        let w =
-            (ui.available_width() - if app.agent_chat.modes.is_empty() { 4.0 } else { 116.0 } - if models { 146.0 } else { 0.0 }).clamp(90.0, 260.0);
+        let providers = if models { model_providers(app) } else { Vec::new() };
+        let w = (ui.available_width()
+            - if app.agent_chat.modes.is_empty() { 4.0 } else { 116.0 }
+            - if models { 146.0 } else { 0.0 }
+            - if providers.is_empty() { 0.0 } else { 146.0 })
+        .clamp(90.0, 260.0);
         let mut picked: Option<String> = None;
         let mut add = false;
         let combo = ui
@@ -958,17 +1105,47 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
                 set_mode(app, &m);
             }
         }
+        // Models from several providers: pick the provider first, then one of its models.
+        if let Some(shown) = shown_provider(app).filter(|_| !providers.is_empty()) {
+            let mut pick: Option<String> = None;
+            let width = picker_width(ui, &shown);
+            let r = ui
+                .allocate_ui(vec2(width, t.control_height), |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                    ui_kit::dropdown_menu(ui, "sc_agent_provider", &shown, |ui| {
+                        for (name, count) in &providers {
+                            let row = ui_kit::list_picker(ui, &format!("provider:{name}"), name, *name == shown)
+                                .on_hover_text(trf("ui.agent_chat_provider_models", &[("count", &count.to_string())]));
+                            crate::scenario::publish_handle(&format!("agent_chat:provider:{name}"), row.rect.center());
+                            if row.clicked() {
+                                pick = Some(name.clone());
+                            }
+                        }
+                    })
+                })
+                .inner;
+            crate::scenario::publish_rect("agent_chat:provider", r.rect);
+            crate::scenario::publish_handle("agent_chat:provider", r.rect.center());
+            r.on_hover_text(tr("ui.agent_chat_provider_tip"));
+            if let Some(p) = pick {
+                set_model_provider(app, &p);
+            }
+        }
         // The agent's models (ACP `models`, or an endpoint's list): shown only when it reports some.
         if models {
-            let list = app.agent_chat.models.clone();
-            let cur = list.iter().find(|m| m.id == app.agent_chat.model).map_or_else(|| app.agent_chat.model.clone(), |m| m.name.clone());
+            let list = listed_models(app);
+            let cur = list.iter().find(|(m, _)| m.id == app.agent_chat.model).map_or_else(
+                || if providers.is_empty() { app.agent_chat.model.clone() } else { tr("ui.agent_chat_choose_model").to_string() },
+                |(_, name)| name.clone(),
+            );
             let mut pick: Option<String> = None;
+            let width = if providers.is_empty() { t.form_label_width } else { picker_width(ui, &cur) };
             let r = ui
-                .allocate_ui(vec2(t.form_label_width, t.control_height), |ui| {
+                .allocate_ui(vec2(width, t.control_height), |ui| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                     ui_kit::dropdown_menu(ui, "sc_agent_model", &cur, |ui| {
-                        for m in &list {
-                            let row = ui_kit::list_picker(ui, &m.id, &m.name, m.id == app.agent_chat.model);
+                        for (m, name) in &list {
+                            let row = ui_kit::list_picker(ui, &m.id, name, m.id == app.agent_chat.model);
                             let row = if m.description.is_empty() { row } else { row.on_hover_text(&m.description) };
                             crate::scenario::publish_handle(&format!("agent_chat:model:{}", m.id), row.rect.center());
                             if row.clicked() {
@@ -986,11 +1163,15 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         }
     });
+    if let Some(warning) = settings::model_warning(app) {
+        ui.add(egui::Label::new(RichText::new(warning).color(t.warning).size(t.font_small)).wrap());
+    }
     ui.horizontal(|ui| {
         let b = if app.agent_chat.state().running() {
             ui_kit::button(ui, tr("ui.agent_chat_stop"), ui_kit::Button::Normal).on_hover_text(tr("ui.agent_chat_stop_tip"))
         } else {
-            ui_kit::button(ui, tr("ui.agent_chat_connect"), ui_kit::Button::Normal)
+            let label = if app.agent_chat.state() == State::Failed { "ui.agent_chat_retry" } else { "ui.agent_chat_connect" };
+            ui_kit::button(ui, tr(label), ui_kit::Button::Normal)
         };
         crate::scenario::publish_handle("agent_chat:connect", b.rect.center());
         if b.clicked() {
@@ -1004,6 +1185,41 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
     if let Some(a) = &app.agent_chat.auth_status {
         ui.label(RichText::new(a).color(t.text_dim).size(crate::theme::Tokens::get().font_small));
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+const FLATPAK_OVERRIDE: &str = "flatpak override --user io.tangencylabs.solidcraft --filesystem=~/.nvm:ro --filesystem=~/.local/bin:ro --filesystem=~/.local/share/claude:ro --filesystem=~/.claude --filesystem=~/.claude.json --share=network";
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn no_agents_message() -> String {
+    if std::env::var_os("FLATPAK_ID").is_some() { tr("ui.agent_chat_flatpak_none_found") } else { tr("ui.agent_chat_none_found") }.to_string()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn no_agents(ui: &mut egui::Ui) {
+    let flatpak = std::env::var_os("FLATPAK_ID").is_some();
+    let style = if flatpak { ui_kit::Text::Report("none", false) } else { ui_kit::Text::Note("none") };
+    ui_kit::text(ui, &no_agents_message(), style);
+    if flatpak {
+        // The Copy button comes before the long command so it shows without scrolling.
+        let copy = ui_kit::button(ui, tr("ui.agent_chat_copy"), ui_kit::Button::Small);
+        crate::scenario::publish_handle("agent_chat:flatpak_override", copy.rect.center());
+        if copy.clicked() {
+            ui.ctx().copy_text(FLATPAK_OVERRIDE.to_string());
+        }
+        ui_kit::text(ui, FLATPAK_OVERRIDE, ui_kit::Text::Report("flatpak_override", false));
+    }
+}
+
+/// The width of a provider or model picker: its label's, from the usual picker width up to 200
+/// points and never wider than the panel, so a short name is read whole and a long one truncates.
+#[cfg(not(target_arch = "wasm32"))]
+fn picker_width(ui: &egui::Ui, label: &str) -> f32 {
+    let t = Tokens::get();
+    let label: String = label.chars().take(64).collect();
+    let text = ui.painter().layout_no_wrap(label, egui::FontId::proportional(t.font_label), t.text).size().x + 34.0;
+    let most = ui.max_rect().width().clamp(t.form_label_width, 200.0);
+    text.clamp(t.form_label_width, most)
 }
 
 /// Before the first connection: what's installed, how to install the rest, and Add agent.
@@ -1038,9 +1254,15 @@ fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
             app.agent_chat.agent_id = Some(e.id.clone());
         }
     }
+    // In the Flatpak the hint already says nothing was found, so the install list below is
+    // headed "Not installed" instead of repeating it.
+    let flatpak_hint = all.is_empty() && app.agent_chat.detecting.is_none() && std::env::var_os("FLATPAK_ID").is_some();
+    if flatpak_hint {
+        no_agents(ui);
+    }
     let missing: Vec<discover::Missing> = app.agent_chat.detection.as_ref().map(|d| d.missing.clone()).unwrap_or_default();
     if !missing.is_empty() {
-        let heading = if all.is_empty() { tr("ui.agent_chat_none_found") } else { tr("ui.agent_chat_not_installed") };
+        let heading = if all.is_empty() && !flatpak_hint { tr("ui.agent_chat_none_found") } else { tr("ui.agent_chat_not_installed") };
         ui_kit::section(ui, "sc_agent_missing", heading, all.is_empty(), |ui| {
             for m in missing {
                 ui.horizontal(|ui| {
@@ -1112,9 +1334,10 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut undo: Option<usize> = None;
     let mut open_gallery: Option<Gallery> = None;
     let current_doc = app.session.doc.clone();
+    let units = summary::Units { units: &app.session.doc.units, decimals: app.preferences.length_decimals };
     for (n, item) in app.agent_chat.items.iter().enumerate() {
         match item {
-            Item::User { text, image, pictures, files } => {
+            Item::User { text, image, pictures, context, files } => {
                 ui_kit::assistant_bubble(ui, |ui| {
                     if !text.is_empty() {
                         ui.add(egui::Label::new(RichText::new(text).color(t.text)).selectable(true).wrap());
@@ -1127,6 +1350,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                         // Taken when the agent starts on the message: nothing to show yet.
                         ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(t.font_small));
                     }
+                    context_chips(ui, context, false);
                     files_line(ui, files.iter().map(String::as_str));
                 });
             }
@@ -1144,8 +1368,17 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui_kit::assistant_tool_frame(ui, false, |ui| {
                     ui.spacing_mut().item_spacing.y = Tokens::get().space_2;
                     for (offset, next) in app.agent_chat.items.iter().skip(n).take_while(|next| matches!(next, Item::Tool { .. })).enumerate() {
-                        if let Item::Tool { title, kind, status, output, .. } = next {
-                            tool_card(ui, n + offset, title, kind, *status, output.as_deref());
+                        if let Item::Tool { title, kind, status, input, output, .. } = next {
+                            let words = summary::summary(title, input.as_ref(), output.as_deref(), *status == Some(ToolStatus::Completed), units);
+                            let call = ToolCall {
+                                title,
+                                summary: words.as_deref(),
+                                kind,
+                                status: *status,
+                                input: input.as_ref(),
+                                output: output.as_deref(),
+                            };
+                            tool_card(ui, n + offset, &call);
                         }
                     }
                 });
@@ -1250,7 +1483,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             Item::Notice { text, error } => {
                 ui_kit::assistant_banner(ui, if *error { ui_kit::AssistantTone::Error } else { ui_kit::AssistantTone::Neutral }, |ui| {
-                    ui.label(RichText::new(text).color(if *error { t.error } else { t.text_dim }));
+                    ui.add(egui::Label::new(RichText::new(text).color(if *error { t.error } else { t.text_dim })).wrap());
                 });
             }
         }
@@ -1268,7 +1501,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
         Container::new(ui.ctx(), Surface::Panel)
             .edge_frame(t.panel)
             .stroke(Stroke::new(1.0, t.accent))
-            .corner_radius(6.0)
+            .corner_radius(t.control_radius)
             .inner_margin(egui::Margin::same(6))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -1310,6 +1543,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                         if p.image {
                             ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(crate::theme::Tokens::get().font_small));
                         }
+                        context_chips(ui, &p.context, false);
                         files_line(ui, p.files.iter().map(|f| f.name.as_str()));
                     }
                 }
@@ -1451,9 +1685,12 @@ pub(super) fn remove_tip(f: &attach::Attachment) -> &'static str {
 fn loading_chip(ui: &mut egui::Ui, name: &str, importing: bool, i: usize, w: f32) -> bool {
     let t = Tokens::get();
     let mut clicked = false;
-    let r = egui::Frame::NONE.fill(t.toolbar).stroke(Stroke::new(1.0, t.border)).corner_radius(6.0).inner_margin(egui::Margin::symmetric(4, 3)).show(
-        ui,
-        |ui| {
+    let r = egui::Frame::NONE
+        .fill(t.toolbar)
+        .stroke(t.control_border_stroke(t.border))
+        .corner_radius(t.control_radius)
+        .inner_margin(egui::Margin::symmetric(4, 3))
+        .show(ui, |ui| {
             let inner = (w - 10.0).max(40.0);
             ui.set_width(inner);
             ui.horizontal(|ui| {
@@ -1475,8 +1712,7 @@ fn loading_chip(ui: &mut egui::Ui, name: &str, importing: bool, i: usize, w: f32
                 crate::scenario::publish_handle(&format!("agent_chat:file_loading_remove:{i}"), c);
                 clicked = x.on_hover_text(tr(if importing { "ui.agent_chat_remove_imported" } else { "ui.agent_chat_remove_file" })).clicked();
             });
-        },
-    );
+        });
     crate::scenario::publish_handle(&format!("agent_chat:file_loading:{i}"), r.response.rect.center());
     clicked
 }
@@ -1486,9 +1722,12 @@ fn loading_chip(ui: &mut egui::Ui, name: &str, importing: bool, i: usize, w: f32
 fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<u64, egui::TextureHandle>, f: &attach::Attachment, i: usize, w: f32) -> bool {
     let t = Tokens::get();
     let mut clicked = false;
-    let r = egui::Frame::NONE.fill(t.toolbar).stroke(Stroke::new(1.0, t.border)).corner_radius(6.0).inner_margin(egui::Margin::symmetric(4, 3)).show(
-        ui,
-        |ui| {
+    let r = egui::Frame::NONE
+        .fill(t.toolbar)
+        .stroke(t.control_border_stroke(t.border))
+        .corner_radius(t.control_radius)
+        .inner_margin(egui::Margin::symmetric(4, 3))
+        .show(ui, |ui| {
             let inner = (w - 10.0).max(40.0);
             ui.set_width(inner);
             ui.horizontal(|ui| {
@@ -1531,8 +1770,7 @@ fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<u64, egui::Tex
                 crate::scenario::publish_handle(&format!("agent_chat:file_remove:{i}"), c);
                 clicked = x.on_hover_text(remove_tip(f)).clicked();
             });
-        },
-    );
+        });
     crate::scenario::publish_target(&format!("agent_chat:file:{i}"), r.response.rect);
     clicked
 }
@@ -1572,16 +1810,37 @@ fn add_menu(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
 }
 
-/// A tool call as a card: its state, name and kind on one line; a click unfolds what it returned.
+/// A tool call as its card shows it.
 #[cfg(not(target_arch = "wasm32"))]
-fn tool_card(ui: &mut egui::Ui, n: usize, title: &str, kind: &str, status: Option<ToolStatus>, output: Option<&str>) {
+struct ToolCall<'a> {
+    /// The agent's title, shown when there are no words for the call.
+    title: &'a str,
+    /// What it did in words (#1457).
+    summary: Option<&'a str>,
+    kind: &'a str,
+    status: Option<ToolStatus>,
+    input: Option<&'a Value>,
+    output: Option<&'a str>,
+}
+
+/// Longest raw text shown under a card's Details (characters).
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_DETAIL: usize = 8000;
+
+/// A tool call as a card: its state and what it did in words on one line (the agent's own title
+/// when there are none); a click on the line unfolds Details, the raw arguments and what it
+/// returned.
+#[cfg(not(target_arch = "wasm32"))]
+fn tool_card(ui: &mut egui::Ui, n: usize, call: &ToolCall) {
     let t = Tokens::get();
+    let status = call.status;
     let (color, mark, state) = match status {
         Some(ToolStatus::Completed) => (t.form_success, ui_kit::AssistantToolState::Done, "ui.ai_tool_done"),
         Some(ToolStatus::Failed) => (t.error, ui_kit::AssistantToolState::Failed, "ui.ai_tool_failed"),
         Some(ToolStatus::InProgress) => (t.accent, ui_kit::AssistantToolState::Running, "ui.ai_tool_running"),
         _ => (t.text_dim, ui_kit::AssistantToolState::Pending, "ui.ai_tool_waiting"),
     };
+    let details = call.input.is_some() || call.output.is_some();
     ui_kit::assistant_tool_row(ui, status == Some(ToolStatus::Failed), |ui| {
         ui.set_width(ui.available_width());
         let id = ui.make_persistent_id(("sc_agent_tool", n));
@@ -1590,37 +1849,57 @@ fn tool_card(ui: &mut egui::Ui, n: usize, title: &str, kind: &str, status: Optio
             ui.spacing_mut().item_spacing.x = t.space_8;
             ui_kit::assistant_tool_status(ui, mark);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if output.is_some() {
+                if details {
                     let (rect, _) = ui.allocate_exact_size(vec2(t.space_14, t.space_14), Sense::hover());
                     ui_kit::disclosure(ui.painter(), rect.center(), state_.is_open(), t.text_dim);
+                    ui.label(RichText::new(tr("ui.ai_tool_details")).size(t.font_small).color(t.text_dim));
                 }
                 ui.label(RichText::new(tr(state)).size(t.font_small).color(color));
-                if !kind.is_empty() && kind != "other" {
-                    ui.label(RichText::new(kind).size(t.font_small).color(t.text_dim));
+                if !call.kind.is_empty() && call.kind != "other" {
+                    ui.label(RichText::new(call.kind).size(t.font_small).color(t.text_dim));
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.add(egui::Label::new(RichText::new(title).monospace().size(t.font_caption).color(t.text)).truncate()).on_hover_text(title);
+                    let text = match call.summary {
+                        Some(words) => RichText::new(words).size(t.font_caption).color(t.text),
+                        None => RichText::new(summary::plain_title(call.title)).monospace().size(t.font_caption).color(t.text),
+                    };
+                    ui.add(egui::Label::new(text).truncate().selectable(false)).on_hover_text(call.title);
                 });
             });
         });
         let click = ui.interact(head.response.rect, id.with("head"), Sense::click());
         crate::scenario::publish_handle(&format!("agent_chat:tool:{n}"), head.response.rect.center());
-        if output.is_some() && click.clicked() {
+        if details && click.clicked() {
             state_.toggle(ui);
         }
-        if output.is_some() {
+        if details {
             click.on_hover_text(tr("ui.ai_tool_unfold"));
         }
         state_.show_body_unindented(ui, |ui| {
-            if let Some(o) = output {
-                ui.indent(id.with("detail"), |ui| {
-                    ui_kit::assistant_tool_detail(ui, |ui| {
-                        egui::ScrollArea::vertical().id_salt(("sc_agent_tool_out", n)).max_height(180.0).show(ui, |ui| {
-                            ui.add(egui::Label::new(RichText::new(o).monospace().size(t.font_small)).selectable(true).wrap());
-                        });
-                    });
-                });
-            }
+            ui.indent(id.with("detail"), |ui| {
+                if let Some(input) = call.input {
+                    let text = serde_json::to_string_pretty(input).unwrap_or_default();
+                    tool_detail(ui, tr("ui.ai_tool_arguments"), &text, id.with("in"));
+                }
+                if let Some(o) = call.output {
+                    tool_detail(ui, tr("ui.ai_tool_result"), o, id.with("out"));
+                }
+            });
+        });
+    });
+}
+
+/// One part of a card's Details: its heading and the raw text, cut short and scrolling.
+#[cfg(not(target_arch = "wasm32"))]
+fn tool_detail(ui: &mut egui::Ui, heading: &str, text: &str, id: Id) {
+    let t = Tokens::get();
+    ui.label(RichText::new(heading).size(t.font_small).color(t.text_dim));
+    let shown: String =
+        if text.chars().count() > MAX_DETAIL { text.chars().take(MAX_DETAIL).chain(std::iter::once('…')).collect() } else { text.to_string() };
+    ui_kit::assistant_tool_detail(ui, |ui| {
+        ui.set_min_width(ui.available_width());
+        egui::ScrollArea::vertical().id_salt(id).max_height(180.0).show(ui, |ui| {
+            ui.add(egui::Label::new(RichText::new(shown).monospace().size(t.font_small)).selectable(true).wrap());
         });
     });
 }
@@ -1656,6 +1935,56 @@ pub(super) fn quote(a: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_discovery_explains_flatpak_permissions() {
+        const CHILD: &str = "SOLIDCRAFT_TEST_FLATPAK_MESSAGE";
+        if let Ok(case) = std::env::var(CHILD) {
+            let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+            app.agent_chat.detection = Some(discover::Detection::default());
+            assert!(agents::entries(&app).is_empty());
+            let message = no_agents_message();
+            if case == "flatpak" {
+                assert!(message.contains("sandbox"), "{message}");
+                assert!(message.contains("restart"), "{message}");
+                let ctx = crate::fonts::test_context();
+                let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(300.0, 900.0))), ..Default::default() };
+                for _ in 0..2 {
+                    let mut output = ctx.run_ui(input.clone(), |ui| picker(&mut app, ui));
+                    assert!(crate::test_support::text_shapes(&output).any(|text| text.galley.text() == message));
+                    assert!(crate::test_support::text_shapes(&output).any(|text| text.galley.text() == FLATPAK_OVERRIDE));
+                    output.textures_delta.clear();
+                }
+                let at = crate::scenario::handle_at("agent_chat:flatpak_override").expect("copy override");
+                let mut copied = false;
+                for pressed in [true, false] {
+                    let mut output =
+                        ctx.run_ui(egui::RawInput { events: crate::test_support::pointer(at, pressed), ..input.clone() }, |ui| picker(&mut app, ui));
+                    copied |= output
+                        .platform_output
+                        .commands
+                        .iter()
+                        .any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text == FLATPAK_OVERRIDE));
+                    output.textures_delta.clear();
+                }
+                assert!(copied, "Copy preserves the complete override command");
+            } else {
+                assert_eq!(message, tr("ui.agent_chat_none_found"));
+            }
+            return;
+        }
+        for case in ["flatpak", "native"] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child.args(["--exact", "agent_chat::panel::tests::empty_discovery_explains_flatpak_permissions", "--nocapture"]);
+            child.env(CHILD, case);
+            if case == "flatpak" {
+                child.env("FLATPAK_ID", "io.tangencylabs.solidcraft");
+            } else {
+                child.env_remove("FLATPAK_ID");
+            }
+            assert!(child.status().unwrap().success(), "{case}");
+        }
+    }
 
     #[test]
     fn custom_commands_show_short_in_the_picker() {
@@ -1767,8 +2096,14 @@ mod tests {
         });
         app.agent_chat.modes = vec![("edit".into(), "A provider mode with a long descriptive label".into())];
         app.agent_chat.mode = "edit".into();
-        app.agent_chat.models =
-            vec![acp::ModelInfo { id: "model".into(), name: "A model with a long descriptive label".into(), description: String::new() }];
+        app.agent_chat.models = vec![
+            acp::ModelInfo {
+                id: "model".into(),
+                name: "A provider with a long name · A model with a long descriptive label".into(),
+                description: String::new(),
+            },
+            acp::ModelInfo { id: "other".into(), name: "Another provider · model".into(), description: String::new() },
+        ];
         app.agent_chat.model = "model".into();
         let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(296.0, 720.0))), ..Default::default() };
         crate::scenario::clear_handles();
@@ -1777,7 +2112,7 @@ mod tests {
             ui_kit::scope(ui, |ui| switcher(&mut app, ui));
         });
         output.textures_delta.clear();
-        let rects: Vec<_> = ["switcher", "mode", "model"]
+        let rects: Vec<_> = ["switcher", "mode", "provider", "model"]
             .into_iter()
             .map(|name| {
                 let rect = crate::scenario::rect_of(&format!("agent_chat:{name}")).expect("picker retained");

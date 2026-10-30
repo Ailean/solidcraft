@@ -1,3 +1,31 @@
+# Render: current reviewable source and qualification boundaries
+
+30 October2026. These are canonical source checkpoints requested by Judit. Production modules on this archive branch remain unchanged. Source/math review, written tests and a running validation are different from an observed runtime pass or ready PR.
+
+| Packet | Current meaning |
+| --- | --- |
+| [Complete53-path C12 candidate](c12-complete-source/README.md) | One patch against draft base a0779062; core corrections, Interactive capture/cache/lifecycle, waiting/input/layout, help translations, GPU reasons and Area/LED. Applied locally and frozen for current C12. Do not compose this with the earlier incremental patches. |
+| [Actual-worker Area/LED E2E tests](cpu-progressive-area-led/E2E.md) | Included in the complete candidate. Two original native-host/Snapshot/PNG/cache/stale-final-priority cases; no completed C12 result yet. |
+| [Nested certified-box glass V2](cpu-nested-boxes-v2-source-review/README.md) and [current cumulative rebind](cpu-nested-boxes-v2-source-review/CURRENT-REBIND.md) | Independent numerical and Engine source review,15 new Render/Engine declarations; NOT APPLIED/COMPILED/RUN. V1 remains blocked. General/progressive/Interactive glass and physical-library routing remain open. |
+| [EV/HDR real-worker additions](ev-hdr-e2e/README.md) | Separate2-test proposal on the213-test C12 prefix; independently source-reviewed, unrun and not part of C12's53-case selection. |
+| [Explicit output-envelope helpers](output-envelope-helpers/README.md) | Seven-helper V2/13 original tests, independently source-reviewed; no CPU host/raw-linear/work/publication enablement. Unapplied/uncompiled/unrun. |
+| [Genuine midpass progress foundation](midpass-film-preparation/README.md) | Option A selected. A1 partial-film accessor +5 originals reviewed; still unintegrated, expected unused API until a REAL A2 producer exists. No lint allowances/dummy consumers. Host/producer/UI implementation is being prepared privately under disjoint ownership. |
+| [Raster perspective candidate](parity-raster-main66bd/README.md) | Source-reviewed against its actual newer main API, not this older frozen candidate. Original perspective/legacy controls, no compiler/runtime claim or permission to overlay it blindly. |
+| [Native observations](native-followups/native-round-one.md) and [remaining EV/HDR/final journeys](native-followups/ev-hdr-final-acceptance-proposal.md) | First older-binary round was partial. Fresh current-source app build and mouse/keyboard acceptance remain pending; source tests do not close native UX. |
+
+## Current validation
+
+C12 is still running once. Formatter/check and repository-list/i18n exterior commands completed; the owner reports advancement through strict affected Clippy and default wasm into the combined engine/UI/Render native no-run build. Final exact exits, artifacts, inventories,53 selected cases and35 real-CPU markers are not yet independently qualified at WHOLE. Full repository CI, a new desktop executable, GPU and long-scene native quality remain pending.
+
+The real i18n gate invokes a cached release CLI-registry build internally. Its exterior exit0 does not independently prove that registry's success because a helper can swallow the error. That evidence limit is preserved. A uniquely identified lingering compiler auxiliary was explicitly disposed after its command exited; that administrative action is not a product/test pass. No control receipts, tokens or machine logs are public here.
+
+CPU final output should cover GPU-supported effects, including real glass, and coherent maximum-resolution admission/finishing/export. Current16SPP Interactive remains a responsive provisional default, not the final quality ceiling. Long renders need genuine intermediate pixels, truthful unknown/sample provenance and bounded retained images. Raster is explicitly schematic. More samples/completion alone do not prove clean, correct or converged output.
+
+The [active tracker and acceptance plan](https://github.com/tangency-labs/solidcraft/issues/6201) records dependencies/owners and preserves historical results. Existing Nathan-Dane panels/Results/Studio/gizmos and other contributors' GPU/compiler/color work retain their ownership.
+
+<details>
+<summary>Earlier source-preservation snapshot (historical; current table above supersedes statuses)</summary>
+
 # Render follow-up source preservation, 30 October 2026
 
 These are unqualified work-in-progress snapshots and narrow patches, preserved at Judit's request. Production files on this archive branch remain unchanged. The earlier [complete source and pending parity packet](../2026-10-29/README.md) remains intact. This directory does not register feature modules or claim a ready delivery.
@@ -21,3 +49,5 @@ The original 516-case core result remains bound to its exact unchanged core sour
 ## Latest engine correction and native acceptance plan
 
 [Current validation status](STATUS.md) supersedes the earlier snapshot above. The [engine test-helper Result correction](engine-test-helper-result.patch) and exact engine sources are now preserved here. [Native mouse/keyboard acceptance](native-mouse-keyboard-acceptance.md) is planned after validation and an actual application build; it has not been executed.
+
+</details>

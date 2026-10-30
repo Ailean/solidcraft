@@ -1,0 +1,126 @@
+{
+  "status": "PRE_FORMAT_C19_SOURCE_PROPOSAL_UNFORMATTED_UNCOMPILED_UNRUN_UNADOPTED",
+  "base_working_source_manifest_sha256": "e70ee3bb9a68fdeeee921ca338b6c1a9e08c8198fe5f07a114166a3af87b446d",
+  "source_packet_manifest_sha256": "576581355d23a99a23fb79ddf34f6527b1ddd8737f6c4f9261b7c16b0d15fea6",
+  "source_packet_index_sha256": "81b96e88683232f8cfd77b95047f3d572f846c49bf342fd95ec41e60c212120d",
+  "core_source_review_sha256": "4e3920ad6b76ab568e29e6315851f599e61083bf7a364dd3b0578aff89df6cf0",
+  "consumer_source_review_sha256": "997ffa52a7e3653d9d67e29da850b0d3aa04358c70ecf8ec7cce130cacf57741",
+  "combined_patch_sha256": "96aa2f2f3353afbe08de5a520716294f5c2f603ad44cad3a17d05689717a8a2b",
+  "combined_patch_bytes": 61170,
+  "application_mode": "combined_only_not_split_or_staged_double_application",
+  "requires_explicit_later_postformat_receiver_rebind": true,
+  "files": [
+    {
+      "path": "crates/render/src/raytrace/image.rs",
+      "before_sha256": "3210cbd9115bd26a5f9bfb7a4e121e79afe2070e17cf02dc8da7feed110ae731",
+      "candidate_sha256": "928115ae0c8cb460438da47a1b73c94f37e4a8dbf2c48c301957a40eadfb4ccf",
+      "before_bytes": 112115,
+      "candidate_bytes": 115405,
+      "new_file": false,
+      "candidate_CRLF": 0,
+      "candidate_LF_only": 2362
+    },
+    {
+      "path": "crates/render/src/job/mod.rs",
+      "before_sha256": "3fb4d226d51633d846c0f454b0da9401d5ea3e24944a494c8afedfea69e98387",
+      "candidate_sha256": "e22b2e890f72769ed114e541cb50514000521add8cee17a022cd7acb669d5e49",
+      "before_bytes": 67361,
+      "candidate_bytes": 70285,
+      "new_file": false,
+      "candidate_CRLF": 0,
+      "candidate_LF_only": 1631
+    },
+    {
+      "path": "crates/render/src/raytrace/image_tests.rs",
+      "before_sha256": "3006fba08770f0c3d2d19f6fb8f4fc83667e6ca5133c90e61d1dad33a894bda8",
+      "candidate_sha256": "c9910e3b110fbf6910e4c126c1e9d212777dc1ea2903f32481de56d84a62d8c2",
+      "before_bytes": 119242,
+      "candidate_bytes": 141787,
+      "new_file": false,
+      "candidate_CRLF": 0,
+      "candidate_LF_only": 2962
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_cpu.rs",
+      "before_sha256": "aa110b13e97c6887f64f449c170c3cdcdf7ba11ec0399372bd0c6134152f158b",
+      "candidate_sha256": "728e43ebcafc7f638b24beec3f02c7af180e2f021067e6717090dce0f2478360",
+      "before_bytes": 27938,
+      "candidate_bytes": 41333,
+      "new_file": false,
+      "candidate_CRLF": 0,
+      "candidate_LF_only": 825
+    },
+    {
+      "path": "crates/doc/src/render_job.rs",
+      "before_sha256": "8c3e0670d9d5df947cd29999b7d4e1a89c12ea4e5a8679a12dec2b0b182f0d5b",
+      "candidate_sha256": "cb102321f3ff97b2530257d82170dd0c7a8187e1becfec0e6b3e03d43e6cb164",
+      "before_bytes": 15299,
+      "candidate_bytes": 17762,
+      "new_file": false,
+      "candidate_CRLF": 398,
+      "candidate_LF_only": 0
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_setups.rs",
+      "before_sha256": "925f8494df6157675dda8a0f85f6c40144b9b6fb08c17c2942d83910e6fcc608",
+      "candidate_sha256": "5013b8b3f4302f4102c7803c5410639b1dd158e0b6ccd26201c7caf6787fa116",
+      "before_bytes": 15513,
+      "candidate_bytes": 15655,
+      "new_file": false,
+      "candidate_CRLF": 307,
+      "candidate_LF_only": 0
+    },
+    {
+      "path": "crates/doc/src/format/pending/cpu-dielectric-transport.rs",
+      "before_sha256": null,
+      "candidate_sha256": "ee897a13782f4a4db2158e2c3d06cd186eb01a5d378ef36cee0dfc80af163221",
+      "before_bytes": 0,
+      "candidate_bytes": 495,
+      "new_file": true,
+      "candidate_CRLF": 0,
+      "candidate_LF_only": 6
+    },
+    {
+      "path": "assets/locales/pending/cpu-dielectric-transport.json",
+      "before_sha256": null,
+      "candidate_sha256": "0f85f08b1a4e041c87b86c849ee5e519ef0dd06903ebc8caae35d20c70c1a6c6",
+      "before_bytes": 0,
+      "candidate_bytes": 4694,
+      "new_file": true,
+      "candidate_CRLF": 0,
+      "candidate_LF_only": 56
+    },
+    {
+      "path": "docs/render-raytrace-image.md",
+      "before_sha256": "24ae57d817c66b341b802fbdd0b343607cf0e3c042b68bdcc92a3a2eb52bf3a3",
+      "candidate_sha256": "c2a63a404f4eab31bc390f889260e91f790ee497186b4b2f3a566a2827f07b6c",
+      "before_bytes": 13509,
+      "candidate_bytes": 14832,
+      "new_file": false,
+      "candidate_CRLF": 208,
+      "candidate_LF_only": 22
+    },
+    {
+      "path": "docs/render-settings.md",
+      "before_sha256": "79f92ecb52878652cb0bbc0c427be4c0fce3de6616b918d449f5f55a84910751",
+      "candidate_sha256": "fee45ded12b0b4f62765b06e05ff4d2cdbe9a28b1cd2588f3f18165797c3c1d0",
+      "before_bytes": 20793,
+      "candidate_bytes": 21700,
+      "new_file": false,
+      "candidate_CRLF": 297,
+      "candidate_LF_only": 15
+    }
+  ],
+  "new_test_declarations": 18,
+  "required_native_TRUE_markers": [
+    "STRICT_RATIONAL_BRANCH cpu_supported=true",
+    "CPU_GLASS_POLICY_UI_BRANCH cpu_supported=true"
+  ],
+  "Legacy_default_omitted": true,
+  "Strict_explicit_opt_in": true,
+  "compiled": false,
+  "tests_run": 0,
+  "native_or_GPU_qualified": false,
+  "adoption_authorized": false,
+  "C19_build_results_transfer": false
+}

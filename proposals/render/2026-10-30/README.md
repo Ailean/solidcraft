@@ -122,3 +122,11 @@ record the Interactive/Shot source contracts and corrected bounded dielectric
 wording. Only the cumulative patch from exact C19 RAW endpoints is included.
 The docs are unadopted; C19 build results and the separate U17 proposal do not
 qualify these edits or authorize runtime/adoption.
+
+## Strict CPU dielectric source proposal
+
+[Ten-path strict-TIR proposal and 18 unrun original tests](strict-cpu-dielectric/README.md)
+preserve default/omitted Legacy behavior and explicit bounded Strict intent.
+This pre-format C19 delta requires a separate post-format receiver rebind; the
+current C19 build does not include or qualify it. Only the combined patch is
+archived, with no adoption, runtime, energy-convergence or GPU-parity claim.

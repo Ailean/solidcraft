@@ -5,7 +5,7 @@
 | Packet | Current meaning |
 | --- | --- |
 | [Complete53-path C12 candidate](c12-complete-source/README.md) | One patch against draft base a0779062; core corrections, Interactive capture/cache/lifecycle, waiting/input/layout, help translations, GPU reasons and Area/LED. Applied locally and frozen for current C12. Do not compose this with the earlier incremental patches. |
-| [Actual-worker Area/LED E2E tests](cpu-progressive-area-led/E2E.md) | Included in the complete candidate. Two original native-host/Snapshot/PNG/cache/stale-final-priority cases; no completed C12 result yet. |
+| [Actual-worker Area/LED E2E tests](cpu-progressive-area-led/E2E.md) | Included in the complete candidate. Two original native-host/Snapshot/PNG/cache/stale-final-priority cases; C12 built successfully but stopped on selection before test bodies; C13 tests-only pending. |
 | [Nested certified-box glass V2](cpu-nested-boxes-v2-source-review/README.md) and [current cumulative rebind](cpu-nested-boxes-v2-source-review/CURRENT-REBIND.md) | Independent numerical and Engine source review,15 new Render/Engine declarations; NOT APPLIED/COMPILED/RUN. V1 remains blocked. General/progressive/Interactive glass and physical-library routing remain open. |
 | [EV/HDR real-worker additions](ev-hdr-e2e/README.md) | Separate2-test proposal on the213-test C12 prefix; independently source-reviewed, unrun and not part of C12's53-case selection. |
 | [Explicit output-envelope helpers](output-envelope-helpers/README.md) | Seven-helper V2/13 original tests, independently source-reviewed; no CPU host/raw-linear/work/publication enablement. Unapplied/uncompiled/unrun. |
@@ -15,7 +15,9 @@
 
 ## Current validation
 
-C12 is still running once. Formatter/check and repository-list/i18n exterior commands completed; the owner reports advancement through strict affected Clippy and default wasm into the combined engine/UI/Render native no-run build. Final exact exits, artifacts, inventories,53 selected cases and35 real-CPU markers are not yet independently qualified at WHOLE. Full repository CI, a new desktop executable, GPU and long-scene native quality remain pending.
+C12 is terminal: formatter/check, repository lists, strict affected Clippy, default-feature wasm and the combined engine/UI/Render native library-test build exited0. Six inventories also exited0. Selection stopped before any test body because two names used the wrong module prefix (`job::tests` instead of `job::runtime_request_roundtrip_tests`). **Zero test bodies and zero CPU markers ran; this is a preparation error, not a product failure or53 passes.** Independent closure verified the13 exited command roots/empty owned Jobs, source/config/toolchain, the actual three CargoJSON artifacts and physical lease cleanup.
+
+C13 is a newly reviewed tests-only sequence on the same frozen source and already-built executables: only those two prefixes change; the other51 selections and all expectations remain unchanged. It requires six fresh inventories then53 exact cases (UI43+Render10),35 TRUE CPU markers, fresh resource admission and serial execution. No Cargo, formatting, prechecks, application or GPU launch is part of C13. No C13 result is claimed until terminal evidence is independently reviewed. Full repository CI and current-source native application/long-scene quality acceptance remain pending.
 
 The real i18n gate invokes a cached release CLI-registry build internally. Its exterior exit0 does not independently prove that registry's success because a helper can swallow the error. That evidence limit is preserved. A uniquely identified lingering compiler auxiliary was explicitly disposed after its command exited; that administrative action is not a product/test pass. No control receipts, tokens or machine logs are public here.
 

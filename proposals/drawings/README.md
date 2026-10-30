@@ -55,3 +55,7 @@ or invented B1 GID0 widths. The helper is unregistered/uncompiled/unrun:
 49 ordinary declarations and four separate negative obligations remain source
 only. TextPlan, prior v3 history and Cam's parent/content/allocator stay unchanged;
 real emitted-content coverage, PDF readers and actual validation remain pending.
+
+## 2026-10-31: X1 two-file main reconciliation
+
+[X1 main reconciliation](2026-10-31/x1-main-reconciliation/README.md) preserves the exact caller successor, foreign source payload, 53 original byte pins and 18+7 test declarations. Only two of the 12 legitimate X1 paths are supplied; ten prerequisite paths remain separate. Source-only/uncompiled/unrun, not standalone main or a resolved/ready PR. Policy references are retained; no historical result transfers.

@@ -1,0 +1,82 @@
+{
+  "scope": "TWO_FILE_RECONCILIATION_CONDITIONAL_ON_EXISTING_X1_PREREQUISITES",
+  "commits": {
+    "frozen_main": "8e9e2700275a363ac63ee5178aca7e33fac06722",
+    "original_PR_head": "3fb2eef92dce4bafe9cfb3f68a8334985d4d83ee",
+    "original_merge_base": "0312808b92d4523894d2af57c99401c65886e24d",
+    "reviewed_caller_archive": "28d90fae50dc9b060434a393305b0c93dff0444a"
+  },
+  "files": [
+    {
+      "repository_path": "crates/engine/src/cmd/sheet.rs",
+      "before": {
+        "file": "before/crates/engine/src/cmd/sheet.rs",
+        "sha256": "0ded6d11902e5da7b5923ca0aa46bf4a3dc1af7d6fbae344deb63f65ca4c33b5",
+        "bytes": 58207
+      },
+      "candidate": {
+        "file": "candidate/crates/engine/src/cmd/sheet.rs",
+        "sha256": "aa8a67b736a553bec91072d763567d26252212485d1d3806bed93fcc909483dc",
+        "bytes": 58421
+      },
+      "delta": {
+        "file": "deltas/crates/engine/src/cmd/sheet.rs.patch",
+        "sha256": "469d0b09814f5f9ef9ec9b1ba46de6a406ddfe986cf69121ee8bccb690c1bbe6",
+        "bytes": 3772
+      }
+    },
+    {
+      "repository_path": "crates/engine/src/cmd/sheet_dxf_tests.rs",
+      "before": {
+        "file": "before/crates/engine/src/cmd/sheet_dxf_tests.rs",
+        "sha256": "ead1645edffec671b6bc65e8e5b69d32c2c77b4cc21b1550d395a2d167582895",
+        "bytes": 33759
+      },
+      "candidate": {
+        "file": "candidate/crates/engine/src/cmd/sheet_dxf_tests.rs",
+        "sha256": "480ee7b2dc1a6879fb21d4a1652790d7c6d80ffc5ecf337af43887b176cc367d",
+        "bytes": 59739
+      },
+      "delta": {
+        "file": "deltas/crates/engine/src/cmd/sheet_dxf_tests.rs.patch",
+        "sha256": "dacfe9e03f28880b069af8af9c03bdd9a7013cb46621ae6abac74a3cb2974f58",
+        "bytes": 27575
+      }
+    }
+  ],
+  "application": "Apply each delta exactly once to its own exact frozen-main before file. Two disjoint paths; snapshots are inspection alternatives, not more patches. This is not a full X1 integration.",
+  "remaining_original_X1_paths_not_provided": [
+    "Cargo.lock",
+    "crates/doc/src/sheet_convert.rs",
+    "crates/engine/Cargo.toml",
+    "crates/geom/src/lib.rs",
+    "crates/geom/src/profile.rs",
+    "crates/geom/src/tests.rs",
+    "crates/io/src/dxf_out.rs",
+    "crates/io/src/dxf_out/path.rs",
+    "crates/io/src/lib.rs",
+    "crates/io/tests/dxf_paths.rs"
+  ],
+  "required_external_contracts": [
+    "DxfPath/DxfPathStyle/path_shapes exports and shared converter original-piece/style/200000-piece admission",
+    "Original strict generic Loop2 recognizers and negative tests",
+    "Original certified_round_wall_turn producer helper and original trimmed-cap five-entity acceptance",
+    "Original engine sha2 dev dependency, coherent Cargo.lock and original IO/geom/doc acceptance sources"
+  ],
+  "owner_decision_and_plan_URLs": [
+    "https://github.com/tangency-labs/solidcraft/pull/6184#issuecomment-6522562149",
+    "https://github.com/tangency-labs/solidcraft/pull/6184#issuecomment-6522733382",
+    "https://github.com/tangency-labs/solidcraft/issues/860#issuecomment-6234779815"
+  ],
+  "preservation": {
+    "original_pin_tuples": 53,
+    "original_head_declarations": 18,
+    "archived_appended_declarations": 7,
+    "total_declarations": 25,
+    "new_compatibility_contract": false,
+    "foreign_payload_preserved": true
+  },
+  "source_review_sha256": "5f19f4262a7019f67fe3c351c30eda940f437758ab6d0d92d151e4b7f0e592d2",
+  "status": "SOURCE_ONLY_UNFORMATTED_UNCOMPILED_UNRUN_NOT_STANDALONE_NOT_READY",
+  "hash_kind_note": "The 40-hex values under commits are Git commit identifiers. 64-hex file/source-review SHA256 values are byte identities, not commits or execution results."
+}

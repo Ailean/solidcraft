@@ -1,0 +1,185 @@
+--- a/crates/engine/src/cmd/sheet.rs
++++ b/crates/engine/src/cmd/sheet.rs
+@@ -479,12 +479,36 @@
+     }
+ }
+ 
++/// The flat-pattern caller's historical whole-circle compatibility bound.
++/// Keep this local: generic Loop2 recognition and DXF path admission stay strict.
++fn loop_circle(lp: &solidcraft_geom::Loop2) -> Option<(Vec2, f64)> {
++    use solidcraft_geom::Seg2;
++    let Some(Seg2::Arc { center, radius, sweep, .. }) = lp.segs.first() else { return None };
++    let total: f64 = lp.segs.iter().filter_map(|s| if let Seg2::Arc { sweep, .. } = s { Some(*sweep) } else { None }).sum();
++    let circular = lp.segs.iter().all(
++        |s| matches!(s, Seg2::Arc { center: c, radius: r, sweep: a, .. } if c.dist(*center) < 1e-9 && (*r - *radius).abs() < 1e-9 && a.signum() == sweep.signum()),
++    );
++    (circular && (total.abs() - std::f64::consts::TAU).abs() < 1e-9).then_some((*center, *radius))
++}
++
++/// Admit through the shared converter before applying this caller's legacy merge.
++/// An invalid piece, style or budget still refuses instead of being hidden by CIRCLE.
++fn flat_loop_shapes(lp: &solidcraft_geom::Loop2, style: solidcraft_io::DxfPathStyle) -> solidcraft_io::Result<Vec<solidcraft_io::DxfShape>> {
++    use solidcraft_io::{DxfPath, DxfShape, path_shapes};
++    let mut shapes = path_shapes(DxfPath::Closed(lp), style)?;
++    if let Some((c, r)) = loop_circle(lp) {
++        shapes.clear();
++        shapes.push(DxfShape::Circle { c, r });
++    }
++    Ok(shapes)
++}
++
+ /// A loop's exact shape for the flat pattern JSON: a circle, or its lines and arcs (other
+ /// curves as point lists at the flat pattern's 0.001 mm tolerance).
+ fn loop_shape(lp: &solidcraft_geom::Loop2) -> Value {
+     use solidcraft_geom::Seg2;
+     let pt = |v: Vec2| json!([v.x, v.y]);
+-    if let Some((center, radius)) = lp.as_circle() {
++    if let Some((center, radius)) = loop_circle(lp) {
+         return json!({"circle": {"center": pt(center), "radius": radius}});
+     }
+     let segments: Vec<Value> = lp
+@@ -654,7 +678,7 @@
+ /// per pocket depth and PERFORATION. Inner contours are written before the outline, so a program
+ /// that follows the file's order cuts inside-out. Free-form curves as `o.curves` says.
+ pub fn flat_dxf(sh: &SheetBody, o: &DxfOptions) -> Result<String> {
+-    use solidcraft_io::{DxfEntity, DxfPath, DxfPathStyle, DxfShape, path_shapes};
++    use solidcraft_io::{DxfEntity, DxfPathStyle, DxfShape};
+     let regions = sh.flat_regions()?;
+     let pockets = sh.machining()?;
+     let letters = sh.letters();
+@@ -728,7 +752,7 @@
+             DxfCurves::Exact => DxfPathStyle::Exact,
+             DxfCurves::Arcs => DxfPathStyle::Arcs { tolerance_mm: solidcraft_kernel::PLANAR_FIT_TOL },
+         };
+-        let shapes = path_shapes(DxfPath::Closed(h), style)
++        let shapes = flat_loop_shapes(h, style)
+             .map_err(|e| EngineError::Other(format!("flat-pattern body {:?}, layer {layer:?}, contour {}: {e}", sh.body, i + 1)))?;
+         entities.extend(shapes.into_iter().map(|shape| DxfEntity { layer: layer.clone(), shape }));
+     }
+--- a/crates/engine/src/cmd/sheet_dxf_tests.rs
++++ b/crates/engine/src/cmd/sheet_dxf_tests.rs
+@@ -909,3 +909,124 @@
+         capture.finish();
+     }
+ }
++
++/// Independent caller-level values for the explicitly reviewed legacy contract.
++/// The generic recognizer and its tests are not relaxed by these flat-pattern rules.
++mod caller_circle_compatibility {
++    use super::*;
++    use solidcraft_geom::Loop2;
++    use solidcraft_io::{DxfPathStyle, DxfShape};
++
++    fn halves(center: Vec2, radius: f64, second_center: Vec2, second_radius: f64) -> Loop2 {
++        Loop2 { segs: vec![
++            Seg2::Arc { center, radius, start: 0.0, sweep: PI },
++            Seg2::Arc { center: second_center, radius: second_radius, start: PI, sweep: PI },
++        ] }
++    }
++    fn styles() -> [DxfPathStyle; 2] {
++        [DxfPathStyle::Exact, DxfPathStyle::Arcs { tolerance_mm: 0.001 }]
++    }
++    fn expect_circle(lp: &Loop2, center: Vec2, radius: f64) {
++        assert_eq!(super::super::loop_circle(lp), Some((center, radius)));
++        let json = super::super::loop_shape(lp);
++        assert_eq!(json["circle"]["center"], json!([center.x, center.y]));
++        assert_eq!(json["circle"]["radius"].as_f64(), Some(radius));
++        for style in styles() {
++            let shapes = super::super::flat_loop_shapes(lp, style).unwrap();
++            assert_eq!(shapes.len(), 1);
++            assert!(matches!(shapes[0], DxfShape::Circle { c, r } if c == center && r == radius), "{style:?}: {shapes:?}");
++        }
++    }
++    fn expect_arcs(lp: &Loop2) {
++        assert!(super::super::loop_circle(lp).is_none());
++        assert!(lp.as_circle().is_none(), "generic recognition must remain strict");
++        let json = super::super::loop_shape(lp);
++        assert!(json.get("circle").is_none());
++        let segments = json["segments"].as_array().unwrap();
++        assert_eq!(segments.len(), lp.segs.len());
++        assert!(segments.iter().all(|s| s.get("arc").is_some()));
++        for style in styles() {
++            let shapes = super::super::flat_loop_shapes(lp, style).unwrap();
++            assert_eq!(shapes.len(), lp.segs.len());
++            assert!(shapes.iter().all(|s| matches!(s, DxfShape::Arc { .. })), "{style:?}: {shapes:?}");
++        }
++    }
++    #[test]
++    fn trimmed_cap_support_witness_is_one_flat_circle_but_not_a_generic_circle() {
++        // Captured source supports from the existing original regression, not new expected output.
++        let center = Vec2::new(25.0, 25.0);
++        let radius = 1.9999999999999987;
++        let second = Vec2::new(24.999999999999996, 25.0);
++        let other_radius = 2.0000000000000004;
++        assert!(center.dist(second) > 0.0 && center.dist(second) < 1e-9);
++        assert!(other_radius > radius && other_radius - radius < 1e-9);
++        let lp = halves(center, radius, second, other_radius);
++        assert!(lp.as_circle().is_none(), "unequal stored supports remain unequal in generic geom");
++        expect_circle(&lp, center, radius);
++    }
++    #[test]
++    fn center_distance_at_and_just_past_bound_keeps_both_arcs() {
++        let center = Vec2::new(0.0, 0.0);
++        let inside = 0.5e-9;
++        expect_circle(&halves(center, 1.0, Vec2::new(inside, 0.0), 1.0), center, 1.0);
++        for offset in [1e-9, f64::from_bits(1e-9_f64.to_bits() + 1)] {
++            let second = Vec2::new(offset, 0.0);
++            assert!(second.dist(center) >= 1e-9);
++            expect_arcs(&halves(center, 1.0, second, 1.0));
++        }
++    }
++    #[test]
++    fn radius_difference_just_past_bound_keeps_both_arcs() {
++        let center = Vec2::new(0.0, 0.0);
++        let radius = 1.0;
++        let inside = radius + 0.5e-9;
++        let outside = f64::from_bits((radius + 1e-9_f64).to_bits() + 1);
++        assert!(inside - radius < 1e-9);
++        assert!(outside - radius > 1e-9);
++        expect_circle(&halves(center, radius, center, inside), center, radius);
++        expect_arcs(&halves(center, radius, center, outside));
++    }
++    #[test]
++    fn angular_sum_just_past_one_turn_bound_keeps_both_arcs() {
++        let center = Vec2::new(0.0, 0.0);
++        let mut inside = halves(center, 1.0, center, 1.0);
++        inside.segs[1] = Seg2::Arc { center, radius: 1.0, start: PI, sweep: PI + 0.5e-9 };
++        expect_circle(&inside, center, 1.0);
++        let total = f64::from_bits((TAU + 1e-9).to_bits() + 1);
++        let second = total - PI;
++        assert!(((PI + second).abs() - TAU).abs() > 1e-9);
++        let outside = Loop2 { segs: vec![
++            Seg2::Arc { center, radius: 1.0, start: 0.0, sweep: PI },
++            Seg2::Arc { center, radius: 1.0, start: PI, sweep: second },
++        ] };
++        expect_arcs(&outside);
++    }
++    #[test]
++    fn double_turn_is_four_arcs_in_both_flat_export_styles() {
++        let center = Vec2::new(0.0, 0.0);
++        let lp = Loop2 { segs: (0..4).map(|i| Seg2::Arc { center, radius: 1.0, start: f64::from(i) * PI, sweep: PI }).collect() };
++        expect_arcs(&lp);
++    }
++    #[test]
++    fn mixed_signs_with_net_one_turn_are_still_four_arcs() {
++        let center = Vec2::new(0.0, 0.0);
++        let lp = Loop2 { segs: [PI, PI, PI, -PI].into_iter().enumerate().map(|(i, sweep)| {
++            Seg2::Arc { center, radius: 1.0, start: i as f64 * PI, sweep }
++        }).collect() };
++        assert_eq!([PI, PI, PI, -PI].iter().sum::<f64>(), TAU);
++        expect_arcs(&lp);
++    }
++    #[test]
++    fn caller_merge_never_bypasses_shared_converter_admission() {
++        let center = Vec2::new(0.0, 0.0);
++        let invalid_start = Loop2 { segs: vec![Seg2::Arc { center, radius: 1.0, start: f64::NAN, sweep: TAU }] };
++        assert!(super::super::loop_circle(&invalid_start).is_some(), "historical helper ignores start; admission must not");
++        for style in styles() { assert!(super::super::flat_loop_shapes(&invalid_start, style).is_err()); }
++        let valid = halves(center, 1.0, center, 1.0);
++        assert!(super::super::flat_loop_shapes(&valid, DxfPathStyle::Arcs { tolerance_mm: f64::NAN }).is_err());
++        // The existing shared path cap stays200000 even if a caller could merge to one entity.
++        let over_budget = Loop2 { segs: vec![Seg2::Arc { center, radius: 1.0, start: 0.0, sweep: TAU / 200001.0 }; 200001] };
++        assert!(super::super::loop_circle(&over_budget).is_some());
++        for style in styles() { assert!(super::super::flat_loop_shapes(&over_budget, style).is_err()); }
++    }
++}

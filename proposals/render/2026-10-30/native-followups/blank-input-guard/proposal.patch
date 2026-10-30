@@ -1,0 +1,332 @@
+--- a/crates/ui-egui/src/render_workspace.rs
++++ b/crates/ui-egui/src/render_workspace.rs
+@@ -1962,35 +1962,41 @@
+     let response = ui.interact(rect, ui.id().with("render_preview"), Sense::click_and_drag());
+     if !environment::ring_input(app, ui, rect, &response) {
+         let input = crate::navigation::handle(app, ui, rect, &response, crate::navigation::NavCaps::RENDER);
+-        let navigating = input.scroll != 0.0
+-            || input.pinch != 1.0
+-            || input.pan != egui::Vec2::ZERO
+-            || input.middle
+-            || input.secondary_down
+-            || (input.primary_nav.is_some() && input.primary_down)
+-            || input.mode.is_some()
+-            || app.viewport.axis_drag.is_some()
+-            || app.viewport.spin
+-            || app.cam_anim.is_some();
+-        let hits = input
+-            .hover
+-            .filter(|_| input.inside && !navigating)
+-            .map(|p| crate::viewport::pick_cached(app, &crate::viewport::projection(app, rect), p))
+-            .unwrap_or_default();
+-        let candidate = assign::candidate(app, &hits, input.mods);
+-        app.viewport.hover = candidate.as_ref().map(|(hit, _)| hit.clone());
+-        let assigning = assign::input(app, ui, &response, candidate.as_ref(), input.inside && !navigating);
+-        if !assigning && input.inside && !navigating {
+-            assign::hover_tooltip(app, &response, candidate.as_ref());
+-        }
+-        if !assigning && response.clicked_by(egui::PointerButton::Primary) && input.inside && !navigating {
+-            let (add, toggle) = crate::tool_modifiers::selection_click(
+-                crate::tool_modifiers::Held::from_modifiers(input.mods),
+-                app.preferences.selection_shift_add_only,
+-            );
+-            crate::viewport::select(app, candidate.as_ref().map(|(_, sel)| sel.clone()), add, toggle);
+-        }
+-        if response.secondary_clicked()
++        // Navigation can invalidate the displayed image in this frame. Observe before
++        // any geometry interaction, and observe again below after visible UI actions.
++        interactive::before_paint(app, ui.ctx());
++        let waiting = interactive::awaiting_current_frame(app);
++        let navigating = input.scroll != 0.0
++            || input.pinch != 1.0
++            || input.pan != egui::Vec2::ZERO
++            || input.middle
++            || input.secondary_down
++            || (input.primary_nav.is_some() && input.primary_down)
++            || input.mode.is_some()
++            || app.viewport.axis_drag.is_some()
++            || app.viewport.spin
++            || app.cam_anim.is_some();
++        let hits = input
++            .hover
++            .filter(|_| input.inside && !navigating && !waiting)
++            .map(|p| crate::viewport::pick_cached(app, &crate::viewport::projection(app, rect), p))
++            .unwrap_or_default();
++        let candidate = assign::candidate(app, &hits, input.mods);
++        app.viewport.hover = candidate.as_ref().map(|(hit, _)| hit.clone());
++        // No target or inside flag while blank; still drain drag release / Escape.
++        let assigning = assign::input(app, ui, &response, candidate.as_ref(), input.inside && !navigating && !waiting);
++        if !waiting && !assigning && input.inside && !navigating {
++            assign::hover_tooltip(app, &response, candidate.as_ref());
++        }
++        if !waiting && !assigning && response.clicked_by(egui::PointerButton::Primary) && input.inside && !navigating {
++            let (add, toggle) = crate::tool_modifiers::selection_click(
++                crate::tool_modifiers::Held::from_modifiers(input.mods),
++                app.preferences.selection_shift_add_only,
++            );
++            crate::viewport::select(app, candidate.as_ref().map(|(_, sel)| sel.clone()), add, toggle);
++        }
++        if !waiting
++            && response.secondary_clicked()
+             && let Some((crate::viewport::Hit::Face { body, .. }, _)) = &candidate
+         {
+             if let Some(candidate) = &candidate {
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -7804,3 +7804,256 @@
+     h.app.run("render.interactive", json!({"action":"off"})).unwrap();
+     assert!(!h.app.render_workspace.interactive.pending());
+ }
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_canvas_input_frame(h: &mut Harness, time: &mut f64, events: Vec<egui::Event>) {
++    *time += 1.0 / 60.0;
++    let mut output = h.ctx.run_ui(
++        egui::RawInput {
++            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0))),
++            time: Some(*time),
++            focused: true,
++            events,
++            ..Default::default()
++        },
++        |ui| show(&mut h.app, ui),
++    );
++    output.textures_delta.clear();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_canvas_input_fixture(case: &str) -> Option<(Harness, f64, egui::Pos2)> {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, case) {
++        return None;
++    }
++    h.app.run("select.filter", json!({"mode":"body"})).unwrap();
++    h.app.run("select.clear", json!({})).unwrap();
++    let scene = solidcraft_engine::product_scene::extract(&h.app.session).unwrap();
++    h.app.cam.fit(&scene.bounds);
++    h.app.preferences.nav = "fusion".into();
++    h.app.preferences.zoom_to_cursor = false;
++    h.app.preferences.smooth_wheel_zoom = false;
++    let mut time = interactive::test_clock(&h.app).as_secs_f64();
++    for _ in 0..3 {
++        interactive_canvas_input_frame(&mut h, &mut time, vec![]);
++    }
++    let rect = h.app.viewport.rect.unwrap();
++    let projection = crate::viewport::projection(&h.app, rect);
++    let at = projection.to_screen(h.app.cam.target).unwrap();
++    assert!(!crate::shell::covered(&h.app, at));
++    assert!(crate::viewport::pick(&h.app, &projection, at).iter().any(|hit| matches!(hit, crate::viewport::Hit::Face { body, .. } if body == "Subject")));
++    interactive_canvas_input_frame(&mut h, &mut time, vec![egui::Event::PointerMoved(at)]);
++    Some((h, time, at))
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn interactive_canvas_input_click(h: &mut Harness, time: &mut f64, at: egui::Pos2, button: egui::PointerButton, mods: egui::Modifiers) {
++    interactive_canvas_input_frame(h, time, vec![egui::Event::ModifiersChanged(mods), egui::Event::PointerMoved(at)]);
++    for pressed in [true, false] {
++        interactive_canvas_input_frame(
++            h,
++            time,
++            vec![egui::Event::PointerButton { pos: at, button, pressed, modifiers: mods }],
++        );
++    }
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_blank_canvas_blocks_hover_selection_and_context_but_off_keeps_real_targets() {
++    let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_blank_canvas_blocks_hover_selection_and_context_but_off_keeps_real_targets") else {
++        return;
++    };
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    let document = h.app.session.doc.clone();
++    let undo = h.app.session.undo.len();
++    for mods in [egui::Modifiers::NONE, egui::Modifiers::SHIFT, egui::Modifiers::CTRL] {
++        interactive_canvas_input_click(&mut h, &mut time, at, egui::PointerButton::Primary, mods);
++        assert!(interactive::awaiting_current_frame(&h.app));
++        assert!(h.app.viewport.hover.is_none(), "hidden geometry cannot advertise a hover target");
++        assert!(h.app.session.selection.is_empty(), "plain/add/toggle clicks cannot select invisible geometry");
++    }
++    interactive_canvas_input_click(&mut h, &mut time, at, egui::PointerButton::Secondary, egui::Modifiers::NONE);
++    assert!(h.app.viewport.context_menu.is_none(), "a right click cannot open a menu for hidden geometry");
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!(h.app.session.undo.len(), undo);
++    assert!(!h.app.render_workspace.interactive.pending(), "show never dispatches a capture");
++
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++    interactive_canvas_input_click(&mut h, &mut time, at, egui::PointerButton::Primary, egui::Modifiers::NONE);
++    assert!(h.app.viewport.hover.is_some(), "the same real hit remains available with Interactive Off");
++    assert!(h.app.session.selection.contains(&solidcraft_engine::Sel::Body { name: "Subject".into() }));
++    interactive_canvas_input_click(&mut h, &mut time, at, egui::PointerButton::Secondary, egui::Modifiers::NONE);
++    assert!(h.app.viewport.context_menu.is_some(), "the same native canvas click still opens the normal body menu");
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_blank_canvas_neither_paints_nor_samples_and_escape_and_off_still_work() {
++    for sampling in [false, true] {
++        let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_blank_canvas_neither_paints_nor_samples_and_escape_and_off_still_work") else {
++            return;
++        };
++        if sampling {
++            h.app.start("appearance.pick_up");
++        } else {
++            assign::arm(&mut h.app, json!({"appearance":"ABS - Blue"})).unwrap();
++        }
++        h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++        let document = h.app.session.doc.clone();
++        let undo = h.app.session.undo.len();
++        let look = h.app.render_workspace.view.assign.look.clone();
++        interactive_canvas_input_click(&mut h, &mut time, at, egui::PointerButton::Primary, egui::Modifiers::NONE);
++        assert!(interactive::awaiting_current_frame(&h.app));
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        assert_eq!(h.app.session.undo.len(), undo);
++        assert_eq!(h.app.render_workspace.view.assign.look, look, "no hidden face is sampled");
++        assert_eq!(h.app.render_workspace.view.assign.sampling, sampling);
++        assert_eq!(h.app.render_workspace.view.assign.painting, !sampling);
++
++        interactive_canvas_input_frame(
++            &mut h,
++            &mut time,
++            vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }],
++        );
++        assert!(!h.app.render_workspace.view.assign.painting && !h.app.render_workspace.view.assign.sampling);
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        interactive_canvas_input_frame(
++            &mut h,
++            &mut time,
++            vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::NONE }],
++        );
++        h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++        if sampling {
++            h.app.start("appearance.pick_up");
++        } else {
++            assign::arm(&mut h.app, json!({"appearance":"ABS - Blue"})).unwrap();
++        }
++        interactive_canvas_input_click(&mut h, &mut time, at, egui::PointerButton::Primary, egui::Modifiers::NONE);
++        if sampling {
++            assert!(!h.app.render_workspace.view.assign.sampling);
++            assert!(h.app.render_workspace.view.assign.painting, "Off permits real sampling to arm paint");
++        } else {
++            assert_eq!(h.app.session.undo.len(), undo + 1);
++            assert_eq!(h.app.session.doc.appearances.bodies.get("Subject").unwrap().name, "ABS - Blue");
++        }
++    }
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_blank_canvas_clears_real_drag_preview_and_release_cannot_apply_hidden_target() {
++    let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_blank_canvas_clears_real_drag_preview_and_release_cannot_apply_hidden_target") else {
++        return;
++    };
++    let document = h.app.session.doc.clone();
++    let undo = h.app.session.undo.len();
++    assign::tile(&mut h.app, json!({"appearance":"ABS - Blue"}), true).unwrap();
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE }],
++    );
++    assert!(assign::preview(&h.app).is_some(), "positive control: real Off drag reached geometry");
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_canvas_input_frame(&mut h, &mut time, vec![egui::Event::PointerMoved(at)]);
++    assert!(interactive::awaiting_current_frame(&h.app));
++    assert!(assign::preview(&h.app).is_none());
++    assert!(assign::hover(&h.app).is_none());
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE }],
++    );
++    assert!(assign::preview(&h.app).is_none());
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!(h.app.session.undo.len(), undo);
++    assert!(!h.app.render_workspace.interactive.pending());
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_current_and_paused_images_keep_canvas_paint_and_final_observation() {
++    for paused in [false, true] {
++        let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_current_and_paused_images_keep_canvas_paint_and_final_observation") else {
++            return;
++        };
++        h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++        let job = interactive_recovery_require_success(&mut h, time + 0.3, time + 0.4);
++        time += 0.4;
++        if paused {
++            h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++        }
++        interactive_canvas_input_click(&mut h, &mut time, at, egui::PointerButton::Primary, egui::Modifiers::NONE);
++        assert!(h.app.session.selection.contains(&solidcraft_engine::Sel::Body { name: "Subject".into() }));
++        assert!(!interactive::awaiting_current_frame(&h.app));
++        assert_eq!(interactive::test_cache(&h.app).unwrap().0.job, job);
++        let undo = h.app.session.undo.len();
++        assign::arm(&mut h.app, json!({"appearance":"ABS - Blue"})).unwrap();
++        interactive_canvas_input_click(&mut h, &mut time, at, egui::PointerButton::Primary, egui::Modifiers::NONE);
++        assert_eq!(h.app.session.undo.len(), undo + 1);
++        assert_eq!(h.app.session.doc.appearances.bodies.get("Subject").unwrap().name, "ABS - Blue");
++        if paused {
++            assert_eq!(interactive::inspect(&h.app)["phase"], "Paused");
++            assert_eq!(interactive::inspect(&h.app)["stale"], true);
++            assert_eq!(interactive::test_cache(&h.app).unwrap().0.job, job);
++            assert!(!interactive::awaiting_current_frame(&h.app));
++        } else {
++            assert!(interactive::test_cache(&h.app).is_none(), "the final observation sees the appearance edit made by this canvas click");
++            assert!(interactive::awaiting_current_frame(&h.app));
++        }
++        assert!(!h.app.render_workspace.interactive.pending());
++        h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++    }
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_canvas_reobserves_pending_edit_before_release_and_navigation_still_updates_camera() {
++    let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_canvas_reobserves_pending_edit_before_release_and_navigation_still_updates_camera") else {
++        return;
++    };
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_recovery_require_success(&mut h, time + 0.3, time + 0.4);
++    time += 0.4;
++    interactive_canvas_input_frame(&mut h, &mut time, vec![egui::Event::PointerMoved(at)]);
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE }],
++    );
++    let visual = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    h.app.render_workspace.view.raytrace.shadows = !h.app.render_workspace.view.raytrace.shadows;
++    assert!(interactive::test_cache(&h.app).is_some(), "before show, old UI state has not yet observed the visible setting edit");
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE }],
++    );
++    assert!(interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap() > visual);
++    assert!(interactive::awaiting_current_frame(&h.app));
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(h.app.session.selection.is_empty(), "the release cannot pick using the previous frame's cache/phase");
++    assert!(h.app.viewport.hover.is_none());
++
++    let camera = h.app.cam;
++    let document = h.app.session.doc.clone();
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![egui::Event::MouseWheel {
++            unit: egui::MouseWheelUnit::Line,
++            delta: egui::vec2(0.0, 3.0),
++            modifiers: egui::Modifiers::NONE,
++            phase: egui::TouchPhase::Move,
++        }],
++    );
++    assert_ne!(h.app.cam, camera, "the waiting guard must not swallow real shared camera navigation");
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert!(interactive::awaiting_current_frame(&h.app));
++    assert!(h.app.viewport.hover.is_none());
++    assert!(!h.app.render_workspace.interactive.pending(), "neither observation dispatches Snapshot");
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}

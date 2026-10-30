@@ -1292,7 +1292,6 @@ mod tests {
     /// At 1° the crease rounds from 0.526 mm: R2 lies 0.076 µm in and R20 0.76 µm, and each
     /// builds, removing 20 · r²(tan(δ/2) − δ/2).
     #[test]
-    #[ignore = "fails until SMLib rounds creases from 0.5° (SmEdge::GetBlendEdgeuse calls an edge within 2° of tangent smooth: SM_ERR_INVALID_INPUT)"]
     fn a_one_degree_crease_rounds_from_the_smallest_radius_named() {
         let (gentle, crease) = roof(0.5);
         let turn = 1f64.to_radians();

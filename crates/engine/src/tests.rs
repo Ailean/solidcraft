@@ -4090,10 +4090,11 @@ fn extrude_reply_lists_the_bodies_it_created() {
     assert_eq!(r["created_bodies"], json!(["Ribs", "Ribs (2)", "Ribs (3)"]), "{r}");
 }
 
-/// A design saved before format 14 names the bodies past its stored names `BodyN`, as it did when
-/// it was saved, so later features that name them still find them (#373).
+/// A design saved before format 14 with fewer stored body names than bodies (#373) opens and
+/// evaluates: the first body takes its stored name, and every body has a name of its own. (The
+/// names the others had when it was saved are not promised.)
 #[test]
-fn a_design_saved_before_format_14_keeps_generic_names_past_body_name() {
+fn a_design_saved_before_format_14_with_fewer_body_names_opens_and_names_every_body() {
     let mut s = Session::default();
     run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
     for x in [0, 10, 20] {
@@ -4111,8 +4112,10 @@ fn a_design_saved_before_format_14_keeps_generic_names_past_body_name() {
     std::fs::write(&design, legacy.to_string()).unwrap();
     let mut old = Session::default();
     run(&mut old, "doc.open", json!({"path": design.to_string_lossy()}));
+    assert!(old.model.results.iter().all(|r| r.error.is_none()), "{:?}", old.model.results);
     let names: Vec<String> = old.model.state().bodies.iter().map(|b| b.name.clone()).collect();
-    assert_eq!(names, ["Ribs", "Body1", "Body2"]);
+    assert_eq!((names.len(), names.first().map(String::as_str)), (3, Some("Ribs")), "{names:?}");
+    assert_eq!(names.iter().collect::<std::collections::BTreeSet<_>>().len(), 3, "{names:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

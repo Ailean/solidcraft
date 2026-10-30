@@ -1,0 +1,15 @@
+# Coherent25-path reviewed A2 source preparation
+
+This is a PRIVATE TEXT COMPOSITION checkpoint saved canonically for review. It has NOT been applied to the working tree, formatted, compiled or run. It is NOT the new protected-work implementation and is NOT feature-complete, ready or a native result.
+
+It combines exact before/candidate bytes for: nested certified fixed-final glass V2 plus Engine command support; two EV/HDR real-worker test additions; seven output-envelope helpers; the independently source-reviewed C13 pinned-action layout correction; A1 film access plus A2 producer V2 preserving the normal full-pass work tick; reviewed host IF1 with two TOTAL preview slots; and receiver V3 aligning Unknown geometry/canvas blocking with actual paint eligibility. The last fix preserves paused/stale Unknown protection while yielding when final priority/error/missing texture hides the image.
+
+Base: first reconstruct the adjacent ../c12-complete-source candidate against its documented production head, then ALL numbered candidate-NN.patch parts in order. Parts end at source-file boundaries and concatenate byte-for-byte to the combined patch SHA in manifest.json. The SHA manifest records every current frozen before image and final composed candidate. This is an ALTERNATIVE to applying the individual incremental proposal patches: never apply overlapping forms twice. The actual source checkpoint remains separate from production PR8938 head.
+
+The25 selected preimages composed exactly, and all3569 shared source files remained unchanged during preparation. That is text/hash evidence, not Rust type/layout/lint/test evidence. Candidate UI declarations224 preserve the215-test prefix then seven descriptor/decoder policies and two visibility regressions. Pure synthetic descriptor/policy tests are explicitly not CPU lifecycle receipts; actual host/producer and earlier EV/HDR/light tests still need the sole builder.
+
+Independent source review found the specific producer tick and receiver hidden-Unknown defects closed in their V2/V3 corrections. The old shared-cap partial policy STILL permits preview work to starve final work. The separate ../protected-feedback-work-policy increment is being implemented privately to address that; this patch intentionally does not pretend it already exists.
+
+Automated UI-through-native-worker acceptance WHILE Refining lacks an exported deterministic real-worker barrier; no fake CPU result or racy sleep/huge-fixture substitute was added. Native mouse/keyboard acceptance on the original detailed scene remains mandatory after a source-bound application build. C13 remains1PASS/1FAIL/51unrun on its earlier source, and the old narrow-card failure never becomes a pass by source review.
+
+Glass remains explicitly opted-in certified fixed-final boxes only; progressive/general glass, normal material-library optics routing, indirect transport and CPU finishing/export enablement remain open. The helper foundation alone does not enable those effects. No skipped GPU/fullCI/quality/readiness claim follows.

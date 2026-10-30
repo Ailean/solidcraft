@@ -1,0 +1,1657 @@
+--- a/crates/render/src/job/linear_exr_decode.rs
++++ b/crates/render/src/job/linear_exr_decode.rs
+@@ -17,13 +17,24 @@
+ impl Decoder {
+     pub(super) fn new(bytes: &[u8], width: u32, height: u32, cancel: &CancelToken) -> Result<Self> {
+         cancel.check()?;
+-        let limit = super::linear_exr::encoded_limit(width, height)?;
+-        let expected = super::linear_exr::header(width, height)?;
++        super::linear_exr::encoded_limit(width, height)?;
++        Self::new_with_limits(bytes, width, height, cancel, super::GPU_PATH_LIMITS)
++    }
++    pub(crate) fn new_with_limits(bytes: &[u8], width: u32, height: u32, cancel: &CancelToken, limits: crate::RenderLimits) -> Result<Self> {
++        cancel.check()?;
++        let limit = super::linear_exr::encoded_limit_with_limits(width, height, limits)?;
++        let count = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
++        super::linear_exr::checked_output_bytes(count, 16, 0, limits)?;
++        super::linear_exr::checked_stage_bytes(count, 16, 4096, limits)?;
++        let expected = if limits == super::GPU_PATH_LIMITS {
++            super::linear_exr::header(width, height)?
++        } else {
++            super::linear_exr::header_with_limits(width, height, limits)?
++        };
+         if bytes.len() as u64 > limit || !bytes.starts_with(&expected) {
+             return Err(invalid("master is not the retained native FLOAT32 linear-sRGB/D65 profile"));
+         }
+-        let first = expected.len() + height as usize * 8;
+-        let length = first + height as usize * (width as usize * 16 + 8);
++        let (first, length) = super::linear_exr::scanline_layout(width, height, expected.len(), limits)?;
+         if bytes.len() != length {
+             return Err(invalid("native master has missing or trailing scanline bytes"));
+         }
+@@ -79,7 +90,8 @@
+     }
+ }
+ fn word(bytes: &[u8], offset: usize) -> Result<u32> {
+-    bytes.get(offset..offset + 4).and_then(|s| s.try_into().ok()).map(u32::from_le_bytes).ok_or_else(|| invalid("truncated native master word"))
++    let end = offset.checked_add(4).ok_or_else(|| invalid("native master word offset overflow"))?;
++    bytes.get(offset..end).and_then(|s| s.try_into().ok()).map(u32::from_le_bytes).ok_or_else(|| invalid("truncated native master word"))
+ }
+ 
+ #[cfg(test)]
+@@ -117,4 +129,22 @@
+         assert!(decoder.step(&bytes, &cancel).is_err());
+         assert_eq!(decoder.rows(), 0);
+     }
++
++    #[test]
++    fn explicit_wide_native_roundtrip_retains_raw_bits_and_legacy_limits() {
++        let wide = super::super::CpuBudget::Workstation.image_limits(false);
++        let raw = vec![[4.0, 1.0, 0.25, 1.0]; 8193];
++        let cancel = CancelToken::default();
++        let mut task = super::super::linear_exr::ExrTask::new_with_limits(8193, 1, raw.clone(), cancel.clone(), wide).unwrap();
++        assert!(task.step(1).unwrap());
++        let (bytes, unchanged) = task.finish().unwrap();
++        assert_eq!(unchanged, raw);
++        assert!(Decoder::new(&bytes, 8193, 1, &cancel).is_err());
++        let mut decoder = Decoder::new_with_limits(&bytes, 8193, 1, &cancel, wide).unwrap();
++        assert!(decoder.step(&bytes, &cancel).unwrap());
++        assert_eq!(decoder.finish().unwrap(), raw);
++        cancel.cancel();
++        assert_eq!(Decoder::new(&[], 0, 0, &cancel).err().unwrap().code, ErrorCode::Cancelled);
++        assert_eq!(Decoder::new_with_limits(&[], 0, 0, &cancel, wide).err().unwrap().code, ErrorCode::Cancelled);
++    }
+ }
+--- a/crates/render/src/job/mod.rs
++++ b/crates/render/src/job/mod.rs
+@@ -44,7 +44,7 @@
+ pub(crate) use host::Reservation;
+ pub use host::{
+     CpuHost, HostKind, ImageHost, JobEnvironmentInfo, JobHandle, JobStatus, LinearAlphaConvention, LinearColourEncoding, LinearMasterInfo,
+-    PreviewInfo, RenderFrame, RenderPreview,
++    PartialPreviewInfo, PartialPreviewProjection, PreviewInfo, RenderFrame, RenderPartialPreview, RenderPreview,
+ };
+ pub use image::{Admission, ImageTask, TaskPoll, admit, admit_geometry, admit_geometry_with_limits};
+ pub use lens::ThinLens;
+@@ -1282,3 +1282,73 @@
+         }
+     }
+ }
++
++/// Fixed representative presentation plan; fitting never grants source admission.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct PartialPreviewPlan {
++    source_width: u32,
++    source_height: u32,
++    width: u32,
++    height: u32,
++}
++impl PartialPreviewPlan {
++    pub fn source_width(&self) -> u32 { self.source_width }
++    pub fn source_height(&self) -> u32 { self.source_height }
++    pub fn width(&self) -> u32 { self.width }
++    pub fn height(&self) -> u32 { self.height }
++    pub fn new(source_width: u32, source_height: u32) -> Result<Self> {
++        if source_width == 0 || source_height == 0 {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview source dimensions must be positive"));
++        }
++        let edge = source_width.max(source_height);
++        let fit = |side: u32| {
++            if edge <= 1024 { side } else { ((u64::from(side) * 1024 + u64::from(edge) / 2) / u64::from(edge)).max(1) as u32 }
++        };
++        Ok(Self { source_width, source_height, width: fit(source_width), height: fit(source_height) })
++    }
++    pub fn validate(&self) -> Result<()> {
++        if *self != Self::new(self.source_width, self.source_height)? {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview dimensions differ from the fixed plan"));
++        }
++        Ok(())
++    }
++    pub fn pixels(&self) -> u64 {
++        u64::from(self.width) * u64::from(self.height)
++    }
++    pub fn source_index(&self, preview_index: usize) -> Result<usize> {
++        self.validate()?;
++        let index = u64::try_from(preview_index).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "partial preview index overflow"))?;
++        if index >= self.pixels() {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview index outside its plan"));
++        }
++        let x = (index % u64::from(self.width)) * u64::from(self.source_width) / u64::from(self.width);
++        let y = (index / u64::from(self.width)) * u64::from(self.source_height) / u64::from(self.height);
++        let source = y.checked_mul(u64::from(self.source_width)).and_then(|v| v.checked_add(x))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial source index overflow"))?;
++        usize::try_from(source).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "partial source index exceeds address space"))
++    }
++    pub fn encoded_limit(&self) -> Result<u64> {
++        self.validate()?;
++        self.pixels().checked_mul(8).and_then(|v| v.checked_add(65_536))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial PNG capacity overflow"))
++    }
++    pub fn covered_bytes(&self) -> Result<u64> {
++        self.validate()?;
++        self.pixels().checked_mul(2).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial coverage capacity overflow"))
++    }
++    pub fn snapshot_work(&self) -> Result<u64> {
++        self.validate()?;
++        self.pixels().checked_mul(12).and_then(|v| v.checked_add(65_538))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial work bound overflow"))
++    }
++    /// Two retained payload slots; existing admitted RGBA/encoder scratch is reused.
++    #[cfg(feature = "raytrace-cpu")]
++    pub(crate) fn additional_bytes(&self) -> Result<u64> {
++        self.slot_bytes()?.checked_mul(2).and_then(|v| v.checked_add(1024))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial preview admission overflow"))
++    }
++    pub(crate) fn slot_bytes(&self) -> Result<u64> {
++        self.encoded_limit()?.checked_add(self.covered_bytes()?).and_then(|v| v.checked_add(2048))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial retained slot overflow"))
++    }
++}
+--- a/crates/render/src/job/photographic.rs
++++ b/crates/render/src/job/photographic.rs
+@@ -98,6 +98,12 @@
+         }
+         count.checked_mul(8).and_then(|n| n.checked_add(16_384)).ok_or_else(|| invalid("photographic scratch size overflow"))
+     }
++    pub(crate) fn scratch_bytes_with_limits(self, width: u32, height: u32, limits: crate::RenderLimits) -> Result<u64> {
++        self.validate()?;
++        let count = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
++        if !self.active() { return Ok(0); }
++        super::linear_exr::checked_stage_bytes(count, 8, 16_384, limits)
++    }
+ }
+ #[derive(Clone, Copy, Debug, Default)]
+ struct Highlight {
+@@ -114,6 +120,22 @@
+ impl PhotographicTask {
+     pub fn new(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken) -> Result<Self> {
+         options.scratch_bytes(width, height)?;
++        Self::create(width, height, source, linear, options, cancel, GPU_PATH_LIMITS)
++    }
++    pub(crate) fn new_with_limits(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
++        options.scratch_bytes_with_limits(width, height, limits)?;
++        cancel.check()?;
++        let count = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
++        if usize::try_from(count).ok() != Some(linear.len()) || linear.len().checked_mul(4) != Some(source.len()) || !options.active() {
++            return Err(invalid("photographic stage requires an admitted opaque image, matching source pixels and an active effect"));
++        }
++        let raw_bytes = super::linear_exr::checked_output_bytes(linear.capacity() as u64, 16, 0, limits)? as u64;
++        let source_bytes = super::linear_exr::checked_output_bytes(source.capacity() as u64, 1, 0, limits)? as u64;
++        let retained = raw_bytes.checked_add(source_bytes).and_then(|n| n.checked_add(16_384)).ok_or_else(|| invalid("photographic retained byte overflow"))?;
++        super::linear_exr::checked_stage_bytes(count, 4, retained, limits)?;
++        Self::create(width, height, source, linear, options, cancel, limits)
++    }
++    fn create(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
+         if std::mem::size_of::<PhotographicState>() > 16_384 {
+             return Err(invalid("photographic metadata exceeds its admitted allowance"));
+         }
+@@ -122,7 +144,7 @@
+         if state.capacity() != 1 {
+             return Err(invalid("photographic state exceeds bounded capacity"));
+         }
+-        state.push(PhotographicState::new(width, height, source, linear, options, cancel)?);
++        state.push(PhotographicState::new(width, height, source, linear, options, cancel, limits)?);
+         Ok(Self { state })
+     }
+     pub fn step(&mut self, units: usize) -> Result<bool> {
+@@ -153,21 +175,23 @@
+     ready: bool,
+ }
+ impl PhotographicState {
+-    pub fn new(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken) -> Result<Self> {
++    pub fn new(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
+         options.validate()?;
+         cancel.check()?;
+         let count = u64::from(width) * u64::from(height);
+         if width == 0
+             || height == 0
+-            || u64::from(width) > GPU_PATH_LIMITS.max_dimension
+-            || u64::from(height) > GPU_PATH_LIMITS.max_dimension
+-            || count > GPU_PATH_LIMITS.max_pixels
++            || super::linear_exr::output_pixels_with_limits(width, height, limits).is_err()
+             || usize::try_from(count).ok() != Some(linear.len())
+             || linear.len().checked_mul(4) != Some(source.len())
+             || !options.active()
+         {
+             return Err(invalid("photographic stage requires an admitted opaque image, matching source pixels and an active effect"));
+         }
++        let raw_bytes = super::linear_exr::checked_output_bytes(linear.capacity() as u64, 16, 0, limits)? as u64;
++        let source_bytes = super::linear_exr::checked_output_bytes(source.capacity() as u64, 1, 0, limits)? as u64;
++        let retained = raw_bytes.checked_add(source_bytes).and_then(|n| n.checked_add(16_384)).ok_or_else(|| invalid("photographic retained byte overflow"))?;
++        super::linear_exr::checked_stage_bytes(count, 4, retained, limits)?;
+         let mut output = Vec::new();
+         output.try_reserve_exact(source.len()).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "photographic output allocation failed"))?;
+         if output.capacity() != source.len() {
+@@ -449,4 +473,35 @@
+         assert!(task.step(1).is_err());
+         assert!(serde_json::from_str::<Photographic>(r#"{"physical_lens":true}"#).is_err());
+     }
+-}
++
++    #[test]
++    fn explicit_wide_photographic_keeps_constants_and_legacy_refusal() {
++        let wide = super::super::CpuBudget::Workstation.image_limits(false);
++        let options = Photographic { radial_distortion: 0.1, chromatic_pixels: 2.0, soft_focus: 0.3, sharpening: 0.2, ..Default::default() };
++        assert!(PhotographicTask::new(8193, 1, vec![], vec![], options, CancelToken::default()).is_err());
++        let rgba = [128, 128, 128, 255].repeat(8193);
++        let mut task = PhotographicTask::new_with_limits(8193, 1, rgba.clone(), vec![[0.25, 0.25, 0.25, 1.0]; 8193], options, CancelToken::default(), wide).unwrap();
++        while !task.step(256).unwrap() {}
++        assert_eq!(task.finish().unwrap(), rgba);
++        let cancel = CancelToken::default(); cancel.cancel();
++        assert_eq!(Photographic::default().scratch_bytes(0, u32::MAX).unwrap(), 0);
++        assert_eq!(PhotographicTask::new(0, 1, vec![], vec![], options, cancel.clone()).err().unwrap().code, ErrorCode::InvalidRequest);
++        assert_eq!(PhotographicTask::new(0, 1, vec![], vec![], Photographic::default(), cancel).err().unwrap().code, ErrorCode::Cancelled);
++    }
++
++    #[test]
++    fn explicit_gpu_photographic_matches_legacy_and_cancel_never_finishes() {
++        let options = Photographic { grain: 0.03, seed: 37, ..Default::default() };
++        let rgba = [64, 128, 192, 255].repeat(6);
++        let linear = vec![[0.1, 0.5, 2.0, 1.0]; 6];
++        let mut legacy = PhotographicTask::new(3, 2, rgba.clone(), linear.clone(), options, CancelToken::default()).unwrap();
++        let mut explicit = PhotographicTask::new_with_limits(3, 2, rgba.clone(), linear.clone(), options, CancelToken::default(), GPU_PATH_LIMITS).unwrap();
++        while !legacy.step(1).unwrap() {} while !explicit.step(16).unwrap() {}
++        assert_eq!(legacy.finish().unwrap(), explicit.finish().unwrap());
++        let cancel = CancelToken::default();
++        let mut task = PhotographicTask::new_with_limits(3, 2, rgba, linear, options, cancel.clone(), GPU_PATH_LIMITS).unwrap();
++        cancel.cancel();
++        assert_eq!(task.step(1).unwrap_err().code, ErrorCode::Cancelled);
++        assert_eq!(task.finish().err().unwrap().code, ErrorCode::Cancelled);
++    }
++}
+--- a/crates/render/src/job/png.rs
++++ b/crates/render/src/job/png.rs
+@@ -51,8 +51,20 @@
+             return Err(JobError::new(ErrorCode::InvalidRequest, "invalid PNG dimensions or RGBA length"));
+         }
+         cancel.check()?;
++        Self::new_with_limits(request, rgba, cancel, super::GPU_PATH_LIMITS)
++    }
++    pub(crate) fn new_with_limits(request: &ImageRequest, rgba: Vec<u8>, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
++        let pixels = super::linear_exr::output_pixels_with_limits(request.width, request.height, limits)?;
++        let rgba_bytes = super::linear_exr::checked_output_bytes(pixels, 4, 0, limits)?;
++        if rgba.len() != rgba_bytes {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "invalid PNG dimensions or RGBA length"));
++        }
++        let limit = super::linear_exr::checked_output_bytes(pixels, 8, 65_536, limits)?;
++        let retained = super::linear_exr::checked_output_bytes(rgba.capacity() as u64, 1, 0, limits)? as u64;
++        super::linear_exr::checked_stage_bytes(1, retained, limit as u64, limits)?;
++        cancel.check()?;
+         let bytes = Arc::new(Mutex::new(Vec::new()));
+-        let output = Output { bytes: bytes.clone(), limit: (pixels * 8 + 65_536) as usize, cancel: cancel.clone() };
++        let output = Output { bytes: bytes.clone(), limit, cancel: cancel.clone() };
+         let mut encoder = png::Encoder::new(output, request.width, request.height);
+         encoder.set_color(png::ColorType::Rgba);
+         encoder.set_depth(png::BitDepth::Eight);
+@@ -85,3 +97,43 @@
+         Ok(TaskPoll::Complete(std::mem::take(&mut *bytes)))
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn request(width: u32, height: u32) -> ImageRequest {
++        ImageRequest { width, height, camera: Default::default(), integrator: Default::default(), raytrace: None,
++            environment: None, textures: None, studio_weights: None, background: [0; 3], transparent_background: false }
++    }
++    fn finish(mut task: PngTask) -> Vec<u8> {
++        loop { if let TaskPoll::Complete(bytes) = task.step(1).unwrap() { return bytes; } }
++    }
++
++    #[test]
++    fn explicit_png_keeps_default_bytes_and_roundtrips_a_narrow_wide_image() {
++        let small = request(3, 2); let rgba = [20, 40, 60, 255].repeat(6);
++        let legacy = finish(PngTask::new(&small, rgba.clone(), CancelToken::default()).unwrap());
++        let explicit = finish(PngTask::new_with_limits(&small, rgba, CancelToken::default(), super::super::GPU_PATH_LIMITS).unwrap());
++        assert_eq!(explicit, legacy);
++        let wide = request(8193, 1); let rgba = [20, 40, 60, 255].repeat(8193);
++        assert!(PngTask::new(&wide, vec![], CancelToken::default()).is_err());
++        let png = finish(PngTask::new_with_limits(&wide, rgba.clone(), CancelToken::default(), super::super::CpuBudget::Workstation.image_limits(false)).unwrap());
++        let decoded = image::load_from_memory(&png).unwrap().to_rgba8();
++        assert_eq!(decoded.dimensions(), (8193, 1));
++        assert_eq!(decoded.as_raw(), &rgba);
++    }
++
++    #[test]
++    fn png_dimension_length_and_cancel_precedence_remains_legacy() {
++        let cancel = CancelToken::default(); cancel.cancel();
++        assert_eq!(PngTask::new(&request(0, 1), vec![], cancel.clone()).err().unwrap().code, ErrorCode::InvalidRequest);
++        assert_eq!(PngTask::new(&request(1, 1), vec![], cancel.clone()).err().unwrap().code, ErrorCode::InvalidRequest);
++        assert_eq!(PngTask::new(&request(1, 1), vec![0; 4], cancel.clone()).err().unwrap().code, ErrorCode::Cancelled);
++        let bad = crate::RenderLimits { max_scratch_bytes: u64::MAX, ..super::super::GPU_PATH_LIMITS };
++        assert!(PngTask::new_with_limits(&request(1, 1), vec![0; 4], CancelToken::default(), bad).is_err());
++        let cancel = CancelToken::default();
++        let mut task = PngTask::new_with_limits(&request(1, 1), vec![0; 4], cancel.clone(), super::super::GPU_PATH_LIMITS).unwrap();
++        cancel.cancel(); assert_eq!(task.step(1).err().unwrap().code, ErrorCode::Cancelled);
++    }
++}
+--- a/crates/render/src/job/presentation.rs
++++ b/crates/render/src/job/presentation.rs
+@@ -45,6 +45,11 @@
+     pub fn display(self, width: u32, height: u32) -> Result<Display> {
+         self.validate()?;
+         super::linear_exr::encoded_limit(width, height)?;
++        self.display_with_limits(width, height, super::GPU_PATH_LIMITS)
++    }
++    pub(crate) fn display_with_limits(self, width: u32, height: u32, limits: crate::RenderLimits) -> Result<Display> {
++        self.validate()?;
++        super::linear_exr::output_pixels_with_limits(width, height, limits)?;
+         Ok(Display {
+             width,
+             height,
+@@ -97,6 +102,19 @@
+             return Err(JobError::new(ErrorCode::InvalidRequest, "bloom/display length mismatch"));
+         }
+         super::linear_exr::encoded_limit(self.width, self.height)?;
++        self.encode_bloom_at_with_limits(input, output, cancel, offset, bloom, super::GPU_PATH_LIMITS)
++    }
++    pub(crate) fn encode_bloom_at_with_limits(
++        self, input: &[[f32; 4]], output: &mut [u8], cancel: &CancelToken,
++        offset: usize, bloom: Option<&[[f32; 3]]>, limits: crate::RenderLimits,
++    ) -> Result<()> {
++        if bloom.is_some_and(|pixels| pixels.len() != input.len()) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "bloom/display length mismatch"));
++        }
++        let count = super::linear_exr::output_pixels_with_limits(self.width, self.height, limits)?;
++        super::linear_exr::checked_output_bytes(count, 16, 0, limits)?;
++        super::linear_exr::checked_output_bytes(count, 4, 0, limits)?;
++        if bloom.is_some() { super::linear_exr::checked_output_bytes(count, 12, 0, limits)?; }
+         self.finishing.validate()?;
+         if let Some(backdrop) = self.backdrop {
+             backdrop.validate()?;
+@@ -143,3 +161,49 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn raw_radiance_ev_and_coverage_have_independent_analytic_display_oracles() {
++        let raw = [[4.0, 1.0, 0.25, 1.0], [2.0, 0.5, 0.125, 0.5]];
++        let before = raw.map(|pixel| pixel.map(f32::to_bits));
++        let display = Presentation { exposure_ev: 1.0, background: [0; 3], ..Default::default() }.display(2, 1).unwrap();
++        let mut output = [0; 8];
++        display.encode(&raw, &mut output, &CancelToken::default()).unwrap();
++        let opaque = [8.0 / 9.0, 2.0 / 3.0, 1.0 / 3.0].map(solidcraft_geom::srgb::encode8);
++        let covered = [4.0 / 9.0, 1.0 / 3.0, 1.0 / 6.0].map(solidcraft_geom::srgb::encode8);
++        assert_eq!(&output[..4], &[opaque[0], opaque[1], opaque[2], 255]);
++        assert_eq!(&output[4..], &[covered[0], covered[1], covered[2], 255]);
++        assert_eq!(raw.map(|pixel| pixel.map(f32::to_bits)), before);
++    }
++
++    #[test]
++    fn wide_display_requires_explicit_policy_on_both_calls_without_allocating_a_frame() {
++        let wide = super::super::CpuBudget::Workstation.image_limits(false);
++        assert!(Presentation::default().display(8193, 1).is_err());
++        let display = Presentation::default().display_with_limits(8193, 1, wide).unwrap();
++        let mut output = [0; 4];
++        let raw = [[1.0, 0.0, 0.0, 1.0]];
++        assert!(display.encode_at(&raw, &mut output, &CancelToken::default(), 8192).is_err());
++        display.encode_bloom_at_with_limits(&raw, &mut output, &CancelToken::default(), 8192, None, wide).unwrap();
++        assert_eq!(output, [solidcraft_geom::srgb::encode8(0.5), 0, 0, 255]);
++        assert!(display.encode_bloom_at_with_limits(&raw, &mut output, &CancelToken::default(), 8193, None, wide).is_err());
++    }
++
++    #[test]
++    fn explicit_gpu_display_matches_legacy_and_preserves_validation_before_cancel() {
++        let display = Presentation { exposure_ev: -1.0, ..Default::default() }.display(3, 2).unwrap();
++        let input = [[0.125, 2.0, 0.5, 1.0]; 6];
++        let mut legacy = [0; 24];
++        let mut explicit = [0; 24];
++        display.encode(&input, &mut legacy, &CancelToken::default()).unwrap();
++        display.encode_bloom_at_with_limits(&input, &mut explicit, &CancelToken::default(), 0, None, super::super::GPU_PATH_LIMITS).unwrap();
++        assert_eq!(explicit, legacy);
++        let cancel = CancelToken::default(); cancel.cancel();
++        assert_eq!(display.encode(&[], &mut explicit, &cancel).unwrap_err().code, ErrorCode::InvalidRequest);
++        assert_eq!(display.encode(&input, &mut explicit, &cancel).unwrap_err().code, ErrorCode::Cancelled);
++    }
++}
+--- a/crates/render/src/job/regrade.rs
++++ b/crates/render/src/job/regrade.rs
+@@ -7,19 +7,29 @@
+ pub(super) fn required_bytes(source: &RenderFrame, settings: Presentation) -> Result<u64> {
+     settings.validate()?;
+     super::linear_exr::encoded_limit(source.info.width, source.info.height)?;
++    required_bytes_with_limits(source, settings, super::GPU_PATH_LIMITS)
++}
++
++pub(crate) fn required_bytes_with_limits(source: &RenderFrame, settings: Presentation, limits: crate::RenderLimits) -> Result<u64> {
++    settings.validate()?;
++    super::linear_exr::encoded_limit_with_limits(source.info.width, source.info.height, limits)?;
+     if source.linear_exr().is_none() {
+         return Err(JobError::new(ErrorCode::InvalidRequest, "this completed frame has no retained raw linear master"));
+     }
+-    // Includes decoded float4, bloom ping/pong float3 or display bytes, bounded
+-    // PNG output and codec/header/task metadata. The source keeps its own lease.
+-    Ok(u64::from(source.info.width) * u64::from(source.info.height) * 48
+-        + 1_048_576
+-        + settings.finishing.photographic.scratch_bytes(source.info.width, source.info.height)?)
++    output_bytes(source.info.width, source.info.height, settings, limits)
++}
++
++fn output_bytes(width: u32, height: u32, settings: Presentation, limits: crate::RenderLimits) -> Result<u64> {
++    let pixels = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
++    let photo = settings.finishing.photographic.scratch_bytes_with_limits(width, height, limits)?;
++    let extra = photo.checked_add(1_048_576).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "regrade byte estimate overflow"))?;
++    super::linear_exr::checked_stage_bytes(pixels, 48, extra, limits)
+ }
+ 
+ pub(super) struct RegradeTask {
+     source: Arc<RenderFrame>,
+     settings: Presentation,
++    limits: crate::RenderLimits,
+     cancel: CancelToken,
+     decoder: Option<Decoder>,
+     bloom: Option<BloomTask>,
+@@ -33,11 +43,20 @@
+ impl RegradeTask {
+     pub(super) fn new(source: Arc<RenderFrame>, settings: Presentation, cancel: CancelToken) -> Result<Self> {
+         required_bytes(&source, settings)?;
++        Self::new_with_limits(source, settings, cancel, super::GPU_PATH_LIMITS)
++    }
++    pub(crate) fn new_with_limits(source: Arc<RenderFrame>, settings: Presentation, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
++        required_bytes_with_limits(&source, settings, limits)?;
+         let raw = source.linear_exr().ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "linear master disappeared"))?;
+-        let decoder = Decoder::new(raw, source.info.width, source.info.height, &cancel)?;
++        let decoder = if limits == super::GPU_PATH_LIMITS {
++            Decoder::new(raw, source.info.width, source.info.height, &cancel)?
++        } else {
++            Decoder::new_with_limits(raw, source.info.width, source.info.height, &cancel, limits)?
++        };
+         Ok(Self {
+             source,
+             settings,
++            limits,
+             cancel,
+             decoder: Some(decoder),
+             bloom: None,
+@@ -81,7 +100,7 @@
+                 background: self.settings.background,
+                 transparent_background: self.settings.transparent_background,
+             };
+-            self.png = Some(PngTask::new(&request, task.finish()?, self.cancel.clone())?);
++            self.png = Some(PngTask::new_with_limits(&request, task.finish()?, self.cancel.clone(), self.limits)?);
+             return self.pending(0, u64::from(height));
+         }
+         if let Some(mut decoder) = self.decoder.take() {
+@@ -93,7 +112,7 @@
+             }
+             let pixels = decoder.finish()?;
+             if let Some(bloom) = self.settings.finishing.bloom.filter(|b| b.active()) {
+-                self.bloom = Some(BloomTask::new(width, height, pixels, bloom, self.cancel.clone())?);
++                self.bloom = Some(BloomTask::new_with_limits(width, height, pixels, bloom, self.cancel.clone(), self.limits)?);
+                 return self.pending(0, u64::from(height) * 7);
+             }
+             self.linear = Some(pixels);
+@@ -124,7 +143,8 @@
+             .ok_or_else(|| JobError::new(ErrorCode::Internal, "missing regrade pixels"))?;
+         let output = self.rgba.get_mut(self.encoded * 4..end * 4).ok_or_else(|| JobError::new(ErrorCode::Internal, "missing regrade output"))?;
+         let glow = self.glow.as_deref().and_then(|g| g.get(self.encoded..end));
+-        self.settings.display(width, height)?.encode_bloom_at(pixels, output, &self.cancel, self.encoded, glow)?;
++        self.settings.display_with_limits(width, height, self.limits)?
++            .encode_bloom_at_with_limits(pixels, output, &self.cancel, self.encoded, glow, self.limits)?;
+         self.encoded = end;
+         if end < count {
+             return self.pending(end as u64, count as u64);
+@@ -132,13 +152,14 @@
+         self.glow = None;
+         if self.settings.finishing.photographic.active() {
+             let pixels = self.linear.take().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing photographic master pixels"))?;
+-            self.photographic = Some(super::photographic::PhotographicTask::new(
++            self.photographic = Some(super::photographic::PhotographicTask::new_with_limits(
+                 width,
+                 height,
+                 std::mem::take(&mut self.rgba),
+                 pixels,
+                 self.settings.finishing.photographic,
+                 self.cancel.clone(),
++                self.limits,
+             )?);
+             return self.pending(0, u64::from(width) * u64::from(height));
+         }
+@@ -155,7 +176,22 @@
+             background: self.settings.background,
+             transparent_background: self.settings.transparent_background,
+         };
+-        self.png = Some(PngTask::new(&request, std::mem::take(&mut self.rgba), self.cancel.clone())?);
++        self.png = Some(PngTask::new_with_limits(&request, std::mem::take(&mut self.rgba), self.cancel.clone(), self.limits)?);
+         self.pending(0, u64::from(height))
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn regrade_size_estimate_is_explicit_checked_and_does_not_grant_a_lease() {
++        let wide = super::super::CpuBudget::Workstation.image_limits(false);
++        assert_eq!(output_bytes(8193, 1, Presentation::default(), wide).unwrap(), 8193 * 48 + 1_048_576);
++        assert!(output_bytes(8193, 1, Presentation::default(), super::super::GPU_PATH_LIMITS).is_err());
++        assert!(output_bytes(u32::MAX, u32::MAX, Presentation::default(), wide).is_err());
++        assert!(output_bytes(1, 1, Presentation::default(), crate::RenderLimits { max_scratch_bytes: u64::MAX, ..wide }).is_err());
++        assert!(output_bytes(1, 1, Presentation::default(), crate::RenderLimits { max_scratch_bytes: 1_048_576, ..wide }).is_err());
++    }
++}
+--- a/crates/render/src/raytrace/dielectric.rs
++++ b/crates/render/src/raytrace/dielectric.rs
+@@ -241,6 +241,160 @@
+     lo.x <= hi.x && lo.y <= hi.y && lo.z <= hi.z
+ }
+ 
++/// Immediate parents of already-certified axis-aligned boxes. Strict containment
++/// is sufficient for this exact box subset; touching and partial overlap refuse.
++/// Eight overrides bound this to at most 64 comparisons, without allocation.
++pub(super) fn parents(
++    certificates: &[Option<Certificate>; MAX_OVERRIDES],
++    nested: bool,
++) -> Result<[Option<usize>; MAX_OVERRIDES]> {
++    let mut result = [None; MAX_OVERRIDES];
++    for (child, certificate) in certificates.iter().enumerate() {
++        let Some(Certificate::ClosedBox(bounds)) = certificate else { continue };
++        for (candidate, certificate) in certificates.iter().enumerate() {
++            let Some(Certificate::ClosedBox(container)) = certificate else { continue };
++            if candidate == child || !overlaps(*bounds, *container) {
++                continue;
++            }
++            if !nested {
++                return Err(TraceError::InvalidInput("nested, touching or overlapping dielectric volumes are unsupported"));
++            }
++            if strictly_contains(*container, *bounds) {
++                let parent = result.get_mut(child).ok_or(TraceError::Internal("dielectric child index"))?;
++                let replace = match *parent {
++                    None => true,
++                    Some(previous) => match certificates.get(previous).copied().flatten() {
++                        Some(Certificate::ClosedBox(old)) => strictly_contains(old, *container),
++                        _ => return Err(TraceError::Internal("dielectric parent certificate")),
++                    },
++                };
++                if replace {
++                    *parent = Some(candidate);
++                }
++            } else if !strictly_contains(*bounds, *container) {
++                return Err(TraceError::InvalidInput("dielectric boxes must be disjoint or strictly nested; touching and overlap are unsupported"));
++            }
++        }
++    }
++    Ok(result)
++}
++
++fn strictly_contains(outer: Bounds, inner: Bounds) -> bool {
++    let lo = outer.min();
++    let hi = outer.max();
++    let a = inner.min();
++    let b = inner.max();
++    lo.x < a.x && lo.y < a.y && lo.z < a.z && hi.x > b.x && hi.y > b.y && hi.z > b.z
++}
++
++/// A certified axis-aligned face point, shared by propagation and Beer intervals.
++/// This is used only by the explicit nested-box path, never by general spawn.
++#[derive(Clone, Copy)]
++pub(super) struct ExactBoxFace {
++    pub point: Vec3,
++    axis: usize,
++    outward: f64,
++    entering: bool,
++}
++
++impl ExactBoxFace {
++    pub fn spawn(self, direction: Vec3, reflected: bool) -> Result<super::Ray> {
++        let ray = super::Ray::new(self.point, direction, 0.0_f64.next_up(), super::MAX_DISTANCE_MM)?;
++        let side = super::component(ray.direction(), self.axis) * self.outward;
++        let exterior = if reflected { self.entering } else { !self.entering };
++        if (exterior && side <= 0.0) || (!exterior && side >= 0.0) {
++            return Err(TraceError::InvalidInput("nested box continuation is tangent or on the wrong side"));
++        }
++        Ok(ray)
++    }
++}
++
++/// Recover the exact constant-axis coordinate from the actual certified face.
++/// Tangential coordinates are validated, never clamped or displaced. Equal
++/// ray/other-face depths conservatively refuse independently of ordinal ties.
++pub(super) fn exact_box_face(
++    bounds: Bounds,
++    vertices: [Vec3; 3],
++    normal: Vec3,
++    position: Vec3,
++    incoming: super::Ray,
++) -> Result<ExactBoxFace> {
++    let mut face = None;
++    for axis in 0..3 {
++        let [a, b, c] = vertices.map(|v| super::component(v, axis));
++        if a == b && b == c {
++            if face.is_some() {
++                return Err(TraceError::InvalidInput("nested box face has ambiguous constant axes"));
++            }
++            face = Some((axis, a));
++        }
++    }
++    let (axis, plane) = face.ok_or(TraceError::InvalidInput("nested box face is not axis aligned"))?;
++    let lo = bounds.min();
++    let hi = bounds.max();
++    let outward = if plane == super::component(lo, axis) {
++        -1.0
++    } else if plane == super::component(hi, axis) {
++        1.0
++    } else {
++        return Err(TraceError::InvalidInput("nested box face disagrees with its certificate"));
++    };
++    let axis_vector = match axis {
++        0 => Vec3::X,
++        1 => Vec3::Y,
++        2 => Vec3::Z,
++        _ => return Err(TraceError::Internal("nested box face axis")),
++    };
++    if normal != axis_vector * outward || Triangle::new(vertices)?.geometric_normal() != Some(normal) {
++        return Err(TraceError::InvalidInput("nested box outward normal disagrees with its certified face"));
++    }
++    for vertex in vertices {
++        for a in 0..3 {
++            let coordinate = super::component(vertex, a);
++            if coordinate != super::component(lo, a) && coordinate != super::component(hi, a) {
++                return Err(TraceError::InvalidInput("nested box face vertex is not a certified corner"));
++            }
++        }
++    }
++    let point = match axis {
++        0 => Vec3::new(plane, position.y, position.z),
++        1 => Vec3::new(position.x, plane, position.z),
++        2 => Vec3::new(position.x, position.y, plane),
++        _ => return Err(TraceError::Internal("nested box point axis")),
++    };
++    if !point.is_finite() {
++        return Err(TraceError::InvalidInput("nested box reconstructed point is not finite"));
++    }
++    let direction = super::component(incoming.direction(), axis);
++    if direction == 0.0 {
++        return Err(TraceError::InvalidInput("nested box incident ray is tangent"));
++    }
++    let depth = (plane - super::component(incoming.origin(), axis)) / direction;
++    let [min, max] = incoming.interval();
++    if !depth.is_finite() || depth < min || depth > max {
++        return Err(TraceError::InvalidInput("nested box face is outside the incident ray interval"));
++    }
++    for a in 0..3 {
++        if a == axis {
++            continue;
++        }
++        let coordinate = super::component(point, a);
++        if coordinate <= super::component(lo, a) || coordinate >= super::component(hi, a) {
++            return Err(TraceError::InvalidInput("nested box edge, corner or outside-face point is ambiguous"));
++        }
++        let d = super::component(incoming.direction(), a);
++        if d != 0.0 {
++            for plane in [super::component(lo, a), super::component(hi, a)] {
++                let other = (plane - super::component(incoming.origin(), a)) / d;
++                if other == depth {
++                    return Err(TraceError::InvalidInput("nested box simultaneous face depths are ambiguous"));
++                }
++            }
++        }
++    }
++    Ok(ExactBoxFace { point, axis, outward, entering: direction * outward < 0.0 })
++}
++
+ #[cfg(test)]
+ #[path = "dielectric_tests.rs"]
+ pub(super) mod tests;
+--- a/crates/render/src/raytrace/dielectric_tests.rs
++++ b/crates/render/src/raytrace/dielectric_tests.rs
+@@ -514,3 +514,212 @@
+     // maps to 98, so this also detects a consumer still using the old series.
+     assert_eq!(pixel.expect("Brewster sheet fixture must finish"), [95, 95, 95, 255]);
+ }
++
++#[test]
++fn strict_box_parent_selection_is_order_independent_and_opt_in() {
++    let bounds = |lo: f64, hi: f64| Bounds::new(Vec3::new(lo, lo, lo), Vec3::new(hi, hi, hi)).unwrap();
++    let mut certificates = [None; MAX_OVERRIDES];
++    certificates[0] = Some(Certificate::ClosedBox(bounds(2.0, 3.0)));
++    certificates[1] = Some(Certificate::ClosedBox(bounds(0.0, 5.0)));
++    certificates[2] = Some(Certificate::ClosedBox(bounds(1.0, 4.0)));
++    assert!(parents(&certificates, false).is_err());
++    assert_eq!(parents(&certificates, true).unwrap(), [Some(2), None, Some(1), None, None, None, None, None]);
++    certificates.swap(0, 1);
++    assert_eq!(parents(&certificates, true).unwrap(), [None, Some(2), Some(0), None, None, None, None, None]);
++}
++
++#[test]
++fn nesting_opt_in_still_refuses_touching_equal_and_partially_overlapping_boxes() {
++    let outer = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)).unwrap();
++    for (lo, hi) in [
++        (Vec3::new(0.0, 1.0, 1.0), Vec3::new(3.0, 3.0, 3.0)),
++        (Vec3::new(4.0, 1.0, 1.0), Vec3::new(5.0, 3.0, 3.0)),
++        (Vec3::new(4.0, 4.0, 1.0), Vec3::new(5.0, 5.0, 3.0)),
++        (Vec3::new(4.0, 4.0, 4.0), Vec3::new(5.0, 5.0, 5.0)),
++        (Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)),
++        (Vec3::new(3.0, 1.0, 1.0), Vec3::new(5.0, 3.0, 3.0)),
++    ] {
++        let mut certificates = [None; MAX_OVERRIDES];
++        certificates[0] = Some(Certificate::ClosedBox(outer));
++        certificates[1] = Some(Certificate::ClosedBox(Bounds::new(lo, hi).unwrap()));
++        assert!(parents(&certificates, true).is_err());
++    }
++}
++
++pub(in crate::raytrace) fn nested_fixture(reverse: bool) -> (ProductScene, RaytraceOptions) {
++    let mut outer = box_body(4.0);
++    outer.name = "Outer".into();
++    let mut inner = box_body(2.0);
++    inner.name = "Inner".into();
++    for p in &mut Arc::make_mut(&mut inner.mesh).positions {
++        *p = Vec3::new(p.x * 0.5, p.y * 0.5, p.z + 1.0);
++    }
++    let mut scene = scene(outer);
++    scene.meshes.push(inner);
++    if reverse {
++        scene.meshes.reverse();
++    }
++    let dielectrics = scene.meshes.iter().enumerate().map(|(body_index, body)| DielectricOptions {
++        body_index,
++        body_name: body.name.clone(),
++        boundary: DielectricBoundary::ClosedBox,
++        ior: 1.0,
++        absorption_per_mm: if body.name == "Outer" { [0.1, 0.2, 0.0] } else { [0.3, 0.4, 0.0] },
++        thickness_mm: 0.0,
++    }).collect();
++    (scene, RaytraceOptions {
++        dielectrics,
++        environment: environment(),
++        lights: Some(Vec::new()),
++        shadows: false,
++        ..Default::default()
++    })
++}
++
++#[test]
++fn actual_nested_png_uses_parent_only_outside_the_inner_interval() {
++    for reverse in [false, true] {
++        let (scene, options) = nested_fixture(reverse);
++        assert!(super::super::image::admit(&scene, &request(options.clone()), &options).is_err());
++        let mut task = super::super::image::ImageTask::new_with_environment_and_nested(
++            scene, request(options.clone()), CancelToken::default(), options, None, true,
++        ).unwrap();
++        let mut completed = false;
++        for _ in 0..100_000 {
++            if let TaskPoll::Complete(png) = task.step(16384).unwrap() {
++                let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
++                // Outer length2, inner length2; Beer radiance (exp(-.8), exp(-1.2), 1).
++                // Reinhard then IEC sRGB encoding gives these independently fixed bytes.
++                assert_eq!(image.get_pixel(0, 0).0, [151, 132, 188, 255]);
++                completed = true;
++                break;
++            }
++        }
++        assert!(completed, "nested final image did not complete");
++    }
++}
++
++#[test]
++fn nested_opt_in_does_not_enable_dielectric_progressive_or_interactive() {
++    let (_, mut options) = nested_fixture(false);
++    options.progressive = Some(Default::default());
++    assert!(options.validate().is_err());
++    let (_, options) = nested_fixture(false);
++    assert!(crate::job::interactive::cpu_request(&request(options)).is_err());
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn native_host_forwards_only_the_existing_nested_media_exception() {
++    use crate::job::{CpuHost, ErrorCode, JobId, JobOptions, Phase};
++    let host = CpuHost::for_platform().unwrap();
++    let (scene, options) = nested_fixture(false);
++    let request = request(options);
++    let nested = JobOptions { nested_media: true, ..Default::default() };
++    assert!(host.admit(&scene, &request, JobOptions::default()).is_err());
++    assert!(host.admit(&scene, &request, nested).is_ok());
++    for bad in [
++        JobOptions { samples: 2, ..nested },
++        JobOptions { max_depth: 2, ..nested },
++        JobOptions { seed: 7, ..nested },
++        JobOptions { exposure_ev: 1.0, ..nested },
++        JobOptions { transmission_samples: 2, ..nested },
++        JobOptions { denoise: true, ..nested },
++        JobOptions { linear_exr: true, ..nested },
++    ] {
++        assert_eq!(host.admit(&scene, &request, bad).unwrap_err().code, ErrorCode::InvalidRequest);
++    }
++    let mut raster = request.clone();
++    raster.integrator = Integrator::Raster;
++    raster.raytrace = None;
++    assert!(host.admit(&scene, &raster, nested).is_err());
++    let handle = host.submit_with_options(
++        JobId { session: 6302, serial: 1, generation: 1 }, 1, scene, request, nested,
++    ).unwrap();
++    assert_eq!(handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap().progress.phase, Phase::Completed);
++    assert_eq!(handle.status().unwrap().options.nested_media, true);
++    let frame = handle.frame().unwrap().unwrap();
++    let image = ::image::load_from_memory(frame.png()).unwrap().to_rgba8();
++    assert_eq!(image.get_pixel(0, 0).0, [151, 132, 188, 255]);
++}
++
++fn face_fixture(axis: usize, positive: bool) -> (Bounds, [Vec3; 3], Vec3, Vec3) {
++    let point = |a: f64, u: f64, v: f64| match axis {
++        0 => Vec3::new(a, u, v),
++        1 => Vec3::new(v, a, u),
++        2 => Vec3::new(u, v, a),
++        _ => panic!("test axis"),
++    };
++    let bounds = Bounds::new(Vec3::new(1.0, 1.0, 1.0), Vec3::new(4.0, 4.0, 4.0)).unwrap();
++    let plane = if positive { 4.0 } else { 1.0 };
++    let mut vertices = [point(plane, 1.0, 1.0), point(plane, 4.0, 1.0), point(plane, 4.0, 4.0)];
++    if !positive {
++        vertices.swap(1, 2);
++    }
++    let normal = match axis { 0 => Vec3::X, 1 => Vec3::Y, 2 => Vec3::Z, _ => panic!("test axis") } * if positive { 1.0 } else { -1.0 };
++    (bounds, vertices, normal, point(plane, 2.5, 2.5))
++}
++
++#[test]
++fn exact_face_excludes_own_zero_depth_and_retains_one_ulp_neighbour_on_every_axis_and_side() {
++    use super::super::Ray;
++    for axis in 0..3 {
++        for positive in [false, true] {
++            let (bounds, vertices, normal, position) = face_fixture(axis, positive);
++            for entering in [false, true] {
++                let direction = if entering { -normal } else { normal };
++                let incoming = Ray::new(position - direction, direction, 0.0, 10.0).unwrap();
++                let face = exact_box_face(bounds, vertices, normal, position, incoming).unwrap();
++                assert_eq!(face.point, position, "face diagonal is valid interior");
++                let optics = interface(direction, -direction, if entering { 1.0 } else { 1.5 }, if entering { 1.5 } else { 1.0 }).unwrap();
++                let reflected = face.spawn(optics.reflected, true).unwrap();
++                let transmitted = face.spawn(optics.transmitted.unwrap(), false).unwrap();
++                let triangle = Triangle::new(vertices).unwrap();
++                assert!(triangle.intersect(&reflected).is_none(), "own reflected face at t0 must be excluded");
++                assert!(triangle.intersect(&transmitted).is_none(), "own transmitted face at t0 must be excluded");
++                assert_eq!(reflected.origin(), face.point);
++                assert_eq!(transmitted.origin(), face.point);
++                assert_eq!(transmitted.interval()[0], 0.0_f64.next_up());
++                let plane = super::super::component(position, axis);
++                let next = if super::super::component(direction, axis) > 0.0 { plane.next_up() } else { plane.next_down() };
++                let neighbour = vertices.map(|v| match axis {
++                    0 => Vec3::new(next, v.y, v.z),
++                    1 => Vec3::new(v.x, next, v.z),
++                    2 => Vec3::new(v.x, v.y, next),
++                    _ => panic!("test axis"),
++                });
++                let hit = Triangle::new(neighbour).unwrap().intersect(&transmitted).expect("one-ULP positive face must remain ahead");
++                assert_eq!(hit.distance, (next - plane).abs());
++            }
++        }
++    }
++}
++
++#[test]
++fn exact_face_recovers_certified_plane_without_clamping_or_blessing_ties() {
++    use super::super::Ray;
++    let (bounds, vertices, normal, point) = face_fixture(2, false);
++    let incoming = Ray::new(point - Vec3::Z, Vec3::Z, 0.0, 10.0).unwrap();
++    let rounded = Vec3::new(point.x, point.y, point.z.next_up());
++    let face = exact_box_face(bounds, vertices, normal, rounded, incoming).unwrap();
++    assert_eq!(face.point, point);
++    for bad in [
++        Vec3::new(1.0, 2.5, 1.0), Vec3::new(1.0, 1.0, 1.0),
++        Vec3::new(1.0_f64.next_down(), 2.5, 1.0), Vec3::new(f64::NAN, 2.5, 1.0),
++    ] {
++        assert!(exact_box_face(bounds, vertices, normal, bad, incoming).is_err());
++    }
++    let tied = Ray::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0), 0.0, 10.0).unwrap();
++    // Even if rounded tangential reconstruction claims interior, independently
++    // equal actual ray/face depths cannot inherit the BVH ordinal's blessing.
++    let uncertain = Vec3::new(1.0_f64.next_up(), 1.0_f64.next_up(), 1.0);
++    assert!(exact_box_face(bounds, vertices, normal, uncertain, tied).is_err());
++    assert!(exact_box_face(bounds, vertices, -normal, point, incoming).is_err());
++    let other_bounds = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)).unwrap();
++    assert!(exact_box_face(other_bounds, vertices, normal, point, incoming).is_err());
++    let tangent = Ray::new(point - Vec3::X, Vec3::X, 0.0, 10.0).unwrap();
++    assert!(exact_box_face(bounds, vertices, normal, point, tangent).is_err());
++    assert!(face.spawn(Vec3::X, true).is_err());
++    assert!(face.spawn(-Vec3::Z, false).is_err());
++    assert!(face.spawn(Vec3::Z, true).is_err());
++}
+--- a/crates/render/src/raytrace/image.rs
++++ b/crates/render/src/raytrace/image.rs
+@@ -80,22 +80,16 @@
+ }
+ type Look = PreparedPrimitive;
+ 
+-fn certificates(scene: &ProductScene, options: &RaytraceOptions) -> job::Result<[Option<Certificate>; MAX_OVERRIDES]> {
++fn certificates(
++    scene: &ProductScene,
++    options: &RaytraceOptions,
++    nested: bool,
++) -> job::Result<([Option<Certificate>; MAX_OVERRIDES], [Option<usize>; MAX_OVERRIDES])> {
+     let mut result = [None; MAX_OVERRIDES];
+     for (slot, input) in result.iter_mut().zip(&options.dielectrics) {
+         *slot = Some(dielectric::certify(scene, input).map_err(error)?);
+     }
+-    for (i, left) in result.iter().enumerate() {
+-        if let Some(Certificate::ClosedBox(a)) = left {
+-            for right in result.iter().skip(i + 1) {
+-                if let Some(Certificate::ClosedBox(b)) = right
+-                    && dielectric::overlaps(*a, *b)
+-                {
+-                    return Err(invalid("nested, touching or overlapping dielectric volumes are unsupported"));
+-                }
+-            }
+-        }
+-    }
++    let parents = dielectric::parents(&result, nested).map_err(error)?;
+     // Sheets within volumes are unsupported. Conservatively use the admitted
+     // tiny sheet's bounds, rather than pretending to resolve medium nesting.
+     for (i, certificate) in result.iter().enumerate() {
+@@ -112,10 +106,50 @@
+             }
+         }
+     }
+-    Ok(result)
++    Ok((result, parents))
+ }
+ 
+ pub fn admit(scene: &ProductScene, request: &ImageRequest, options: &RaytraceOptions) -> job::Result<Admission> {
++    admit_with_nested(scene, request, options, false)
++}
++
++pub(crate) fn admit_with_nested(
++    scene: &ProductScene,
++    request: &ImageRequest,
++    options: &RaytraceOptions,
++    nested: bool,
++) -> job::Result<Admission> {
++    admit_with_policy(scene, request, options, nested, None)
++}
++
++pub(crate) fn admit_with_partial_preview(
++    scene: &ProductScene,
++    request: &ImageRequest,
++    options: &RaytraceOptions,
++    nested: bool,
++    plan: job::PartialPreviewPlan,
++) -> job::Result<Admission> {
++    admit_with_policy(scene, request, options, nested, Some(plan))
++}
++
++fn admit_with_policy(
++    scene: &ProductScene,
++    request: &ImageRequest,
++    options: &RaytraceOptions,
++    nested: bool,
++    partial: Option<job::PartialPreviewPlan>,
++) -> job::Result<Admission> {
++    if let Some(plan) = partial {
++        plan.validate()?;
++        if plan != job::PartialPreviewPlan::new(request.width, request.height)?
++            || options.progressive.is_none()
++            || request.environment.is_some()
++            || request.textures.is_some()
++            || scene.has_transmission()
++        {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview requires the exact CPU progressive source plan"));
++        }
++    }
+     options.validate()?;
+     if let Some(original) = &request.raytrace {
+         original.validate()?;
+@@ -161,7 +195,7 @@
+         }
+     }
+     anisotropic_faces::prepare(scene, options, || Ok(()))?;
+-    certificates(scene, options)?;
++    certificates(scene, options, nested)?;
+     for input in &options.dielectrics {
+         if options.reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|v| v.body == input.body_name))
+             || options.anisotropic_faces.iter().flatten().any(|v| v.body_index == input.body_index)
+@@ -225,8 +259,13 @@
+     let n = usize::try_from(a.triangles).map_err(|_| error(TraceError::MemoryLimit))?;
+     let film_bytes = if let Some(progressive) = options.progressive {
+         let checkpoint = a.encoded_limit.checked_add(job::FRAME_METADATA_BYTES).ok_or_else(|| error(TraceError::MemoryLimit))?;
++        let previews = if let Some(plan) = partial {
++            plan.additional_bytes()?
++        } else {
++            u64::from(progressive.preview_count()).checked_mul(checkpoint).ok_or_else(|| error(TraceError::MemoryLimit))?
++        };
+         PrimaryFilm::required_bytes(request.width, request.height, progressive, options.budget)?
+-            .checked_add(u64::from(progressive.preview_count()).checked_mul(checkpoint).ok_or_else(|| error(TraceError::MemoryLimit))?)
++            .checked_add(previews)
+             .and_then(|v| v.checked_add(std::mem::size_of::<Progressive>() as u64))
+             .ok_or_else(|| error(TraceError::MemoryLimit))?
+     } else {
+@@ -376,6 +415,8 @@
+ /// lighting state, encode pixels, or allocate outside the existing job reservation.
+ struct OpticalTask {
+     certificates: [Option<Certificate>; MAX_OVERRIDES],
++    parents: [Option<usize>; MAX_OVERRIDES],
++    nested: bool,
+     pending: Option<DielectricPixel>,
+ }
+ 
+@@ -500,6 +541,23 @@
+     Complete(Vec<u8>),
+ }
+ 
++/// Additive host-only poll; the public legacy ImagePoll contract is unchanged.
++pub(crate) enum PartialImagePoll {
++    Pending(Progress),
++    Complete(Vec<u8>),
++    Preview { png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64 },
++}
++
++pub(crate) enum PartialBegin {
++    Started,
++    Exhausted,
++}
++
++enum ImageAdvance {
++    Legacy(ImagePoll),
++    Partial { png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64 },
++}
++
+ impl ImageTask {
+     pub fn punctual_diagnostics(&self) -> Option<job::PunctualDiagnostics> {
+         (!self.punctual_diagnostics.is_empty()).then_some(self.punctual_diagnostics)
+@@ -515,16 +573,51 @@
+         options: RaytraceOptions,
+         input: Option<crate::lighting::environment_input::EnvironmentInput>,
+     ) -> job::Result<Self> {
++        Self::new_with_environment_and_nested(scene, request, cancel, options, input, false)
++    }
++
++    pub(crate) fn new_with_environment_and_nested(
++        scene: ProductScene,
++        request: ImageRequest,
++        cancel: CancelToken,
++        options: RaytraceOptions,
++        input: Option<crate::lighting::environment_input::EnvironmentInput>,
++        nested: bool,
++    ) -> job::Result<Self> {
++        Self::new_with_policy(scene, request, cancel, options, input, nested, None)
++    }
++
++    pub(crate) fn new_with_environment_and_nested_and_partial(
++        scene: ProductScene,
++        request: ImageRequest,
++        cancel: CancelToken,
++        options: RaytraceOptions,
++        input: Option<crate::lighting::environment_input::EnvironmentInput>,
++        nested: bool,
++        plan: job::PartialPreviewPlan,
++    ) -> job::Result<Self> {
++        Self::new_with_policy(scene, request, cancel, options, input, nested, Some(plan))
++    }
++
++    fn new_with_policy(
++        scene: ProductScene,
++        request: ImageRequest,
++        cancel: CancelToken,
++        options: RaytraceOptions,
++        input: Option<crate::lighting::environment_input::EnvironmentInput>,
++        nested: bool,
++        partial: Option<job::PartialPreviewPlan>,
++    ) -> job::Result<Self> {
+         cancel.check()?;
+-        let mut admission = admit(&scene, &request, &options)?;
++        let mut admission = admit_with_policy(&scene, &request, &options, nested, partial)?;
+         let mut optical = Vec::new();
+         if !options.dielectrics.is_empty() {
+-            let certificates = certificates(&scene, &options)?;
++            let (certificates, parents) = certificates(&scene, &options, nested)?;
+             optical.try_reserve_exact(1).map_err(|_| error(TraceError::AllocationFailed))?;
+             if optical.capacity() != 1 {
+                 return Err(error(TraceError::MemoryLimit));
+             }
+-            optical.push(OpticalTask { certificates, pending: None });
++            optical.push(OpticalTask { certificates, parents, nested, pending: None });
+         }
+         if input.is_some() {
+             options.validate_environment_reflections(&scene)?;
+@@ -601,7 +694,7 @@
+             .map(|options| -> job::Result<Progressive> {
+                 let bytes = PrimaryFilm::required_bytes(request.width, request.height, options, budget)?;
+                 let film = PrimaryFilm::new(request.width, request.height, options, bytes, &cancel, budget)?;
+-                Ok(Progressive { film, options, resolving: false, resolve_pixel: 0 })
++                Ok(Progressive { film, options, resolving: false, resolve_pixel: 0, partial_plan: partial, partial: None, last_partial: None })
+             })
+             .transpose()?;
+         Ok(Self {
+@@ -646,6 +739,12 @@
+     pub fn progress(&self) -> Progress {
+         let (phase, done, total) = if self.done {
+             (Phase::Completed, 1, 1)
++        } else if let Some(partial) = self.progressive.as_ref().and_then(|p| p.partial.as_ref()) {
++            if let Some(encoder) = &self.encoder {
++                (Phase::Encoding, encoder.row() as u64, u64::from(partial.plan.height()))
++            } else {
++                (Phase::Encoding, partial.next as u64, partial.plan.pixels())
++            }
+         } else if let Some(e) = &self.encoder {
+             (Phase::Encoding, e.row() as u64, self.request.height as u64)
+         } else if let Some(progressive) = &self.progressive {
+@@ -1299,7 +1398,19 @@
+         let scene = PreparedScene { bvh, primitives: &self.looks, source: &self.scene };
+         // Optics always uses the certified geometric boundary, before optional opaque
+         // shading-normal effects. Distance starts before the numerical spawn offset.
+-        let shared = scene.resolve_hit(pending.ray, hit).map_err(error)?;
++        let mut shared = scene.resolve_hit(pending.ray, hit).map_err(error)?;
++        let exact_face = if optical.nested {
++            match state.selected.and_then(|index| optical.certificates.get(index).copied().flatten()) {
++                Some(Certificate::ClosedBox(bounds)) => {
++                    let face = dielectric::exact_box_face(bounds, shared.vertices, shared.geometric_normal, shared.position, pending.ray).map_err(error)?;
++                    shared.position = face.point;
++                    Some(face)
++                }
++                _ => None,
++            }
++        } else {
++            None
++        };
+         if let Some(index) = state.path.medium {
+             let medium = self.options.dielectrics.get(index).ok_or_else(|| invalid("active dielectric medium"))?;
+             let distance = shared.position.dist(state.path.segment_start);
+@@ -1363,16 +1474,21 @@
+                 if boundary_axes > 1 {
+                     return Err(invalid("dielectric box edge or corner has an ambiguous interface normal"));
+                 }
++                let parent = optical.parents.get(index).copied().ok_or_else(|| invalid("missing dielectric parent"))?;
++                let parent_ior = match parent {
++                    Some(parent) => self.options.dielectrics.get(parent).ok_or_else(|| invalid("missing parent optical material"))?.ior,
++                    None => 1.0,
++                };
+                 let (incident, transmitted, next_medium) = if shared.front_face {
+-                    if state.path.medium.is_some() {
+-                        return Err(invalid("nested dielectric entry"));
++                    if state.path.medium != parent {
++                        return Err(invalid("dielectric entry does not match certified parent"));
+                     }
+-                    (1.0, medium.ior, Some(index))
++                    (parent_ior, medium.ior, Some(index))
+                 } else {
+                     if state.path.medium != Some(index) {
+                         return Err(invalid("dielectric exit without matching entry"));
+                     }
+-                    (medium.ior, 1.0, None)
++                    (medium.ior, parent_ior, parent)
+                 };
+                 let optics = dielectric::interface(direction, normal, incident, transmitted).map_err(error)?;
+                 let f = optics.reflectance;
+@@ -1380,8 +1496,14 @@
+                 (optics, Vec3::new(f, f, f), Vec3::new(t, t, t), next_medium)
+             }
+         };
++        let spawn = |direction, reflected| {
++            match exact_face {
++                Some(face) => face.spawn(direction, reflected).map_err(error),
++                None => shared.spawn(direction).map_err(error),
++            }
++        };
+         state.push(OpticalPath {
+-            ray: shared.spawn(optics.reflected).map_err(error)?,
++            ray: spawn(optics.reflected, true)?,
+             throughput: dielectric::multiply(state.path.throughput, reflected_weight),
+             medium: state.path.medium,
+             segment_start: shared.position,
+@@ -1390,7 +1512,7 @@
+         })?;
+         if let Some(direction) = optics.transmitted {
+             state.push(OpticalPath {
+-                ray: shared.spawn(direction).map_err(error)?,
++                ray: spawn(direction, false)?,
+                 throughput: dielectric::multiply(state.path.throughput, transmitted_weight),
+                 medium: next_medium,
+                 segment_start: shared.position,
+@@ -1446,6 +1568,145 @@
+         Ok(())
+     }
+ 
++
++    pub(crate) fn partial_preview_ready(&self, plan: job::PartialPreviewPlan) -> job::Result<bool> {
++        self.cancel.check()?;
++        plan.validate()?;
++        if (plan.source_width(), plan.source_height()) != (self.request.width, self.request.height) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview source dimensions changed"));
++        }
++        let Some(progressive) = &self.progressive else { return Ok(false) };
++        if progressive.partial_plan != Some(plan) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview plan differs from the task policy"));
++        }
++        if self.done || !progressive.film.ready() || !self.pending.is_none()
++            || self.encoder.is_some() || progressive.partial.is_some() || progressive.resolving || !self.pixels.is_empty()
++        {
++            return Ok(false);
++        }
++        let frontier = progressive.film.partial_frontier()?;
++        if frontier.completed_passes >= progressive.options.samples_per_pixel {
++            return Ok(false);
++        }
++        let safe = if frontier.updated_prefix == 0 {
++            frontier.completed_passes > 0 && self.pixel == frontier.pixels
++        } else {
++            self.pixel == frontier.updated_prefix
++        };
++        if !safe {
++            return Ok(false);
++        }
++        progressive::represented_changed(plan, progressive.last_partial, frontier)
++    }
++
++    /// Host must already hold its one in-flight credit. No host lease or clock
++    /// lives here; an insufficient optional debit does not mutate trace state.
++    pub(crate) fn begin_partial_preview(&mut self, plan: job::PartialPreviewPlan) -> job::Result<PartialBegin> {
++        if !self.partial_preview_ready(plan)? {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview requires a fresh safe completed pixel"));
++        }
++        let frontier = self.progressive.as_ref().ok_or_else(|| invalid("missing progressive film"))?.film.partial_frontier()?;
++        let units = plan.snapshot_work()?;
++        if self.work.remaining() < units {
++            return Ok(PartialBegin::Exhausted);
++        }
++        self.work.charge(units, &self.cancel).map_err(error)?;
++        let count = usize::try_from(plan.pixels()).map_err(|_| error(TraceError::MemoryLimit))?;
++        let mut covered = Vec::new();
++        covered.try_reserve_exact(count).map_err(|_| error(TraceError::AllocationFailed))?;
++        if covered.capacity() != count {
++            return Err(error(TraceError::MemoryLimit));
++        }
++        self.cancel.check()?;
++        let progressive = self.progressive.as_mut().ok_or_else(|| invalid("missing progressive film"))?;
++        progressive.partial = Some(progressive::PartialResolve { plan, frontier, resume_pixel: self.pixel, next: 0, covered });
++        Ok(PartialBegin::Started)
++    }
++
++    /// One prepaid representative resolve, encoder setup, or encoding row.
++    /// Work was debited before allocation; cancel/continuation bounds remain real.
++    fn partial_preview_one(&mut self) -> job::Result<Option<ImageAdvance>> {
++        self.cancel.check()?;
++        let (plan, frontier, resume_pixel, next) = {
++            let partial = self.progressive.as_ref().and_then(|p| p.partial.as_ref()).ok_or_else(|| invalid("missing partial resolve state"))?;
++            (partial.plan, partial.frontier, partial.resume_pixel, partial.next)
++        };
++        let count = usize::try_from(plan.pixels()).map_err(|_| error(TraceError::MemoryLimit))?;
++        if next < count {
++            let index = plan.source_index(next)?;
++            let value = self.progressive.as_ref().ok_or_else(|| invalid("missing partial film"))?.film.partial_pixel(index)?;
++            let (rgba, covered) = match value {
++                crate::film::primary::PartialPixel::Unknown => ([0; 4], 0),
++                crate::film::primary::PartialPixel::Sampled { linear_premultiplied, covered, count } => {
++                    let covered = u16::try_from(covered).map_err(|_| error(TraceError::MemoryLimit))?;
++                    let count = u16::try_from(count).map_err(|_| error(TraceError::MemoryLimit))?;
++                    let [r, g, b] = linear_premultiplied;
++                    (composite_spatial(Vec3::new(r, g, b), covered, count, self.request.background, self.options.exposure_ev)?, covered)
++                }
++            };
++            if next.checked_mul(4) != Some(self.pixels.len()) {
++                return Err(invalid("partial RGBA cursor mismatch"));
++            }
++            self.cancel.check()?;
++            let partial = self.progressive.as_mut().and_then(|p| p.partial.as_mut()).ok_or_else(|| invalid("missing partial cell state"))?;
++            if partial.covered.len() != next || partial.covered.capacity() != count {
++                return Err(invalid("partial coverage cursor or capacity mismatch"));
++            }
++            self.pixels.extend_from_slice(&rgba);
++            partial.covered.push(covered);
++            partial.next += 1;
++            return Ok(None);
++        }
++        if next != count {
++            return Err(invalid("partial display cursor exceeded its plan"));
++        }
++        if self.encoder.is_none() {
++            let limit = plan.encoded_limit()?;
++            let capacity = usize::try_from(limit).map_err(|_| error(TraceError::MemoryLimit))?;
++            let mut output = Vec::new();
++            output.try_reserve_exact(capacity).map_err(|_| error(TraceError::AllocationFailed))?;
++            if output.capacity() != capacity {
++                return Err(error(TraceError::MemoryLimit));
++            }
++            self.cancel.check()?;
++            self.encoder = Some(job::encoding::PngEncoding::with_output(plan.width(), plan.height(), limit, self.cancel.clone(), output)?);
++            return Ok(None);
++        }
++        let png = self.encoder.as_mut().ok_or_else(|| invalid("missing partial encoder"))?.step(&self.pixels)?;
++        let Some(png) = png else { return Ok(None) };
++        self.cancel.check()?;
++        let progressive = self.progressive.as_mut().ok_or_else(|| invalid("missing completed partial film"))?;
++        if progressive.film.partial_frontier()? != frontier || self.pixel != resume_pixel || !self.pending.is_none() {
++            return Err(invalid("partial snapshot changed its captured sample frontier"));
++        }
++        let partial = progressive.partial.take().ok_or_else(|| invalid("missing completed partial output"))?;
++        if partial.covered.len() != count || partial.covered.capacity() != count {
++            return Err(invalid("partial covered output differs from its plan"));
++        }
++        let updated_prefix = u64::try_from(frontier.updated_prefix).map_err(|_| error(TraceError::MemoryLimit))?;
++        progressive.last_partial = Some(frontier);
++        self.encoder = None;
++        self.pixels.clear();
++        // Preserve the complete-pass sentinel too: after host hashing, the
++        // ordinary continuation must still charge its tick before P -> 0.
++        self.pixel = resume_pixel;
++        Ok(Some(ImageAdvance::Partial { png, covered: partial.covered, completed_passes: frontier.completed_passes, updated_prefix }))
++    }
++
++    pub(crate) fn step_with_partial_previews(&mut self, units: usize) -> job::Result<PartialImagePoll> {
++        if self.progressive.as_ref().is_none_or(|p| p.partial_plan.is_none()) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial polling requires the CPU partial policy"));
++        }
++        match self.advance_image(units)? {
++            ImageAdvance::Legacy(ImagePoll::Pending(progress)) => Ok(PartialImagePoll::Pending(progress)),
++            ImageAdvance::Legacy(ImagePoll::Complete(png)) => Ok(PartialImagePoll::Complete(png)),
++            ImageAdvance::Partial { png, covered, completed_passes, updated_prefix } => {
++                Ok(PartialImagePoll::Preview { png, covered, completed_passes, updated_prefix })
++            }
++            ImageAdvance::Legacy(ImagePoll::Preview { .. }) => Err(invalid("partial policy produced a legacy checkpoint")),
++        }
++    }
++
+     fn resolve_progressive_one(&mut self) -> job::Result<()> {
+         self.work.tick(&self.cancel).map_err(error)?;
+         let progressive = self.progressive.as_mut().ok_or_else(|| invalid("missing progressive resolve state"))?;
+@@ -1478,12 +1739,26 @@
+     /// At most four continuations/encoding rows. One cumulative work budget spans
+     /// geometry preparation, every absolute camera sample and every checkpoint.
+     pub fn step_with_previews(&mut self, units: usize) -> job::Result<ImagePoll> {
++        if self.progressive.as_ref().is_some_and(|p| p.partial_plan.is_some()) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "partial CPU tasks require their additive internal poll"));
++        }
++        match self.advance_image(units)? {
++            ImageAdvance::Legacy(poll) => Ok(poll),
++            ImageAdvance::Partial { .. } => Err(invalid("legacy policy produced a partial snapshot")),
++        }
++    }
++
++    fn advance_image(&mut self, units: usize) -> job::Result<ImageAdvance> {
+         self.cancel.check()?;
+         if units == 0 || units > 16384 || self.done {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "invalid raytrace step or completed task"));
+         }
+         for _ in 0..units.min(4) {
+-            if self.progressive.as_ref().is_some_and(|p| !p.film.ready()) {
++            if self.progressive.as_ref().is_some_and(|p| p.partial.is_some()) {
++                if let Some(preview) = self.partial_preview_one()? {
++                    return Ok(preview);
++                }
++            } else if self.progressive.as_ref().is_some_and(|p| !p.film.ready()) {
+                 self.progressive
+                     .as_mut()
+                     .ok_or_else(|| invalid("missing progressive initialization"))?
+@@ -1508,11 +1783,11 @@
+                             self.encoder = None;
+                             self.pixels.clear();
+                             self.pixel = 0;
+-                            return Ok(ImagePoll::Preview { png, samples_per_pixel });
++                            return Ok(ImageAdvance::Legacy(ImagePoll::Preview { png, samples_per_pixel }));
+                         }
+                     }
+                     self.release_completed_work()?;
+-                    return Ok(ImagePoll::Complete(png));
++                    return Ok(ImageAdvance::Legacy(ImagePoll::Complete(png)));
+                 }
+             } else if self.progressive.as_ref().is_some_and(|p| p.resolving) {
+                 self.resolve_progressive_one()?;
+@@ -1528,7 +1803,7 @@
+                     if let Some(progressive) = &mut self.progressive {
+                         self.work.tick(&self.cancel).map_err(error)?;
+                         let samples = progressive.film.samples();
+-                        if samples == progressive.options.samples_per_pixel || samples.is_power_of_two() {
++                        if samples == progressive.options.samples_per_pixel || (progressive.partial_plan.is_none() && samples.is_power_of_two()) {
+                             progressive.resolving = true;
+                         } else {
+                             self.pixel = 0;
+@@ -1557,7 +1832,7 @@
+                 self.prepare_one()?;
+             }
+         }
+-        Ok(ImagePoll::Pending(self.progress()))
++        Ok(ImageAdvance::Legacy(ImagePoll::Pending(self.progress())))
+     }
+ }
+ /// Apply the already selected deterministic effect to the shared opaque hit.
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -1421,3 +1421,241 @@
+     cancel.cancel();
+     assert_eq!(PendingPixelSlot::new(&cancel).err().unwrap().code, ErrorCode::Cancelled);
+ }
++
++fn nested_optical_task() -> ImageTask {
++    let (scene, mut options) = dielectric::tests::nested_fixture(false);
++    for medium in &mut options.dielectrics {
++        medium.ior = if medium.body_name == "Outer" { 1.5 } else { 2.0 };
++        medium.absorption_per_mm = [0.0; 3];
++    }
++    ImageTask::new_with_environment_and_nested(
++        scene, dielectric::tests::request(options.clone()), CancelToken::default(), options, None, true,
++    ).unwrap()
++}
++
++#[test]
++fn nested_image_interfaces_use_actual_parent_ior_and_restore_it_on_exit() {
++    let mut task = nested_optical_task();
++    let outer_entry = 0.96 / 2.25;
++    let inner_entry = outer_entry * (27.0 / 49.0);
++    let inner_exit = inner_entry * (256.0 / 147.0);
++    let expected = [
++        (1, Some(0), outer_entry),
++        (2, Some(1), inner_entry),
++        (3, Some(0), inner_exit),
++        (4, None, inner_exit * 2.16),
++    ];
++    let mut next = 0;
++    for _ in 0..100_000 {
++        assert!(matches!(task.step(1).unwrap(), TaskPoll::Pending(_)));
++        if let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref()) {
++            let (depth, medium, throughput) = expected[next];
++            if state.path.boundaries == depth && state.path.medium == medium {
++                assert!((state.path.throughput.x - throughput).abs() < 1e-12);
++                assert!((state.path.throughput.y - throughput).abs() < 1e-12);
++                assert!((state.path.throughput.z - throughput).abs() < 1e-12);
++                next += 1;
++                if next == expected.len() {
++                    return;
++                }
++            }
++        }
++    }
++    panic!("nested first transmitted path did not cross all four interfaces");
++}
++
++#[test]
++fn nested_paths_keep_one_unit_work_cancellation_and_total_budget_contracts() {
++    for cancel in [false, true] {
++        let mut task = nested_optical_task();
++        let mut observed = false;
++        for _ in 0..100_000 {
++            let before = task.work.used();
++            assert!(matches!(task.step(1).unwrap(), TaskPoll::Pending(_)));
++            assert!(task.work.used() - before <= 1, "one-unit continuation overspent its quantum");
++            if task.optical.first().and_then(|optical| optical.pending.as_ref()).is_some_and(|state| state.path.medium == Some(1)) {
++                if cancel {
++                    task.cancel.cancel();
++                } else {
++                    task.work.limit = task.work.used();
++                }
++                assert_eq!(task.step(1).err().unwrap().code, if cancel { ErrorCode::Cancelled } else { ErrorCode::LimitExceeded });
++                assert!(!task.done);
++                observed = true;
++                break;
++            }
++        }
++        assert!(observed, "nested interior was never reached");
++    }
++}
++
++#[test]
++fn nested_admission_bills_parent_table_and_keeps_geometry_and_camera_refusals() {
++    let (scene, options) = dielectric::tests::nested_fixture(false);
++    let request = dielectric::tests::request(options.clone());
++    let admitted = admit_with_nested(&scene, &request, &options, true).unwrap();
++    let original = options.retained_dielectric_bytes().unwrap()
++        + request.raytrace.as_ref().unwrap().retained_dielectric_bytes().unwrap()
++        + std::mem::size_of::<OpticalTask>() as u64;
++    assert!(admitted.preparation_bytes >= original);
++    assert!(std::mem::size_of::<OpticalTask>() >= std::mem::size_of::<[Option<usize>; MAX_OVERRIDES]>());
++
++    let mut invalid = scene.clone();
++    std::sync::Arc::make_mut(&mut invalid.meshes[1].mesh).triangles.pop();
++    assert!(admit_with_nested(&invalid, &request, &options, true).is_err());
++
++    let mut inside = request.clone();
++    inside.camera.distance = 0.1;
++    inside.camera.target = Vec3::new(0.0, 0.0, 2.0);
++    let mut task = ImageTask::new_with_environment_and_nested(scene, inside, CancelToken::default(), options, None, true).unwrap();
++    for _ in 0..100_000 {
++        match task.step(1) {
++            Err(error) => {
++                assert_eq!(error.code, ErrorCode::InvalidScene);
++                assert!(error.message.contains("inside a dielectric"));
++                return;
++            }
++            Ok(TaskPoll::Pending(_)) => {}
++            Ok(TaskPoll::Complete(_)) => panic!("inside camera must not publish"),
++        }
++    }
++    panic!("inside camera was not refused");
++}
++
++fn close_gap_nested_task(gap: f64, positive: bool) -> ImageTask {
++    use std::sync::Arc;
++    let mut outer = dielectric::tests::box_body(3.0);
++    outer.name = "OuterGap".into();
++    for p in &mut Arc::make_mut(&mut outer.mesh).positions {
++        *p = Vec3::new(p.x * 0.2, p.y * 0.2, p.z + 1.0);
++    }
++    let mut inner = dielectric::tests::box_body(2.0);
++    inner.name = "InnerGap".into();
++    for p in &mut Arc::make_mut(&mut inner.mesh).positions {
++        *p = Vec3::new(p.x * 0.1, p.y * 0.1, if p.z == 0.0 { 1.0 + gap } else { 3.0 });
++    }
++    let mut scene = dielectric::tests::scene(outer);
++    scene.meshes.push(inner);
++    let options = RaytraceOptions {
++        dielectrics: scene.meshes.iter().enumerate().map(|(body_index, body)| job::DielectricOptions {
++            body_index, body_name:body.name.clone(), boundary:job::DielectricBoundary::ClosedBox,
++            ior:1.0, absorption_per_mm:[0.0;3], thickness_mm:0.0,
++        }).collect(),
++        lights:Some(Vec::new()), shadows:false,
++        environment:Some(job::RaytraceEnvironmentOptions { color:[1.0;3], intensity:1.0 }),
++        ..Default::default()
++    };
++    let mut request = dielectric::tests::request(options.clone());
++    request.camera.set_view(if positive { crate::StandardView::Bottom } else { crate::StandardView::Top });
++    request.camera.target = Vec3::new(0.0,0.0,2.5);
++    request.camera.fov = 0.0;
++    ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap()
++}
++
++#[test]
++fn positive_one_ulp_nested_gap_and_separated_control_visit_every_real_interface() {
++    for gap in [f64::EPSILON, 0.25] {
++        for positive in [false, true] {
++            let mut task = close_gap_nested_task(gap, positive);
++            let points = if positive { [1.0,1.0+gap,3.0,4.0] } else { [4.0,3.0,1.0+gap,1.0] };
++            let media = [Some(0),Some(1),Some(0),None];
++            let mut next = 0;
++            let mut completed = false;
++            for _ in 0..100_000 {
++                match task.step(1).unwrap() {
++                    TaskPoll::Pending(_) => {
++                        if next < points.len()
++                            && let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref())
++                            && state.path.boundaries == next as u8 + 1
++                        {
++                            assert_eq!(state.path.medium, media[next]);
++                            assert_eq!(state.path.segment_start.z, points[next]);
++                            assert_eq!(state.path.ray.origin(), state.path.segment_start, "propagation and Beer start share one physical point");
++                            assert_eq!(state.path.throughput, Vec3::new(1.0,1.0,1.0));
++                            next += 1;
++                        }
++                    }
++                    TaskPoll::Complete(png) => {
++                        assert_eq!(next, 4, "an admitted interface was skipped");
++                        let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
++                        assert_eq!(image.get_pixel(0,0).0, [188,188,188,255]);
++                        completed = true;
++                        break;
++                    }
++                }
++            }
++            assert!(completed, "close-gap image failed to complete");
++        }
++    }
++}
++
++#[test]
++fn nested_reflected_route_keeps_child_beer_then_restores_parent_from_both_sides() {
++    for positive in [false, true] {
++        let (scene, mut options) = dielectric::tests::nested_fixture(false);
++        for medium in &mut options.dielectrics {
++            medium.ior = if medium.body_name == "Outer" { 1.5 } else { 2.0 };
++        }
++        let mut request = dielectric::tests::request(options.clone());
++        request.camera.set_view(if positive { crate::StandardView::Bottom } else { crate::StandardView::Top });
++        request.camera.target = Vec3::new(0.0,0.0,2.0);
++        request.camera.fov = 0.0;
++        let mut task = ImageTask::new_with_environment_and_nested(scene, request, CancelToken::default(), options, None, true).unwrap();
++        let (near, far) = if positive { (1.0,3.0) } else { (3.0,1.0) };
++        let factor = (0.96 / 2.25) * (27.0 / 49.0) / 49.0;
++        let reflected = Vec3::new(factor * (-0.1_f64 - 0.3*2.0).exp(), factor * (-0.2_f64 - 0.4*2.0).exp(), factor);
++        let returned = dielectric::multiply(reflected, Vec3::new((-0.3_f64*2.0).exp(),(-0.4_f64*2.0).exp(),1.0)) * (256.0/147.0);
++        let mut saw_reflected = false;
++        let mut restored = false;
++        for _ in 0..1_000_000 {
++            if let TaskPoll::Complete(_) = task.step(1).unwrap() {
++                break;
++            }
++            let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref()) else { continue };
++            let path = state.path;
++            if path.boundaries == 3 && path.medium == Some(1) && path.segment_start.z == far {
++                assert!((path.throughput - reflected).len() < 1e-12);
++                assert_eq!(path.ray.origin(), path.segment_start);
++                assert!(path.ray.direction().z * if positive { -1.0 } else { 1.0 } > 0.0);
++                saw_reflected = true;
++            }
++            if saw_reflected && path.boundaries == 4 && path.medium == Some(0) && path.segment_start.z == near {
++                assert!((path.throughput - returned).len() < 1e-12);
++                assert_eq!(path.ray.origin(), path.segment_start);
++                restored = true;
++                break;
++            }
++        }
++        assert!(saw_reflected && restored, "actual reflected child route never restored its parent");
++    }
++}
++
++#[test]
++fn exact_box_launch_is_opt_in_and_legacy_default_origin_is_preserved() {
++    for nested in [false, true] {
++        let mut material = dielectric::tests::input(job::DielectricBoundary::ClosedBox);
++        material.ior = 1.0;
++        let options = RaytraceOptions { dielectrics:vec![material], lights:Some(Vec::new()), shadows:false, ..Default::default() };
++        let request = dielectric::tests::request(options.clone());
++        let mut task = ImageTask::new_with_environment_and_nested(
++            dielectric::tests::scene(dielectric::tests::box_body(2.0)), request, CancelToken::default(), options, None, nested,
++        ).unwrap();
++        let mut observed = false;
++        for _ in 0..100_000 {
++            assert!(matches!(task.step(1).unwrap(), TaskPoll::Pending(_)));
++            if let Some(state) = task.optical.first().and_then(|optical| optical.pending.as_ref())
++                && state.path.boundaries == 1 && state.path.medium == Some(0)
++            {
++                assert_eq!(state.path.segment_start.z, 2.0);
++                if nested {
++                    assert_eq!(state.path.ray.origin(), state.path.segment_start);
++                } else {
++                    assert!(state.path.ray.origin().z < state.path.segment_start.z, "default must retain its original inward offset");
++                }
++                observed = true;
++                break;
++            }
++        }
++        assert!(observed, "first box entry was not observed");
++    }
++}

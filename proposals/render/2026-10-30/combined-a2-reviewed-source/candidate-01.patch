@@ -1,0 +1,1688 @@
+--- a/assets/locales/pending/render-interactive.json
++++ b/assets/locales/pending/render-interactive.json
+@@ -6,6 +6,9 @@
+     "render.interactive_final_active": "Final render active",
+     "render.interactive_off": "Off",
+     "render.interactive_on": "On",
++    "render.interactive_partial_dimensions": "Display {display_width} × {display_height} px · Sampling {source_width} × {source_height} px · Output {final_width} × {final_height} px",
++    "render.interactive_partial_exhausted": "Not enough remaining work budget for another partial image.",
++    "render.interactive_partial_samples": "Samples/pixel {min}–{max} · {known}/{pixels} source pixels sampled",
+     "render.interactive_pause": "Pause",
+     "render.interactive_paused": "Paused",
+     "render.interactive_provisional": "Provisional preview",
+@@ -24,6 +27,9 @@
+     "render.interactive_final_active": "التصيير النهائي قيد التنفيذ",
+     "render.interactive_off": "إيقاف",
+     "render.interactive_on": "تفعيل",
++    "render.interactive_partial_dimensions": "العرض {display_width} × {display_height} بكسل · أخذ العينات {source_width} × {source_height} بكسل · الإخراج {final_width} × {final_height} بكسل",
++    "render.interactive_partial_exhausted": "لا تكفي ميزانية المعالجة المتبقية لصورة جزئية أخرى.",
++    "render.interactive_partial_samples": "عينات لكل بكسل {min}–{max} · أُخذت عينات من {known}/{pixels} بكسل من المصدر",
+     "render.interactive_pause": "إيقاف مؤقت",
+     "render.interactive_paused": "متوقف مؤقتًا",
+     "render.interactive_provisional": "معاينة مؤقتة",
+@@ -42,6 +48,9 @@
+     "render.interactive_final_active": "Finales Rendering aktiv",
+     "render.interactive_off": "Aus",
+     "render.interactive_on": "Ein",
++    "render.interactive_partial_dimensions": "Anzeige {display_width} × {display_height} px · Abtastung {source_width} × {source_height} px · Ausgabe {final_width} × {final_height} px",
++    "render.interactive_partial_exhausted": "Das verbleibende Rechenbudget reicht nicht für ein weiteres Teilbild.",
++    "render.interactive_partial_samples": "Samples/Pixel {min}–{max} · {known}/{pixels} Quellpixel abgetastet",
+     "render.interactive_pause": "Pausieren",
+     "render.interactive_paused": "Pausiert",
+     "render.interactive_provisional": "Vorläufige Vorschau",
+@@ -60,6 +69,9 @@
+     "render.interactive_final_active": "Render final activo",
+     "render.interactive_off": "Desactivar",
+     "render.interactive_on": "Activar",
++    "render.interactive_partial_dimensions": "Visualización {display_width} × {display_height} px · Muestreo {source_width} × {source_height} px · Salida {final_width} × {final_height} px",
++    "render.interactive_partial_exhausted": "El presupuesto de cálculo restante no permite otra imagen parcial.",
++    "render.interactive_partial_samples": "Muestras/píxel {min}–{max} · {known}/{pixels} píxeles de origen muestreados",
+     "render.interactive_pause": "Pausar",
+     "render.interactive_paused": "En pausa",
+     "render.interactive_provisional": "Vista previa provisional",
+@@ -78,6 +90,9 @@
+     "render.interactive_final_active": "הרינדור הסופי פעיל",
+     "render.interactive_off": "כיבוי",
+     "render.interactive_on": "הפעלה",
++    "render.interactive_partial_dimensions": "תצוגה {display_width} × {display_height} פיקסלים · דגימה {source_width} × {source_height} פיקסלים · פלט {final_width} × {final_height} פיקסלים",
++    "render.interactive_partial_exhausted": "תקציב החישוב שנותר אינו מספיק לתמונה חלקית נוספת.",
++    "render.interactive_partial_samples": "דגימות לפיקסל {min}–{max} · נדגמו {known}/{pixels} פיקסלים במקור",
+     "render.interactive_pause": "השהיה",
+     "render.interactive_paused": "מושהה",
+     "render.interactive_provisional": "תצוגה מקדימה זמנית",
+@@ -96,6 +111,9 @@
+     "render.interactive_final_active": "最終レンダリング中",
+     "render.interactive_off": "無効にする",
+     "render.interactive_on": "有効にする",
++    "render.interactive_partial_dimensions": "表示 {display_width} × {display_height} px · サンプリング {source_width} × {source_height} px · 出力 {final_width} × {final_height} px",
++    "render.interactive_partial_exhausted": "残りの計算予算では、次の部分画像を生成できません。",
++    "render.interactive_partial_samples": "ピクセルあたり {min}～{max} サンプル · 元画像の {known}/{pixels} ピクセルをサンプリング済み",
+     "render.interactive_pause": "一時停止",
+     "render.interactive_paused": "一時停止中",
+     "render.interactive_provisional": "暫定プレビュー",
+@@ -114,6 +132,9 @@
+     "render.interactive_final_active": "최종 렌더링 진행 중",
+     "render.interactive_off": "끄기",
+     "render.interactive_on": "켜기",
++    "render.interactive_partial_dimensions": "표시 {display_width} × {display_height} px · 샘플링 {source_width} × {source_height} px · 출력 {final_width} × {final_height} px",
++    "render.interactive_partial_exhausted": "남은 연산 예산으로는 부분 이미지를 더 만들 수 없습니다.",
++    "render.interactive_partial_samples": "픽셀당 샘플 {min}–{max} · 원본 픽셀 {known}/{pixels}개 샘플링됨",
+     "render.interactive_pause": "일시 중지",
+     "render.interactive_paused": "일시 중지됨",
+     "render.interactive_provisional": "임시 미리 보기",
+@@ -132,6 +153,9 @@
+     "render.interactive_final_active": "Đang kết xuất ảnh cuối",
+     "render.interactive_off": "Tắt",
+     "render.interactive_on": "Bật",
++    "render.interactive_partial_dimensions": "Hiển thị {display_width} × {display_height} px · Lấy mẫu {source_width} × {source_height} px · Đầu ra {final_width} × {final_height} px",
++    "render.interactive_partial_exhausted": "Ngân sách tính toán còn lại không đủ cho một ảnh từng phần nữa.",
++    "render.interactive_partial_samples": "Mẫu/điểm ảnh {min}–{max} · Đã lấy mẫu {known}/{pixels} điểm ảnh nguồn",
+     "render.interactive_pause": "Tạm dừng",
+     "render.interactive_paused": "Đã tạm dừng",
+     "render.interactive_provisional": "Bản xem trước tạm thời",
+@@ -150,6 +174,9 @@
+     "render.interactive_final_active": "最终渲染进行中",
+     "render.interactive_off": "关闭",
+     "render.interactive_on": "启用",
++    "render.interactive_partial_dimensions": "显示 {display_width} × {display_height} px · 采样 {source_width} × {source_height} px · 输出 {final_width} × {final_height} px",
++    "render.interactive_partial_exhausted": "剩余计算预算不足以生成另一张部分图像。",
++    "render.interactive_partial_samples": "每像素样本数 {min}–{max} · 已采样 {known}/{pixels} 个源像素",
+     "render.interactive_pause": "暂停",
+     "render.interactive_paused": "已暂停",
+     "render.interactive_provisional": "临时预览",
+--- a/crates/engine/src/cmd/render.rs
++++ b/crates/engine/src/cmd/render.rs
+@@ -124,7 +124,7 @@
+ CommandSpec::new("render.settings.capture_hdr", "Save Render Settings with HDR", resources::capture_settings).icon("settings").doc_only()
+     .params("name, set: typed CPU/GPU setup patch with hdr/environment unset; path: scoped HDR; expected_sha256?: digest returned by render.hdr.inspect (changed sources refuse); rotation_rad?:0, intensity?:1; samples?:1/4/16/64 for CPU only (default16); assume_linear_srgb?:false for GPU only. Captures immutable bytes and saves resource plus setup atomically in one undo, without a host; returns name/setup/resource metadata, never source bytes"),
+ CommandSpec::new("render.preflight", "Check Render Request", jobs::preflight).icon("inspect").noundo().doc_only()
+-    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace and transient studio_weights may accompany it. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy and dielectrics require fixed sampling. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
++    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace and transient studio_weights may accompany it. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy and dielectrics require fixed sampling. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; dielectric progressive and Interactive requests still refuse. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
+ CommandSpec::new("render.start", "Render Image", jobs::start).key("R").noundo().doc_only().at("RENDER", "IMAGE").icon("render_image")
+     .params("Same request as render.preflight. Captures an immutable product scene and queues a bounded image job. Returns its session-scoped job identity, captured scene_generation and progress. Does not change the design. See docs/render-jobs.md"),
+ CommandSpec::new("render.status", "Render Progress", jobs::status).icon("list").noundo().doc_only()
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -11,6 +11,7 @@
+ #[derive(Default, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ struct Start {
++    nested_media: bool,
+     studio_weights: Option<[f64; 3]>,
+     progressive: bool,
+     denoise: bool,
+@@ -381,6 +382,119 @@
+         assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty()));
+         assert_eq!(wire["settings"]["width"], 3840);
+     }
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    fn nested_command_fixture() -> (Session, Value) {
++        let mut s = Session::default();
++        for (name, length, width, height) in [("Outer", 20, 20, 4), ("Inner", 10, 10, 2)] {
++            s.execute("solid.box", &json!({
++                "length":length,"width":width,"height":height,"center":[0,0,2],
++                "operation":"new","body_name":name,
++            })).unwrap();
++        }
++        s.execute("render.scene", &json!({})).unwrap();
++        let scene = crate::product_scene::extract(&s).unwrap();
++        assert_eq!(scene.meshes.len(), 2);
++        let dielectrics: Vec<_> = scene.meshes.iter().enumerate().map(|(index, body)| {
++            assert!(matches!(body.name.as_str(), "Outer" | "Inner"));
++            json!({
++                "body_index":index,"body_name":body.name,"boundary":"closed_box","ior":1.0,
++                "absorption_per_mm":if body.name == "Outer" { [0.1,0.2,0.0] } else { [0.3,0.4,0.0] },
++                "thickness_mm":0.0,
++            })
++        }).collect();
++        let mut camera = solidcraft_render::Camera { distance:50.0, fov:0.0, ..Default::default() };
++        camera.set_view(solidcraft_render::StandardView::Top);
++        camera.target = solidcraft_geom::Vec3::new(0.0,0.0,2.0);
++        let host = solidcraft_render::job::CpuHost::for_platform().unwrap();
++        assert_eq!(host.kind(), solidcraft_render::job::HostKind::NativeWorker);
++        assert!(host.is_available(), "this native test requires an available real CPU worker");
++        s.set_render_job_host(Some(host)).unwrap();
++        let wire = json!({
++            "integrator":"raytrace","nested_media":true,
++            "settings":{"width":1,"height":1,"camera":camera,"background":[255,255,255],"job":null},
++            "raytrace":{"dielectrics":dielectrics,"lights":[],"shadows":false,
++                "environment":{"color":[1,1,1],"intensity":1}},
++        });
++        (s, wire)
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn command_nested_opt_in_reaches_retained_job_options_and_real_beer_transport() {
++        use solidcraft_render::job::{JobId, Phase};
++        let (mut s, wire) = nested_command_fixture();
++        let before = (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty());
++        let document = s.doc.clone();
++        for value in [None, Some(false)] {
++            let mut default = wire.clone();
++            if let Some(value) = value {
++                default["nested_media"] = json!(value);
++            } else {
++                default.as_object_mut().unwrap().remove("nested_media");
++            }
++            for command in ["render.preflight", "render.start"] {
++                let error = s.execute(command, &default).unwrap_err().to_string();
++                assert!(error.contains("nested, touching or overlapping dielectric volumes are unsupported"), "{command}: {error}");
++            }
++        }
++        let checked = s.execute("render.preflight", &wire).unwrap();
++        assert_eq!(checked["resolved"]["executor"], "cpu-raytrace");
++        assert_eq!(checked["request"]["raytrace"]["dielectrics"], wire["raytrace"]["dielectrics"]);
++        let started = s.execute("render.start", &wire).unwrap();
++        let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++        let handle = s.render_job_handle(id).unwrap();
++        let status = handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap();
++        assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
++        assert_eq!(status.options, solidcraft_render::job::JobOptions { nested_media:true, ..Default::default() });
++        let retained = s.execute("render.status", &json!({"job":id})).unwrap();
++        assert_eq!(retained["options"]["nested_media"], true);
++        let frame = handle.frame().unwrap().unwrap();
++        let image = image::load_from_memory(frame.png()).unwrap().to_rgba8();
++        // Independent Beer oracle: outer2mm + inner2mm, replacing the parent
++        // interval, yields exp(-.8), exp(-1.2),1 -> Reinhard+sRGB [151,132,188].
++        assert_eq!(image.get_pixel(0,0).0, [151,132,188,255]);
++        assert!(std::sync::Arc::ptr_eq(&document, &s.doc));
++        assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty()));
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn command_nesting_keeps_default_false_and_rejects_other_gpu_controls_and_progressive_glass() {
++        use solidcraft_render::job::{JobId, JobOptions, Phase};
++        let (mut s, wire) = nested_command_fixture();
++        for (key, value) in [
++            ("samples", json!(2)), ("max_depth", json!(2)), ("seed", json!(7)),
++            ("denoise", json!(true)), ("lens", json!({})),
++        ] {
++            let mut invalid = wire.clone();
++            invalid[key] = value;
++            for command in ["render.preflight", "render.start"] {
++                assert!(s.execute(command, &invalid).is_err(), "{command} accepted unrelated control {key}");
++            }
++        }
++        let mut progressive = wire.clone();
++        progressive["raytrace"]["progressive"] = json!({"samples_per_pixel":2,"seed":0});
++        let refusal = "InvalidRequest: CPU progressive currently supports isotropic opaque surfaces; use fixed sampling for dielectric or anisotropic inputs";
++        for command in ["render.preflight", "render.start"] {
++            assert_eq!(s.execute(command, &progressive).unwrap_err().to_string(), refusal);
++        }
++        assert_eq!(interactive_params(&wire).unwrap_err().to_string(), refusal);
++
++        // Ordinary CPU requests retain the exact default JobOptions; omission is
++        // not silently promoted to nesting by adding this explicit opt-in.
++        let mut opaque = wire;
++        opaque.as_object_mut().unwrap().remove("nested_media");
++        opaque["raytrace"].as_object_mut().unwrap().remove("dielectrics");
++        s.execute("render.preflight", &opaque).unwrap();
++        let started = s.execute("render.start", &opaque).unwrap();
++        let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++        let status = s.render_job_handle(id).unwrap().wait_timeout(std::time::Duration::from_secs(60)).unwrap();
++        assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
++        assert_eq!(status.options, JobOptions::default());
++        let retained = s.execute("render.status", &json!({"job":id})).unwrap();
++        assert_eq!(retained["options"]["nested_media"], false);
++    }
++
+ }
+ 
+ /// Resolve portable intent before choosing an executor. Legacy requests are left intact;
+@@ -677,7 +791,8 @@
+         background: settings.background,
+         transparent_background: input.transparent_background,
+     };
+-    let mut admission = solidcraft_render::job::admit(&scene, &request).map_err(job_error)?;
++    let options = solidcraft_render::job::JobOptions { nested_media: input.nested_media, ..Default::default() };
++    let mut admission = host.admit(&scene, &request, options).map_err(job_error)?;
+     let environment_bytes = environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| bad(command, e.to_string()))?;
+     let retained_lights = request.raytrace.as_ref().map_or(Ok(0), |o| o.retained_bytes()).map_err(job_error)?;
+     let retained_environment =
+@@ -698,7 +813,7 @@
+         Integrator::Raytrace => "opaque_only",
+     };
+     let reply = json!({"ignored_controls":ignored,"stage_panels":settings.stage.len(),"stage_transport":"CPU direct/specular only; no diffuse interreflection", "cpu_budget":budget,"cpu_limits":budget.limits(),"environment":environment_info,"retained_request_bytes":retained_request_bytes,"resolved":resolved,"admission":admission,"request":request,"scene_generation":s.revision,"host":host.kind(),"transparency":transparency,"refraction":refraction,"dielectric_boundaries":if refraction {vec!["thin_sheet","closed_box"]} else {Vec::<&str>::new()}});
+-    Ok(Prepared { replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options: Default::default() })
++    Ok(Prepared { replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options })
+ }
+ 
+ fn prepare_progressive(
+--- a/crates/engine/src/render_interactive.rs
++++ b/crates/engine/src/render_interactive.rs
+@@ -225,7 +225,7 @@
+                 .render_job_host()
+                 .ok_or_else(|| job_error(JobError::new(ErrorCode::HostUnavailable, "CPU image host is unavailable")))?;
+             let job = host
+-                .submit_with_environment_and_options(
++                .submit_cpu_partial_with_environment_and_options(
+                     self.ticket.job_id(),
+                     self.ticket.revision().scene_generation,
+                     prepared.scene,
+--- a/crates/render/src/film_primary.rs
++++ b/crates/render/src/film_primary.rs
+@@ -10,6 +10,23 @@
+ struct Pixel {
+     sum: [f64; 3],
+     covered: u32,
++}
++
++/// Observed scanline frontier; metadata only, never a caller-supplied authority.
++/// Every pixel before updated_prefix has one more sample than completed_passes.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) struct PartialFrontier {
++    pub completed_passes: u32,
++    pub updated_prefix: usize,
++    pub pixels: usize,
++}
++
++/// A partial view never invents a zero sample for a pixel not yet observed.
++/// Sampled linear radiance includes zero contributions from primary misses.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub(crate) enum PartialPixel {
++    Unknown,
++    Sampled { linear_premultiplied: [f64; 3], covered: u32, count: u32 },
+ }
+ 
+ pub(crate) struct PrimaryFilm {
+@@ -121,4 +138,49 @@
+         let samples = u16::try_from(self.samples).map_err(|_| limit("primary sample count exceeds resolve representation"))?;
+         Ok((pixel.sum.map(|sum| sum / f64::from(self.samples)), covered, samples))
+     }
++    /// Inspect only the real committed state. This value does not freeze the film
++    /// or authorize a snapshot. A caller resolving several pixels must keep the
++    /// film immutably borrowed at one completed-pixel frontier, and must charge
++    /// reads/copies and check cancellation against its existing job budget.
++    pub(crate) fn partial_frontier(&self) -> Result<PartialFrontier> {
++        if !self.ready()
++            || self.next_pixel >= self.count
++            || self.samples > self.sample_limit
++            || (self.samples == self.sample_limit && self.next_pixel != 0)
++        {
++            return Err(invalid("primary film has no initialized partial frontier"));
++        }
++        Ok(PartialFrontier { completed_passes: self.samples, updated_prefix: self.next_pixel, pixels: self.count })
++    }
++
++    /// Bounded allocation-free read, separate from the strict complete-pass pixel().
++    /// Counts come from this film, never from a supplied frontier or sample count.
++    /// Unknown means count0/covered0; a sampled miss has count>0 and covered0.
++    /// No exposure, tone mapping, background, work lease or publication occurs here.
++    /// The caller owes cancellation checks and work charges for each read/copy;
++    /// this accessor creates no independent budget and never advances an ordinal.
++    pub(crate) fn partial_pixel(&self, index: usize) -> Result<PartialPixel> {
++        let frontier = self.partial_frontier()?;
++        let pixel = self.pixels.get(index).ok_or_else(|| invalid("primary film partial index out of range"))?;
++        let count = frontier
++            .completed_passes
++            .checked_add(u32::from(index < frontier.updated_prefix))
++            .filter(|count| *count <= self.sample_limit)
++            .ok_or_else(|| limit("primary partial sample count exceeded"))?;
++        if pixel.covered > count {
++            return Err(invalid("primary partial coverage exceeds its committed count"));
++        }
++        if count == 0 {
++            if pixel.covered != 0 || pixel.sum != [0.0; 3] {
++                return Err(invalid("unobserved primary pixel has accumulated data"));
++            }
++            return Ok(PartialPixel::Unknown);
++        }
++        Ok(PartialPixel::Sampled {
++            linear_premultiplied: pixel.sum.map(|sum| sum / f64::from(count)),
++            covered: pixel.covered,
++            count,
++        })
++    }
++
+ }
+--- a/crates/render/src/film_tests.rs
++++ b/crates/render/src/film_tests.rs
+@@ -275,3 +275,167 @@
+     assert!(film.add(0, 512, [0.0; 3], true, &cancel, &mut || Ok(())).is_err());
+     assert_eq!(film.samples(), 512);
+ }
++
++
++#[cfg(feature = "raytrace-cpu")]
++mod partial_camera_passes {
++    use super::primary::{PartialFrontier, PartialPixel, PrimaryFilm};
++    use super::*;
++    use crate::job::{CpuBudget, CpuProgressiveOptions};
++
++    fn uninitialized(samples: u32, seed: u32) -> PrimaryFilm {
++        let options = CpuProgressiveOptions { samples_per_pixel: samples, seed };
++        let bytes = PrimaryFilm::required_bytes(4, 1, options, CpuBudget::Compact).unwrap();
++        PrimaryFilm::new(4, 1, options, bytes, &CancelToken::default(), CpuBudget::Compact).unwrap()
++    }
++
++    fn ready(samples: u32, seed: u32) -> PrimaryFilm {
++        let mut film = uninitialized(samples, seed);
++        while !film.ready() {
++            film.initialize_one(&CancelToken::default(), &mut || Ok(())).unwrap();
++        }
++        film
++    }
++
++    fn observe(film: &PrimaryFilm) -> (PartialFrontier, Vec<PartialPixel>) {
++        (film.partial_frontier().unwrap(), (0..4).map(|index| film.partial_pixel(index).unwrap()).collect())
++    }
++
++    fn sampled(mean: [f64; 3], covered: u32, count: u32) -> PartialPixel {
++        PartialPixel::Sampled { linear_premultiplied: mean, covered, count }
++    }
++
++    #[test]
++    fn partial_frontier_distinguishes_first_prefix_miss_and_unobserved_pixels() {
++        let mut film = ready(2, 7);
++        assert_eq!(observe(&film), (
++            PartialFrontier { completed_passes: 0, updated_prefix: 0, pixels: 4 },
++            vec![PartialPixel::Unknown; 4],
++        ));
++        film.add(0, 0, [2.0, 0.0, 0.0], true, &CancelToken::default(), &mut || Ok(())).unwrap();
++        film.add(1, 0, [0.0; 3], false, &CancelToken::default(), &mut || Ok(())).unwrap();
++        assert_eq!(observe(&film), (
++            PartialFrontier { completed_passes: 0, updated_prefix: 2, pixels: 4 },
++            vec![sampled([2.0, 0.0, 0.0], 1, 1), sampled([0.0; 3], 0, 1), PartialPixel::Unknown, PartialPixel::Unknown],
++        ));
++        assert!(film.pixel(0).is_err(), "legacy whole-pass reader still rejects the partial pass");
++        assert!(film.pixel(1).is_err(), "a sampled miss does not imply a uniform pass");
++    }
++
++    #[test]
++    fn partial_counts_and_means_follow_real_interior_and_full_pass_frontiers() {
++        let mut film = ready(2, 0);
++        let cancel = CancelToken::default();
++        for (index, value, covered) in [
++            (0, [2.0, 0.0, 0.0], true), (1, [0.0; 3], false),
++            (2, [0.0, 0.0, 4.0], true), (3, [0.0; 3], false),
++        ] {
++            film.add(index, 0, value, covered, &cancel, &mut || Ok(())).unwrap();
++        }
++        assert_eq!(film.partial_frontier().unwrap(), PartialFrontier { completed_passes: 1, updated_prefix: 0, pixels: 4 });
++        assert_eq!(film.partial_pixel(3).unwrap(), sampled([0.0; 3], 0, 1));
++        assert_eq!(film.pixel(0).unwrap(), ([2.0, 0.0, 0.0], 1, 1));
++
++        film.add(0, 1, [4.0, 0.0, 0.0], true, &cancel, &mut || Ok(())).unwrap();
++        film.add(1, 1, [0.0, 2.0, 0.0], true, &cancel, &mut || Ok(())).unwrap();
++        assert_eq!(observe(&film), (
++            PartialFrontier { completed_passes: 1, updated_prefix: 2, pixels: 4 },
++            vec![sampled([3.0, 0.0, 0.0], 2, 2), sampled([0.0, 1.0, 0.0], 1, 2),
++                sampled([0.0, 0.0, 4.0], 1, 1), sampled([0.0; 3], 0, 1)],
++        ));
++        assert!(film.pixel(0).is_err());
++
++        film.add(2, 1, [0.0, 0.0, 8.0], true, &cancel, &mut || Ok(())).unwrap();
++        assert_eq!(film.partial_frontier().unwrap().updated_prefix, 3);
++        film.add(3, 1, [0.0; 3], false, &cancel, &mut || Ok(())).unwrap();
++        assert_eq!(observe(&film), (
++            PartialFrontier { completed_passes: 2, updated_prefix: 0, pixels: 4 },
++            vec![sampled([3.0, 0.0, 0.0], 2, 2), sampled([0.0, 1.0, 0.0], 1, 2),
++                sampled([0.0, 0.0, 6.0], 2, 2), sampled([0.0; 3], 0, 2)],
++        ));
++        assert_eq!(film.pixel(2).unwrap(), ([0.0, 0.0, 6.0], 2, 2));
++        assert!(film.add(0, 2, [0.0; 3], false, &cancel, &mut || Ok(())).is_err());
++        assert_eq!(film.partial_frontier().unwrap().completed_passes, 2);
++    }
++
++    #[test]
++    fn partial_access_refuses_uninitialized_storage_and_invalid_indices() {
++        let mut film = uninitialized(2, 7);
++        assert!(film.partial_frontier().is_err());
++        assert!(film.partial_pixel(0).is_err());
++        film.initialize_one(&CancelToken::default(), &mut || Ok(())).unwrap();
++        assert!(film.partial_frontier().is_err(), "allocated prefix is not an initialized film");
++        assert!(film.partial_pixel(0).is_err());
++        while !film.ready() {
++            film.initialize_one(&CancelToken::default(), &mut || Ok(())).unwrap();
++        }
++        assert_eq!(film.partial_pixel(0).unwrap(), PartialPixel::Unknown);
++        assert!(film.partial_pixel(4).is_err());
++        assert!(film.partial_pixel(usize::MAX).is_err());
++        assert_eq!(film.partial_frontier().unwrap().updated_prefix, 0);
++    }
++
++    #[test]
++    fn failed_or_cancelled_updates_preserve_the_observed_partial_frontier() {
++        let mut film = ready(2, 7);
++        film.add(0, 0, [2.0, 0.0, 0.0], true, &CancelToken::default(), &mut || Ok(())).unwrap();
++        let before = observe(&film);
++        for (index, ordinal, value, covered) in [
++            (0, 0, [0.0; 3], false), (2, 0, [0.0; 3], false), (1, 1, [0.0; 3], false),
++            (1, 0, [f64::NAN; 3], true), (1, 0, [1.0; 3], false),
++        ] {
++            assert!(film.add(index, ordinal, value, covered, &CancelToken::default(), &mut || Ok(())).is_err());
++            assert_eq!(observe(&film), before);
++        }
++        assert_eq!(film.add(1, 0, [4.0; 3], true, &CancelToken::default(), &mut || Err(limit("existing job exhausted"))).unwrap_err().code,
++            ErrorCode::LimitExceeded);
++        assert_eq!(observe(&film), before);
++        let cancel = CancelToken::default();
++        let observer = cancel.clone();
++        assert_eq!(film.add(1, 0, [4.0; 3], true, &cancel, &mut || {
++            observer.cancel();
++            Ok(())
++        }).unwrap_err().code, ErrorCode::Cancelled);
++        assert_eq!(observe(&film), before);
++        film.add(1, 0, [4.0; 3], true, &CancelToken::default(), &mut || Ok(())).unwrap();
++        assert_eq!(film.partial_frontier().unwrap().updated_prefix, 2, "failed updates did not consume the next ordinal");
++    }
++
++    #[test]
++    fn reading_partial_pixels_preserves_default_sum_order_bits_and_charge_count() {
++        for seed in [0, 7, u32::MAX] {
++            let mut observed = ready(4, seed);
++            let mut control = ready(4, seed);
++            let mut observed_charges = 0;
++            let mut control_charges = 0;
++            for ordinal in 0..4 {
++                let red = if ordinal == 0 { 1e12 } else { 2.0_f64.powi(-15) };
++                for index in 0..4 {
++                    let value = [red, red * 0.5, 2.0];
++                    observed.add(index, ordinal, value, true, &CancelToken::default(), &mut || {
++                        observed_charges += 1;
++                        Ok(())
++                    }).unwrap();
++                    // These uncharged O(1) reads model only the accessor. A future
++                    // snapshot caller still owes its own per-read/copy work charge.
++                    let _ = observe(&observed);
++                    control.add(index, ordinal, value, true, &CancelToken::default(), &mut || {
++                        control_charges += 1;
++                        Ok(())
++                    }).unwrap();
++                }
++            }
++            assert_eq!((observed_charges, control_charges), (16, 16));
++            assert_eq!(observed.samples(), 4);
++            for index in 0..4 {
++                let (actual, covered, count) = observed.pixel(index).unwrap();
++                let (expected, expected_covered, expected_count) = control.pixel(index).unwrap();
++                assert_eq!(actual.map(f64::to_bits), expected.map(f64::to_bits));
++                assert_eq!(actual.map(f64::to_bits), [2.5e11_f64, 1.25e11_f64, 2.0_f64].map(f64::to_bits),
++                    "ordered additions keep each sub-half-ULP contribution rounded at its original addition");
++                assert_eq!((covered, count), (expected_covered, expected_count));
++                assert_eq!(observed.partial_pixel(index).unwrap(), sampled(actual, 4, 4));
++            }
++        }
++    }
++}
+--- a/crates/render/src/job/bloom.rs
++++ b/crates/render/src/job/bloom.rs
+@@ -39,6 +39,13 @@
+             return Ok(0);
+         }
+         u64::from(width).checked_mul(u64::from(height)).and_then(|n| n.checked_mul(24)).ok_or_else(|| invalid("bloom scratch overflow"))
++    }
++    pub(crate) fn scratch_bytes_with_limits(self, width: u32, height: u32, limits: crate::RenderLimits) -> Result<u64> {
++        self.validate()?;
++        let count = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
++        if !self.active() { return Ok(0); }
++        super::linear_exr::checked_output_bytes(count, 12, 0, limits)?;
++        super::linear_exr::checked_stage_bytes(count, 24, 0, limits)
+     }
+ }
+ fn invalid(message: &str) -> JobError {
+@@ -64,21 +71,30 @@
+ }
+ impl BloomTask {
+     pub fn new(width: u32, height: u32, pixels: Vec<[f32; 4]>, options: Bloom, cancel: CancelToken) -> Result<Self> {
++        Self::new_with_limits(width, height, pixels, options, cancel, GPU_PATH_LIMITS)
++    }
++    pub(crate) fn new_with_limits(width: u32, height: u32, pixels: Vec<[f32; 4]>, options: Bloom, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
+         options.validate()?;
+         cancel.check()?;
+         let count = u64::from(width).checked_mul(u64::from(height)).ok_or_else(|| invalid("bloom dimensions overflow"))?;
+         if width == 0
+             || height == 0
+-            || u64::from(width) > GPU_PATH_LIMITS.max_dimension
+-            || u64::from(height) > GPU_PATH_LIMITS.max_dimension
+-            || count > GPU_PATH_LIMITS.max_pixels
++            || super::linear_exr::output_pixels_with_limits(width, height, limits).is_err()
+             || usize::try_from(count).ok() != Some(pixels.len())
+             || !options.active()
+         {
+             return Err(invalid("bloom requires an admitted nonempty image and positive strength"));
+         }
++        options.scratch_bytes_with_limits(width, height, limits)?;
++        let retained = super::linear_exr::checked_output_bytes(pixels.capacity() as u64, 16, 0, limits)? as u64;
++        super::linear_exr::checked_stage_bytes(count, 24, retained, limits)?;
+         let horizontal = allocate(pixels.len())?;
++        let horizontal_bytes = super::linear_exr::checked_output_bytes(horizontal.capacity() as u64, 12, 0, limits)? as u64;
++        let retained = retained.checked_add(horizontal_bytes).ok_or_else(|| invalid("bloom retained byte overflow"))?;
++        super::linear_exr::checked_stage_bytes(count, 12, retained, limits)?;
+         let vertical = allocate(pixels.len())?;
++        super::linear_exr::checked_output_bytes(vertical.capacity() as u64, 12, 0, limits)?;
++        super::linear_exr::checked_stage_bytes(vertical.capacity() as u64, 12, retained, limits)?;
+         Ok(Self { pixels, horizontal, vertical, width: width as usize, height: height as usize, options, cancel, phase: 0, line: 0 })
+     }
+     pub fn total_lines(&self) -> u64 {
+@@ -247,4 +263,36 @@
+         assert!(task.step(1).is_err());
+         assert!(task.finish().is_err());
+     }
+-}
++
++    #[test]
++    fn explicit_bloom_preserves_independent_three_box_kernel_and_quantum() {
++        let mut pixels = vec![[0.0, 0.0, 0.0, 1.0]; 121]; pixels[60][0] = 1.0;
++        let options = Bloom { strength: 1.0, threshold: 0.0, radius: 1 };
++        let mut work = BloomTask::new_with_limits(11, 11, pixels.clone(), options, CancelToken::default(), GPU_PATH_LIMITS).unwrap();
++        while !work.step(1).unwrap() {}
++        let (retained, glow) = work.finish().unwrap();
++        assert_eq!(retained, pixels);
++        let kernel = [1.0, 3.0, 6.0, 7.0, 6.0, 3.0, 1.0];
++        for y in 0..11 { for x in 0..11 {
++            let expected = if (2..=8).contains(&x) && (2..=8).contains(&y) { kernel[x-2] * kernel[y-2] / 729.0 } else { 0.0 };
++            assert!((f64::from(glow[y*11+x][0]) - expected).abs() < 2e-7);
++            assert_eq!(&glow[y*11+x][1..], &[0.0, 0.0]);
++        } }
++        assert_eq!(glow, run(pixels, 11, 11, 1, 32));
++    }
++
++    #[test]
++    fn wide_bloom_is_explicit_and_legacy_inactive_and_cancel_order_stay_intact() {
++        let wide = super::super::CpuBudget::Workstation.image_limits(false);
++        let options = Bloom { strength: 1.0, ..Default::default() };
++        assert!(BloomTask::new(8193, 1, vec![], options, CancelToken::default()).is_err());
++        let cancel = CancelToken::default();
++        let mut task = BloomTask::new_with_limits(8193, 1, vec![[0.0, 0.0, 0.0, 1.0]; 8193], options, cancel.clone(), wide).unwrap();
++        cancel.cancel();
++        assert_eq!(task.step(1).unwrap_err().code, ErrorCode::Cancelled);
++        assert_eq!(Bloom::default().scratch_bytes(0, u32::MAX).unwrap(), 0);
++        assert_eq!(options.scratch_bytes(8193, 1).unwrap(), 8193 * 24, "legacy estimate remains arithmetic-only");
++        assert_eq!(BloomTask::new(0, 1, vec![], options, cancel.clone()).err().unwrap().code, ErrorCode::Cancelled);
++        assert_eq!(BloomTask::new(0, 1, vec![], Bloom { strength: f64::NAN, ..options }, cancel).err().unwrap().code, ErrorCode::InvalidRequest);
++    }
++}
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -107,6 +107,17 @@
+     }
+ }
+ impl Reservation {
++    /// Merge unique portions of one admission without a second pool debit.
++    fn merge_from(&mut self, donor: &mut Self) -> Result<()> {
++        if !Arc::ptr_eq(&self.budget, &donor.budget) {
++            return Err(JobError::new(ErrorCode::WrongOwner, "cannot merge different image admission pools"));
++        }
++        let bytes = self.bytes.checked_add(donor.bytes).filter(|v| *v <= self.budget.limit)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "image reservation merge overflow"))?;
++        self.bytes = bytes;
++        donor.bytes = 0;
++        Ok(())
++    }
+     /// Transfer an already admitted portion without changing the pool's total.
+     /// CPU progressive admission includes every possible checkpoint up front.
+     fn split(&mut self, bytes: u64) -> Result<Self> {
+@@ -362,6 +373,7 @@
+ }
+ 
+ struct Data {
++    partial_preview: Option<Arc<RenderPartialPreview>>,
+     punctual_diagnostics: Option<super::PunctualDiagnostics>,
+     sampling: Option<super::adaptive::SamplingReport>,
+     progress: Progress,
+@@ -370,6 +382,7 @@
+     preview: Option<Arc<RenderPreview>>,
+ }
+ struct Record {
++    partial: Option<Arc<PartialCredits>>,
+     presentation: Option<Arc<RetainedPresentation>>,
+     textures: Option<super::textures::TextureSummary>,
+     options: JobOptions,
+@@ -425,14 +438,18 @@
+         })
+     }
+     pub fn cancel(&self) -> Result<JobStatus> {
++        if let Some(credits) = &self.0.partial { credits.close(); }
++        let mut released_partial = None;
+         {
+             let mut data = self.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render status lock poisoned"))?;
+             if !data.progress.phase.terminal() {
+                 self.0.cancel.cancel();
++                released_partial = data.partial_preview.take();
+                 data.preview = None;
+                 data.progress.phase = if data.progress.phase == Phase::Queued { Phase::Cancelled } else { Phase::Cancelling };
+             }
+         }
++        drop(released_partial);
+         self.0.notify();
+         self.status()
+     }
+@@ -472,6 +489,14 @@
+     }
+ }
+ 
++struct Submission {
++    id: JobId,
++    scene_generation: u64,
++    scene: ProductScene,
++    request: ImageRequest,
++    options: JobOptions,
++    environment: Option<crate::lighting::environment_input::EnvironmentInput>,
++}
+ struct Work {
+     regrade: Option<(Arc<RenderFrame>, super::presentation::Presentation)>,
+     request: Option<ImageRequest>,
+@@ -551,6 +576,8 @@
+     handle: JobHandle,
+     reservation: Option<Reservation>,
+     next_preview_sequence: u32,
++    // Task/PNG allocations above die before the in-flight credit below.
++    partial: Option<TaskSlot<PartialRunning>>,
+ }
+ 
+ /// One fallibly allocated task, keeping the dispatch enum small in either build.
+@@ -582,6 +609,8 @@
+ }
+ 
+ enum WorkPoll {
++    #[cfg(feature = "raytrace-cpu")]
++    Partial { png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64 },
+     Existing(TaskPoll),
+     #[cfg(feature = "raytrace-cpu")]
+     Preview {
+@@ -591,6 +620,37 @@
+ }
+ 
+ impl WorkTask {
++    fn partial_ready(&mut self, plan: super::PartialPreviewPlan) -> Result<bool> {
++        let _ = &plan;
++        match self {
++            #[cfg(feature = "raytrace-cpu")]
++            Self::Raytrace(task) => task.get_mut()?.partial_preview_ready(plan),
++            _ => Ok(false),
++        }
++    }
++    fn begin_partial(&mut self, plan: super::PartialPreviewPlan) -> Result<bool> {
++        let _ = &plan;
++        match self {
++            #[cfg(feature = "raytrace-cpu")]
++            Self::Raytrace(task) => match task.get_mut()?.begin_partial_preview(plan)? {
++                crate::raytrace::image::PartialBegin::Started => Ok(true),
++                crate::raytrace::image::PartialBegin::Exhausted => Ok(false),
++            },
++            _ => Err(JobError::new(ErrorCode::InvalidRequest, "partial presentation requires the builtin CPU task")),
++        }
++    }
++    fn step_partial(&mut self, units: usize) -> Result<WorkPoll> {
++        let _ = &units;
++        match self {
++            #[cfg(feature = "raytrace-cpu")]
++            Self::Raytrace(task) => Ok(match task.get_mut()?.step_with_partial_previews(units)? {
++                crate::raytrace::image::PartialImagePoll::Pending(progress) => WorkPoll::Existing(TaskPoll::Pending(progress)),
++                crate::raytrace::image::PartialImagePoll::Complete(png) => WorkPoll::Existing(TaskPoll::Complete(png)),
++                crate::raytrace::image::PartialImagePoll::Preview { png, covered, completed_passes, updated_prefix } => WorkPoll::Partial { png, covered, completed_passes, updated_prefix },
++            }),
++            _ => Err(JobError::new(ErrorCode::InvalidRequest, "partial presentation requires the builtin CPU task")),
++        }
++    }
+     fn punctual_diagnostics(&self) -> Option<super::PunctualDiagnostics> {
+         match self {
+             #[cfg(feature = "raytrace-cpu")]
+@@ -624,15 +684,22 @@
+         request: ImageRequest,
+         cancel: CancelToken,
+         environment: Option<crate::lighting::environment_input::EnvironmentInput>,
++        job_options: JobOptions,
++        partial: Option<super::PartialPreviewPlan>,
+     ) -> Result<Self> {
+-        let _ = &environment;
++        let _ = (&environment, &job_options, &partial);
+         match request.integrator {
+             Integrator::Raster => ImageTask::new(scene, request, cancel).and_then(TaskSlot::new).map(Self::Raster),
+             Integrator::Raytrace => {
+                 #[cfg(feature = "raytrace-cpu")]
+                 {
+                     let options = request.raytrace.clone().unwrap_or_default();
+-                    crate::raytrace::image::ImageTask::new_with_environment(scene, request, cancel, options, environment)
++                    let task = if let Some(plan) = partial {
++                        crate::raytrace::image::ImageTask::new_with_environment_and_nested_and_partial(scene, request, cancel, options, environment, job_options.nested_media, plan)
++                    } else {
++                        crate::raytrace::image::ImageTask::new_with_environment_and_nested(scene, request, cancel, options, environment, job_options.nested_media)
++                    };
++                    task
+                         .and_then(TaskSlot::new)
+                         .map(Self::Raytrace)
+                 }
+@@ -660,6 +727,8 @@
+ }
+ 
+ fn terminal(handle: &JobHandle, error: JobError) {
++    if let Some(credits) = &handle.0.partial { credits.close(); }
++    let mut released_partial = None;
+     if let Ok(mut data) = handle.0.data.lock() {
+         if data.progress.phase == Phase::Completed {
+             return;
+@@ -673,7 +742,9 @@
+         }
+         data.frame = None;
+         data.preview = None;
+-    }
++        released_partial = data.partial_preview.take();
++    }
++    drop(released_partial);
+     handle.0.notify();
+ }
+ 
+@@ -695,12 +766,22 @@
+                 let request = work.request.ok_or_else(|| JobError::new(ErrorCode::Internal, "missing registered executor request"))?;
+                 executor.begin(work.scene, request, work.handle.0.options, work.handle.0.cancel.clone()).map(WorkTask::Registered)
+             } else {
+-                WorkTask::new(work.scene, work.handle.0.request.clone(), work.handle.0.cancel.clone(), work.environment)
++                WorkTask::new(
++                    work.scene,
++                    work.handle.0.request.clone(),
++                    work.handle.0.cancel.clone(),
++                    work.environment,
++                    work.handle.0.options,
++                    work.handle.0.partial.as_ref().map(|credits| credits.plan),
++                )
+             }
+         }))
+         .unwrap_or_else(|_| Err(JobError::new(ErrorCode::Internal, "image executor failed while preparing the job")));
++        let partial = work.handle.0.partial.as_ref().map(|credits| TaskSlot::new(PartialRunning::new(credits.clone()))).transpose();
++        let task = task.and_then(|task| partial.map(|partial| (task, partial)));
+         match task {
+-            Ok(task) => Some(Self {
++            Ok((task, partial)) => Some(Self {
++                partial,
+                 source_master: None,
+                 task: Some(task),
+                 pending_png: None,
+@@ -720,7 +801,22 @@
+         if self.pending_png.is_some() {
+             return self.advance_png(units);
+         }
+-        let result = self.task.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing render task"))?.step(units)?;
++        if let Some(partial) = self.partial.as_mut() {
++            let partial = partial.get_mut()?;
++            if partial.lease.is_none() && partial.credits.requested.load(Ordering::Acquire) && !partial.credits.exhausted.load(Ordering::Acquire) {
++                let task = self.task.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial CPU task"))?;
++                if task.partial_ready(partial.credits.plan)? && let Some(lease) = partial.credits.acquire()? {
++                        // Keep the lease past any producer error until task buffers drop.
++                        partial.lease = Some(lease);
++                        if !task.begin_partial(partial.credits.plan)? {
++                            partial.credits.exhaust();
++                            drop(partial.lease.take());
++                        }
++                }
++            }
++        }
++        let task = self.task.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing render task"))?;
++        let result = if self.partial.is_some() { task.step_partial(units)? } else { task.step(units)? };
+         let mut data = self.handle.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render status lock poisoned"))?;
+         data.punctual_diagnostics = self.task.as_ref().and_then(WorkTask::punctual_diagnostics);
+         // The final publication check is under the same lock as cancellation.
+@@ -728,10 +824,20 @@
+             data.progress.phase = Phase::Cancelled;
+             data.frame = None;
+             data.preview = None;
++            let released = data.partial_preview.take();
++            drop(data);
++            if let Some(credits) = &self.handle.0.partial { credits.close(); }
++            drop(released);
+             self.handle.0.notify();
+             return Ok(false);
+         }
+         match result {
++            #[cfg(feature = "raytrace-cpu")]
++            WorkPoll::Partial { png, covered, completed_passes, updated_prefix } => {
++                drop(data);
++                self.capture_partial(png, covered, completed_passes, updated_prefix)?;
++                Ok(true)
++            }
+             WorkPoll::Existing(TaskPoll::Pending(progress)) => {
+                 data.progress = progress;
+                 Ok(true)
+@@ -782,6 +888,9 @@
+         }
+         let PendingPng { png, digest, preview_samples, exr, exr_digest, .. } =
+             self.pending_png.take().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing completed PNG digest"))?;
++        if self.partial.as_ref().and_then(|slot| slot.0.first()).is_some_and(|partial| partial.pending.is_some()) {
++            return self.publish_partial(png, digest);
++        }
+         let info = FrameInfo {
+             job: self.handle.0.id,
+             scene_generation: self.handle.0.scene_generation,
+@@ -865,7 +974,11 @@
+             _reservation: reservation,
+         }));
+         data.preview = None;
++        let released = data.partial_preview.take();
+         data.progress = Progress { phase: Phase::Completed, done: 1, total: 1 };
++        drop(data);
++        if let Some(credits) = &self.handle.0.partial { credits.close(); }
++        drop(released);
+         self.handle.0.notify();
+         Ok(false)
+     }
+@@ -873,6 +986,7 @@
+     fn guarded_step(&mut self, units: usize) -> bool {
+         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.advance(units)));
+         match result {
++
+             Ok(Ok(more)) => more,
+             Ok(Err(e)) => {
+                 terminal(&self.handle, e);
+@@ -1057,6 +1171,17 @@
+     }
+ 
+     pub fn admit(&self, scene: &ProductScene, request: &ImageRequest, options: JobOptions) -> Result<Admission> {
++        self.admit_with_policy(scene, request, options, None)
++    }
++    fn admit_with_policy(&self, scene: &ProductScene, request: &ImageRequest, options: JobOptions, partial: Option<super::PartialPreviewPlan>) -> Result<Admission> {
++        if let Some(plan) = partial {
++            if self.0.executor.is_some() || request.integrator != Integrator::Raytrace || request.transparent_background
++                || request.environment.is_some() || request.textures.is_some()
++                || request.raytrace.as_ref().and_then(|v| v.progressive).is_none()
++                || plan != super::PartialPreviewPlan::new(request.width, request.height)? {
++                return Err(JobError::new(ErrorCode::InvalidRequest, "partial previews require the canonical builtin CPU progressive request"));
++            }
++        }
+         let scatter = |t: Option<crate::transmission::Transmission>| t.and_then(|v| v.subsurface()).is_some_and(|s| s.active());
+         if scene.meshes.iter().any(|b| scatter(b.transmission) || b.faces.iter().any(|f| scatter(f.transmission)))
+             && !self.0.executor.as_ref().is_some_and(|executor| executor.supports_subsurface())
+@@ -1104,10 +1229,39 @@
+             Ok(admission)
+         } else {
+             request.cpu_budget().validate_execution()?;
+-            if options != JobOptions::default() {
++            // Only the existing nesting opt-in is admitted on the CPU raytrace path.
++            // Every other JobOptions field retains its exact default-only contract.
++            if (JobOptions { nested_media: false, ..options }) != JobOptions::default() {
+                 return Err(JobError::new(ErrorCode::InvalidRequest, "CPU images use raytrace options, not progressive sampling controls"));
+             }
+-            admit(scene, request)
++            if let Some(plan) = partial {
++                #[cfg(feature = "raytrace-cpu")]
++                {
++                    let raytrace = request.raytrace.as_ref().ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "partial previews require CPU progressive options"))?;
++                    return crate::raytrace::image::admit_with_partial_preview(scene, request, raytrace, options.nested_media, plan);
++                }
++                #[cfg(not(feature = "raytrace-cpu"))]
++                {
++                    let _ = plan;
++                    return Err(JobError::new(ErrorCode::HostUnavailable, "CPU raytracing is not compiled in; enable raytrace-cpu"));
++                }
++            }
++            if !options.nested_media {
++                return admit(scene, request);
++            }
++            if request.integrator != Integrator::Raytrace || request.environment.is_some() || request.textures.is_some() || scene.has_transmission() {
++                return Err(JobError::new(ErrorCode::InvalidRequest, "CPU nested media require explicit raytrace dielectric overrides"));
++            }
++            #[cfg(feature = "raytrace-cpu")]
++            {
++                let defaults = super::RaytraceOptions::default();
++                let raytrace = request.raytrace.as_ref().unwrap_or(&defaults);
++                crate::raytrace::image::admit_with_nested(scene, request, raytrace, true)
++            }
++            #[cfg(not(feature = "raytrace-cpu"))]
++            {
++                Err(JobError::new(ErrorCode::HostUnavailable, "CPU raytracing is not compiled in; enable raytrace-cpu"))
++            }
+         }
+     }
+ 
+@@ -1234,14 +1388,21 @@
+     }
+ 
+     pub fn submit_with_environment_and_options(
+-        &self,
+-        id: JobId,
+-        scene_generation: u64,
+-        scene: ProductScene,
+-        request: ImageRequest,
+-        options: JobOptions,
++        &self, id: JobId, scene_generation: u64, scene: ProductScene, request: ImageRequest, options: JobOptions,
+         environment: Option<crate::lighting::environment_input::EnvironmentInput>,
+     ) -> Result<JobHandle> {
++        self.submit_with_policy(Submission { id, scene_generation, scene, request, options, environment }, None)
++    }
++    /// Transient CPU presentation policy. Final request and legacy observers are unchanged.
++    pub fn submit_cpu_partial_with_environment_and_options(
++        &self, id: JobId, scene_generation: u64, scene: ProductScene, request: ImageRequest, options: JobOptions,
++        environment: Option<crate::lighting::environment_input::EnvironmentInput>,
++    ) -> Result<JobHandle> {
++        let plan = super::PartialPreviewPlan::new(request.width, request.height)?;
++        self.submit_with_policy(Submission { id, scene_generation, scene, request, options, environment }, Some(plan))
++    }
++    fn submit_with_policy(&self, input: Submission, partial_plan: Option<super::PartialPreviewPlan>) -> Result<JobHandle> {
++        let Submission { id, scene_generation, scene, request, options, environment } = input;
+         if self.0.executor.is_some() && environment.is_some() {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "registered image executors do not accept CPU environments"));
+         }
+@@ -1276,7 +1437,7 @@
+         {
+             features.push(crate::RenderFeature::Refraction);
+         }
+-        let Admission { estimated_total_bytes, .. } = self.admit(&scene, &request, options)?;
++        let Admission { estimated_total_bytes, .. } = self.admit_with_policy(&scene, &request, options, partial_plan)?;
+         let environment_bytes =
+             environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| JobError::new(ErrorCode::InvalidRequest, e.to_string()))?;
+         let estimated_total_bytes = estimated_total_bytes
+@@ -1313,8 +1474,9 @@
+             return Err(JobError::new(ErrorCode::QueueFull, "image queue is full"));
+         }
+         self.check_request_sum(estimated_total_bytes, request_bytes, request.cpu_budget())?;
+-        let reservation = self.0.shared.budget.reserve(estimated_total_bytes)?;
++        let mut reservation = self.0.shared.budget.reserve(estimated_total_bytes)?;
+         let request_reservation = if request_bytes == 0 { None } else { Some(self.0.shared.budget.reserve(request_bytes)?) };
++        let partial_credits = partial_plan.map(|plan| PartialCredits::new(plan, &mut reservation)).transpose()?;
+         // Preserve the original CPU option capacities in the retained request and its lease.
+         // Registered executors instead move resource Arcs into work and keep a small public copy.
+         let (public_request, work_request) = if self.0.executor.is_some() {
+@@ -1323,6 +1485,7 @@
+             (request, None)
+         };
+         let handle = JobHandle(Arc::new(Record {
++            partial: partial_credits,
+             presentation: None,
+             textures,
+             options,
+@@ -1334,6 +1497,7 @@
+             resolved,
+             cancel: CancelToken::default(),
+             data: Mutex::new(Data {
++                partial_preview: None,
+                 punctual_diagnostics: None,
+                 sampling: None,
+                 progress: Progress { phase: Phase::Queued, done: 0, total: 1 },
+@@ -1440,6 +1604,7 @@
+         let metadata = self.0.shared.budget.reserve(metadata_bytes)?;
+         let origin = Arc::new(RetainedPresentation { info: origin, _reservation: metadata });
+         let handle = JobHandle(Arc::new(Record {
++            partial: None,
+             presentation: Some(origin),
+             textures: None,
+             options,
+@@ -1451,6 +1616,7 @@
+             resolved,
+             cancel: CancelToken::default(),
+             data: Mutex::new(Data {
++                partial_preview: None,
+                 punctual_diagnostics: None,
+                 sampling: None,
+                 progress: Progress { phase: Phase::Queued, done: 0, total: 1 },
+@@ -1834,3 +2000,236 @@
+         JobId { session: owner, serial, generation: serial }
+     }
+ }
++
++/// Provisional source-film observation, separate from complete-pass previews.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
++#[serde(rename_all = "snake_case")]
++pub enum PartialPreviewProjection { TopLeftRepresentativeV1 }
++#[derive(Clone, Debug, Serialize)]
++pub struct PartialPreviewInfo {
++    pub frame: FrameInfo,
++    pub sequence: u64,
++    pub source_width: u32,
++    pub source_height: u32,
++    pub completed_passes: u32,
++    pub updated_prefix: u64,
++    pub projection: PartialPreviewProjection,
++}
++/// Fields drop in declaration order: payload allocations die before credit return.
++pub struct RenderPartialPreview {
++    pub info: PartialPreviewInfo,
++    png: Vec<u8>,
++    covered: Vec<u16>,
++    _lease: ReturnReservation,
++}
++const _: [(); 1] = [(); (std::mem::size_of::<RenderPartialPreview>() + 2 * crate::MAX_RENDER_ID_BYTES + 256 <= 2048) as usize];
++impl RenderPartialPreview {
++    pub fn png(&self) -> &[u8] { &self.png }
++    pub fn covered(&self) -> &[u16] { &self.covered }
++}
++struct PartialCreditState {
++    free: Reservation,
++    in_flight: bool,
++    closed: bool,
++}
++struct PartialCredits {
++    plan: super::PartialPreviewPlan,
++    state: Mutex<PartialCreditState>,
++    requested: AtomicBool,
++    exhausted: AtomicBool,
++    _metadata: Reservation,
++}
++const _: [(); 1] = [(); (std::mem::size_of::<PartialCredits>() + std::mem::size_of::<PartialRunning>() + std::mem::size_of::<TaskSlot<PartialRunning>>() + 128 <= 1024) as usize];
++impl PartialCredits {
++    fn new(plan: super::PartialPreviewPlan, reservation: &mut Reservation) -> Result<Arc<Self>> {
++        plan.validate()?;
++        let metadata = reservation.split(1024)?;
++        let bytes = plan.slot_bytes()?.checked_mul(2).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial credit overflow"))?;
++        let free = reservation.split(bytes)?;
++        Ok(Arc::new(Self {
++            plan,
++            state: Mutex::new(PartialCreditState { free, in_flight: false, closed: false }),
++            requested: AtomicBool::new(false),
++            exhausted: AtomicBool::new(false),
++            _metadata: metadata,
++        }))
++    }
++    fn request(&self) -> Result<bool> {
++        let state = self.state.lock().map_err(|_| JobError::new(ErrorCode::Internal, "partial credit lock poisoned"))?;
++        if state.closed || self.exhausted.load(Ordering::Acquire) { return Ok(false); }
++        self.requested.store(true, Ordering::Release);
++        Ok(true)
++    }
++    fn acquire(self: &Arc<Self>) -> Result<Option<ReturnReservation>> {
++        let mut state = self.state.lock().map_err(|_| JobError::new(ErrorCode::Internal, "partial credit lock poisoned"))?;
++        let bytes = self.plan.slot_bytes()?;
++        if state.closed || state.in_flight || self.exhausted.load(Ordering::Acquire)
++            || !self.requested.load(Ordering::Acquire) || state.free.bytes < bytes { return Ok(None); }
++        let reservation = state.free.split(bytes)?;
++        state.in_flight = true;
++        self.requested.store(false, Ordering::Release);
++        Ok(Some(ReturnReservation { reservation: Some(reservation), credits: self.clone(), in_flight: true }))
++    }
++    fn exhaust(&self) {
++        self.exhausted.store(true, Ordering::Release);
++        self.requested.store(false, Ordering::Release);
++    }
++    fn close(&self) {
++        let mut state = match self.state.lock() { Ok(state) => state, Err(error) => error.into_inner() };
++        state.closed = true;
++        state.in_flight = false;
++        self.requested.store(false, Ordering::Release);
++        // Atomic release only: no image destruction or user work under this lock.
++        let _ = state.free.shrink(0);
++    }
++}
++/// Unique lease; Arc payload clones never create another independent slot.
++struct ReturnReservation {
++    reservation: Option<Reservation>,
++    credits: Arc<PartialCredits>,
++    in_flight: bool,
++}
++impl ReturnReservation {
++    fn published(&mut self) -> Result<()> {
++        let mut state = self.credits.state.lock().map_err(|_| JobError::new(ErrorCode::Internal, "partial credit lock poisoned"))?;
++        if state.closed || !state.in_flight || !self.in_flight {
++            return Err(JobError::new(ErrorCode::Cancelled, "partial preview credit is no longer current"));
++        }
++        state.in_flight = false;
++        self.in_flight = false;
++        Ok(())
++    }
++}
++impl Drop for ReturnReservation {
++    fn drop(&mut self) {
++        let Some(mut reservation) = self.reservation.take() else { return };
++        let mut state = match self.credits.state.lock() {
++            Ok(state) => state,
++            Err(error) => {
++                let mut state = error.into_inner();
++                state.closed = true;
++                let _ = state.free.shrink(0);
++                state
++            }
++        };
++        if self.in_flight { state.in_flight = false; }
++        if !state.closed {
++            let limit = self.credits.plan.slot_bytes().ok().and_then(|v| v.checked_mul(2));
++            if state.free.bytes.checked_add(reservation.bytes).zip(limit).is_some_and(|(total, limit)| total <= limit) {
++                if state.free.merge_from(&mut reservation).is_err() { state.closed = true; let _ = state.free.shrink(0); }
++            } else { state.closed = true; let _ = state.free.shrink(0); }
++        }
++        drop(state);
++        // A closed sink releases this uniquely held reservation globally.
++    }
++}
++struct PartialPending {
++    covered: Vec<u16>,
++    completed_passes: u32,
++    updated_prefix: u64,
++}
++// Error paths preserve the same payload-before-lease destruction order.
++struct PartialPublication {
++    png: Vec<u8>,
++    pending: PartialPending,
++    lease: ReturnReservation,
++}
++struct PartialRunning {
++    pending: Option<PartialPending>,
++    lease: Option<ReturnReservation>,
++    credits: Arc<PartialCredits>,
++    next_sequence: u64,
++}
++impl PartialRunning {
++    fn new(credits: Arc<PartialCredits>) -> Self { Self { pending: None, lease: None, credits, next_sequence: 1 } }
++}
++impl JobHandle {
++    /// Request presentation only; this is not a visual-authority certificate.
++    pub fn request_partial_preview(&self) -> Result<bool> {
++        let terminal = self.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render status lock poisoned"))?.progress.phase.terminal();
++        if terminal { return Ok(false); }
++        self.0.partial.as_ref().map_or(Ok(false), |credits| credits.request())
++    }
++    pub fn partial_preview_exhausted(&self) -> Result<bool> {
++        Ok(self.0.partial.as_ref().is_some_and(|credits| credits.exhausted.load(Ordering::Acquire)))
++    }
++    pub fn partial_preview(&self) -> Result<Option<Arc<RenderPartialPreview>>> {
++        let data = self.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render partial preview lock poisoned"))?;
++        let preview = data.partial_preview.clone();
++        if preview.as_ref().is_some_and(|p| p.info.frame.job != self.0.id || p.info.frame.scene_generation != self.0.scene_generation) {
++            return Err(JobError::new(ErrorCode::WrongOwner, "partial preview identity does not match its job"));
++        }
++        Ok(preview)
++    }
++}
++impl Running {
++    #[cfg(feature = "raytrace-cpu")]
++    fn capture_partial(&mut self, png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64) -> Result<()> {
++        self.handle.0.cancel.check()?;
++        let partial = self.partial.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "partial output without its policy"))?.get_mut()?;
++        let plan = partial.credits.plan;
++        let source_pixels = u64::from(plan.source_width()) * u64::from(plan.source_height());
++        let target = self.handle.0.request.raytrace.as_ref().and_then(|v| v.progressive)
++            .ok_or_else(|| JobError::new(ErrorCode::Internal, "partial output without progressive intent"))?.samples_per_pixel;
++        let covered_limit = plan.covered_bytes()?;
++        if partial.lease.is_none() || partial.pending.is_some() || completed_passes >= target || updated_prefix >= source_pixels
++            || (completed_passes == 0 && updated_prefix == 0) || covered.len() as u64 != plan.pixels()
++            || (covered.capacity() as u64).checked_mul(2).is_none_or(|v| v > covered_limit)
++            || png.capacity() as u64 > plan.encoded_limit()? {
++            return Err(JobError::new(ErrorCode::LimitExceeded, "partial payload exceeds its admitted frontier or capacities"));
++        }
++        // This sole sidecar verification scan was included in the producer's precharge.
++        for (index, count) in covered.iter().enumerate() {
++            self.handle.0.cancel.check()?;
++            let source = plan.source_index(index)? as u64;
++            let samples = completed_passes.checked_add(u32::from(source < updated_prefix))
++                .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial sample count overflow"))?;
++            if u32::from(*count) > samples {
++                return Err(JobError::new(ErrorCode::Internal, "partial coverage exceeds committed source samples"));
++            }
++        }
++        partial.pending = Some(PartialPending { covered, completed_passes, updated_prefix });
++        self.pending_png = Some(PendingPng::new(png));
++        Ok(())
++    }
++    fn publish_partial(&mut self, png: Vec<u8>, digest: Sha256) -> Result<bool> {
++        self.handle.0.cancel.check()?;
++        let partial = self.partial.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial publication state"))?.get_mut()?;
++        let pending = partial.pending.take().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial metadata"))?;
++        let lease = partial.lease.take().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial publication credit"))?;
++        let mut publication = PartialPublication { png, pending, lease };
++        let sequence = partial.next_sequence;
++        let next = sequence.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial preview sequence exhausted"))?;
++        let plan = partial.credits.plan;
++        let info = FrameInfo {
++            job: self.handle.0.id, scene_generation: self.handle.0.scene_generation,
++            backend: self.handle.0.resolved.backend.clone(), executor: self.handle.0.resolved.executor.clone(),
++            width: plan.width(), height: plan.height(), encoding: ColourEncoding::Srgb, alpha: AlphaConvention::Straight,
++            png_bytes: publication.png.len() as u64, png_sha256: format!("{:x}", digest.finalize()),
++        };
++        let metadata = std::mem::size_of::<RenderPartialPreview>().checked_add(64 + 2 * crate::MAX_RENDER_ID_BYTES)
++            .and_then(|v| v.checked_add(info.png_sha256.capacity()));
++        if metadata.is_none_or(|v| v > 2048) { return Err(JobError::new(ErrorCode::LimitExceeded, "partial payload metadata exceeds its slot")); }
++        // No Data lock while touching the credit coordinator.
++        publication.lease.published()?;
++        let PartialPublication { png, pending, lease } = publication;
++        let preview = Arc::new(RenderPartialPreview {
++            info: PartialPreviewInfo { frame: info, sequence, source_width: plan.source_width(), source_height: plan.source_height(),
++                completed_passes: pending.completed_passes, updated_prefix: pending.updated_prefix, projection: PartialPreviewProjection::TopLeftRepresentativeV1 },
++            png, covered: pending.covered, _lease: lease,
++        });
++        let mut data = self.handle.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render partial publication lock poisoned"))?;
++        if self.handle.0.cancel.is_cancelled() || data.progress.phase.terminal() {
++            drop(data);
++            drop(preview);
++            return Err(JobError::new(ErrorCode::Cancelled, "late partial preview refused"));
++        }
++        let released = data.partial_preview.replace(preview);
++        partial.next_sequence = next;
++        // A demand arriving during encoding remains pending; never clear it here.
++        drop(data);
++        drop(released);
++        self.handle.0.notify();
++        Ok(true)
++    }
++}
+--- a/crates/render/src/job/host_tests.rs
++++ b/crates/render/src/job/host_tests.rs
+@@ -1228,3 +1228,274 @@
+     drop(lease);
+     assert_eq!(host.admitted_bytes(), 0);
+ }
++
++mod partial_preview_contract {
++    use super::*;
++    use crate::job::PartialPreviewPlan;
++
++    fn credits() -> (Arc<Budget>, Reservation, Arc<PartialCredits>) {
++        let plan = PartialPreviewPlan::new(4, 1).unwrap();
++        let total = 2 * plan.slot_bytes().unwrap() + 1024 + 17;
++        let budget = Arc::new(Budget { used: AtomicU64::new(0), limit: total });
++        let mut work = budget.reserve(total).unwrap();
++        let credits = PartialCredits::new(plan, &mut work).unwrap();
++        assert_eq!(work.bytes, 17);
++        (budget, work, credits)
++    }
++    fn take(credits: &Arc<PartialCredits>) -> ReturnReservation {
++        assert!(credits.request().unwrap());
++        credits.acquire().unwrap().unwrap()
++    }
++    fn payload(mut lease: ReturnReservation, sequence: u64) -> Arc<RenderPartialPreview> {
++        lease.published().unwrap();
++        Arc::new(RenderPartialPreview {
++            info: PartialPreviewInfo {
++                frame: FrameInfo { job: id(7724, 1), scene_generation: 19, backend: crate::builtin_backend().id,
++                    executor: ExecutorId::new("cpu-raytrace").unwrap(), width: 4, height: 1,
++                    encoding: ColourEncoding::Srgb, alpha: AlphaConvention::Straight, png_bytes: 4, png_sha256: "unit-lease-fixture".into() },
++                sequence, source_width: 4, source_height: 1, completed_passes: 0, updated_prefix: 1,
++                projection: PartialPreviewProjection::TopLeftRepresentativeV1,
++            },
++            png: vec![1, 2, 3, 4], covered: vec![1, 0, 0, 0], _lease: lease,
++        })
++    }
++    #[test]
++    fn plan_is_canonical_no_upscale_and_maps_top_left_without_source_scan() {
++        for (w, h, expected) in [(16384, 4096, (1024, 256)), (2160, 3840, (576, 1024)), (4, 1, (4, 1)), (u32::MAX, 1, (1024, 1))] {
++            let plan = PartialPreviewPlan::new(w, h).unwrap();
++            assert_eq!((plan.width(), plan.height()), expected);
++            assert_eq!((plan.source_width(), plan.source_height()), (w, h));
++            assert_eq!(plan.source_index(0).unwrap(), 0);
++            assert!(plan.source_index(plan.pixels() as usize).is_err());
++            assert!(plan.pixels() <= 1024 * 1024);
++        }
++        let plan = PartialPreviewPlan::new(16384, 4096).unwrap();
++        assert_eq!(plan.source_index(1025).unwrap(), 16 * 16384 + 16);
++        assert_eq!(plan.snapshot_work().unwrap(), 12 * 1024 * 256 + 65538);
++        assert!(PartialPreviewPlan::new(0, 1).is_err());
++        assert!(PartialPreviewPlan::new(1, 0).is_err());
++    }
++    #[test]
++    fn same_budget_merge_moves_ownership_once_and_wrong_pool_preserves_both() {
++        let a = Arc::new(Budget { used: AtomicU64::new(0), limit: 100 });
++        let b = Arc::new(Budget { used: AtomicU64::new(0), limit: 100 });
++        let mut retained = a.reserve(80).unwrap();
++        let mut donor = retained.split(30).unwrap();
++        let mut foreign = b.reserve(9).unwrap();
++        assert_eq!(retained.merge_from(&mut foreign).unwrap_err().code, ErrorCode::WrongOwner);
++        assert_eq!((retained.bytes, foreign.bytes), (50, 9));
++        retained.merge_from(&mut donor).unwrap();
++        assert_eq!((retained.bytes, donor.bytes, a.used.load(Ordering::Acquire)), (80, 0, 80));
++        assert!(retained.split(81).is_err());
++        assert_eq!(retained.bytes, 80);
++        drop(donor);
++        assert_eq!(a.used.load(Ordering::Acquire), 80);
++        drop(retained);
++        drop(foreign);
++        assert_eq!((a.used.load(Ordering::Acquire), b.used.load(Ordering::Acquire)), (0, 0));
++    }
++    #[test]
++    fn two_total_slots_include_inflight_and_clones_do_not_mint_capacity() {
++        let (budget, work, credits) = credits();
++        let total = budget.used.load(Ordering::Acquire);
++        let first = take(&credits);
++        assert!(credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none(), "one encoder even with another free slot");
++        let first = payload(first, 1);
++        let held = first.clone();
++        let second = payload(take(&credits), 2);
++        assert!(credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none());
++        assert!(credits.requested.load(Ordering::Acquire), "full credit preserves coalesced demand");
++        drop(first);
++        assert!(credits.acquire().unwrap().is_none(), "a clone retains the same first slot");
++        assert_eq!(budget.used.load(Ordering::Acquire), total);
++        drop(held);
++        let third = credits.acquire().unwrap().unwrap();
++        assert_eq!(budget.used.load(Ordering::Acquire), total, "return/transfer does not reserve globally again");
++        assert_eq!(second.png(), &[1, 2, 3, 4]);
++        drop(third);
++        drop(second);
++        credits.close();
++        assert_eq!(budget.used.load(Ordering::Acquire), 17 + 1024);
++        drop(credits);
++        drop(work);
++        assert_eq!(budget.used.load(Ordering::Acquire), 0);
++    }
++    #[test]
++    fn demand_during_inflight_survives_publication_and_terminal_held_frames_stay_billed() {
++        let (budget, work, credits) = credits();
++        let first = take(&credits);
++        assert!(!credits.requested.load(Ordering::Acquire));
++        assert!(credits.request().unwrap());
++        let first = payload(first, 1);
++        assert!(credits.requested.load(Ordering::Acquire));
++        let second = payload(credits.acquire().unwrap().unwrap(), 2);
++        let per_slot = credits.plan.slot_bytes().unwrap();
++        credits.close();
++        assert!(!credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none());
++        drop(work);
++        assert_eq!(budget.used.load(Ordering::Acquire), 2 * per_slot + 1024);
++        drop(credits);
++        assert_eq!(first.covered(), &[1, 0, 0, 0]);
++        drop(first);
++        assert_eq!(budget.used.load(Ordering::Acquire), per_slot + 1024);
++        drop(second);
++        assert_eq!(budget.used.load(Ordering::Acquire), 0);
++    }
++    #[test]
++    fn optional_exhaustion_is_real_and_legacy_request_remains_noop() {
++        let (_, work, credits) = credits();
++        assert!(credits.request().unwrap());
++        credits.exhaust();
++        assert!(credits.exhausted.load(Ordering::Acquire));
++        assert!(!credits.request().unwrap());
++        assert!(credits.acquire().unwrap().is_none());
++        credits.close();
++        drop(work);
++        let host = CpuHost::cooperative();
++        let job = host.submit(id(7724, 2), 19, empty(), request()).unwrap();
++        let before = serde_json::to_value(job.status().unwrap()).unwrap();
++        assert!(!job.request_partial_preview().unwrap());
++        assert!(!job.partial_preview_exhausted().unwrap());
++        assert!(job.partial_preview().unwrap().is_none());
++        assert_eq!(serde_json::to_value(job.status().unwrap()).unwrap(), before);
++        job.cancel().unwrap();
++        assert!(!job.request_partial_preview().unwrap());
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    fn real_fixture() -> (CpuHost, JobHandle, Running) {
++        let host = ImageHost(Arc::new(Owner {
++            executor: None, shared: CpuHost::shared(MEMORY_LIMIT), kind: HostKind::NativeWorker,
++            running: Mutex::new(None), _worker: None,
++        }));
++        let request = ImageRequest {
++            integrator: Integrator::Raytrace,
++            raytrace: Some(crate::job::RaytraceOptions {
++                progressive: Some(crate::job::CpuProgressiveOptions { samples_per_pixel: 5, seed: 123 }),
++                lights: Some(Vec::new()), ..Default::default()
++            }), width: 16, height: 16, ..request()
++        };
++        let job = host.submit_cpu_partial_with_environment_and_options(id(7724, 3), 19, empty(), request, JobOptions::default(), None).unwrap();
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        let running = Running::begin(work).unwrap();
++        (host, job, running)
++    }
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn real_partial_png_carries_unknown_and_two_held_payloads_do_not_block_final() {
++        let (host, job, mut running) = real_fixture();
++        assert!(job.request_partial_preview().unwrap());
++        let mut during = false;
++        for _ in 0..100_000 {
++            assert!(running.advance(1).unwrap());
++            if !during && running.partial.as_ref().unwrap().0[0].lease.is_some() {
++                assert!(job.request_partial_preview().unwrap());
++                during = true;
++            }
++            if job.partial_preview().unwrap().is_some() { break; }
++        }
++        let first = job.partial_preview().unwrap().unwrap();
++        assert!(during);
++        assert_eq!(first.info.sequence, 1);
++        assert_eq!(first.info.completed_passes, 0);
++        assert!(first.info.updated_prefix > 0 && first.info.updated_prefix < 256);
++        assert!(job.preview().unwrap().is_none(), "partial mode never publishes uncredited legacy snapshots");
++        let decoded = image::load_from_memory(first.png()).unwrap().to_rgba8();
++        assert_eq!(decoded.dimensions(), (16, 16));
++        for (i, rgba) in decoded.pixels().enumerate() {
++            assert_eq!(rgba.0[3], if (i as u64) < first.info.updated_prefix { 255 } else { 0 });
++            assert_eq!(first.covered()[i], 0, "empty scene means a real miss, never a fabricated hit");
++        }
++        let first_hash = Sha256::digest(first.png());
++        for _ in 0..100_000 {
++            if job.partial_preview().unwrap().is_some_and(|p| p.info.sequence == 2) { break; }
++            assert!(running.advance(1).unwrap());
++        }
++        let second = job.partial_preview().unwrap().unwrap();
++        assert_eq!(second.info.sequence, 2, "request issued during encoding must survive first publication");
++        assert!(job.request_partial_preview().unwrap());
++        assert_eq!(job.0.partial.as_ref().unwrap().state.lock().unwrap().free.bytes, 0);
++        for _ in 0..100_000 {
++            if !running.advance(1).unwrap() { break; }
++            assert!(job.partial_preview().unwrap().is_some_and(|p| p.info.sequence == 2));
++            assert!(running.partial.as_ref().unwrap().0[0].lease.is_none());
++            assert!(running.partial.as_ref().unwrap().0[0].pending.is_none());
++        }
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
++        let final_frame = job.frame().unwrap().unwrap();
++        assert_eq!((final_frame.info.width, final_frame.info.height), (16, 16));
++        assert!(job.partial_preview().unwrap().is_none());
++        assert!(!job.request_partial_preview().unwrap());
++        assert_eq!(Sha256::digest(first.png()), first_hash);
++        let per_slot = job.0.partial.as_ref().unwrap().plan.slot_bytes().unwrap();
++        drop(running);
++        let before = host.admitted_bytes();
++        drop(first);
++        assert_eq!(host.admitted_bytes(), before - per_slot);
++        drop(second);
++        assert_eq!(host.admitted_bytes(), before - 2 * per_slot);
++        drop(final_frame);
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++}
++
++#[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++mod partial_preview_terminal_errors {
++    use super::*;
++    use crate::job::{CpuProgressiveOptions, RaytraceOptions};
++
++    #[test]
++    fn cancellation_during_real_partial_hash_closes_slots_and_publishes_nothing() {
++        let host = ImageHost(Arc::new(Owner { executor: None, shared: CpuHost::shared(MEMORY_LIMIT),
++            kind: HostKind::NativeWorker, running: Mutex::new(None), _worker: None }));
++        let request = ImageRequest { integrator: Integrator::Raytrace, raytrace: Some(RaytraceOptions {
++            progressive: Some(CpuProgressiveOptions { samples_per_pixel: 5, seed: 7 }), lights: Some(Vec::new()), ..Default::default()
++        }), width: 8, height: 8, ..request() };
++        let job = host.submit_cpu_partial_with_environment_and_options(id(7725, 1), 19, empty(), request, JobOptions::default(), None).unwrap();
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        let mut running = Running::begin(work).unwrap();
++        assert!(job.request_partial_preview().unwrap());
++        for _ in 0..100_000 {
++            if running.pending_png.is_some() { break; }
++            assert!(running.advance(1).unwrap());
++        }
++        assert!(running.pending_png.is_some());
++        assert!(job.partial_preview().unwrap().is_none());
++        assert!(running.partial.as_ref().unwrap().0[0].pending.is_some());
++        job.cancel().unwrap();
++        assert!(!job.request_partial_preview().unwrap());
++        assert!(!running.guarded_step(1));
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Cancelled);
++        assert!(job.partial_preview().unwrap().is_none());
++        assert!(job.frame().unwrap().is_none());
++        drop(running);
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++}
++
++#[test]
++fn partial_credit_last_drop_fails_closed_after_poison_without_losing_leases() {
++    let plan = crate::job::PartialPreviewPlan::new(1, 1).unwrap();
++    let bytes = 2 * plan.slot_bytes().unwrap() + 1024;
++    let budget = Arc::new(Budget { used: AtomicU64::new(0), limit: bytes });
++    let mut work = budget.reserve(bytes).unwrap();
++    let credits = PartialCredits::new(plan, &mut work).unwrap();
++    credits.request().unwrap();
++    let held = credits.acquire().unwrap().unwrap();
++    let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++        let _state = credits.state.lock().unwrap();
++        panic!("deliberate test-only credit lock poison");
++    }));
++    assert!(poisoned.is_err());
++    drop(held);
++    assert_eq!(budget.used.load(Ordering::Acquire), 1024);
++    credits.close();
++    drop(credits);
++    drop(work);
++    assert_eq!(budget.used.load(Ordering::Acquire), 0);
++}
+--- a/crates/render/src/job/linear_exr.rs
++++ b/crates/render/src/job/linear_exr.rs
+@@ -14,7 +14,70 @@
+     if w == 0 || h == 0 || w > 8192 || h > 8192 || w * h > 16_777_216 {
+         return Err(invalid("linear EXR requires 1..8192 sides and at most 16777216 pixels"));
+     }
+-    Ok(w * h * 16 + h * 16 + 4096)
++    encoded_limit_with_limits(width, height, super::GPU_PATH_LIMITS)
++}
++
++/// Internal bounded policy, not proof of a host reservation. Future callers must
++/// retain their request's lease and charge work before advancing output stages.
++pub(crate) fn output_pixels_with_limits(width: u32, height: u32, limits: crate::RenderLimits) -> Result<u64> {
++    let maximum = super::CpuBudget::Workstation.image_limits(false);
++    if limits.max_dimension > maximum.max_dimension || limits.max_pixels > maximum.max_pixels
++        || limits.max_scratch_bytes > maximum.max_scratch_bytes
++    {
++        return Err(invalid("output policy exceeds the bounded implementation envelope"));
++    }
++    let (w, h) = (u64::from(width), u64::from(height));
++    if limits.fit(w, h, None) != Some((w, h)) {
++        return Err(invalid("output dimensions exceed the explicit policy"));
++    }
++    let pixels = w.checked_mul(h).ok_or_else(|| invalid("output pixel count overflow"))?;
++    checked_output_bytes(pixels, 1, 0, limits)?;
++    Ok(pixels)
++}
++
++/// Checked combined live-byte estimate; this is not an individual Vec layout or a lease.
++pub(crate) fn checked_stage_bytes(count: u64, element_bytes: u64, extra: u64, limits: crate::RenderLimits) -> Result<u64> {
++    let maximum = super::CpuBudget::Workstation.image_limits(false);
++    if limits.max_dimension > maximum.max_dimension || limits.max_pixels > maximum.max_pixels
++        || limits.max_scratch_bytes > maximum.max_scratch_bytes
++    {
++        return Err(invalid("output policy exceeds the bounded implementation envelope"));
++    }
++    let bytes = count.checked_mul(element_bytes).and_then(|n| n.checked_add(extra))
++        .ok_or_else(|| invalid("output byte layout overflow"))?;
++    if bytes > limits.max_scratch_bytes {
++        return Err(invalid("output byte layout exceeds its explicit policy"));
++    }
++    Ok(bytes)
++}
++
++/// Check an individual addressable byte layout separately from combined estimates.
++pub(crate) fn checked_output_bytes(count: u64, element_bytes: u64, extra: u64, limits: crate::RenderLimits) -> Result<usize> {
++    let bytes = checked_stage_bytes(count, element_bytes, extra, limits)?;
++    let addressable = usize::try_from(bytes).map_err(|_| invalid("output byte layout exceeds address space"))?;
++    if std::alloc::Layout::array::<u8>(addressable).is_err() {
++        return Err(invalid("output byte layout exceeds address space"));
++    }
++    Ok(addressable)
++}
++
++pub(crate) fn encoded_limit_with_limits(width: u32, height: u32, limits: crate::RenderLimits) -> Result<u64> {
++    let pixels = output_pixels_with_limits(width, height, limits)?;
++    let row_bytes = u64::from(width).checked_mul(16).ok_or_else(|| invalid("EXR row overflow"))?;
++    i32::try_from(row_bytes).map_err(|_| invalid("EXR row exceeds scanline representation"))?;
++    i32::try_from(width).and_then(|_| i32::try_from(height)).map_err(|_| invalid("EXR window exceeds integer representation"))?;
++    let extra = u64::from(height).checked_mul(16).and_then(|n| n.checked_add(4096)).ok_or_else(|| invalid("EXR metadata overflow"))?;
++    Ok(checked_output_bytes(pixels, 16, extra, limits)? as u64)
++}
++
++pub(crate) fn scanline_layout(width: u32, height: u32, header_bytes: usize, limits: crate::RenderLimits) -> Result<(usize, usize)> {
++    let limit = encoded_limit_with_limits(width, height, limits)?;
++    let rows = usize::try_from(height).map_err(|_| invalid("EXR row count exceeds address space"))?;
++    let row = usize::try_from(width).ok().and_then(|n| n.checked_mul(16)).ok_or_else(|| invalid("EXR row layout overflow"))?;
++    let first = rows.checked_mul(8).and_then(|n| n.checked_add(header_bytes)).ok_or_else(|| invalid("EXR offset table overflow"))?;
++    let total = row.checked_add(8).and_then(|n| n.checked_mul(rows)).and_then(|n| n.checked_add(first)).ok_or_else(|| invalid("EXR scanline layout overflow"))?;
++    if total as u64 > limit { return Err(invalid("EXR output exceeds its admission")); }
++    Ok((first, total))
+ }
+ 
+ fn attribute(out: &mut Vec<u8>, name: &[u8], kind: &[u8], value: &[u8]) -> Result<()> {
+@@ -32,6 +95,12 @@
+ }
+ 
+ pub(super) fn header(width: u32, height: u32) -> Result<Vec<u8>> {
++    encoded_limit(width, height)?;
++    header_with_limits(width, height, super::GPU_PATH_LIMITS)
++}
++
++pub(crate) fn header_with_limits(width: u32, height: u32, limits: crate::RenderLimits) -> Result<Vec<u8>> {
++    encoded_limit_with_limits(width, height, limits)?;
+     let mut out = Vec::new();
+     out.try_reserve_exact(4096).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "EXR header allocation failed"))?;
+     out.extend_from_slice(&20_000_630_u32.to_le_bytes());
+@@ -83,20 +152,25 @@
+ }
+ impl ExrTask {
+     pub fn new(width: u32, height: u32, pixels: Vec<[f32; 4]>, cancel: CancelToken) -> Result<Self> {
+-        let limit = encoded_limit(width, height)?;
++        encoded_limit(width, height)?;
++        Self::new_with_limits(width, height, pixels, cancel, super::GPU_PATH_LIMITS)
++    }
++
++    pub(crate) fn new_with_limits(width: u32, height: u32, pixels: Vec<[f32; 4]>, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
++        let limit = encoded_limit_with_limits(width, height, limits)?;
+         if pixels.len() as u64 != u64::from(width) * u64::from(height) {
+             return Err(invalid("EXR pixel count differs from dimensions"));
+         }
+         cancel.check()?;
+-        let mut bytes = header(width, height)?;
++        checked_output_bytes(pixels.capacity() as u64, 16, 0, limits)?;
++        checked_stage_bytes(pixels.capacity() as u64, 16, limit, limits)?;
++        let mut bytes = header_with_limits(width, height, limits)?;
+         let row_bytes = u64::from(width) * 16;
+-        let first = bytes.len() as u64 + u64::from(height) * 8;
+-        let total = first + u64::from(height) * (row_bytes + 8);
+-        if total > limit {
+-            return Err(invalid("EXR output exceeds its admission"));
+-        }
+-        let additional = usize::try_from(total).ok().and_then(|n| n.checked_sub(bytes.len())).ok_or_else(|| invalid("EXR address space exceeded"))?;
++        let (first, total) = scanline_layout(width, height, bytes.len(), limits)?;
++        let first = first as u64;
++        let additional = total.checked_sub(bytes.len()).ok_or_else(|| invalid("EXR address space exceeded"))?;
+         bytes.try_reserve_exact(additional).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "EXR output allocation failed"))?;
++        if bytes.capacity() as u64 > limit { return Err(invalid("EXR output exceeds its admission")); }
+         for y in 0..height {
+             bytes.extend_from_slice(&(first + u64::from(y) * (row_bytes + 8)).to_le_bytes());
+         }
+@@ -197,4 +271,43 @@
+         cancel.cancel();
+         assert_eq!(task.step(1).unwrap_err().code, ErrorCode::Cancelled);
+     }
+-}
++
++    #[test]
++    fn explicit_output_policy_is_exact_bounded_and_checked_before_allocation() {
++        let wide = super::super::CpuBudget::Workstation.image_limits(false);
++        assert_eq!(output_pixels_with_limits(8193, 1, wide).unwrap(), 8193);
++        assert_eq!(encoded_limit_with_limits(8193, 1, wide).unwrap(), 135200);
++        assert_eq!(checked_output_bytes(8193, 8, 65536, wide).unwrap(), 131080);
++        for (w, h) in [(0, 1), (1, 0), (u32::MAX, u32::MAX)] {
++            assert!(output_pixels_with_limits(w, h, wide).is_err());
++        }
++        assert!(output_pixels_with_limits(8193, 1, super::super::GPU_PATH_LIMITS).is_err(), "a reduced fit is not acceptance");
++        for hostile in [
++            crate::RenderLimits { max_dimension: u64::MAX, ..wide },
++            crate::RenderLimits { max_pixels: u64::MAX, ..wide },
++            crate::RenderLimits { max_scratch_bytes: u64::MAX, ..wide },
++        ] {
++            assert!(output_pixels_with_limits(1, 1, hostile).is_err());
++        }
++        assert!(checked_output_bytes(u64::MAX, 16, 0, wide).is_err());
++        assert!(checked_output_bytes(1, 1, u64::MAX, wide).is_err());
++        assert!(scanline_layout(1, 1, usize::MAX, wide).is_err());
++        assert!(checked_output_bytes(1, 16, 0, crate::RenderLimits { max_scratch_bytes: 15, ..wide }).is_err());
++        assert!(checked_output_bytes(isize::MAX as u64 + 1, 1, 0, wide).is_err());
++    }
++
++    #[test]
++    fn explicit_gpu_exr_keeps_legacy_bytes_and_dimension_before_cancel_order() {
++        let pixels = vec![[4.0, 1.0, 0.25, 1.0]; 6];
++        let expected = encode(pixels.clone(), 3, 2);
++        let mut task = ExrTask::new_with_limits(3, 2, pixels, CancelToken::default(), super::super::GPU_PATH_LIMITS).unwrap();
++        assert!(task.step(2).unwrap());
++        assert_eq!(task.finish().unwrap().0, expected);
++        let cancel = CancelToken::default();
++        cancel.cancel();
++        let error = ExrTask::new(0, 1, vec![], cancel.clone()).err().unwrap();
++        assert_eq!(error.code, ErrorCode::InvalidRequest);
++        assert!(error.to_string().contains("linear EXR requires 1..8192"));
++        assert_eq!(ExrTask::new(1, 1, vec![], cancel).err().unwrap().code, ErrorCode::InvalidRequest);
++    }
++}

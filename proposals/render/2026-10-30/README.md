@@ -99,3 +99,10 @@ Additive source proposals; prior checkpoint sections remain unchanged. This appe
 - [CPU display exposure±32 alternatives](reviewed-followups/cpu-exposure-32/README.md): exact standalone OR TIR-layer EV delta, six unrun new tests and retained original negative-contract source bodies. The TIR prerequisite chain is referenced, unprovided here and not installed; this is not a complete TIR code archive.
 
 See the [unit index](reviewed-followups/README.md) and each portable bindings file. These source archives do not establish full CI, native GUI/GPU acceptance or readiness.
+
+## Coherent preview and exposure source checkpoint
+
+[C19 source, bindings and unrun original tests](coherent-preview-exposure/README.md)
+preserve the full reviewed-source assembly for saved Raster lights, common
+Model/CPU/Raster exposure, captured-image boundaries and paused framing.
+This archive is not adoption, a test pass or production readiness.

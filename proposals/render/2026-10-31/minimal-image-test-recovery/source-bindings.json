@@ -1,0 +1,44 @@
+{
+  "scope": "SINGLE_EXISTING_TEST_FILE_TWO_EXACT_CALL_SITE_REPAIRS",
+  "repository_path": "crates/render/src/job/image_tests.rs",
+  "base_source_manifest_sha256": "957860ad2cabb8f23dbf9dda398b2092de08d1dfd762645fbce69d83954f7010",
+  "adopted_C21_source_manifest_sha256": "de1a7c3ae6720e89ba25e92d3eab86673ddef37d8dcc57a675716c6bd8b04b59",
+  "source_snapshot_git_HEAD": "a077906234972dbbf11e80c54893f85ece97c8b7",
+  "hash_kind_note": "Source-manifest SHA256 values identify byte inventories; source_snapshot_git_HEAD is a Git commit identifier. Neither identifies a successful build.",
+  "before": {
+    "file": "before/crates/render/src/job/image_tests.rs",
+    "bytes": 30843,
+    "sha256": "e4aef1c05dbd600ecb3ea780e514f637acfce99a3738aff8f4bf9c3a918ddd96"
+  },
+  "candidate": {
+    "file": "candidate/crates/render/src/job/image_tests.rs",
+    "bytes": 30852,
+    "sha256": "3b209558bd7363fd41c039f034701141d30fe43ef3764a5cc42f48820bb44922"
+  },
+  "delta": {
+    "file": "delta.patch",
+    "bytes": 927,
+    "sha256": "17c35716ad66c62841ebd0f0775e67184211e3b1296fb51f59749e14dd07c167",
+    "application_order": "Apply this delta once to the exact before file; snapshots are alternatives for inspection, not additional patches."
+  },
+  "two_carried_test_body_exceptions": [
+    {
+      "name": "registered_executor_geometry_admission_excludes_the_cpu_raster_estimate",
+      "line": 288,
+      "change": "Pass the same &r request as the actual second admit_raster argument."
+    },
+    {
+      "name": "explicit_raster_request_rejects_capacity_conflicts_and_foreign_integrators",
+      "line": 550,
+      "change": "Resolve the same Raytrace enum variant through crate::job::Integrator."
+    }
+  ],
+  "declarations": {
+    "before": 23,
+    "candidate": 23,
+    "new": 0
+  },
+  "preservation": "Only the two listed source lines differ; reversing both contextual edits restores every original RAW byte. Every original oracle, assertion, threshold, fixture and other source byte is retained.",
+  "independent_source_review_sha256": "a96966d217ef9e30af6baef4ced80a1ffb4b99f8407f88fc8119d867174a77fa",
+  "validation": "C20 compiler errors E0061 and E0433 remain recorded as failed original evidence. C21 candidate is adopted source only, not formatted, compiled or tested; zero executed cases and the 349-case/60-marker selection remains proposed and UNRUN."
+}

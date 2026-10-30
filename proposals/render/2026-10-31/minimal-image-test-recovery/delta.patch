@@ -1,0 +1,20 @@
+--- a/crates/render/src/job/image_tests.rs
++++ b/crates/render/src/job/image_tests.rs
+@@ -285,7 +285,7 @@
+     let mut r = request();
+     r.width = 2048;
+     r.height = 2048;
+-    let cpu = admit_raster(admit_source(&source, &r, 1_048_576).unwrap()).unwrap_err();
++    let cpu = admit_raster(admit_source(&source, &r, 1_048_576).unwrap(), &r).unwrap_err();
+     assert_eq!(cpu.code, ErrorCode::LimitExceeded);
+     assert!(cpu.message.contains("384 MiB"), "{}", cpu.message);
+     let geometry = admit_geometry(&source, &r, 1_048_576).unwrap();
+@@ -547,7 +547,7 @@
+     input.raytrace = Some(Default::default());
+     assert_eq!(admit(&part, &input).unwrap_err().code, ErrorCode::InvalidRequest);
+     input.raytrace = None;
+-    input.integrator = super::Integrator::Raytrace;
++    input.integrator = crate::job::Integrator::Raytrace;
+     assert_eq!(admit(&part, &input).unwrap_err().code, ErrorCode::InvalidRequest);
+ }
+ 

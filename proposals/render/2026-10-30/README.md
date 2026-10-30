@@ -156,3 +156,7 @@ sheets/disjoint boxes. The 33 old plus 12 new declarations are all unrun on this
 candidate. There is no image consumer or C20 adoption; brute-scan cost, refusal
 domain, cumulative work/memory admission and missing real-image acceptance remain
 explicit. Source review and replay are not compilation, full CI or GPU parity.
+
+## 2026-10-31: minimal carried image-test recovery
+
+[Minimal image test recovery](../2026-10-31/minimal-image-test-recovery/README.md) archives two exact call-site repairs in the existing Render image tests, both RAW snapshots, the unchanged delta and portable bindings. 23 original declarations / 0 new; all original oracles remain. C20 compiler failure is preserved; C21 is source-adopted only, with 0 executed cases and the 349-case/60-marker selection still UNRUN. No PASS/full-CI/GPU/desktop readiness is inferred.

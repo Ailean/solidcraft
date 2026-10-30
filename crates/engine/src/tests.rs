@@ -4,6 +4,26 @@ use serde_json::{Value, json};
 
 use crate::*;
 
+/// A folder of the test's own, removed when dropped.
+pub(crate) struct Folder(pub std::path::PathBuf);
+
+impl Folder {
+    pub(crate) fn new(name: &str) -> Folder {
+        let dir = solidcraft_io::vfs::temp_dir().join(format!("solidcraft-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        Folder(dir)
+    }
+    pub(crate) fn path(&self, file: &str) -> String {
+        self.0.join(file).to_str().unwrap().to_string()
+    }
+}
+
+impl Drop for Folder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 mod mesh_convert;
 
 fn run(s: &mut Session, id: &str, p: Value) -> Value {
@@ -822,6 +842,14 @@ fn hostile_params_never_panic() {
         "keep_with",
         "stitch",
         "extend",
+        "view",
+        "display_style",
+        "reference_style",
+        "reference_hides_model",
+        "reference_margin_mm",
+        "tangent_edges",
+        "sheet",
+        "position_mm",
     ];
     // Commands are independent; worker threads take them one at a time (their costs vary a lot).
     let ids: Vec<&str> = command_specs()
@@ -892,12 +920,12 @@ fn only_own_ids_name_commands() {
 }
 
 /// An unknown command's error names the ids it was probably meant to be: a typo's, or the
-/// command that ends in the same word.
+/// commands that end in the same word, the nearest first.
 #[test]
 fn unknown_commands_suggest_the_closest_ids() {
     let mut s = Session::default();
     let mut msg = |id: &str| s.execute(id, &serde_json::json!({})).unwrap_err().to_string();
-    assert_eq!(msg("file.open"), "unknown command `file.open` (did you mean `doc.open`?)");
+    assert!(msg("file.open").starts_with("unknown command `file.open` (did you mean `doc.open`"), "{}", msg("file.open"));
     assert!(msg("solid.extrud").starts_with("unknown command `solid.extrud` (did you mean `solid.extrude`"), "{}", msg("solid.extrud"));
     assert!(msg("Extrude").contains("`solid.extrude`"), "{}", msg("Extrude"));
     assert_eq!(msg("FusionFilletEdgesCommand"), "unknown command `FusionFilletEdgesCommand`");
@@ -2421,18 +2449,45 @@ mod naming {
         assert_eq!(warning(&s, "Round"), None);
     }
 
+    /// A notch through the right face, `p0` to `p1` on the top.
+    fn notch(s: &mut Session, p0: [f64; 2], p1: [f64; 2]) {
+        run(s, "sketch.create", json!({"plane": "XY", "name": "N"}));
+        run(s, "sketch.rectangle.two_point", json!({"p0": p0, "p1": p1}));
+        run(s, "sketch.finish", json!({}));
+        run(s, "solid.extrude", json!({"sketch": "N", "distance": 10, "operation": "cut", "name": "Notch"}));
+    }
+
+    /// Upstream of the fillet, a notch across the filleted edge at y 6 to 12 leaves two pieces of
+    /// it, 6 and 18 long: the fillet warns and rounds the one nearest its pick at y 15, the longer.
     #[test]
     fn a_split_edge_warns_and_takes_the_nearest_piece() {
         let mut s = block();
-        // Upstream of the fillet, a notch through the middle of the filleted edge.
         run(&mut s, "timeline.roll_to", json!({"feature": "Hole"}));
-        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "N"}));
-        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [36, 12], "p1": [44, 18]}));
-        run(&mut s, "sketch.finish", json!({}));
-        run(&mut s, "solid.extrude", json!({"sketch": "N", "distance": 10, "operation": "cut", "name": "Notch"}));
+        notch(&mut s, [36.0, 6.0], [44.0, 12.0]);
         run(&mut s, "timeline.roll_to", json!({}));
         let w = warning(&s, "Round").unwrap_or_default();
         assert!(w.contains("split"), "{w}");
+        let rounded = 12000.0 - std::f64::consts::PI * 160.0 - 240.0 - STRIP * 18.0 / 30.0;
+        assert!((volume(&mut s) - rounded).abs() < 0.1, "{} {rounded}", volume(&mut s));
+    }
+
+    /// A fillet on a piece of a split edge, its notch then suppressed: the edge is whole again and
+    /// its piece's name matches it only through the face the piece was cut from, so the fillet
+    /// rounds all of it with a warning, not as the very edge it named.
+    #[test]
+    fn a_pieces_name_on_the_whole_edge_again_warns() {
+        let mut s = block();
+        run(&mut s, "timeline.delete", json!({"features": ["Round"]}));
+        notch(&mut s, [36.0, 12.0], [44.0, 18.0]);
+        run(&mut s, "solid.fillet", json!({"edges": [[40, 24, 10]], "radius": 2, "name": "Piece"}));
+        let named = s.doc.find_feature("Piece").map(|f| f.edge_names.clone()).unwrap_or_default();
+        assert!(!named.is_empty() && named.iter().all(|n| n.contains('#')), "a piece's name: {named:?}");
+        assert_eq!(warning(&s, "Piece"), None);
+        run(&mut s, "timeline.suppress", json!({"feature": "Notch", "suppressed": true}));
+        let w = warning(&s, "Piece").unwrap_or_default();
+        assert!(w.contains("split"), "{w}");
+        let rounded = 12000.0 - std::f64::consts::PI * 160.0 - STRIP;
+        assert!((volume(&mut s) - rounded).abs() < 0.1, "{} {rounded}", volume(&mut s));
     }
 
     #[test]

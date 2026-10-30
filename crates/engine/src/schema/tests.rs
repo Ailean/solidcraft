@@ -185,6 +185,19 @@ fn present_null_is_refused_but_absent_is_fine() {
     }
 }
 
+/// A box design's drawing, open, checking parameters at `level`, and its source's id: where the
+/// drawing commands' schemas are tested.
+pub(super) fn drawing_session(level: ParamCheck) -> (Session, Value) {
+    let mut s = Session::default();
+    let design = json!({"length": 40, "width": 30, "height": 10, "body_name": "Plate"});
+    for (id, p) in [("solid.box", design), ("drawing.create", json!({}))] {
+        s.execute(id, &p).unwrap_or_else(|e| panic!("{id}: {e}"));
+    }
+    s.param_check = level;
+    let id = s.execute("drawing.inspect", &json!({})).unwrap_or_else(|e| panic!("{e}"))["sources"][0]["id"].clone();
+    (s, id)
+}
+
 pub(super) fn sketch_rectangle(s: &mut Session) {
     for (id, p) in [
         ("sketch.create", json!({"plane": "XY"})),
@@ -264,7 +277,7 @@ fn the_level_survives_a_new_design() {
 /// `items`, `minItems`, `maxItems`, `uniqueItems`, `enum`, `minLength`, `maxLength`, `minimum`,
 /// `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `anyOf`, `not` and `$ref`. (`integer`
 /// here is what serde reads as one, so `1.0` is not.)
-pub(super) fn conforms(root: &Value, node: &Value, v: &Value) -> bool {
+pub(crate) fn conforms(root: &Value, node: &Value, v: &Value) -> bool {
     if let Some(name) = node.get("$ref").and_then(Value::as_str).and_then(|r| r.strip_prefix("#/$defs/")) {
         return root.get("$defs").and_then(|d| d.get(name)).is_some_and(|t| conforms(root, t, v));
     }

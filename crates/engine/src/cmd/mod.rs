@@ -31,6 +31,10 @@ mod component_clone_assembly;
 mod construct;
 mod delete;
 mod diagnostics;
+mod drawing;
+mod drawing_dimension;
+mod drawing_sheet;
+mod drawing_view;
 mod edit;
 mod face;
 mod features;
@@ -102,6 +106,16 @@ pub type LiveRun = fn(&mut Session, &Value) -> Result<(Value, Option<crate::Live
 pub type Enabled = fn(&Session) -> std::result::Result<(), String>;
 pub type SchemaFn = fn() -> schemars::Schema;
 
+/// The part of the design a command works on (#3890): the model (most commands), the open
+/// drawing, or either (files, undo, selection, diagnostics, choosing a drawing).
+/// [`CommandSpec::allowed`] checks it before the command's own `enabled`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    Model,
+    Drawing,
+    Any,
+}
+
 pub struct CommandSpec {
     pub id: &'static str,
     pub label: &'static str,
@@ -130,6 +144,8 @@ pub struct CommandSpec {
     pub contract: Option<&'static dyn crate::schema::Contract>,
     /// The JSON Schema of a successful result; `None` until described.
     pub output: Option<SchemaFn>,
+    /// The part of the design it works on: the model unless it says otherwise.
+    pub part: Part,
 }
 
 impl CommandSpec {
@@ -150,6 +166,7 @@ impl CommandSpec {
             planned: None,
             contract: None,
             output: None,
+            part: Part::Model,
         }
     }
     /// Not built yet; `issue` tracks building it.
@@ -202,14 +219,33 @@ impl CommandSpec {
         self.undoable = false;
         self
     }
-    /// Run inside another command: when it is enabled, its `run` (the caller's command owns the
+    /// Works with a drawing open or with none.
+    pub const fn any_part(mut self) -> Self {
+        self.part = Part::Any;
+        self
+    }
+    /// Works on the open drawing.
+    pub const fn in_drawing(mut self) -> Self {
+        self.part = Part::Drawing;
+        self
+    }
+    /// Whether the command can run in `s` now: on the part open, and enabled. The one check
+    /// running a command, running it inside another and listing it make.
+    pub fn allowed(&self, s: &Session) -> std::result::Result<(), String> {
+        match (self.part, s.open_drawing.is_some()) {
+            (Part::Model, true) => Err("a drawing is open: close it to change the model (drawing.close)".into()),
+            (Part::Drawing, false) => Err("open a drawing first (drawing.open, or drawing.create)".into()),
+            _ => (self.enabled)(s),
+        }
+    }
+    /// Run inside another command: when it is allowed, its `run` (the caller's command owns the
     /// undo step and the evaluation).
     pub(crate) fn run_nested(&self, s: &mut Session, p: &Value) -> Result<Value> {
-        (self.enabled)(s).map_err(|why| crate::EngineError::Disabled(self.id.to_string(), why))?;
+        self.allowed(s).map_err(|why| crate::EngineError::Disabled(self.id.to_string(), why))?;
         (self.run)(s, p)
     }
     pub fn info(&self, s: &Session) -> CommandInfo {
-        let e = (self.enabled)(s);
+        let e = self.allowed(s);
         CommandInfo {
             id: self.id,
             label: self.label,
@@ -303,6 +339,10 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(section::COMMANDS.iter());
     v.extend(view_navigation::COMMANDS.iter());
     v.extend(view_dxf::COMMANDS.iter());
+    v.extend(drawing::COMMANDS.iter());
+    v.extend(drawing_dimension::COMMANDS.iter());
+    v.extend(drawing_sheet::COMMANDS.iter());
+    v.extend(drawing_view::COMMANDS.iter());
     v.extend(diagnostics::COMMANDS.iter());
     v.extend(render::COMMANDS.iter());
     v

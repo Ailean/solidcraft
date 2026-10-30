@@ -20,6 +20,7 @@ pub mod display_quality;
 pub mod display_units;
 mod document;
 pub mod drawing;
+pub mod drawing_view;
 mod eval;
 pub mod expr;
 pub mod face_anchor;
@@ -55,8 +56,8 @@ pub use project3d::iso_grid;
 pub mod sheet;
 
 pub use assembly::{
-    BomType, IDENTITY, MAX_PLACEMENT_DEPTH, MAX_PLACEMENTS, Mat, Occurrence, apply_point, apply_vector, is_identity, map_point_expr, mat_inverse,
-    mat_mul, rigid,
+    BomType, IDENTITY, MAX_PLACEMENT_DEPTH, MAX_PLACEMENTS, Mat, Occurrence, apply_point, apply_vector, is_identity, map_plane, map_point_expr,
+    mat_inverse, mat_mul, rigid,
 };
 pub use document::*;
 pub use eval::KeptResults;

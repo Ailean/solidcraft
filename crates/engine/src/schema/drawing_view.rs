@@ -1,0 +1,485 @@
+//! Contracts and result types for the commands in `cmd/drawing_view.rs`.
+//!
+//! The view's own settings are `solidcraft_doc::drawing_view::ViewSettings`, which a saved view
+//! (W12) keeps too. The contract lists the same fields, each read by that type's own reader, and
+//! `the_contract_lists_the_view_settings` keeps the two lists the same. A saved view's own
+//! settings (`ViewOverrides`) are read and changed through `drawing.view.inspect` and
+//! `drawing.view.edit`, each setting with where its value comes from.
+
+use std::borrow::Cow;
+
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use solidcraft_doc::drawing_view::{TangentEdges, ViewDirection, ViewSettings};
+use solidcraft_geom::drawing_sheet::{Orientation, PaperSize, SheetSize};
+use solidcraft_geom::drawing_view::{NamedView, Scale};
+use solidcraft_render::VisualStyle;
+
+use super::Point2;
+
+/// The lowest and highest picture resolution a sheet takes, in dots per inch.
+pub const DPI_RANGE: std::ops::RangeInclusive<f64> = 25.0..=2400.0;
+
+/// What `drawing.view.snapshot` takes: the view's settings, the page it fits on, and where its
+/// centre goes.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
+pub struct SnapshotParams {
+    pub view: ViewParam,
+    #[serde(deserialize_with = "super::present")]
+    #[schemars(with = "ScaleParam")]
+    pub scale: Option<ScaleParam>,
+    pub display_style: StyleParam,
+    pub reference_style: StyleParam,
+    /// Whether reference parts hide the model's lines behind them (false when not given).
+    pub reference_hides_model: bool,
+    /// Model millimetres added on every side of the view's extents, so reference parts around
+    /// the model show inside its boundary: 0 to 100000 (0 when not given).
+    pub reference_margin_mm: f64,
+    pub tangent_edges: TangentEdgesParam,
+    pub sheet: SheetParam,
+    /// Where the view's centre goes on the sheet, in paper millimetres from its lower-left
+    /// corner (the sheet's centre when not given).
+    #[serde(deserialize_with = "super::present")]
+    #[schemars(with = "Point2")]
+    pub position_mm: Option<Point2>,
+}
+
+impl SnapshotParams {
+    pub fn settings(&self) -> ViewSettings {
+        ViewSettings {
+            view: self.view.0,
+            scale: self.scale.map(|s| s.0),
+            display_style: self.display_style.0,
+            reference_style: self.reference_style.0,
+            reference_hides_model: self.reference_hides_model,
+            reference_margin_mm: self.reference_margin_mm,
+            tangent_edges: self.tangent_edges.0,
+        }
+    }
+}
+
+// Each parameter type below reads as the type it wraps, so the contract accepts exactly what the
+// view's settings do; it is there for its schema.
+
+/// Which way the view looks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[serde(transparent)]
+pub struct ViewParam(pub ViewDirection);
+
+impl JsonSchema for ViewParam {
+    fn schema_name() -> Cow<'static, str> {
+        "DrawingView".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        let names: Vec<Value> = NamedView::ALL.iter().filter_map(|v| serde_json::to_value(v).ok()).chain([json!("iso")]).collect();
+        let vector = json!({"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3});
+        json_schema!({
+            "description": "Which way the view looks: a named view (front when not given; iso is iso_front_right), or {direction, up, origin?}: the line of sight, the way up the paper (not along the direction) and the point the view's plane passes through (the world origin when not given).",
+            "anyOf": [
+                {"type": "string", "enum": names},
+                {"type": "object", "properties": {"direction": vector, "up": vector, "origin": vector}, "required": ["direction", "up"], "additionalProperties": false}
+            ]
+        })
+    }
+}
+
+/// A drawing scale, paper:model.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(transparent)]
+pub struct ScaleParam(pub Scale);
+
+impl JsonSchema for ScaleParam {
+    fn schema_name() -> Cow<'static, str> {
+        "DrawingScale".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "description": "The scale as paper:model text, such as \"1:2\" or \"5:1\", from 1:100000 to 1000:1. When not given, the largest ISO 5455 scale at which the view fits the sheet's drawing area.",
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?:[0-9]+(\\.[0-9]+)?$"
+        })
+    }
+}
+
+/// How the model draws.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[serde(transparent)]
+pub struct StyleParam(pub VisualStyle);
+
+impl JsonSchema for StyleParam {
+    fn schema_name() -> Cow<'static, str> {
+        "VisualStyle".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        let names: Vec<Value> = VisualStyle::ALL.iter().filter_map(|s| serde_json::to_value(s).ok()).collect();
+        json_schema!({
+            "description": "How the model draws: visible (the default), visible_hidden, shaded, shaded_visible or shaded_visible_hidden.",
+            "type": "string",
+            "enum": names
+        })
+    }
+}
+
+/// Tangent edges hidden or shown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[serde(transparent)]
+pub struct TangentEdgesParam(pub TangentEdges);
+
+impl JsonSchema for TangentEdgesParam {
+    fn schema_name() -> Cow<'static, str> {
+        "TangentEdges".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({"description": "Edges where faces meet smoothly: hide (the default) or show.", "type": "string", "enum": ["hide", "show"]})
+    }
+}
+
+/// The page the view fits on: its size, the way it lies and its picture resolution.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SheetParam {
+    pub size: SheetSize,
+    pub orientation: Orientation,
+    pub dpi: f64,
+}
+
+impl Default for SheetParam {
+    fn default() -> Self {
+        SheetParam { size: SheetSize::Standard(PaperSize::A3), orientation: Orientation::Landscape, dpi: 300.0 }
+    }
+}
+
+impl JsonSchema for SheetParam {
+    fn schema_name() -> Cow<'static, str> {
+        "SnapshotSheet".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        let papers: Vec<Value> = PaperSize::ALL.iter().filter_map(|p| serde_json::to_value(p).ok()).collect();
+        let sides = json!({"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2});
+        let standard = json!({"type": "object", "properties": {"standard": {"type": "string", "enum": papers}}, "required": ["standard"], "additionalProperties": false});
+        let custom = json!({
+            "type": "object",
+            "properties": {"custom": {"type": "object", "properties": {"sides_mm": sides}, "required": ["sides_mm"], "additionalProperties": false}},
+            "required": ["custom"],
+            "additionalProperties": false
+        });
+        json_schema!({
+            "description": "The page the view fits and centres on (A3 landscape at 300 dpi when not given).",
+            "type": "object",
+            "properties": {
+                "size": {"anyOf": [standard, custom]},
+                "orientation": {"type": "string", "enum": ["landscape", "portrait"]},
+                "dpi": {"type": "number", "minimum": *DPI_RANGE.start(), "maximum": *DPI_RANGE.end()}
+            },
+            "additionalProperties": false
+        })
+    }
+}
+
+/// A saved view, by its id as `drawing.inspect` lists it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewIdParam(pub u64);
+
+impl<'de> Deserialize<'de> for ViewIdParam {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        match Value::deserialize(d)? {
+            Value::String(s) => solidcraft_doc::ids::decode(&s).map(ViewIdParam).ok_or_else(|| serde::de::Error::custom("must be a view's id")),
+            _ => Err(serde::de::Error::custom("must be a view's id")),
+        }
+    }
+}
+
+impl JsonSchema for ViewIdParam {
+    fn schema_name() -> Cow<'static, str> {
+        "DrawingViewId".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({"description": "A view's id: 13 characters of lowercase Crockford base32.", "type": "string", "pattern": "^[0-9a-hjkmnp-tv-z]{13}$"})
+    }
+}
+
+/// Where a saved view's centre sits on its sheet, in paper millimetres.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum PlaceParam {
+    /// At this point of the sheet, from its lower-left corner.
+    At([f64; 2]),
+    /// Lined up with its parent, this far along the free axis (a projected view only).
+    Aligned(f64),
+}
+
+/// What `drawing.view.inspect` takes.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
+pub struct InspectParams {
+    pub view: ViewIdParam,
+}
+
+/// What `drawing.view.edit` takes: the view, and what to change.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
+pub struct EditParams {
+    pub view: ViewIdParam,
+    pub set: ViewSet,
+}
+
+/// The settings `drawing.view.edit` changes, each only when given. For the five that can follow
+/// the view's parent, `null` means follow it (a base view's scale can't: it has no parent).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
+pub struct ViewSet {
+    #[serde(deserialize_with = "super::present")]
+    pub scale: Option<Option<ScaleParam>>,
+    #[serde(deserialize_with = "super::present")]
+    pub display_style: Option<Option<StyleParam>>,
+    #[serde(deserialize_with = "super::present")]
+    pub reference_style: Option<Option<StyleParam>>,
+    #[serde(deserialize_with = "super::present")]
+    pub reference_hides_model: Option<Option<bool>>,
+    #[serde(deserialize_with = "super::present")]
+    pub tangent_edges: Option<Option<TangentEdgesParam>>,
+    /// Model millimetres added on every side of the view's extents: 0 to 100000.
+    #[serde(deserialize_with = "super::present")]
+    #[schemars(with = "f64")]
+    pub reference_margin_mm: Option<f64>,
+    /// A base view's direction.
+    #[serde(deserialize_with = "super::present")]
+    #[schemars(with = "ViewParam")]
+    pub view: Option<ViewParam>,
+    #[serde(deserialize_with = "super::present")]
+    #[schemars(with = "PlaceParam")]
+    pub place: Option<PlaceParam>,
+    /// A projected view's display settings (styles, reference parts, tangent edges) all following
+    /// its parent (true), or all its own, at the values they have now (false).
+    #[serde(deserialize_with = "super::present")]
+    #[schemars(with = "bool")]
+    pub linked: Option<bool>,
+}
+
+/// Where a setting's value comes from.
+#[derive(Clone, Copy, Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FromResult {
+    This,
+    Parent,
+    Default,
+}
+
+/// One of a saved view's settings: its value, where it comes from (the parent's id when it is a
+/// parent), and what the view sets itself (null when it follows).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SettingResult<T> {
+    pub value: T,
+    pub from: FromResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    pub set: Option<T>,
+}
+
+/// A saved view's settings.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SettingsResult {
+    pub scale: SettingResult<String>,
+    pub display_style: SettingResult<String>,
+    pub reference_style: SettingResult<String>,
+    pub reference_hides_model: SettingResult<bool>,
+    pub tangent_edges: SettingResult<String>,
+}
+
+/// The values a window offers for a view's settings.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ChoicesResult {
+    pub display_style: Vec<String>,
+    /// ISO 5455's preset scales, largest first.
+    pub scale: Vec<String>,
+}
+
+/// What `drawing.view.inspect` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct InspectResult {
+    pub view: String,
+    pub sheet: String,
+    /// `base` or `projected`.
+    pub kind: &'static str,
+    /// The design it draws: its own source, or its base view's.
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// The side of its parent a projected view sits on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub side: Option<String>,
+    /// Which way it looks, as resolved through its parents.
+    pub direction: ViewResult,
+    pub place: PlaceParam,
+    pub settings: SettingsResult,
+    pub reference_margin_mm: f64,
+    /// Where it sits on its sheet: its extents grown by its reference margin, at its scale, round
+    /// its centre; a placeholder 20 mm each way when there's nothing to measure.
+    pub boundary_mm: BoxResult,
+    /// Its design's extents on its plane.
+    pub extents: ExtentsResult,
+    /// A projected view's display settings: `true` when all follow its parent, `false` when none
+    /// does, `"partly"` otherwise. None for a base view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Value")]
+    pub linked: Option<Value>,
+    /// Its dimensions' ids, in id order.
+    pub dimensions: Vec<String>,
+    pub choices: ChoicesResult,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// What `drawing.view.edit` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct EditResult {
+    pub view: String,
+    /// The fields the edit changed.
+    pub changed: Vec<String>,
+    /// The other views whose resolved settings changed with it: the views projected from it.
+    pub followers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// What `drawing.view.move_to_sheet` takes.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
+pub struct MoveParams {
+    pub view: ViewIdParam,
+    /// The sheet, by id or name.
+    #[serde(deserialize_with = "super::drawing_sheet::sheet_ref")]
+    pub sheet: String,
+    /// Where its centre goes, in paper millimetres from the sheet's lower-left corner.
+    #[serde(default, deserialize_with = "super::present", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Point2")]
+    pub position_mm: Option<Point2>,
+    /// A view lined up with its parent moves only when this is true, and is then placed apart.
+    #[serde(default)]
+    pub break_alignment: bool,
+}
+
+/// What `drawing.view.copy_to_sheet` takes.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
+pub struct CopyParams {
+    pub view: ViewIdParam,
+    /// The sheet, by id or name.
+    #[serde(deserialize_with = "super::drawing_sheet::sheet_ref")]
+    pub sheet: String,
+    /// Where the copy's centre goes, in paper millimetres from the sheet's lower-left corner.
+    #[serde(default, deserialize_with = "super::present", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Point2")]
+    pub position_mm: Option<Point2>,
+    /// Whether the views lined up with it are copied too, lined up with the copy. Needed when it
+    /// has any.
+    #[serde(default, deserialize_with = "super::present", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "bool")]
+    pub with_linked: Option<bool>,
+}
+
+/// What `drawing.view.move_to_sheet` and `drawing.view.copy_to_sheet` return.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ToSheetResult {
+    /// The view moved, or its copy.
+    pub view: String,
+    pub sheet: String,
+    /// Every view moved or made: the view's first, then the views lined up with it.
+    pub views: Vec<String>,
+    /// Those of them whose boundary leaves the sheet's drawing space; none is moved back in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outside: Vec<OutsideResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// A view whose boundary leaves its sheet's drawing space, and where it sits.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct OutsideResult {
+    pub view: String,
+    pub boundary_mm: BoxResult,
+    /// With nothing to measure, why its boundary is the placeholder's, as `extents.provenance`
+    /// names it in `drawing.view.inspect`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unmeasured: Option<&'static str>,
+}
+
+/// A view's extents on its own plane, in model millimetres.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ExtentsResult {
+    pub min: [f64; 2],
+    pub max: [f64; 2],
+    /// How far the display mesh may lie inside a curved face: the largest display tolerance.
+    pub error_mm: f64,
+    /// `approximate`: measured on the display mesh; `placeholder`: nothing to measure, so the box is
+    /// the placeholder's.
+    pub status: &'static str,
+    /// `display_mesh`; with a placeholder, why: `past_walk_limit` or `no_bodies`.
+    pub provenance: &'static str,
+}
+
+/// A box on the sheet, in paper millimetres.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BoxResult {
+    pub min: [f64; 2],
+    pub max: [f64; 2],
+}
+
+/// The scale the view was drawn at.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScaleResult {
+    pub text: String,
+    pub factor: f64,
+    /// Whether the scale was worked out to fit the sheet rather than given.
+    pub fitted: bool,
+}
+
+/// The view's basis as resolved: its name when it has one, the line of sight and the paper axes.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ViewResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named: Option<String>,
+    pub direction: [f64; 3],
+    pub x: [f64; 3],
+    pub y: [f64; 3],
+    pub origin: [f64; 3],
+}
+
+/// What the view was drawn from.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SourceResult {
+    pub bodies: usize,
+    /// Whether the timeline marker is at the end; otherwise the view shows the rolled-back model.
+    pub timeline_at_end: bool,
+}
+
+/// What `drawing.view.snapshot` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SnapshotResult {
+    pub view: ViewResult,
+    pub scale: ScaleResult,
+    pub position_mm: [f64; 2],
+    /// The sheet the view is placed on, its defaults filled in.
+    pub sheet: SheetParam,
+    pub display_style: String,
+    pub reference_style: String,
+    pub extents: ExtentsResult,
+    /// The view's box on the sheet: `position_mm` at its centre, the extents at the scale.
+    pub boundary_mm: BoxResult,
+    pub source: SourceResult,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+#[cfg(test)]
+#[path = "drawing_view_tests.rs"]
+mod tests;

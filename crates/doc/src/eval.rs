@@ -2063,7 +2063,7 @@ impl Model {
                 }
                 Ok(None) => f,
                 Err(e) => {
-                    frame_error = Some(e.to_string());
+                    frame_error = Some(e.in_feature(&f.name).to_string());
                     f
                 }
             };
@@ -2074,7 +2074,7 @@ impl Model {
                 None => kernel::guard(&f.name, || {
                     let (r, deferred) =
                         kernel::validating(validation, || eval_feature(doc, &vals, f, &mut next, &mut warning, &mut import_report, &mut repair));
-                    r.map_err(|e| kernel::KernelError::Failed(e.to_string()))?;
+                    r.map_err(|e| kernel::KernelError::Failed(e.in_feature(&f.name).to_string()))?;
                     // The checks the feature's steps left to its end: the bodies it keeps.
                     if deferred { check_kept(&state, &next) } else { Ok(()) }
                 }),

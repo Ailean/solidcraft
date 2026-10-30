@@ -10,27 +10,43 @@ use solidcraft_doc::{IDENTITY, Mat, ModelBody, mat_inverse, mat_mul};
 use solidcraft_geom::{Aabb3, Mesh, Vec3};
 use solidcraft_kernel::{KernelError, map_with_local_pools};
 
-use super::{CMD, progress::Stage};
+use super::progress::Stage;
 use crate::params::bad;
 use crate::{Result, Session};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) const WORKERS: usize = 8;
+pub(crate) const WORKERS: usize = 8;
 #[cfg(target_arch = "wasm32")]
-pub(super) const WORKERS: usize = 1;
+pub(crate) const WORKERS: usize = 1;
 const MESH_BYTES: usize = 512 * 1024 * 1024;
 const MAX_BODIES: usize = 100_000;
 
-pub(super) struct Placement {
+pub(crate) struct Placement {
     pub mesh: usize,
     pub transform: Mat,
+    /// Per edge: whether it is drawn.
     pub visibility: Vec<bool>,
+    /// Per edge, when sources are asked for: whether it is a tangent edge.
+    pub tangent: Vec<bool>,
+    /// The pairs of faces every edge between which is drawn, sorted.
+    pub joins: Vec<[u32; 2]>,
 }
-pub(super) struct Scene {
+pub(crate) struct Scene {
     pub meshes: Vec<Arc<Mesh>>,
     pub placements: Vec<Placement>,
     pub triangles: usize,
     pub bytes: usize,
+    /// Whether each line keeps its source ([`Ask::sources`]).
+    pub sources: bool,
+}
+
+/// What a caller asks of the meshes besides the chord. The view DXF asks for neither.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Ask {
+    /// Draw the edges where faces meet smoothly too.
+    pub tangent_edges: bool,
+    /// Each line keeps its placement and its edge or silhouette face.
+    pub sources: bool,
 }
 
 struct Group {
@@ -46,6 +62,8 @@ struct Item<'a> {
 struct Prepared {
     mesh: Option<Arc<Mesh>>,
     visibility: Vec<bool>,
+    tangent: Vec<bool>,
+    joins: Vec<[u32; 2]>,
     triangles: usize,
 }
 
@@ -89,7 +107,10 @@ fn rigid(m: &Mat) -> bool {
         && (x.cross(y).dot(z) - 1.).abs() < 1e-9
 }
 
-pub(super) fn prepare(s: &Session, tolerance: f64) -> Result<Scene> {
+/// The export meshes of the bodies `shown` keeps, at the chord `tolerance`, with what `ask` asks
+/// for. Errors about the placements name the command `cmd`; a body with no exportable surface, the
+/// memory budget and cancellation come back as the meshing stage's own errors.
+pub(crate) fn prepare(s: &Session, cmd: &str, tolerance: f64, ask: Ask, shown: impl Fn(&ModelBody) -> bool) -> Result<Scene> {
     let world = s.world_state();
     let state = s.model.state();
     let mut definitions = BTreeMap::new();
@@ -99,9 +120,9 @@ pub(super) fn prepare(s: &Session, tolerance: f64) -> Result<Scene> {
     let mut by_definition = BTreeMap::new();
     let mut groups: Vec<Group> = Vec::new();
     let mut items = Vec::new();
-    for (index, body) in world.bodies.iter().enumerate().filter(|(_, b)| s.body_visible(&b.name)) {
+    for (index, body) in world.bodies.iter().enumerate().filter(|(_, b)| shown(b)) {
         if items.len() >= MAX_BODIES {
-            return Err(bad(CMD, "too many placed bodies to export"));
+            return Err(bad(cmd, "too many placed bodies to export"));
         }
         let key = (body.component, body.definition_name(), body.feature);
         let unambiguous = definitions.get(&key) == Some(&1);
@@ -131,13 +152,18 @@ pub(super) fn prepare(s: &Session, tolerance: f64) -> Result<Scene> {
         if mesh.triangles.is_empty() {
             return Err(KernelError::Invalid(format!("{} has no exportable surface", item.body.name)));
         }
-        let visibility = (0..mesh.edges.len()).map(|i| mesh.shaded_edge_visible(i)).collect();
+        let drawn = |i: usize| if ask.tangent_edges { mesh.edge_pickable(i) } else { mesh.shaded_edge_visible(i) };
+        let visibility: Vec<bool> = (0..mesh.edges.len()).map(drawn).collect();
+        let tangent =
+            if ask.sources { (0..mesh.edges.len()).map(|i| mesh.edge_pickable(i) && !mesh.shaded_edge_visible(i)).collect() } else { Vec::new() };
+        let joins = drawn_joins(&mesh, &visibility);
         let triangles = mesh.triangles.len();
         let mesh = if item.keep {
             // These are owned export buffers, not the document's cached mesh. Picking and
             // shading data are unused by vector occlusion; edge choices were captured above.
-            mesh.normals = Vec::new();
-            mesh.tri_face = Vec::new();
+            // The faces stay (4 bytes a triangle, counted below): they name a silhouette's face,
+            // and tell a silhouette along a drawn edge from one across a face. So do the normals
+            // (a position's size again): they tell a surface seen edge on from a facet's lean.
             mesh.seams = Vec::new();
             mesh.smooth_edges = Vec::new();
             mesh.sharp_edges = Vec::new();
@@ -150,7 +176,7 @@ pub(super) fn prepare(s: &Session, tolerance: f64) -> Result<Scene> {
             None
         };
         progress.advance(1).map_err(|e| KernelError::Failed(e.into()))?;
-        Ok(Prepared { mesh, visibility, triangles })
+        Ok(Prepared { mesh, visibility, tangent, joins, triangles })
     });
     let mut prepared = results.into_iter().collect::<solidcraft_kernel::Result<Vec<_>>>()?;
     let mut meshes: Vec<Option<Arc<Mesh>>> = vec![None; groups.len()];
@@ -161,17 +187,31 @@ pub(super) fn prepare(s: &Session, tolerance: f64) -> Result<Scene> {
             *slot = Some(mesh);
         }
     }
-    let meshes = meshes.into_iter().map(|m| m.ok_or_else(|| bad(CMD, "missing export geometry"))).collect::<Result<Vec<_>>>()?;
+    let meshes = meshes.into_iter().map(|m| m.ok_or_else(|| bad(cmd, "missing export geometry"))).collect::<Result<Vec<_>>>()?;
     let mut placements = Vec::with_capacity(items.len());
     let mut triangles = 0usize;
     for (item, p) in items.iter().zip(prepared) {
         if meshes.get(item.group).is_none_or(|m| m.edges.len() != p.visibility.len()) {
-            return Err(bad(CMD, "placed edge identity changed"));
+            return Err(bad(cmd, "placed edge identity changed"));
         }
         triangles = triangles.saturating_add(p.triangles);
-        placements.push(Placement { mesh: item.group, transform: item.transform, visibility: p.visibility });
+        placements.push(Placement { mesh: item.group, transform: item.transform, visibility: p.visibility, tangent: p.tangent, joins: p.joins });
     }
-    Ok(Scene { meshes, placements, triangles, bytes: bytes.load(Ordering::Relaxed) })
+    Ok(Scene { meshes, placements, triangles, bytes: bytes.load(Ordering::Relaxed), sources: ask.sources })
+}
+
+/// The pairs of faces (smaller first, sorted) every edge between which is drawn: a mesh side
+/// between two of them lies on one of those edges.
+fn drawn_joins(mesh: &Mesh, visibility: &[bool]) -> Vec<[u32; 2]> {
+    let mut all_drawn: BTreeMap<[u32; 2], bool> = BTreeMap::new();
+    for (faces, drawn) in mesh.edge_faces.iter().zip(visibility) {
+        if let [a, b] = faces.as_slice()
+            && a != b
+        {
+            *all_drawn.entry([*a.min(b), *a.max(b)]).or_insert(true) &= *drawn;
+        }
+    }
+    all_drawn.into_iter().filter_map(|(pair, all)| all.then_some(pair)).collect()
 }
 
 pub(super) fn transformed_bounds(mesh: &Mesh, m: &Mat) -> Aabb3 {

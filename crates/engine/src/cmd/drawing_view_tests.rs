@@ -104,6 +104,17 @@ fn nest(s: &mut Session, level: u64) {
     doc.occurrences.push(serde_json::from_value(occurrence).unwrap());
 }
 
+/// Part `Part` with a 10 mm cube `Cube` from the origin, placed twice: the second copy 30 mm along
+/// X. The session and the two occurrences.
+fn two_cubes() -> (Session, [u64; 2]) {
+    let mut s = Session::default();
+    let created = run(&mut s, "component.create", json!({"name": "Part"}));
+    let first = created["occurrence"].as_u64().unwrap();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Cube", "operation": "new"}));
+    let second = run(&mut s, "occurrence.copy", json!({"occurrence": first, "translate": [30, 0, 0]}))["occurrence"].as_u64().unwrap();
+    (s, [first, second])
+}
+
 fn edit_refused(s: &mut Session, view: u64, set: Value) -> String {
     s.execute(EDIT, &json!({"view": ids::encode(view), "set": set})).err().map(|e| e.to_string()).unwrap_or_else(|| panic!("accepted: {set}"))
 }
@@ -418,8 +429,15 @@ fn scale_position_and_margin_set_the_boundary_and_the_design_is_untouched() {
     assert!((one.0 - half.0 * 2.0).len() < EPS && one.1.len() < EPS && half.1.len() < EPS);
     let margin = boundary(&snap(&mut s, json!({"scale": "1:2", "position_mm": [0, 0], "reference_margin_mm": 5})));
     assert!((margin.0 - (half.0 + Vec2::new(5.0, 5.0))).len() < EPS, "2.5 mm a side at 1:2: {margin:?}");
-    let first = snap(&mut s, json!({"view": "top"}));
-    assert_eq!(snap(&mut s, json!({"view": "top"})), first, "the same call gives the same answer");
+    // The same call gives the same answer, apart from what working it out took.
+    let answer = |mut v: Value| {
+        if let Some(reply) = v.as_object_mut() {
+            reply.remove("stats");
+        }
+        v
+    };
+    let first = answer(snap(&mut s, json!({"view": "top"})));
+    assert_eq!(answer(snap(&mut s, json!({"view": "top"}))), first, "the same call gives the same answer");
     assert_eq!((s.undo.len(), s.is_dirty()), (undo, dirty));
     assert!(std::sync::Arc::ptr_eq(&doc, &s.doc), "nothing in the design changes");
     run(&mut s, "browser.visibility", json!({"items": ["Block"], "visible": false}));
@@ -447,6 +465,7 @@ fn hostile_snapshots_are_refused() {
         (json!({"display_style": "shaded"}), "not supported yet"),
         (json!({"reference_style": "shaded_visible"}), "not supported yet"),
         (json!({"display_style": "Shaded"}), "unknown variant"),
+        (json!({"tangent_edges": "thin"}), "thin"),
         (json!({"sheet": {"dpi": 24.9}}), "dpi"),
         (json!({"sheet": {"dpi": 2400.1}}), "dpi"),
         (json!({"sheet": {"size": {"custom": {"sides_mm": [0, 10]}}}}), "sheet"),
@@ -466,6 +485,509 @@ fn hostile_snapshots_are_refused() {
     assert!(e.contains("past ±100000 mm"), "{e}");
     let e = refused(&mut Session::default(), json!({}));
     assert!(e.contains("no bodies"), "{e}");
+}
+
+/// A view shows each placement of a part as a body of its own, named by the occurrences that place
+/// it and its definition's body, and measures them all: the two cubes span 0 to 40 mm across.
+#[test]
+fn a_view_shows_each_placement_of_a_part_with_its_path() {
+    let (mut s, [first, second]) = two_cubes();
+    let set = crate::drawing_view::shown(&s).unwrap();
+    let mut placed: Vec<(Vec<u64>, String)> = set.bodies.iter().map(|b| (b.path.clone(), b.body.clone())).collect();
+    placed.sort();
+    assert_eq!(placed, vec![(vec![first], "Cube".to_string()), (vec![second], "Cube".to_string())]);
+    let v = snap(&mut s, json!({"scale": "1:1"}));
+    assert_eq!(v["source"]["bodies"], 2, "{v}");
+    let (min, max) = (point(&v["extents"]["min"]), point(&v["extents"]["max"]));
+    assert!((max.x - min.x - 40.0).abs() < 1e-6 && (max.y - min.y - 10.0).abs() < 1e-6, "{v}");
+}
+
+/// Every straight segment of `v`'s pieces at `visibility`, on the sheet.
+fn segments(v: &Value, visibility: &str) -> Vec<(Vec2, Vec2)> {
+    let pieces = v["lines"].as_array().into_iter().flatten().flat_map(|l| l["pieces"].as_array().into_iter().flatten());
+    pieces
+        .filter(|p| p["visibility"] == visibility)
+        .flat_map(|p| p["path"].as_array().into_iter().flatten())
+        .filter(|seg| seg["type"] == "line")
+        .map(|seg| (point(&seg["a"]), point(&seg["b"])))
+        .collect()
+}
+
+/// Every arc of `v`'s pieces at `visibility`, on the sheet: its centre, radius and sweep, and its
+/// piece's accuracy.
+fn arcs(v: &Value, visibility: &str) -> Vec<(Vec2, f64, f64, Value)> {
+    let pieces = v["lines"].as_array().into_iter().flatten().flat_map(|l| l["pieces"].as_array().into_iter().flatten());
+    let mut out = Vec::new();
+    for piece in pieces.filter(|p| p["visibility"] == visibility) {
+        for seg in piece["path"].as_array().into_iter().flatten().filter(|seg| seg["type"] == "arc") {
+            out.push((point(&seg["center"]), seg["radius"].as_f64().unwrap(), seg["sweep"].as_f64().unwrap(), piece["accuracy"]["kind"].clone()));
+        }
+    }
+    out
+}
+
+/// A 40 x 40 x 5 mm plate from the origin with a 10 mm hole through it at (20, 20): seen from
+/// above at 1:1, the hole is round the A3 sheet's centre (210, 148.5).
+fn plate() -> Session {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 5, "body_name": "Plate"}));
+    run(&mut s, "solid.cylinder", json!({"diameter": 10, "height": 7, "base": [20, 20, -1], "operation": "cut", "targets": ["Plate"]}));
+    s
+}
+
+/// How long `v`'s pieces at `visibility` are altogether, on the sheet.
+fn drawn_length(v: &Value, visibility: &str) -> f64 {
+    segments(v, visibility).iter().map(|(a, b)| a.dist(*b)).sum()
+}
+
+/// The block's front view at 1:2, centred on the A3 sheet at (210, 148.5): visible lines round its
+/// 50 x 10 mm outline and nothing else. The back edges lie under the front ones and are counted as
+/// covered; the edges seen end on draw nothing. The lines are the mesh's, so they say sampled.
+#[test]
+fn a_views_lines_are_the_blocks_outline() {
+    let mut s = block();
+    let v = snap(&mut s, json!({"scale": "1:2"}));
+    let schema = output_schema_for::<SnapshotResult>();
+    assert!(conforms(schema.as_value(), schema.as_value(), &v), "{v}");
+    assert!((drawn_length(&v, "visible") - 120.0).abs() < 1e-6, "{v}");
+    assert!(segments(&v, "hidden").is_empty(), "{v}");
+    let on_outline = |p: Vec2| {
+        let inside = (185.0 - 1e-6..=235.0 + 1e-6).contains(&p.x) && (143.5 - 1e-6..=153.5 + 1e-6).contains(&p.y);
+        let on_side = [(p.x - 185.0), (p.x - 235.0), (p.y - 143.5), (p.y - 153.5)].iter().any(|d| d.abs() < 1e-6);
+        inside && on_side
+    };
+    assert!(segments(&v, "visible").iter().all(|(a, b)| on_outline(*a) && on_outline(*b)), "{v}");
+    for line in v["lines"].as_array().unwrap() {
+        assert_eq!((&line["body"], &line["occurrence"], &line["reference"]), (&json!("Block"), &json!([]), &json!(false)), "{line}");
+        assert!(line["pieces"].as_array().unwrap().iter().all(|p| p["accuracy"]["kind"] == "sampled"), "{line}");
+    }
+    assert_eq!((&v["status"]["lines"], &v["status"]["provenance"]), (&json!("approximate"), &json!("mesh_projection")));
+    assert!(v["status"]["covered_pieces"].as_u64().unwrap() >= 4, "{v}");
+}
+
+/// A 20 x 20 x 40 tower behind the block, 40 to 60 mm across: in the front view at 1:1 its sides
+/// show above the block (20 to 40 mm up) and are hidden behind it below, 2 x 20 mm of hidden line,
+/// which only `visible_hidden` draws.
+#[test]
+fn hidden_lines_are_drawn_only_when_the_style_asks() {
+    let mut s = block();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 40, "corner": [40, 60, 0], "body_name": "Tower", "operation": "new"}));
+    let v = snap(&mut s, json!({"scale": "1:1", "display_style": "visible_hidden"}));
+    assert!((drawn_length(&v, "hidden") - 40.0).abs() < 1e-6, "{v}");
+    let tower = v["lines"].as_array().unwrap().iter().filter(|l| l["body"] == "Tower").count();
+    assert!(tower > 0, "{v}");
+    let v = snap(&mut s, json!({"scale": "1:1"}));
+    assert!(segments(&v, "hidden").is_empty(), "{v}");
+}
+
+/// The lines name the occurrence each copy of a part is placed by.
+#[test]
+fn each_copys_lines_name_its_occurrence() {
+    let (mut s, [first, second]) = two_cubes();
+    let v = snap(&mut s, json!({"scale": "1:1"}));
+    let mut paths: Vec<Value> = v["lines"].as_array().unwrap().iter().map(|l| l["occurrence"].clone()).collect();
+    paths.dedup();
+    paths.sort_by_key(|p| p.to_string());
+    let mut want = vec![json!([first]), json!([second])];
+    want.sort_by_key(|p| p.to_string());
+    assert_eq!(paths, want, "{v}");
+}
+
+/// The mesh's chord is `chord_mm` on paper over the scale. Below 1:100 it passes 1 mm and is still
+/// taken, while the view DXF keeps its own 1 mm limit; at 1000:1 the default is finer than the
+/// mesh's 0.0001 mm floor and is refused with the chord that would do.
+#[test]
+fn the_meshs_chord_follows_the_scale() {
+    let mut s = block();
+    let v = snap(&mut s, json!({"scale": "1:200"}));
+    assert!((v["status"]["model_chord_mm"].as_f64().unwrap() - 2.0).abs() < 1e-12, "{v}");
+    assert!((v["status"]["chord_mm"].as_f64().unwrap() - 0.01).abs() < 1e-15, "{v}");
+    let e = refused(&mut s, json!({"scale": "1000:1"}));
+    assert!(e.contains("finer than 0.0001 mm") && e.contains("chord_mm 0.1"), "{e}");
+    let v = snap(&mut s, json!({"scale": "1000:1", "chord_mm": 0.2}));
+    assert!((v["status"]["model_chord_mm"].as_f64().unwrap() - 2e-4).abs() < 1e-15, "{v}");
+    let dxf = s.execute("file.export_view_dxf", &json!({"camera": solidcraft_render::Camera::default(), "tolerance": 2})).unwrap_err().to_string();
+    assert!(dxf.contains("tolerance must be 0.0001..1 mm"), "{dxf}");
+}
+
+/// A pocket 40 x 10 mm into the block's back face, 10 mm deep: from the front at 1:1 only the
+/// outline shows, and `visible_hidden` adds the pocket's outline as hidden lines, a 40 x 10
+/// rectangle 190 to 230 across and 143.5 to 153.5 up (its floor lies under its mouth, covered).
+#[test]
+fn a_pocket_behind_the_front_face_is_hidden() {
+    let mut s = block();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 10, "height": 10, "corner": [30, 40, 5], "operation": "cut", "targets": ["Block"]}));
+    let v = snap(&mut s, json!({"scale": "1:1"}));
+    assert!(segments(&v, "hidden").is_empty() && (drawn_length(&v, "visible") - 240.0).abs() < 1e-6, "{v}");
+    let v = snap(&mut s, json!({"scale": "1:1", "display_style": "visible_hidden"}));
+    assert!((drawn_length(&v, "hidden") - 100.0).abs() < 1e-6, "{v}");
+    let on_pocket = |p: Vec2| {
+        let inside = (190.0 - 1e-6..=230.0 + 1e-6).contains(&p.x) && (143.5 - 1e-6..=153.5 + 1e-6).contains(&p.y);
+        inside && [p.x - 190.0, p.x - 230.0, p.y - 143.5, p.y - 153.5].iter().any(|d| d.abs() < 1e-6)
+    };
+    assert!(segments(&v, "hidden").iter().all(|(a, b)| on_pocket(*a) && on_pocket(*b)), "{v}");
+}
+
+/// Two blocks side by side, touching at x = 100: from the front at 1:2 their shared side, 222.5 mm
+/// across the sheet, is drawn once, by the first block, and the second block's copy is covered.
+#[test]
+fn two_touching_blocks_draw_their_shared_side_once() {
+    let mut s = block();
+    run(&mut s, "solid.box", json!({"length": 50, "width": 50, "height": 20, "corner": [100, 0, 0], "body_name": "Second", "operation": "new"}));
+    let v = snap(&mut s, json!({"scale": "1:2"}));
+    assert!((drawn_length(&v, "visible") - 180.0).abs() < 1e-6, "{v}");
+    let at_shared = |line: &&Value| {
+        let segs = line["pieces"].as_array().into_iter().flatten().flat_map(|p| p["path"].as_array().into_iter().flatten());
+        segs.into_iter().any(|seg| (point(&seg["a"]).x - 222.5).abs() < 1e-6 && (point(&seg["b"]).x - 222.5).abs() < 1e-6)
+    };
+    let owners: Vec<&Value> = v["lines"].as_array().unwrap().iter().filter(at_shared).map(|l| &l["body"]).collect();
+    assert_eq!(owners, [&json!("Block")], "{v}");
+    assert!(v["status"]["covered_pieces"].as_u64().unwrap() >= 1, "{v}");
+}
+
+/// Every segment of `v`'s pieces at `visibility`, lines and arcs alike, on the sheet.
+fn drawn(v: &Value, visibility: &str) -> Vec<solidcraft_geom::Seg2> {
+    let pieces = v["lines"].as_array().into_iter().flatten().flat_map(|l| l["pieces"].as_array().into_iter().flatten());
+    let segs = pieces.filter(|p| p["visibility"] == visibility).flat_map(|p| p["path"].as_array().into_iter().flatten());
+    segs.map(|seg| serde_json::from_value(seg.clone()).unwrap()).collect()
+}
+
+/// The points of `seg` furthest out: its ends, and for an arc each quarter-turn point it passes.
+fn reach(seg: &solidcraft_geom::Seg2) -> Vec<Vec2> {
+    let mut out = vec![seg.start(), seg.end()];
+    if let solidcraft_geom::Seg2::Arc { center, radius, start, sweep } = *seg {
+        let (lo, span) = if sweep >= 0.0 { (start, sweep) } else { (start + sweep, -sweep) };
+        for k in 0..8 {
+            let angle = f64::from(k) * std::f64::consts::FRAC_PI_2;
+            if (angle - lo).rem_euclid(std::f64::consts::TAU) <= span {
+                out.push(center + Vec2::from_angle(angle) * radius);
+            }
+        }
+    }
+    out
+}
+
+/// Whether `a` and `b` share a stretch longer than 1e-6 mm: collinear lines that overlap, or arcs
+/// of one circle whose turns overlap.
+fn share_a_stretch(a: &solidcraft_geom::Seg2, b: &solidcraft_geom::Seg2) -> bool {
+    use solidcraft_geom::Seg2::{Arc, Line};
+    use std::f64::consts::TAU;
+    match (*a, *b) {
+        (Line { a: p, b: q }, Line { a: c, b: d }) => {
+            let Some(u) = (q - p).normalized() else { return false };
+            let off = |r: Vec2| (r - p).cross(u).abs();
+            let (t0, t1) = ((c - p).dot(u), (d - p).dot(u));
+            off(c) < 1e-7 && off(d) < 1e-7 && t0.max(t1).min((q - p).len()) - t0.min(t1).max(0.0) > 1e-6
+        }
+        (Arc { center: c0, radius: r0, start: s0, sweep: w0 }, Arc { center: c1, radius: r1, start: s1, sweep: w1 }) => {
+            let range = |s: f64, w: f64| if w >= 0.0 { (s.rem_euclid(TAU), w) } else { ((s + w).rem_euclid(TAU), -w) };
+            let ((l0, n0), (l1, n1)) = (range(s0, w0), range(s1, w1));
+            let overlap = [-TAU, 0.0, TAU].iter().map(|k| (l0 + n0).min(l1 + k + n1) - l0.max(l1 + k)).fold(0.0, f64::max);
+            c0.dist(c1) < 1e-6 && (r0 - r1).abs() < 1e-6 && overlap * r0 > 1e-6
+        }
+        _ => false,
+    }
+}
+
+/// Seeded views of the sample design at mixed views, scales, chords, styles and tangent settings:
+/// nothing panics, every piece stays inside the view's boundary (to within the chord and the
+/// extents' own error on paper), and no stretch is drawn both visible and hidden.
+#[test]
+fn seeded_views_of_the_sample_stay_in_bounds_and_apart() {
+    let mut s = Session::default();
+    s.run_script(&crate::sample::script()).unwrap();
+    let pick = |seed: u64, salt: u64, n: usize| ((seed ^ salt).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 33) as usize % n;
+    for seed in 1..=12u64 {
+        let chord = [0.005, 0.01, 0.05, 0.2][pick(seed, 1, 4)];
+        let view = ["front", "back", "top", "bottom", "left", "right", "iso"][pick(seed, 2, 7)];
+        let scale = ["1:5", "1:2", "1:1", "2:1"][pick(seed, 3, 4)];
+        let style = ["visible", "visible_hidden"][pick(seed, 4, 2)];
+        let tangent = ["hide", "show"][pick(seed, 5, 2)];
+        let p = json!({
+            "view": view,
+            "scale": scale,
+            "chord_mm": chord,
+            "display_style": style,
+            "scene": style == "visible",
+            "tangent_edges": tangent,
+        });
+        let v = snap(&mut s, p.clone());
+        let slack = chord + v["extents"]["error_mm"].as_f64().unwrap() * v["scale"]["factor"].as_f64().unwrap() + 1e-6;
+        let (min, max) = (point(&v["boundary_mm"]["min"]), point(&v["boundary_mm"]["max"]));
+        let inside = |q: &Vec2| q.x >= min.x - slack && q.x <= max.x + slack && q.y >= min.y - slack && q.y <= max.y + slack;
+        let (visible, hidden) = (drawn(&v, "visible"), drawn(&v, "hidden"));
+        assert!(!visible.is_empty(), "{p}");
+        assert!(visible.iter().chain(&hidden).all(|seg| reach(seg).iter().all(inside)), "{p}: a line leaves the boundary");
+        assert!(!hidden.iter().any(|h| visible.iter().any(|w| share_a_stretch(h, w))), "{p}: a stretch is both visible and hidden");
+        if style == "visible" {
+            let scene: solidcraft_geom::paper::Scene = serde_json::from_value(v["scene"].clone()).unwrap();
+            assert!(scene.validate().is_ok(), "{p}");
+            let pieces = v["lines"].as_array().unwrap().iter().flat_map(|l| l["pieces"].as_array().unwrap()).count();
+            assert_eq!(strokes(&v).len(), pieces, "{p}: a stroke per piece");
+        }
+    }
+}
+
+/// `chord_mm` and `max_error_mm` out of range are refused by name; a `max_error_mm` the mesh's
+/// lines can't certify is refused with the count of pieces short of it.
+#[test]
+fn chords_and_accuracy_checks_out_of_range_are_refused() {
+    let mut s = block();
+    let doc = s.doc.clone();
+    for (p, says) in [
+        (json!({"chord_mm": 0}), "chord_mm is a number from"),
+        (json!({"chord_mm": 0.00099}), "chord_mm is a number from"),
+        (json!({"chord_mm": 1.0001}), "chord_mm is a number from"),
+        (json!({"chord_mm": "fine"}), "chord_mm"),
+        (json!({"max_error_mm": 0}), "max_error_mm is a number above 0"),
+        (json!({"max_error_mm": -1}), "max_error_mm is a number above 0"),
+        (json!({"max_error_mm": null}), "max_error_mm"),
+        (json!({"scale": "1:2", "max_error_mm": 0.5}), "accuracy not met: 0 bounded and"),
+    ] {
+        let e = refused(&mut s, p.clone());
+        assert!(e.contains(says), "{p}: {e}");
+        assert!(std::sync::Arc::ptr_eq(&doc, &s.doc), "{p}");
+    }
+}
+
+/// A stadium of cubic segments, two straight sides and four quarter circles, extruded 20: seen from
+/// the front, its straight sides meet its round ends at tangent edges, drawn, and saying they are
+/// tangent, only when the view shows tangent edges. (The kernel marks a join smooth only between
+/// faces swept from cubic segments, and one between two pieces of one surface, as in the middle of
+/// a round end, is a seam, never drawn; a fillet's round keeps its edges, as the viewport draws it.)
+#[test]
+fn tangent_edges_are_drawn_only_when_the_view_shows_them() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Stadium"}));
+    // Quarter circles of radius 10 as cubics, their handles 10 x 4(sqrt 2 - 1)/3 = 5.5228 long.
+    for points in [
+        [[0.0, -10.0], [10.0, -10.0], [20.0, -10.0], [30.0, -10.0]],
+        [[30.0, -10.0], [35.5228, -10.0], [40.0, -5.5228], [40.0, 0.0]],
+        [[40.0, 0.0], [40.0, 5.5228], [35.5228, 10.0], [30.0, 10.0]],
+        [[30.0, 10.0], [20.0, 10.0], [10.0, 10.0], [0.0, 10.0]],
+        [[0.0, 10.0], [-5.5228, 10.0], [-10.0, 5.5228], [-10.0, 0.0]],
+        [[-10.0, 0.0], [-10.0, -5.5228], [-5.5228, -10.0], [0.0, -10.0]],
+    ] {
+        run(&mut s, "sketch.spline.control_point", json!({"points": points}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Stadium", "distance": 20, "body_name": "Stadium"}));
+    let tangent = |v: &Value| v["lines"].as_array().unwrap().iter().filter(|l| l["source"]["tangent"] == true).count();
+    let v = snap(&mut s, json!({"scale": "1:1", "tangent_edges": "show"}));
+    assert!(tangent(&v) > 0, "{v}");
+    let v = snap(&mut s, json!({"scale": "1:1"}));
+    assert_eq!(tangent(&v), 0, "{v}");
+    // The round ends' middles are seams, never drawn: the outline there is the round's silhouette,
+    // 20 mm tall at x -10 and 40 (185 and 235 on the sheet).
+    for x in [185.0, 235.0] {
+        let upright = segments(&v, "visible").into_iter().filter(|(a, b)| (a.x - x).abs() < 1e-6 && (b.x - x).abs() < 1e-6);
+        let tall: f64 = upright.map(|(a, b)| a.dist(b)).sum();
+        assert!((tall - 20.0).abs() < 1e-6, "{x}: {tall}: {v}");
+    }
+}
+
+/// Seen from above, the hole's rim is drawn as its exact circle: radius 5 round the sheet's
+/// centre, analytic, all the way round. Its two rims lie one over the other, so one is covered;
+/// the plate's outline is still its four straight sides.
+#[test]
+fn a_hole_seen_end_on_is_its_exact_circle() {
+    let mut s = plate();
+    let v = snap(&mut s, json!({"view": "top", "scale": "1:1"}));
+    let schema = output_schema_for::<SnapshotResult>();
+    assert!(conforms(schema.as_value(), schema.as_value(), &v), "{v}");
+    let rims = arcs(&v, "visible");
+    assert!(!rims.is_empty(), "{v}");
+    for (centre, radius, _, accuracy) in &rims {
+        assert!(centre.dist(Vec2::new(210.0, 148.5)) < 1e-9 && (radius - 5.0).abs() < 1e-9 && accuracy == "analytic", "{v}");
+    }
+    let round: f64 = rims.iter().map(|(_, _, sweep, _)| sweep.abs()).sum();
+    assert!((round - std::f64::consts::TAU).abs() < 1e-9, "{round}: {v}");
+    assert!(v["status"]["covered_pieces"].as_u64().unwrap() > 0, "{v}");
+    assert!((drawn_length(&v, "visible") - 160.0).abs() < 1e-6, "{v}");
+}
+
+/// A bar across the plate, above the hole, hides the rim where it passes over: the rim is cut where
+/// the bar's sides cross it (2 mm either side of its centre), 4 asin 0.4 of it hidden and the rest
+/// visible. The cut arcs end where the mesh found the change, so they stay sampled.
+#[test]
+fn a_rim_cut_where_its_visibility_changes_stays_sampled() {
+    let mut s = plate();
+    run(&mut s, "solid.box", json!({"length": 30, "width": 4, "height": 2, "corner": [5, 18, 10], "body_name": "Bar", "operation": "new"}));
+    let v = snap(&mut s, json!({"view": "top", "scale": "1:1", "display_style": "visible_hidden"}));
+    let hidden = 4.0 * 0.4f64.asin();
+    for (visibility, want) in [("hidden", hidden), ("visible", std::f64::consts::TAU - hidden)] {
+        let rims = arcs(&v, visibility);
+        let on_rim = |(c, r, _, a): &(Vec2, f64, f64, Value)| c.dist(Vec2::new(210.0, 148.5)) < 1e-9 && (r - 5.0).abs() < 1e-9 && a == "sampled";
+        assert!(!rims.is_empty() && rims.iter().all(on_rim), "{visibility}: {v}");
+        let round: f64 = rims.iter().map(|(_, _, sweep, _)| sweep.abs()).sum();
+        assert!((round - want).abs() < 0.02, "{visibility}: {round}, not {want}: {v}");
+    }
+}
+
+/// A part with a hole placed three times, the third turned a quarter turn: one mesh serves all
+/// three, and each hole is an exact circle where its own placement puts it, 50 mm apart on the
+/// sheet round its centre.
+#[test]
+fn each_placements_hole_is_its_own_exact_circle() {
+    let mut s = Session::default();
+    let first = run(&mut s, "component.create", json!({"name": "Part"}))["occurrence"].as_u64().unwrap();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 5, "body_name": "Plate", "operation": "new"}));
+    run(&mut s, "solid.cylinder", json!({"diameter": 10, "height": 7, "base": [20, 20, -1], "operation": "cut", "targets": ["Plate"]}));
+    run(&mut s, "occurrence.copy", json!({"occurrence": first, "translate": [50, 0, 0]}));
+    let turned = run(&mut s, "occurrence.copy", json!({"occurrence": first, "translate": [140, 0, 0]}))["occurrence"].as_u64().unwrap();
+    run(&mut s, "occurrence.move", json!({"occurrence": turned, "space": "world", "axis": [0, 0, 1], "angle": "90 deg", "origin": [140, 0, 0]}));
+    let v = snap(&mut s, json!({"view": "top", "scale": "1:1"}));
+    assert_eq!(v["stats"]["shared_meshes"], json!(1), "{v}");
+    let mut round: std::collections::BTreeMap<i64, f64> = std::collections::BTreeMap::new();
+    for (centre, radius, sweep, accuracy) in arcs(&v, "visible") {
+        assert!((centre.y - 148.5).abs() < 1e-9 && (radius - 5.0).abs() < 1e-9 && accuracy == "analytic", "{v}");
+        *round.entry(centre.x.round() as i64).or_default() += sweep.abs();
+    }
+    assert_eq!(round.keys().copied().collect::<Vec<_>>(), [160, 210, 260], "{v}");
+    assert!(round.values().all(|r| (r - std::f64::consts::TAU).abs() < 1e-9), "{v}");
+}
+
+/// Every stroke of `v`'s paper scene: its path, whether it is closed, and its width.
+fn strokes(v: &Value) -> Vec<(Vec<solidcraft_geom::Seg2>, bool, f64)> {
+    use solidcraft_geom::paper::{Item, Scene};
+    let scene: Scene = serde_json::from_value(v["scene"].clone()).unwrap();
+    let items = scene.groups.into_iter().flat_map(|g| g.items);
+    items
+        .filter_map(|item| match item {
+            Item::Stroke { path, closed, width_mm } => Some((path, closed, width_mm)),
+            Item::Fill { .. } => None,
+        })
+        .collect()
+}
+
+/// The block's front view at 1:2 as a paper scene of the A3 sheet: one group of the view's kind,
+/// object 0, its strokes open and 0.5 mm wide along the 120 mm outline, and the SVG writer takes
+/// it as one group with a path per stroke. Without `scene` the reply has none.
+#[test]
+fn a_views_scene_is_its_visible_lines_as_strokes() {
+    let mut s = block();
+    assert!(snap(&mut s, json!({"scale": "1:2"})).get("scene").is_none());
+    let v = snap(&mut s, json!({"scale": "1:2", "scene": true}));
+    let schema = output_schema_for::<SnapshotResult>();
+    assert!(conforms(schema.as_value(), schema.as_value(), &v), "{v}");
+    let groups = &v["scene"]["groups"];
+    let head = (&v["scene"]["size_mm"], groups.as_array().map(Vec::len), &groups[0]["object"], &groups[0]["kind"]);
+    assert_eq!(head, (&json!([420.0, 297.0]), Some(1), &json!(0), &json!("view")), "{v}");
+    let strokes = strokes(&v);
+    assert!(strokes.iter().all(|(_, closed, width)| !closed && *width == 0.5), "{v}");
+    let length: f64 = strokes.iter().flat_map(|(path, _, _)| path).map(|seg| seg.start().dist(seg.end())).sum();
+    assert!((length - 120.0).abs() < 1e-6, "{v}");
+    let scene: solidcraft_geom::paper::Scene = serde_json::from_value(v["scene"].clone()).unwrap();
+    let (svg, _) = solidcraft_io::paper::paper_svg(&scene.prepare().unwrap()).unwrap();
+    let svg = String::from_utf8(svg).unwrap();
+    let counts = (svg.matches("<g data-object=\"0\" data-kind=\"view\">").count(), svg.matches("<path").count());
+    assert_eq!(counts, (1, strokes.len()), "{svg}");
+}
+
+/// The plate's hole in the scene, from above at 1:1: its rim's strokes are arcs of radius 5 round
+/// the sheet's centre, 2π × 5 mm in all, and a stroke that is a whole circle is closed.
+#[test]
+fn a_holes_rim_is_arcs_in_the_scene() {
+    let mut s = plate();
+    let v = snap(&mut s, json!({"view": "top", "scale": "1:1", "scene": true}));
+    let mut round = 0.0;
+    for (path, closed, _) in strokes(&v) {
+        for seg in &path {
+            if let solidcraft_geom::Seg2::Arc { center, radius, sweep, .. } = *seg {
+                assert!(center.dist(Vec2::new(210.0, 148.5)) < 1e-9 && (radius - 5.0).abs() < 1e-9, "{v}");
+                round += radius * sweep.abs();
+                let whole = path.len() == 1 && (sweep.abs() - std::f64::consts::TAU).abs() < 1e-9;
+                assert!(closed || !whole, "a whole circle is closed: {v}");
+            }
+        }
+    }
+    assert!((round - std::f64::consts::TAU * 5.0).abs() < 1e-6, "{round}: {v}");
+}
+
+/// `scene` is true or false, and with `visible_hidden` it waits for dashed lines (V7b).
+#[test]
+fn a_scene_with_hidden_lines_or_a_bad_flag_is_refused() {
+    let mut s = block();
+    let doc = s.doc.clone();
+    for (p, says) in [
+        (json!({"scene": "yes"}), "scene"),
+        (json!({"scene": 1}), "scene"),
+        (json!({"scene": null}), "scene"),
+        (json!({"scene": true, "display_style": "visible_hidden"}), "not supported yet: hidden lines in the paper scene"),
+    ] {
+        let e = refused(&mut s, p.clone());
+        assert!(e.contains(says), "{p}: {e}");
+        assert!(std::sync::Arc::ptr_eq(&doc, &s.doc), "{p}");
+    }
+}
+
+/// The occurrence paths `v`'s lines name, each once.
+fn line_paths(v: &Value) -> Vec<Value> {
+    let mut paths: Vec<Value> = v["lines"].as_array().unwrap().iter().map(|l| l["occurrence"].clone()).collect();
+    paths.sort_by_key(|p| p.to_string());
+    paths.dedup();
+    paths
+}
+
+/// Two copies of a part: `source` with the first copy's path draws only that copy, 10 mm across
+/// at 1:1; hiding the second copy draws the same; both together leave nothing and are refused.
+#[test]
+fn a_views_source_and_hide_choose_its_copies() {
+    let (mut s, [first, second]) = two_cubes();
+    for p in [json!({"scale": "1:1", "source": {"occurrences": [[first]]}}), json!({"scale": "1:1", "hide": [[second]]})] {
+        let v = snap(&mut s, p.clone());
+        assert_eq!(line_paths(&v), [json!([first])], "{p}: {v}");
+        let (size, _) = boundary(&v);
+        assert!((size.x - 10.0).abs() < 1e-6, "{p}: {v}");
+    }
+    let e = refused(&mut s, json!({"source": {"occurrences": [[first]]}, "hide": [[first]]}));
+    assert!(e.contains("the source and hide leave no bodies to draw"), "{e}");
+}
+
+/// The empty path takes the design's own bodies only: the block made at the top of the design and
+/// not the cube placed in a part.
+#[test]
+fn the_empty_path_is_the_designs_own_bodies() {
+    let mut s = block();
+    run(&mut s, "component.create", json!({"name": "Part"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [200, 0, 0], "body_name": "Cube", "operation": "new"}));
+    let bodies = |v: &Value| {
+        let mut names: Vec<Value> = v["lines"].as_array().unwrap().iter().map(|l| l["body"].clone()).collect();
+        names.sort_by_key(|n| n.to_string());
+        names.dedup();
+        names
+    };
+    assert_eq!(bodies(&snap(&mut s, json!({"scale": "1:5"}))), [json!("Block"), json!("Cube")]);
+    assert_eq!(bodies(&snap(&mut s, json!({"scale": "1:5", "source": {"occurrences": [[]]}}))), [json!("Block")]);
+}
+
+/// Paths the occurrences don't make, too many paths or ids, `[]` in `hide` and malformed values
+/// are refused with their reason, and the design is left as it was.
+#[test]
+fn hostile_source_and_hide_paths_are_refused() {
+    let (mut s, [first, _]) = two_cubes();
+    let doc = s.doc.clone();
+    let many: Vec<Vec<u64>> = vec![vec![first]; 1001];
+    let deep: Vec<Vec<u64>> = vec![vec![first; 64]; 65];
+    let cases = [
+        (json!({"source": {"occurrences": [[999]]}}), "missing or mismatched parent"),
+        (json!({"hide": [[first, first]]}), "repeats an id"),
+        (json!({"source": {"occurrences": [vec![first; 65]]}}), "1..64 ids"),
+        (json!({"hide": many}), "at most 1000 occurrence paths"),
+        (json!({"source": {"occurrences": deep}}), "4096 ids in all"),
+        (json!({"hide": [[]]}), "hide [] would leave out"),
+        (json!({"hide": [[-1]]}), "hide"),
+        (json!({"hide": [[1.5]]}), "hide"),
+        (json!({"source": {"occurrences": [["a"]]}}), "source"),
+        (json!({"source": null}), "source"),
+        (json!({"source": {}}), "occurrences"),
+        (json!({"source": {"occurrences": [], "extra": 1}}), "extra"),
+    ];
+    for (p, says) in cases {
+        let e = refused(&mut s, p.clone());
+        assert!(e.contains(says), "{p}: {e}");
+        assert!(std::sync::Arc::ptr_eq(&doc, &s.doc), "{p}");
+    }
 }
 
 /// A view shows every body the design places, so a design whose assembly walk stops at its depth

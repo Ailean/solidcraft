@@ -2551,7 +2551,7 @@ fn hole(s: &mut Session, p: &Value) -> Result<Value> {
         }
         (None, Some(t), None) => {
             let size = solidcraft_doc::parse_tapped_thread(t).ok_or_else(|| bad(cmd, "thread"))?;
-            Expr::new(format!("{} mm", size.default_drill(s.metric_tap_drill_major_less_pitch)))
+            Expr::new(format!("{} mm", size.tap_drill))
         }
         (None, None, None) => return Err(bad(cmd, "needs `diameter`, `thread` (a tapped hole) or `clearance` (a bolt size)")),
     };

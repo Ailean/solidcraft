@@ -36,10 +36,6 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         let step = setting::step_values(app, ui).on_hover_text(tip);
         crate::scenario::publish_handle("prefs:step_values", step.rect.center());
     });
-    ui_kit::settings_section(ui, "holes", app.tr("prefs.holes"), |ui| {
-        let check = setting::metric_tap_drill_major_less_pitch(app, ui);
-        crate::scenario::publish_handle("prefs:metric_tap_drill_major_less_pitch", check.rect.center());
-    });
     ui_kit::settings_section(ui, "surfaces", app.tr("prefs.surfaces"), |ui| {
         let check = setting::surface_extrude_symmetric_per_side(app, ui);
         crate::scenario::publish_handle("prefs:surface_extrude_symmetric_per_side", check.rect.center());

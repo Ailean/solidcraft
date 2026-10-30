@@ -1,0 +1,36 @@
+diff --git a/acceptance/retained-b1-cases.rs b/acceptance/retained-b1-cases.rs
+--- a/acceptance/retained-b1-cases.rs
++++ b/acceptance/retained-b1-cases.rs
+@@ -40,8 +40,8 @@
+     assert_eq!((g.original_gid, g.intrinsic_advance_fu, g.placed_advance_mm), (57, 1366, 0.5));
+     assert_eq!(g.matrix_mm, [1.0, 0.0, 0.0, 1.0, 0.375, 0.0]);
+     let input = plan.font_input(*b"ABCDEF", 1 << 20);
+-    assert_eq!(input.postscript_name, b"LiberationSans");
+-    assert_eq!(input.descriptor.unwrap().ascent_1000, 905.2734375);
++    assert_eq!(input.source.font().postscript_name.as_bytes(), b"LiberationSans");
++    assert_eq!(input.source.descriptor().ascent_1000, 905.2734375);
+ }
+ 
+ #[test]
+@@ -52,9 +52,9 @@
+     let plan = super::text_plan::plan_text(&font, &[&second, &first, &first], 1 << 20, 410_820).unwrap();
+     assert_eq!(plan.glyphs().iter().map(|g| (g.code, g.logical)).collect::<Vec<_>>(), [(2, "B"), (1, "A"), (1, "A")]);
+     let input = plan.font_input(*b"ABCDEF", 1 << 20);
+-    assert_eq!(input.codes.len(), 2);
+-    assert_eq!(input.codes[0].subset_gid, input.codes[1].subset_gid);
+-    assert_eq!((input.codes[0].logical, input.codes[1].logical), ("A", "B"));
++    assert_eq!(input.source.codes().len(), 2);
++    assert_eq!(input.source.codes()[0].subset_gid, input.source.codes()[1].subset_gid);
++    assert_eq!((input.source.codes()[0].logical, input.source.codes()[1].logical), ("A", "B"));
+ }
+ 
+ #[test]
+@@ -82,7 +82,7 @@
+     run.clusters[0].text = 0..4;
+     let plan = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).unwrap();
+     assert_eq!(plan.glyphs()[0].logical, "fi\u{301}");
+-    assert_eq!(plan.font_input(*b"ABCDEF", 1 << 20).codes[0].logical, "fi\u{301}");
++    assert_eq!(plan.font_input(*b"ABCDEF", 1 << 20).source.codes()[0].logical, "fi\u{301}");
+ }
+ 
+ #[test]

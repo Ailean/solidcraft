@@ -35,3 +35,14 @@ These folders deliberately remain outside production module registration. Each R
 owned width-provider and actual #9647 Refs seam without changing Cam's builder.
 Mixed per-file bases, strict DW/trust blockers and79 unrun source declarations
 are explicit. This is not a registered, tested or merged implementation.
+
+## P2 F0 checked font-plan source — v3
+
+[Source-only F0 v3 packet](2026-10-30/F0-textplan-fontobjects/README.md) binds the
+actual font-ID/used-font-list contract at 9512`16c9e911` / 9513`a46d46e9`. It preserves
+two product proposals, exact before/candidate/alternative deltas, 46 ordinary
+declarations and 4 separate negative compile obligations, all unrun/unregistered.
+The narrow acceptance-accessor source finding is closed. Cam has resolved DW
+as full emitted-CID W coverage; this historical v3 still refuses absent GID 0
+while its separate successor, F2, parent integration and real acceptance remain pending. Earlier archives
+and contributor windows are preserved; this is not an integrated or ready head.

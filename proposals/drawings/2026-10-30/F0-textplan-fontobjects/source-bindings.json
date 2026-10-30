@@ -1,0 +1,261 @@
+{
+  "format_version": 1,
+  "repository": "tangency-labs/solidcraft",
+  "status": "SOURCE_ONLY_UNFORMATTED_UNCOMPILED_UNRUN_UNREGISTERED",
+  "producer": {
+    "B1a_PR": 9512,
+    "B1a_head": "16c9e9119214a3595b1303e2f1116cd067986c38",
+    "B1b_PR": 9513,
+    "B1b_head": "a46d46e95a7f5c7680ae7440d3c9989846947128",
+    "drawings_base": "562bb379a5b426506d7fc75cc069bc0936044671",
+    "owner_reply": "https://github.com/tangency-labs/solidcraft/issues/4890#issuecomment-6532962216",
+    "contract": "TextRun.font names Font.id; paper_text returns unique used Vec<Font>; no public Font.bundled or invented Font.embed.",
+    "Font_embed": "F2 pending; not present in this proposal"
+  },
+  "lineage": {
+    "public_predecessor_commit": "5f127aceb09f04dcfe6e4dc1d0253a292787dffa",
+    "public_predecessor_url": "https://github.com/tangency-labs/solidcraft/tree/5f127aceb09f04dcfe6e4dc1d0253a292787dffa/proposals/drawings/2026-10-30/P2-width-Refs-composition",
+    "private_source_v3_manifest_sha256": "1b6f64a24513cb069efd76708fd8788dd29ff09da802ea662c1a60da2bbc24ed",
+    "v2_manifest_sha256": "6795b37c0189fed058a04ecf618e50cf34c6bc3952b2a14b62a0ff97d1b323f6",
+    "canonical_private_predecessor_manifest_sha256": "c1981fe32538252f848da8ef1bb1bab440cc97b826308b36e5bfd6070a0f5262",
+    "alternative_partial_manifest_sha256": "a1bc785b5fa6fb39f8a07359631110de5ccf30ec50464a0e48d1315a073a953e",
+    "no_single_composed_Git_head": true
+  },
+  "source_reviews": {
+    "prior_product_boundary_review_sha256": "eddb84822dda988afac07d3eae718b2d7dc90a2a078b6f815af9fbb34955b2e0",
+    "v2_review_sha256": "faf09fbe4b49279770681338e417a5d36b58fd7e0f2416712fa80270f952a649",
+    "v3_focal_accessor_closure_sha256": "335195903fca30866b1dbef23417b191439bee063e6bf35487858151c40c1fcf",
+    "scope": "The single accessor source finding is closed. Two product candidates/patches are unchanged from v2; the focal closure is not a fresh compiler, negative-compilation result, PDF result or full-feature review."
+  },
+  "product_candidates": [
+    {
+      "path": "candidate/crates/io/src/paper/pdf/text_plan.rs",
+      "sha256": "eddb5120912b934c41fd58cea345c9cc8e74f067995336da8401737a9a2fc027",
+      "bytes": 18699
+    },
+    {
+      "path": "candidate/crates/io/src/paper/pdf/font_objects.rs",
+      "sha256": "393ed32fb7a7633fa949ad6758fe9989cab4633ea3771752886c3404558d8a33",
+      "bytes": 58307
+    }
+  ],
+  "patch_routes": {
+    "canonical": {
+      "patch": "deltas/product-from-canonical.patch",
+      "baselines": {
+        "crates/io/src/paper/pdf/text_plan.rs": "before/canonical/crates/io/src/paper/pdf/text_plan.rs",
+        "crates/io/src/paper/pdf/font_objects.rs": "before/canonical/crates/io/src/paper/pdf/font_objects.rs"
+      }
+    },
+    "alternative_partial": {
+      "patch": "deltas/product-from-alternative-partial.patch",
+      "baselines": {
+        "crates/io/src/paper/pdf/text_plan.rs": "before/alternative-partial/crates/io/src/paper/pdf/text_plan.rs",
+        "crates/io/src/paper/pdf/font_objects.rs": "before/canonical/crates/io/src/paper/pdf/font_objects.rs"
+      }
+    },
+    "retained_acceptance_from_original": {
+      "patch": "deltas/acceptance-from-owned-appendix.patch",
+      "logical_patch_filename": "OWNED_APPENDIX_ONLY_NOT_CAM_pdf_tests.rs",
+      "baseline": "before/acceptance/owned-b1-cases.rs",
+      "candidate": "acceptance/retained-b1-cases.rs"
+    },
+    "retained_acceptance_from_v2": {
+      "patch": "deltas/acceptance-accessor-fix-from-v2.patch",
+      "logical_patch_filename": "acceptance/retained-b1-cases.rs",
+      "baseline": "before/acceptance/v2-retained-b1-cases.rs",
+      "candidate": "acceptance/retained-b1-cases.rs"
+    },
+    "alternatives_not_sequential": true,
+    "mixed_per_file_component_bases": true,
+    "normal_existing_test_file_adoption_required": true
+  },
+  "acceptance": {
+    "ordinary_declarations": {
+      "existing_font_objects_inline": 24,
+      "retained_B1": 13,
+      "F0_wrapper": 4,
+      "production_boundary": 5,
+      "total": 46
+    },
+    "negative_compile_obligations": 4,
+    "negative_file": "acceptance/negative-compile-obligations.rs",
+    "negative_obligations_are_not_ordinary_tests": true,
+    "negative_diagnostics_expected_not_observed": true,
+    "ordinary_cases_not_reclassified_as_negative": true,
+    "v3_delta": "Exactly6 normal acceptance lines/eight field reads use existing immutable view getters; no product/oracle/fixture/expected-value/seed/tolerance/budget change.",
+    "all_registered": false,
+    "all_compiled": false,
+    "all_executed": false
+  },
+  "checked_boundary": {
+    "mint": "TextPlan::font_input only constructs FontPlanView after plan_text returns successfully.",
+    "view_private_fields": [
+      "font",
+      "subset",
+      "descriptor",
+      "codes"
+    ],
+    "public_production_input": [
+      "source:FontPlanView",
+      "subset_tag",
+      "max_chunk_bytes"
+    ],
+    "raw_parts": "FontObjectParts and font_objects_parts are module-private, no safe sibling/public/serde entry; descendant component tests use explicit private aliases, never mint the view.",
+    "same_immutable_source_subset": true,
+    "checks_preserved": [
+      "cheap byte/record allowances",
+      "exact descriptor metadata",
+      "bytes+face B1 ID",
+      "original-GID FontGlyph.advance vs original hmtx",
+      "exact used-glyph table",
+      "one subset_font\u2192glyph_closure\u2192check_liberation_sans RAW admission",
+      "subset mapping/program guards",
+      "all Ref/tag/code/finite/missing/DW/output caps"
+    ]
+  },
+  "builtin_source_identity": {
+    "api": "solidcraft_doc::sketch::font_data(None)",
+    "fields": "fresh index0/weightNone; bounded original-byte slice equality and face equality",
+    "before_filesystem_or_cache": true,
+    "substitution_or_fallback": false,
+    "new_parser": false,
+    "new_admission": false,
+    "duplicate_hash": false,
+    "B1_hash_in_textplan": "existing bytes||faceLE check retained",
+    "B1_hash_in_fontobjects": "removed redundant recomputation; fixed reviewedB1ID and exact builtin source comparison retained",
+    "RAW_SHA256": "075e71be4c58beda172ecb574a799308f04c3d054c6a5b7434954d3b0f1b28d8",
+    "B1_ID": "af02dbc8839b7cadae15e528aa3d9ff85c545b715b551d218bf38a937ee7e2b0",
+    "licence_or_F2_waiver": false
+  },
+  "unmodified_source_admission": {
+    "font_admission": {
+      "repository_path": "crates/io/src/paper/pdf/font_admission.rs",
+      "sha256": "a8abc3b4aaef9325694ec404512c228f9973b82006b5718eb304ef57d5c30b23",
+      "bytes": 4170
+    },
+    "glyph_closure": {
+      "repository_path": "crates/io/src/paper/pdf/glyph_closure.rs",
+      "sha256": "a8d94c9996a5c718346e66d1983e6d2f2edb224286d3f45e92d731ab0013f1d8",
+      "bytes": 38397
+    },
+    "subset_font": {
+      "repository_path": "crates/io/src/paper/pdf/subset_font.rs",
+      "sha256": "a9808063f2223fd9e86e208d55092b6b9e9a5ae7ba0eaba2dce5d557a7fd5f26",
+      "bytes": 8941
+    }
+  },
+  "upstream_source_pins": [
+    {
+      "path": "b1a-text",
+      "repository_path": "crates/geom/src/paper/text.rs",
+      "url": "https://github.com/CamWight/solidcraft/blob/16c9e9119214a3595b1303e2f1116cd067986c38/crates/geom/src/paper/text.rs",
+      "blob_sha1": "f16f1e703323a11a0dfbd17de680278006aca997",
+      "sha256": "8b813342836802bdd6f7955ae26bcc3a605c2e9e6e358e4a2097c330d860eb65",
+      "bytes": 14124
+    },
+    {
+      "path": "f0-text",
+      "repository_path": "crates/geom/src/paper/text.rs",
+      "url": "https://github.com/CamWight/solidcraft/blob/a46d46e95a7f5c7680ae7440d3c9989846947128/crates/geom/src/paper/text.rs",
+      "blob_sha1": "f16f1e703323a11a0dfbd17de680278006aca997",
+      "sha256": "8b813342836802bdd6f7955ae26bcc3a605c2e9e6e358e4a2097c330d860eb65",
+      "bytes": 14124
+    },
+    {
+      "path": "f0-paper",
+      "repository_path": "crates/geom/src/paper.rs",
+      "url": "https://github.com/CamWight/solidcraft/blob/a46d46e95a7f5c7680ae7440d3c9989846947128/crates/geom/src/paper.rs",
+      "blob_sha1": "f8f924b0529255efed81b5d2eaa00ae6e8692cb6",
+      "sha256": "5b9fb55ddcfb1d1fa488622dfc69b6d2ee5545943e0d453645aaf8b421bf75d5",
+      "bytes": 10593
+    },
+    {
+      "path": "f0-layout",
+      "repository_path": "crates/sketch/src/paper_text.rs",
+      "url": "https://github.com/CamWight/solidcraft/blob/a46d46e95a7f5c7680ae7440d3c9989846947128/crates/sketch/src/paper_text.rs",
+      "blob_sha1": "63a73ef4c34fe9a1a206e60dd9527b90744b078f",
+      "sha256": "6b3dcb84ba8cdac8b50ee264443b0ac5e27296a1cd02f48ac74a5b2e80908553",
+      "bytes": 10871
+    },
+    {
+      "path": "f0-layout-tests",
+      "repository_path": "crates/sketch/src/paper_text_tests.rs",
+      "url": "https://github.com/CamWight/solidcraft/blob/a46d46e95a7f5c7680ae7440d3c9989846947128/crates/sketch/src/paper_text_tests.rs",
+      "blob_sha1": "bab262b09dd31d93df6e50fe7cc7ca5385a28c60",
+      "sha256": "6c06017f6afbeae37856e7298135a03efdad85b4b1ab89b928deb425828b88a4",
+      "bytes": 9807
+    },
+    {
+      "path": "f0-record-tests",
+      "repository_path": "crates/geom/src/paper/text_tests.rs",
+      "url": "https://github.com/CamWight/solidcraft/blob/a46d46e95a7f5c7680ae7440d3c9989846947128/crates/geom/src/paper/text_tests.rs",
+      "blob_sha1": "16ffc7677f85ff0aff8a6ca67bc30e21cfffdfbc",
+      "sha256": "0799c62e97576c1483437a15d72c58fe7dda1441e21019405b4cb65d90bd2ce3",
+      "bytes": 12753
+    },
+    {
+      "path": "font_admission.rs",
+      "repository_path": "crates/io/src/paper/pdf/font_admission.rs",
+      "url": "https://github.com/tangency-labs/solidcraft/blob/bf2a6fd567b03e1d25dcb66624e719a0cec109fc/crates/io/src/paper/pdf/font_admission.rs",
+      "blob_sha1": "632d21b81d25626dd5fe6e3b28d274a96a640382",
+      "sha256": "a8abc3b4aaef9325694ec404512c228f9973b82006b5718eb304ef57d5c30b23",
+      "bytes": 4170
+    },
+    {
+      "path": "subset_font.rs",
+      "repository_path": "crates/io/src/paper/pdf/subset_font.rs",
+      "url": "https://github.com/tangency-labs/solidcraft/blob/bf2a6fd567b03e1d25dcb66624e719a0cec109fc/crates/io/src/paper/pdf/subset_font.rs",
+      "blob_sha1": "cef7bd532639faf95f5ec5f9ea7451b79b03c688",
+      "sha256": "a9808063f2223fd9e86e208d55092b6b9e9a5ae7ba0eaba2dce5d557a7fd5f26",
+      "bytes": 8941
+    },
+    {
+      "path": "public-sources/9513-a46d/crates/sketch/src/fonts.rs",
+      "repository_path": "crates/sketch/src/fonts.rs",
+      "url": "https://github.com/CamWight/solidcraft/blob/a46d46e95a7f5c7680ae7440d3c9989846947128/crates/sketch/src/fonts.rs",
+      "blob_sha1": "4b104ec49eac9516dc2f69aa56fff779eccdb7f2",
+      "sha256": "f497592266ef11a4071d550277cf61c75ce4d2e6e40e4e0e3b8da6e06969c3d0",
+      "bytes": 22385
+    },
+    {
+      "path": "public-sources/9513-a46d/crates/doc/src/lib.rs",
+      "repository_path": "crates/doc/src/lib.rs",
+      "url": "https://github.com/CamWight/solidcraft/blob/a46d46e95a7f5c7680ae7440d3c9989846947128/crates/doc/src/lib.rs",
+      "blob_sha1": "0123c4bac25559c19a9f3e9c0043dfbc46dd3b3d",
+      "sha256": "e67a61f9ef907a36105d0689a7808cad3e44175a14607d3f78a246af7e81a882",
+      "bytes": 4091
+    },
+    {
+      "path": "public-sources/9513-a46d/crates/io/Cargo.toml",
+      "repository_path": "crates/io/Cargo.toml",
+      "url": "https://github.com/CamWight/solidcraft/blob/a46d46e95a7f5c7680ae7440d3c9989846947128/crates/io/Cargo.toml",
+      "blob_sha1": "e9a701fe1a60be6b30e083a911554a78a2e15b2e",
+      "sha256": "e19c93f548baf29442657ec74e5307bccceaccf202491d80f192ed234bb55ce2",
+      "bytes": 1467
+    }
+  ],
+  "Cam_parent_and_allocator": "Actual9647ce505658 parent/Refs remains untouched; no content/registration or old-byte result is supplied by this two-file boundary proposal.",
+  "DW_single_question": {
+    "url": "https://github.com/tangency-labs/solidcraft/pull/7626#issuecomment-6532370208",
+    "status": "Answered by Cam6534292604; v3 was sealed before this decision.",
+    "reply_url": "https://github.com/tangency-labs/solidcraft/pull/7626#issuecomment-6534292604"
+  },
+  "authorship": "Worker #1 and Engineer team original proposal/acceptance; referenced Cam/P2/font code retains existing original authorship and licences. No binary font/asset or new dependency included.",
+  "owner_DW_decision_now": {
+    "url": "https://github.com/tangency-labs/solidcraft/pull/7626#issuecomment-6534292604",
+    "author": "CamWight",
+    "created_at": "2026-10-30T21:53:12Z",
+    "policy": "Complete explicit W for every emitted CID, no reliance on DW, no B1 GID0 width. Embedded program .notdef is separate.",
+    "status": "OWNER_CONTRACT_RESOLVED_SUCCESSOR_IMPLEMENTATION_PENDING",
+    "archived_v3_product_unchanged": true,
+    "new_question_posted": false
+  },
+  "archived_v3_implementation_limits": [
+    "V3 still refuses missing GID0. The owner has NOW resolved the policy as complete W for every emitted CID without DW fallback; separate v4 implementation/validation is pending. No product change in this payload.",
+    "Parent module/content/font-resource registration, all-runs-per-font grouping and aggregate budgets remain outside this change.",
+    "Multi-glyph ActualText/extraction remains explicitly unsupported.",
+    "Exact integration/dependency/lock/compiler/native/wasm/CI/render/readback/old-vs-new PDF byte acceptance remain unrun.",
+    "Embedding/package licensing and future Font.embed F2 remain separate; source view certifies only performed checks, not arbitrary outlines or historical origin of all public data."
+  ]
+}

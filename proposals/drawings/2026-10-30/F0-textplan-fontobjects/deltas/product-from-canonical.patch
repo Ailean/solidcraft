@@ -1,0 +1,259 @@
+diff --git a/crates/io/src/paper/pdf/text_plan.rs b/crates/io/src/paper/pdf/text_plan.rs
+--- a/crates/io/src/paper/pdf/text_plan.rs
++++ b/crates/io/src/paper/pdf/text_plan.rs
+@@ -65,6 +65,23 @@
+     glyphs: Vec<PlannedGlyph<'a>>,
+ }
+ 
++/// Borrowed only from a successfully constructed TextPlan. Private fields
++/// bind checked source records, the factory-produced subset, descriptor and
++/// codes for one immutable plan; no raw-record or serde constructor exists.
++pub(super) struct FontPlanView<'a> {
++    font: &'a Font,
++    subset: &'a SubsetFont,
++    descriptor: &'a DescriptorMetrics,
++    codes: &'a [CodeToGlyph<'a>],
++}
++
++impl<'a> FontPlanView<'a> {
++    pub(super) fn font(&self) -> &'a Font { self.font }
++    pub(super) fn subset(&self) -> &'a SubsetFont { self.subset }
++    pub(super) fn descriptor(&self) -> &'a DescriptorMetrics { self.descriptor }
++    pub(super) fn codes(&self) -> &'a [CodeToGlyph<'a>] { self.codes }
++}
++
+ impl TextPlan<'_> {
+     pub(super) fn runs(&self) -> &[PlannedRun<'_>] {
+         &self.runs
+@@ -78,11 +95,12 @@
+     /// globally unique subset tag, page resources and a cumulative output budget.
+     pub(super) fn font_input(&self, subset_tag: [u8; 6], max_chunk_bytes: usize) -> FontObjectInput<'_> {
+         FontObjectInput {
+-            source_font: self.font,
+-            subset: &self.subset,
+-            codes: &self.codes,
+-            descriptor: Some(&self.descriptor),
+-            postscript_name: self.font.postscript_name.as_bytes(),
++            source: FontPlanView {
++                font: self.font,
++                subset: &self.subset,
++                descriptor: &self.descriptor,
++                codes: &self.codes,
++            },
+             subset_tag,
+             max_chunk_bytes,
+         }
+@@ -159,18 +177,36 @@
+     u16_at(table(&font.bytes, b"hmtx")?, usize::from(gid).min(count - 1) * 4)
+ }
+ 
++/// Current builtin bytes/face only, obtained by the existing None catalog path
++/// before any installed-font, filesystem or cache lookup. This does not attest
++/// mutable metrics/advances or waive the existing single subset admission.
++pub(super) fn check_builtin_source(font: &Font) -> Result<()> {
++    if font.bytes.len() != APPROVED_FONT_BYTES {
++        return Err(invalid("font byte length is outside the reviewed resource envelope"));
++    }
++    let builtin = solidcraft_doc::sketch::font_data(None)
++        .map_err(|_| invalid("the builtin drawing font is unavailable"))?;
++    if builtin.index != 0 || builtin.weight.is_some() || font.face != builtin.index
++        || font.bytes.as_ref() != builtin.bytes()
++    {
++        return Err(invalid("font bytes/face differ from the current builtin drawing font"));
++    }
++    Ok(())
++}
++
+ fn descriptor(font: &Font) -> Result<DescriptorMetrics> {
+     // Public Font is hostile input too. Refuse its cheap byte envelope before
+     // hashing or looking through tables, even when the caller's plan budget is tiny.
+     if font.bytes.len() != APPROVED_FONT_BYTES {
+         return Err(invalid("font byte length is outside the reviewed resource envelope"));
+     }
++    check_builtin_source(font)?;
+     // B1 hashes bytes + faceLE. The existing subset admission hashes RAW bytes;
+     // their digests are different identities and are never compared to each other.
+     let m = &font.metrics;
+     // Original fixed-resource metadata, not fitted/default descriptor values.
+     // Values come from this exact Liberation Sans head/hhea/OS2/post and l glyph.
+-    if font.bundled != 0 || font.face != 0 || font.postscript_name != "LiberationSans"
++    if font.face != 0 || font.postscript_name != "LiberationSans"
+         || font.num_glyphs != 2620 || font.units_per_em != 2048
+         || m.bbox != [-1114, -621, 2666, 2007] || m.ascent != 1854 || m.descent != -434
+         || m.cap_height != 1409 || m.stem_v != 180 || m.italic_angle != 0.0
+@@ -197,7 +233,7 @@
+ /// Check the actual B1 cluster partition and the narrower first P2 contract
+ /// BEFORE allocating or subsetting. Returning an error exposes no partial plan.
+ fn check_run(font: &Font, run: &TextRun) -> Result<usize> {
+-    if run.font != font.bundled || !(1..=4000).contains(&run.glyphs.len()) || run.text.len() > 4000 {
++    if run.font != font.id || !(1..=4000).contains(&run.glyphs.len()) || run.text.len() > 4000 {
+         return Err(invalid("run font, glyph count or text length is outside B1"));
+     }
+     let cap = run.scale * f64::from(font.metrics.cap_height);
+@@ -241,6 +277,22 @@
+         return Err(invalid("clusters do not cover the whole run exactly once"));
+     }
+     Ok(run.glyphs.len())
++}
++
++/// Resolve an F0 run through the already validated Scene table, never by a
++/// bundled number or Vec index. This increment still plans ONE font and all
++/// its runs; mixed-font input is rejected by the existing plan_text checks.
++/// Preparation is not proof of PDF embedding permission or trusted advances;
++/// the existing owned admission/provenance boundary remains mandatory.
++pub(super) fn plan_prepared_text<'a>(
++    prepared: &solidcraft_geom::paper::Prepared<'a>,
++    runs: &[&'a TextRun],
++    max_plan_bytes: usize,
++    max_subset_bytes: usize,
++) -> Result<TextPlan<'a>> {
++    let first = runs.first().copied().ok_or_else(|| invalid("empty allowance or unsupported run count"))?;
++    let font = prepared.font(first).ok_or_else(|| invalid("run font ID is absent from the prepared scene"))?;
++    plan_text(font, runs, max_plan_bytes, max_subset_bytes)
+ }
+ 
+ /// One bundled font and ALL its runs, in their existing paint order. Code keys
+diff --git a/crates/io/src/paper/pdf/font_objects.rs b/crates/io/src/paper/pdf/font_objects.rs
+--- a/crates/io/src/paper/pdf/font_objects.rs
++++ b/crates/io/src/paper/pdf/font_objects.rs
+@@ -15,10 +15,10 @@
+ use pdf_writer::types::{CidFontType, FontFlags, SystemInfo};
+ use pdf_writer::{Chunk, Name, Rect, Ref, Str};
+ 
+-use sha2::{Digest, Sha256};
+ use solidcraft_geom::paper::text::Font;
+ 
+ use super::subset_font::SubsetFont;
++use super::text_plan::{FontPlanView, check_builtin_source};
+ use super::to_unicode::write_to_unicode;
+ use crate::{IoError, MAX_DRAWING_BYTES, Result};
+ 
+@@ -140,19 +140,26 @@
+     }
+ }
+ 
+-/// IO parameters borrowing the actual B1 resource, not a global allocator.
+-/// Advances must come from the trusted bundled B1 producer, not JSON assertions;
+-/// resource identity alone does not attest its public per-glyph fields.
++/// Production parameters: the source, subset, descriptor and codes are bound
++/// by an opaque view obtainable only from a successful TextPlan.
+ pub(super) struct FontObjectInput<'a> {
+-    pub(super) source_font: &'a Font,
+-    pub(super) subset: &'a SubsetFont,
+-    pub(super) codes: &'a [CodeToGlyph<'a>],
+-    pub(super) descriptor: Option<&'a DescriptorMetrics>,
+-    pub(super) postscript_name: &'a [u8],
++    pub(super) source: FontPlanView<'a>,
+     pub(super) subset_tag: [u8; 6],
+     pub(super) max_chunk_bytes: usize,
+ }
+ 
++/// Internal preparation components, never an independently callable production
++/// input. Component tests below retain their synthetic scope via private aliases.
++struct FontObjectParts<'a> {
++    source_font: &'a Font,
++    subset: &'a SubsetFont,
++    codes: &'a [CodeToGlyph<'a>],
++    descriptor: Option<&'a DescriptorMetrics>,
++    postscript_name: &'a [u8],
++    subset_tag: [u8; 6],
++    max_chunk_bytes: usize,
++}
++
+ fn invalid(message: &'static str) -> IoError {
+     IoError::Invalid(message.into())
+ }
+@@ -196,23 +203,25 @@
+ impl<'a> B1Widths<'a> {
+     fn read(font: &'a Font, subset: &'a SubsetFont) -> Result<Self> {
+         // Public B1 fields are bounded before digest, table walks or allocation.
+-        // The actual subset factory admits just these source bytes/face and
+-        // validates its returned program. Its private fields cannot be forged
+-        // here. This identity check binds B1 to that same fixed-source policy;
+-        // it does not cryptographically attest caller-modified advance records.
++        // Production obtains these bound records only through FontPlanView;
++        // TextPlan already checked every used original-GID advance and the
++        // single admitted subset chain. These repeated cheap identity/mapping
++        // guards also retain the independent synthetic component-test scope.
+         if font.bytes.len() != MAX_FONT_BYTES {
+             return Err(invalid("B1 font byte envelope differs from the reviewed resource"));
+         }
+-        if font.bundled != 0 || font.face != 0 || font.postscript_name.as_bytes() != POSTSCRIPT_NAME
++        if font.face != 0 || font.postscript_name.as_bytes() != POSTSCRIPT_NAME
+             || font.num_glyphs != 2620 || font.units_per_em != 2048
+             || font.glyphs.len() > usize::from(font.num_glyphs)
+             || font.glyphs.keys().any(|gid| *gid >= font.num_glyphs)
+         {
+             return Err(invalid("B1 font metadata differs from the reviewed regular face"));
+         }
+-        let identity: [u8; 32] = Sha256::new().chain_update(font.bytes.as_ref())
+-            .chain_update(font.face.to_le_bytes()).finalize().into();
+-        if font.id != identity || identity != REVIEWED_B1_ID {
++        // Exact current builtin bytes/face replace the removed numeric index.
++        // The plan already checked bytes+face ID and admitted the SAME source
++        // through subset_font. Compare the fixed B1 ID here without rehashing.
++        check_builtin_source(font)?;
++        if font.id != REVIEWED_B1_ID {
+             return Err(invalid("B1 font bytes/face/id do not identify the reviewed resource"));
+         }
+         let glyphs = subset.mapping().len();
+@@ -295,7 +304,7 @@
+     bound: usize,
+ }
+ 
+-fn prepare(input: FontObjectInput<'_>) -> Result<Prepared<'_>> {
++fn prepare(input: FontObjectParts<'_>) -> Result<Prepared<'_>> {
+     let descriptor = input.descriptor.ok_or_else(|| invalid("essential font descriptor metrics are missing"))?;
+     let flags = descriptor.validate()?;
+     let name = fixed_font_name(input.postscript_name, input.subset_tag)?;
+@@ -370,6 +379,21 @@
+ /// Ref IDs/tag globally and later attach the Type0 ref to page resources.
+ /// No caller Pdf is borrowed, so Result refusals cannot mutate that document.
+ pub(super) fn font_objects(refs: FontObjectRefs, input: FontObjectInput<'_>) -> Result<Chunk> {
++    let source = input.source;
++    font_objects_parts(refs, FontObjectParts {
++        source_font: source.font(),
++        subset: source.subset(),
++        codes: source.codes(),
++        descriptor: Some(source.descriptor()),
++        postscript_name: source.font().postscript_name.as_bytes(),
++        subset_tag: input.subset_tag,
++        max_chunk_bytes: input.max_chunk_bytes,
++    })
++}
++
++/// The raw preparation path is private to this module. Outside callers cannot
++/// supply an independent Font/Subset pair or manufacture a validated view.
++fn font_objects_parts(refs: FontObjectRefs, input: FontObjectParts<'_>) -> Result<Chunk> {
+     refs.validate()?;
+     let prepared = prepare(input)?;
+     let Prepared { font, unicode, cid_map, widths, default_width, name, descriptor, flags, limit, bound } = prepared;
+@@ -423,6 +447,10 @@
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    // Synthetic serialization/refusal components are not proof constructors.
++    // Only these descendant tests can call the module-private raw parts path.
++    use super::{FontObjectParts as FontObjectInput, font_objects_parts as font_objects};
++    use sha2::{Digest, Sha256};
+     use super::super::subset_font::subset_font;
+ 
+     // Unchanged legacy metric reader retained as a test-only independent
+@@ -555,7 +583,7 @@
+         FONT.get_or_init(|| {
+             use solidcraft_geom::paper::text::{FontFlags as B1Flags, FontGlyph, FontMetrics};
+             Font {
+-                bundled: 0, id: REVIEWED_B1_ID, bytes: std::sync::Arc::from(BUNDLED), face: 0,
++                id: REVIEWED_B1_ID, bytes: std::sync::Arc::from(BUNDLED), face: 0,
+                 postscript_name: "LiberationSans".into(), num_glyphs: 2620, units_per_em: 2048,
+                 metrics: FontMetrics {
+                     ascent: 1854, descent: -434, cap_height: 1409, bbox: [-1114, -621, 2666, 2007],
+@@ -1144,7 +1172,7 @@
+             let mut font = source_font().clone();
+             match case {
+                 0 => font.face = 1,
+-                1 => font.bundled = 1,
++                1 => { let mut bytes = font.bytes.to_vec(); bytes[4096] ^= 1; font.bytes = std::sync::Arc::from(bytes); },
+                 2 => font.units_per_em = 0,
+                 3 => font.units_per_em = 1024,
+                 4 => font.num_glyphs = 0,

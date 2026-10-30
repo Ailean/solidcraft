@@ -1163,6 +1163,23 @@ fn chamfer_as_wide_as_sloped_basin_rim_builds() {
     }
 }
 
+/// A chamfer wider than a basin's thin rim runs its leg off the rim's top, over the slab's front
+/// edge (a cliff): it builds as if the top went on and is cut by the front face (the owner's
+/// ruling of 2026-10-30, d7), lowering the front face where it crosses it
+/// ([`sloped_basin_rim_chamfer_removed`], clipped to y >= 0): 73.450475 for 2 and 142.112912 for
+/// 3 on the 1 mm rim, 184.526613 for 4 on the 0.5 mm one.
+#[test]
+#[ignore = "fails until SMLib builds the cliff overflow: CloseRemovalRegion refuses it (SM_FILERR_NO_ROOM, its fillet boundary along the side edge's line lies on the surfaces of two faces)"]
+fn chamfer_wider_than_sloped_basin_rim_builds() {
+    for (margin, distance) in [(1.0, 2.0), (1.0, 3.0), (0.5, 4.0)] {
+        let b = sloped_basin(margin);
+        let made = chamfer(&b, &[Vec3::new(50.0, margin, 30.0)], distance).unwrap_or_else(|e| panic!("{margin}, {distance}: {e}"));
+        assert!(made.validity().is_empty(), "{margin}, {distance}: {:?}", made.validity());
+        let want = measure(&b).unwrap().volume - sloped_basin_rim_chamfer_removed(margin, distance);
+        assert!(rel(measure(&made).unwrap().volume, want) < 1e-8, "{margin}, {distance}: {} vs {want}", measure(&made).unwrap().volume);
+    }
+}
+
 #[test]
 #[ignore]
 fn debug_chamfer_cut() {

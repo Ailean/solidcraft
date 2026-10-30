@@ -32,6 +32,97 @@ pub(crate) struct VisibilityCache {
     bodies: std::collections::BTreeSet<String>,
 }
 
+/// [`Session::occurrence_bodies`] answers for one document, evaluated model and set of pending
+/// moves. The document and model are kept alive with the answers, so neither a new document nor
+/// a later allocation at the same address can reuse them.
+pub(crate) struct OccurrenceBodiesCache {
+    doc: std::sync::Arc<solidcraft_doc::Document>,
+    model: std::sync::Arc<solidcraft_doc::ModelState>,
+    pending_moves: std::collections::BTreeMap<u64, Mat>,
+    pub(crate) bodies: std::collections::HashMap<(Vec<u64>, bool), std::sync::Arc<[String]>>,
+}
+
+/// How many placements' answers [`OccurrenceBodiesCache`] keeps before retiring one for each
+/// new one.
+const OCCURRENCE_BODIES_CACHED: usize = 256;
+
+/// Placement identity for one document and evaluated model, worked out once per design:
+/// occurrences by (parent, id), children per parent, bodies per component, and each placement
+/// path already named. Listing a subtree then costs the subtree, not the subtree times the
+/// design (#7502). Pending moves change a placement's matrices but never its component or its
+/// bodies' names, so the index is keyed on the document and model alone.
+pub(crate) struct PlacementIndex {
+    doc: std::sync::Arc<solidcraft_doc::Document>,
+    state: std::sync::Arc<solidcraft_doc::ModelState>,
+    /// The index into `doc.occurrences` of each (parent component, occurrence id).
+    by_parent_id: std::collections::HashMap<(u64, u64), usize>,
+    /// The occurrence ids of each parent component's children, in document order.
+    children: std::collections::HashMap<u64, Vec<u64>>,
+    /// The source body names of each component.
+    bodies: std::collections::HashMap<u64, Vec<String>>,
+    /// The ids of the design's components.
+    components: std::collections::HashSet<u64>,
+    /// Each placement path already named: its bodies' world names.
+    placed: std::collections::HashMap<Vec<u64>, std::sync::Arc<[OccurrenceBody]>>,
+}
+
+/// How many placement paths [`PlacementIndex`] names before it stops remembering more.
+const PLACEMENT_PATHS_CACHED: usize = solidcraft_doc::MAX_PLACEMENTS;
+
+impl PlacementIndex {
+    fn new(doc: &std::sync::Arc<solidcraft_doc::Document>, state: &std::sync::Arc<solidcraft_doc::ModelState>) -> PlacementIndex {
+        let mut by_parent_id = std::collections::HashMap::with_capacity(doc.occurrences.len());
+        let mut children: std::collections::HashMap<u64, Vec<u64>> = std::collections::HashMap::new();
+        for (i, o) in doc.occurrences.iter().enumerate() {
+            by_parent_id.insert((o.parent, o.id), i);
+            children.entry(o.parent).or_default().push(o.id);
+        }
+        let mut bodies: std::collections::HashMap<u64, Vec<String>> = std::collections::HashMap::new();
+        for b in &state.bodies {
+            bodies.entry(doc.model_body_component(b)).or_default().push(b.name.clone());
+        }
+        PlacementIndex {
+            doc: doc.clone(),
+            state: state.clone(),
+            by_parent_id,
+            children,
+            bodies,
+            components: doc.components.iter().map(|c| c.id).collect(),
+            placed: std::collections::HashMap::new(),
+        }
+    }
+
+    fn matches(&self, session: &Session, model: &std::sync::Arc<solidcraft_doc::ModelState>) -> bool {
+        std::sync::Arc::ptr_eq(&self.doc, &session.doc) && std::sync::Arc::ptr_eq(&self.state, model)
+    }
+
+    /// The component's bodies named at `path`, remembered until the index is replaced.
+    fn bodies_at(&mut self, path: &[u64], component: u64) -> std::sync::Arc<[OccurrenceBody]> {
+        if let Some(bodies) = self.placed.get(path) {
+            return bodies.clone();
+        }
+        let names = solidcraft_doc::WorldNames::new(&self.doc, &self.state);
+        let empty = Vec::new();
+        let bodies: std::sync::Arc<[OccurrenceBody]> = self
+            .bodies
+            .get(&component)
+            .unwrap_or(&empty)
+            .iter()
+            .map(|source| OccurrenceBody { source: source.clone(), world: names.name(source, component, path) })
+            .collect();
+        if self.placed.len() < PLACEMENT_PATHS_CACHED {
+            self.placed.insert(path.to_vec(), bodies.clone());
+        }
+        bodies
+    }
+}
+
+impl OccurrenceBodiesCache {
+    fn matches(&self, session: &Session, model: &std::sync::Arc<solidcraft_doc::ModelState>) -> bool {
+        std::sync::Arc::ptr_eq(&self.doc, &session.doc) && std::sync::Arc::ptr_eq(&self.model, model) && self.pending_moves == session.pending_moves
+    }
+}
+
 /// [`Session::body_removed_later`] for one revision, sketch and history marker.
 pub(crate) struct RemovedLaterCache {
     revision: u64,
@@ -41,6 +132,72 @@ pub(crate) struct RemovedLaterCache {
 }
 
 impl Session {
+    /// Hidden names follow the same body and exact occurrence path through a rename. Undo
+    /// history restores visibility separately. Never parse display labels:
+    /// ambiguous labels and names containing slashes use the document's canonical naming.
+    pub(crate) fn remap_hidden_bodies(
+        &mut self,
+        previous: &solidcraft_doc::Document,
+        state: &solidcraft_doc::ModelState,
+        rename: Option<(&str, &str)>,
+    ) {
+        if self.visibility.hidden_bodies.is_empty() {
+            return;
+        }
+        if rename.is_none() {
+            if previous.occurrences == self.doc.occurrences {
+                return;
+            }
+            let old_names: std::collections::BTreeMap<_, _> = previous.occurrences.iter().map(|o| (o.id, &o.name)).collect();
+            if !self.doc.occurrences.iter().any(|o| old_names.get(&o.id).is_some_and(|name| **name != o.name)) {
+                return;
+            }
+        }
+        let mut renamed = state.clone();
+        if let Some((old, new)) = rename {
+            for body in renamed.bodies.iter_mut().filter(|body| body.name == old) {
+                body.name = new.to_string();
+            }
+        }
+        let hidden: std::collections::BTreeSet<_> = self.visibility.hidden_bodies.iter().map(String::as_str).collect();
+        let mut names = std::collections::BTreeMap::new();
+        let (before, after) = (solidcraft_doc::WorldNames::new(previous, state), solidcraft_doc::WorldNames::new(&self.doc, &renamed));
+        for (component, path, _) in previous.placements() {
+            for body in state.bodies.iter().filter(|body| previous.model_body_component(body) == component) {
+                let old = before.name(&body.name, component, &path);
+                if hidden.contains(old.as_str()) {
+                    let source = rename.filter(|(old, _)| *old == body.name).map_or(body.name.as_str(), |(_, new)| new);
+                    names.insert(old, after.name(source, component, &path));
+                }
+            }
+        }
+        for hidden in &mut self.visibility.hidden_bodies {
+            if let Some(new) = names.get(hidden) {
+                hidden.clone_from(new);
+            }
+        }
+    }
+
+    /// Visibility keeps construction names, while undo history keeps feature ids. Follow the
+    /// same axis or point into the new document on rename, undo and redo (#4419).
+    pub(crate) fn follow_axis_point_renames(&mut self, previous: &solidcraft_doc::Document) {
+        if self.visibility.hidden_origin.is_empty() {
+            return;
+        }
+        let names: std::collections::HashMap<_, _> = self.doc.features.iter().map(|f| (f.id, &f.name)).collect();
+        let renamed: std::collections::HashMap<_, _> = previous
+            .features
+            .iter()
+            .filter(|f| matches!(f.kind, FeatureKind::ConstructionAxis { .. } | FeatureKind::ConstructionPoint { .. }))
+            .filter_map(|f| names.get(&f.id).filter(|name| **name != &f.name).map(|name| (f.name.as_str(), *name)))
+            .collect();
+        for name in &mut self.visibility.hidden_origin {
+            if let Some(new) = renamed.get(name.as_str()) {
+                name.clone_from(new);
+            }
+        }
+    }
+
     /// Document with uncaptured occurrence positions applied, without changing saved geometry.
     pub fn placed_document(&self) -> std::borrow::Cow<'_, solidcraft_doc::Document> {
         if self.pending_moves.is_empty() {
@@ -54,8 +211,72 @@ impl Session {
         }
         std::borrow::Cow::Owned(doc)
     }
-    /// Resolve only the supplied path, never an exponentially expanded assembly.
+    /// Resolve only the supplied path, never an exponentially expanded assembly. The placement
+    /// index answers from lookups; the plain walk stays as the fallback and the error reporter.
     pub fn occurrence_placement(&self, path: &[u64]) -> Result<OccurrencePlacement> {
+        if path.is_empty() || path.len() > 64 {
+            return Err(invalid("occurrence path must contain 1..64 ids"));
+        }
+        if let Some(placement) = self.occurrence_placement_indexed(path) {
+            return Ok(placement);
+        }
+        self.occurrence_placement_walk(path)
+    }
+
+    /// [`Self::occurrence_placement`] through [`PlacementIndex`]: the path walk multiplies
+    /// transforms as the plain walk does, but occurrences, components and body names are
+    /// lookups. `None` for any path the index can't answer, so the walk reports the exact error.
+    fn occurrence_placement_indexed(&self, path: &[u64]) -> Option<OccurrencePlacement> {
+        let mut guard = self.placement_index()?;
+        let index = guard.as_mut()?;
+        let mut component = 0;
+        let mut world = IDENTITY;
+        let mut parent_world = IDENTITY;
+        let mut leaf = None;
+        for id in path {
+            let i = *index.by_parent_id.get(&(component, *id))?;
+            let o = &index.doc.occurrences[i];
+            if !index.components.contains(&o.component) {
+                return None;
+            }
+            parent_world = world;
+            world = mat_mul(&world, self.pending_moves.get(id).unwrap_or(&o.transform));
+            if world.iter().flatten().any(|x| !x.is_finite()) {
+                return None;
+            }
+            leaf = Some(i);
+            component = o.component;
+        }
+        let leaf = leaf?;
+        let bodies = index.bodies_at(path, component).to_vec();
+        let leaf = &index.doc.occurrences[leaf];
+        Some(OccurrencePlacement {
+            occurrence: leaf.id,
+            component,
+            path: path.to_vec(),
+            name: leaf.name.clone(),
+            world,
+            local: self.pending_moves.get(&leaf.id).copied().unwrap_or(leaf.transform),
+            parent_world,
+            grounded: leaf.grounded,
+            bodies,
+        })
+    }
+
+    /// The placement index for the current document and model, built on first use.
+    fn placement_index(&self) -> Option<std::sync::MutexGuard<'_, Option<PlacementIndex>>> {
+        let model = self.model.state();
+        let mut guard = self.placement_index_cache.lock().ok()?;
+        let index = guard.get_or_insert_with(|| PlacementIndex::new(&self.doc, &model));
+        if !index.matches(self, &model) {
+            *index = PlacementIndex::new(&self.doc, &model);
+        }
+        Some(guard)
+    }
+
+    /// The plain walk over `doc.occurrences`, kept as the fallback for paths the index can't
+    /// answer and as the reference the indexed answers are checked against (#7502).
+    pub(crate) fn occurrence_placement_walk(&self, path: &[u64]) -> Result<OccurrencePlacement> {
         if path.is_empty() || path.len() > 64 {
             return Err(invalid("occurrence path must contain 1..64 ids"));
         }
@@ -85,11 +306,12 @@ impl Session {
         }
         let leaf = self.doc.occurrences.iter().find(|o| Some(&o.id) == path.last()).ok_or_else(|| invalid("occurrence path has no leaf"))?;
         let state = self.model.state();
+        let names = solidcraft_doc::WorldNames::new(&self.doc, &state);
         let bodies = state
             .bodies
             .iter()
             .filter(|b| self.doc.model_body_component(b) == component)
-            .map(|b| OccurrenceBody { source: b.name.clone(), world: self.doc.world_body_name(&state, &b.name, component, path) })
+            .map(|b| OccurrenceBody { source: b.name.clone(), world: names.name(&b.name, component, path) })
             .collect();
         Ok(OccurrencePlacement {
             occurrence: leaf.id,
@@ -101,6 +323,20 @@ impl Session {
             parent_world,
             grounded: leaf.grounded,
             bodies,
+        })
+    }
+
+    /// Is the leaf of `path` placed inside a component that has more than one placement? Its
+    /// transform lives in that shared definition, so moving it moves it in every placement.
+    /// Top-level placements and unknown ids are never shared.
+    pub fn occurrence_shared(&self, path: &[u64]) -> bool {
+        let Some((_, ancestors)) = path.split_last() else { return false };
+        ancestors.iter().take(64).any(|id| {
+            self.doc
+                .occurrences
+                .iter()
+                .find(|o| o.id == *id)
+                .is_some_and(|a| self.doc.occurrences.iter().filter(|o| o.component == a.component).nth(1).is_some())
         })
     }
 
@@ -121,6 +357,53 @@ impl Session {
 
     /// Bounded descendant expansion. Never return an incomplete selection or bounds list.
     pub fn occurrence_bodies(&self, path: &[u64], descendants: bool) -> Result<Vec<String>> {
+        Ok(self.occurrence_bodies_shared(path, descendants)?.to_vec())
+    }
+
+    /// [`Self::occurrence_bodies`], shared and remembered until the document, the evaluated
+    /// model or the pending moves change: a nested placement's subtree is walked once, not on
+    /// every frame that lights it (a browser row under the pointer, the active placement; #3892).
+    pub fn occurrence_bodies_shared(&self, path: &[u64], descendants: bool) -> Result<std::sync::Arc<[String]>> {
+        let model = self.model.state();
+        let key = (path.to_vec(), descendants);
+        if let Ok(cache) = self.occurrence_bodies_cache.lock()
+            && let Some(bodies) = cache.as_ref().filter(|c| c.matches(self, &model)).and_then(|c| c.bodies.get(&key))
+        {
+            return Ok(bodies.clone());
+        }
+        let bodies: std::sync::Arc<[String]> = self.expand_occurrence_bodies(path, descendants)?.into();
+        if let Ok(mut cache) = self.occurrence_bodies_cache.lock() {
+            if cache.as_ref().is_none_or(|c| !c.matches(self, &model)) {
+                *cache = Some(OccurrenceBodiesCache {
+                    doc: self.doc.clone(),
+                    model,
+                    pending_moves: self.pending_moves.clone(),
+                    bodies: std::collections::HashMap::new(),
+                });
+            }
+            if let Some(cache) = cache.as_mut() {
+                if !cache.bodies.contains_key(&key) && cache.bodies.len() >= OCCURRENCE_BODIES_CACHED {
+                    // Retire the deepest path first, preferring direct-body answers over
+                    // subtree answers at equal depth, then the greatest full key for a
+                    // stable tie break. Broader assembly listings survive bursts of per-copy
+                    // queries (#7502). Selecting a victim scans at most 256 cached keys,
+                    // avoiding extra eviction bookkeeping while keeping the cache bounded.
+                    if let Some(evict) =
+                        cache.bodies.keys().max_by(|a, b| a.0.len().cmp(&b.0.len()).then_with(|| b.1.cmp(&a.1)).then_with(|| a.cmp(b))).cloned()
+                    {
+                        cache.bodies.remove(&evict);
+                    }
+                }
+                cache.bodies.insert(key, bodies.clone());
+            }
+        }
+        Ok(bodies)
+    }
+
+    fn expand_occurrence_bodies(&self, path: &[u64], descendants: bool) -> Result<Vec<String>> {
+        if let Some(out) = self.expand_occurrence_bodies_indexed(path, descendants) {
+            return Ok(out);
+        }
         let mut stack = vec![self.occurrence_placement(path)?];
         let mut out = Vec::new();
         let mut count = 0;
@@ -135,6 +418,87 @@ impl Session {
             }
         }
         Ok(out)
+    }
+
+    /// [`Self::expand_occurrence_bodies`] through [`PlacementIndex`]: children and bodies are
+    /// lookups and each path is named once, so a listing costs the subtree's size, not the
+    /// subtree times the design (#7502). `None` when the index can't answer (a lock miss, an
+    /// invalid path, a cycle or a design over the limits), so the walk reports the exact error.
+    fn expand_occurrence_bodies_indexed(&self, path: &[u64], descendants: bool) -> Option<Vec<String>> {
+        if path.is_empty() {
+            return None;
+        }
+        let mut guard = self.placement_index()?;
+        let index = guard.as_mut()?;
+        let mut component = 0;
+        let mut world = IDENTITY;
+        for id in path {
+            let i = *index.by_parent_id.get(&(component, *id))?;
+            let o = &index.doc.occurrences[i];
+            if !index.components.contains(&o.component) {
+                return None;
+            }
+            world = mat_mul(&world, self.pending_moves.get(id).unwrap_or(&o.transform));
+            if world.iter().flatten().any(|x| !x.is_finite()) {
+                return None;
+            }
+            component = o.component;
+        }
+        let mut stack = vec![(path.to_vec(), component, world)];
+        let mut out = Vec::new();
+        let mut count = 0;
+        while let Some((path, component, world)) = stack.pop() {
+            count += 1;
+            let bodies = index.bodies_at(&path, component);
+            if count > 100_000 || out.len() + bodies.len() > 100_000 {
+                return None;
+            }
+            out.extend(bodies.iter().map(|b| b.world.clone()));
+            if descendants && path.len() < 64 {
+                for child in index.children.get(&component).into_iter().flatten() {
+                    if path.contains(child) {
+                        return None;
+                    }
+                    let i = *index.by_parent_id.get(&(component, *child))?;
+                    let o = &index.doc.occurrences[i];
+                    if !index.components.contains(&o.component) {
+                        return None;
+                    }
+                    let child_world = mat_mul(&world, self.pending_moves.get(child).unwrap_or(&o.transform));
+                    if child_world.iter().flatten().any(|x| !x.is_finite()) {
+                        return None;
+                    }
+                    let mut next = path.clone();
+                    next.push(*child);
+                    stack.push((next, o.component, child_world));
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// The world names of the bodies `features` made (#5099), in every placement of their
+    /// component, or only in `placement` (a component and the path of one of its placements).
+    pub fn feature_bodies(&self, features: &[u64], placement: Option<(u64, &[u64])>) -> Vec<String> {
+        let state = self.model.state();
+        let made: Vec<_> = state.bodies.iter().filter(|b| features.contains(&b.feature)).collect();
+        if made.is_empty() {
+            return Vec::new();
+        }
+        let placements = match placement {
+            Some((component, path)) => vec![(component, path.to_vec())],
+            None => self.doc.placements().into_iter().map(|(component, path, _)| (component, path)).collect(),
+        };
+        let mut out = Vec::new();
+        for (component, path) in &placements {
+            for b in made.iter().filter(|b| self.doc.model_body_component(b) == *component) {
+                let name = self.doc.world_body_name(&state, &b.name, *component, path);
+                if !out.contains(&name) {
+                    out.push(name);
+                }
+            }
+        }
+        out
     }
 
     /// Selected authoring placement, or the compatible first-placement frame.
@@ -277,12 +641,13 @@ impl Session {
     fn bodies_hidden_by_parents(&self) -> std::collections::BTreeSet<String> {
         let st = self.model.state();
         let mut out = std::collections::BTreeSet::new();
+        let names = solidcraft_doc::WorldNames::new(&self.doc, &st);
         for (component, path, _) in self.doc.placements() {
             let placement_hidden = !path.is_empty() && !self.occurrence_visible(&path);
             let scope = Self::folder_scope(&path);
             for b in st.bodies.iter().filter(|b| self.doc.model_body_component(b) == component) {
                 if placement_hidden || self.item_folder_hidden(&scope, component, "bodies", &b.name) {
-                    out.insert(self.doc.world_body_name(&st, &b.name, component, &path));
+                    out.insert(names.name(&b.name, component, &path));
                 }
             }
         }
@@ -316,7 +681,10 @@ impl Session {
         let mut plane = plane;
         loop {
             match plane {
-                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => plane = base,
+                PlaneRef::Offset { base, .. }
+                | PlaneRef::ThroughPoint { base, .. }
+                | PlaneRef::AtAngle { base, .. }
+                | PlaneRef::Flipped { base, .. } => plane = base,
                 // A face attachment that names no exact source: which body it sits on is unknown,
                 // so none is taken from the view.
                 PlaneRef::Face { anchor: None, .. } => return none,

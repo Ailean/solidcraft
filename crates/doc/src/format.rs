@@ -379,10 +379,27 @@ impl Formats<'_> {
         }
     }
 
+    /// A concept is implemented only when this reader registers its descriptor.
+    fn knows_part_name(&self, name: &str) -> bool {
+        self.folded.iter().flat_map(|(_, parts)| *parts).chain(self.pending).any(|part| part.name == name)
+    }
+
+    /// Read-only spelling from the personal format-29 renderer. Its card schema is
+    /// unchanged; recognizing the alias must never grant support to another reader.
+    fn canonical_applied_name<'name>(&self, version: u32, name: &'name str) -> &'name str {
+        if version == 29 && name == "physical-material-cards" && self.knows_part_name("material-engineering-cards") {
+            "material-engineering-cards"
+        } else {
+            name
+        }
+    }
+
     /// Refuse a `noun` of format `version` that this build can't read: format 0, a newer number,
-    /// or a pending change `applied` (its `format_pending`) names that this build doesn't have,
-    /// which only a newer build's file of the pending number can. A list beside a format that
-    /// isn't pending means nothing (a tool or a test set an older number on a newer file).
+    /// or a change `applied` (its `format_pending`) names that this build doesn't have anywhere in
+    /// its history, which only a newer build's file can. Changes are recognized across the entire
+    /// history: a branch's pending change may have landed at a later number. A list beside a format
+    /// that isn't made of changes means nothing (a tool or a test set an older number on a newer
+    /// file).
     fn check(&self, noun: &str, version: u32, applied: Option<&[String]>) -> Result<()> {
         let newer = |what: String| DocError::Invalid(format!("this {noun} was saved by a newer SolidCraft ({what}): update SolidCraft to open it"));
         let current = self.current();
@@ -392,8 +409,8 @@ impl Formats<'_> {
         if version > current {
             return Err(newer(format!("file format {version}; this version reads formats up to {current}")));
         }
-        let pending = version == current && !self.pending.is_empty();
-        match applied.unwrap_or_default().iter().find(|name| pending && !self.pending.iter().any(|p| p.name == name.as_str())) {
+        let applied = applied.filter(|_| self.parts(version).is_some()).unwrap_or_default();
+        match applied.iter().find(|name| !self.knows_part_name(self.canonical_applied_name(version, name))) {
             Some(unknown) => Err(newer(format!("file format {version} with `{unknown}`, which this version doesn't know"))),
             None => Ok(()),
         }
@@ -402,13 +419,17 @@ impl Formats<'_> {
     /// Bring a `noun` of format `version` up to [`Formats::current`]. `applied` is the file's
     /// `format_pending`: the changes of its format it already has, when it was written while they
     /// were pending; the others' steps run first. A file [`Formats::check`] refuses is refused,
-    /// whoever calls: the steps below need a format from 1 to the current one.
+    /// whoever calls, before anything is changed; already-applied changes never run again at
+    /// their later number.
     fn upgrade(&self, noun: &str, v: &mut Value, version: u32, applied: Option<&[String]>) -> Result<()> {
         self.check(noun, version, applied)?;
         // A list beside a format that isn't made of changes is ignored, like any field an upgrade
         // drops.
-        if let (Some(applied), Some(parts)) = (applied, self.parts(version)) {
-            for part in parts.iter().filter(|p| !applied.iter().any(|name| name == p.name)) {
+        let applied = applied.filter(|_| self.parts(version).is_some());
+        let already_applied =
+            |part: &Part| applied.is_some_and(|names| names.iter().any(|name| self.canonical_applied_name(version, name) == part.name));
+        if applied.is_some() {
+            for part in self.parts(version).unwrap_or_default().iter().filter(|part| !already_applied(part)) {
                 part.step.map_or(Ok(()), |step| step(v))?;
             }
         }
@@ -416,7 +437,7 @@ impl Formats<'_> {
             match self.hand.get(from as usize - 1) {
                 Some(step) => step(v)?,
                 None => {
-                    for part in self.parts(from + 1).unwrap_or_default() {
+                    for part in self.parts(from + 1).unwrap_or_default().iter().filter(|part| !already_applied(part)) {
                         part.step.map_or(Ok(()), |step| step(v))?;
                     }
                 }
@@ -658,7 +679,7 @@ pub fn read(s: &str) -> Result<Document> {
     let (version, applied) = DESIGN.take_version(&mut v)?;
     // Each drawing is a record of its own family, read by its own rules, numbers and all.
     let drawings = take_drawings(&mut v)?;
-    DESIGN.check_numbers(&v, "metadata")?;
+    check_design_numbers(&v)?;
     crate::config::validate_rules_json(&v)?;
     crate::config::validate_styles_json(&v)?;
     crate::face_anchor::validate_face_anchors_json(&v)?;
@@ -671,6 +692,7 @@ pub fn read(s: &str) -> Result<Document> {
     validate_body_transfers(&v)?;
     DESIGN.upgrade(&mut v, version, applied.as_deref())?;
     let mut d: Document = serde_json::from_value(v).map_err(|e| DocError::Invalid(format!("design file: {e}")))?;
+    check_typed_numbers(&d)?;
     let mut legacy_by_feature = std::collections::BTreeMap::<usize, Vec<usize>>::new();
     for (feature, wire) in legacy_wires {
         legacy_by_feature.entry(feature).or_default().push(wire);
@@ -692,19 +714,27 @@ pub fn read(s: &str) -> Result<Document> {
         || d.params.len() > crate::document::MAX_PARAMS
         || d.components.len() > crate::document::MAX_FEATURES
         || d.timeline_groups.len() > crate::document::MAX_FEATURES
-        || d.timeline_groups.iter().any(|group| group.features.len() > crate::document::MAX_FEATURES)
+        || d.timeline_groups
+            .iter()
+            .any(|group| group.features.len() > crate::document::MAX_FEATURES || group.joints.len() > crate::document::MAX_FEATURES)
     {
         return Err(DocError::Invalid("document too large".into()));
     }
+    crate::point_cloud::check_all(&d.point_clouds)?;
     let feature_ids: std::collections::BTreeSet<_> = d.features.iter().map(|feature| feature.id).collect();
     let mut group_ids = std::collections::BTreeSet::new();
     let mut grouped_features = std::collections::BTreeSet::new();
+    let joint_ids: std::collections::BTreeSet<_> = d.assembly.joints.iter().map(|joint| joint.id).collect();
+    let mut grouped_joints = std::collections::BTreeSet::new();
     for group in &d.timeline_groups {
         if group.name.trim().is_empty() || group.name.len() > 128 || !group_ids.insert(group.id) {
             return Err(DocError::Invalid("damaged design: invalid timeline folder".into()));
         }
         if group.parent.is_some_and(|parent| parent == group.id) {
             return Err(DocError::Invalid("damaged design: timeline folder cannot contain itself".into()));
+        }
+        if group.joints.iter().any(|joint| !joint_ids.contains(joint) || !grouped_joints.insert(*joint)) {
+            return Err(DocError::Invalid("damaged design: invalid joint in a timeline folder".into()));
         }
         if group.features.iter().any(|feature| !feature_ids.contains(feature) || !grouped_features.insert(*feature)) {
             return Err(DocError::Invalid("damaged design: invalid feature in a timeline folder".into()));
@@ -1140,8 +1170,56 @@ fn validate_freeform_offsets(value: &Value) -> Result<()> {
 /// outside what the kernel's tolerances serve.
 pub(crate) const MAX_REAL: f64 = 1e9;
 
-/// Every non-integer number in a `noun`'s file is finite and within ±`MAX_REAL` (a damaged or
-/// hostile file is refused instead of overflowing the geometry later).
+/// Every number the design itself holds is in range ([`check_numbers`]). `metadata` is left
+/// alone: it is other tools' data, kept as it is and never read as a number (#1015); parsing
+/// already bounds its nesting. Engineering SI constants have their own bounded admission
+/// (e.g. E in Pa): only the exact root user-material card field bypasses the coordinate bound.
+fn check_design_numbers(v: &Value) -> Result<()> {
+    let Some(root) = v.as_object() else { return check_numbers(v, "design", 0) };
+    for (key, value) in root {
+        if key == "metadata" {
+            continue;
+        }
+        if key != "user_materials" {
+            check_numbers(value, "design", 1)?;
+            continue;
+        }
+        let Some(materials) = value.as_array() else { return check_numbers(value, "design", 1) };
+        if materials.len() > crate::MAX_USER_MATERIALS {
+            return Err(DocError::Invalid("document exceeds 1000 user materials".into()));
+        }
+        for material in materials {
+            let Some(fields) = material.as_object() else {
+                check_numbers(material, "design", 2)?;
+                continue;
+            };
+            for (field, data) in fields {
+                // SI engineering constants have separate typed bounds. No other field,
+                // including nested fields with this name, bypasses coordinate limits.
+                if field == "physical_card" && !data.is_null() {
+                    crate::physical_material::validate_card(data)?;
+                } else {
+                    check_numbers(data, "design", 3)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The range check again, on the typed design: an integer such as `9223372036854775808` passes
+/// [`check_numbers`] in the file (ids and counters are integers and may be large), but once it
+/// lands in a coordinate or size it is a float, and floats are written as floats. Integer fields
+/// (ids, counters, indexes) stay integers and are never limited, so the field's type decides
+/// what is checked, not its name.
+fn check_typed_numbers(d: &Document) -> Result<()> {
+    let typed = serde_json::to_value(d).map_err(|e| DocError::Invalid(format!("design file: {e}")))?;
+    check_design_numbers(&typed)
+}
+
+/// Every non-integer number in a `noun`'s file, outside separately validated engineering cards,
+/// is finite and within ±`MAX_REAL` (a damaged or hostile file is refused instead of overflowing
+/// the geometry later).
 fn check_numbers(v: &Value, noun: &str, depth: usize) -> Result<()> {
     if depth > 64 {
         return Err(DocError::Invalid(format!("damaged {noun}: nested too deeply")));
@@ -1182,6 +1260,7 @@ fn rigid(m: &crate::Mat) -> bool {
 
 /// Feature input names and component occurrences, which format 1 files may predate.
 fn normalise(d: &mut Document) -> Result<()> {
+    d.normalise_component_color_indices()?;
     d.name_all_feature_inputs();
     let missing: Vec<(u64, u64)> =
         d.components.iter().filter(|c| !d.occurrences.iter().any(|o| o.component == c.id)).map(|c| (c.id, c.parent)).collect();
@@ -1304,6 +1383,128 @@ mod tests {
         assert_eq!(trace_of(&released), Vec::<&str>::new());
     }
 
+    #[test]
+    fn personal_format29_card_alias_requires_actual_canonical_support() {
+        let hand: [JsonStep; 27] = [|_| Ok(()); 27];
+        let first = [traced("a-first")];
+        let cards = [traced("material-engineering-cards")];
+        let pending = Formats { hand: &hand, folded: &[(29, &first)], pending: &cards };
+        let folded = Formats { hand: &hand, folded: &[(29, &first), (30, &cards)], pending: &[] };
+        for formats in [pending, folded] {
+            let mut file = serde_json::json!({"trace": ["b"]});
+            formats.upgrade("design", &mut file, 29, Some(&["physical-material-cards".into()])).unwrap();
+            assert_eq!(trace_of(&file), ["b", "a"], "never replay existing card semantics");
+        }
+    }
+
+    #[test]
+    fn personal_card_alias_without_support_refuses_before_mutation() {
+        let hand: [JsonStep; 27] = [|_| Ok(()); 27];
+        let first = [traced("a-first")];
+        let formats = Formats { hand: &hand, folded: &[(29, &first)], pending: &[] };
+        let mut file = serde_json::json!({"trace": [], "sentinel": 7});
+        let original = file.clone();
+        let error = formats.upgrade("design", &mut file, 29, Some(&["physical-material-cards".into()])).unwrap_err();
+        assert!(error.to_string().contains("physical-material-cards"), "{error}");
+        assert_eq!(file, original);
+    }
+
+    #[test]
+    fn personal_card_alias_does_not_extend_to_other_format_numbers() {
+        let hand: [JsonStep; 26] = [|_| Ok(()); 26];
+        let first = [traced("a-first")];
+        let second = [traced("b-second")];
+        let cards = [traced("material-engineering-cards")];
+        let formats = Formats { hand: &hand, folded: &[(28, &first), (29, &second), (30, &cards)], pending: &[] };
+        for version in [28, 30] {
+            let mut file = serde_json::json!({"trace": []});
+            let original = file.clone();
+            let error = formats.upgrade("design", &mut file, version, Some(&["physical-material-cards".into()])).unwrap_err();
+            assert!(error.to_string().contains("physical-material-cards"), "{error}");
+            assert_eq!(file, original);
+        }
+    }
+
+    #[test]
+    fn personal_card_alias_never_hides_unknown_concepts() {
+        let hand: [JsonStep; 27] = [|_| Ok(()); 27];
+        let first = [traced("a-first")];
+        let cards = [traced("material-engineering-cards")];
+        let formats = Formats { hand: &hand, folded: &[(29, &first)], pending: &cards };
+        for names in
+            [["physical-material-cards".into(), "unknown-card-codec".into()], ["unknown-card-codec".into(), "physical-material-cards".into()]]
+        {
+            let mut file = serde_json::json!({"trace": ["b"]});
+            let original = file.clone();
+            let error = formats.upgrade("design", &mut file, 29, Some(&names)).unwrap_err();
+            assert!(error.to_string().contains("unknown-card-codec"), "{error}");
+            assert_eq!(file, original);
+        }
+    }
+
+    #[test]
+    fn alias_and_canonical_markers_never_reapply_the_card_migration() {
+        let hand: [JsonStep; 27] = [|_| Ok(()); 27];
+        let first = [traced("a-first"), traced("material-engineering-cards")];
+        let formats = Formats { hand: &hand, folded: &[(29, &first)], pending: &[] };
+        for names in [
+            vec!["physical-material-cards".into()],
+            vec!["physical-material-cards".into(), "material-engineering-cards".into()],
+            vec!["material-engineering-cards".into(), "physical-material-cards".into()],
+        ] {
+            let mut file = serde_json::json!({"trace": ["b"]});
+            formats.upgrade("design", &mut file, 29, Some(&names)).unwrap();
+            assert_eq!(trace_of(&file), ["b", "a"]);
+        }
+    }
+
+    #[test]
+    fn ordinary_releases_still_receive_cards_and_metadata_remains_inert() {
+        let hand: [JsonStep; 27] = [|_| Ok(()); 27];
+        let first = [traced("a-first")];
+        let cards = [traced("material-engineering-cards")];
+        let formats = Formats { hand: &hand, folded: &[(29, &first)], pending: &cards };
+        let mut file = serde_json::json!({"trace": ["a"], "metadata": {"format_pending": ["physical-material-cards"]}});
+        let metadata = file["metadata"].clone();
+        formats.upgrade("design", &mut file, 29, None).unwrap();
+        assert_eq!(trace_of(&file), ["a", "b"]);
+        assert_eq!(file["metadata"], metadata);
+    }
+
+    /// An experimental producer can use a number that a release later folds without its
+    /// change. Its unknown concept must still be refused before any migration runs.
+    #[test]
+    fn unknown_pending_concepts_are_refused_after_folding() {
+        let parts = [traced("a-first")];
+        let later = [traced("b-second")];
+        for pending in [&[][..], &later[..]] {
+            let formats = Formats { hand: &[], folded: &[(2, &parts)], pending };
+            let mut file = serde_json::json!({"trace": []});
+            let original = file.clone();
+            let err = formats.upgrade("design", &mut file, 2, Some(&["experimental-card".into()])).unwrap_err();
+            assert!(err.to_string().contains("experimental-card") && err.to_string().contains("update SolidCraft"), "{err}");
+            assert_eq!(file, original, "refuse before applying even a known migration");
+        }
+    }
+
+    /// The same concept can land at a later number than an experimental producer used.
+    /// Recognize it anywhere in this reader's history and never apply its migration twice.
+    #[test]
+    fn pending_concepts_moved_to_later_formats_are_not_reapplied() {
+        let first = [traced("a-first")];
+        let later = [traced("b-second")];
+        let pending = Formats { hand: &[], folded: &[(2, &first)], pending: &later };
+        let folded = Formats { hand: &[], folded: &[(2, &first), (3, &later)], pending: &[] };
+        for formats in [pending, folded] {
+            let mut experimental = serde_json::json!({"trace": ["b"]});
+            formats.upgrade("design", &mut experimental, 2, Some(&["b-second".into()])).unwrap();
+            assert_eq!(trace_of(&experimental), ["b", "a"]);
+            let mut released = serde_json::json!({"trace": ["a"]});
+            formats.upgrade("design", &mut released, 2, None).unwrap();
+            assert_eq!(trace_of(&released), ["a", "b"], "ordinary released files still get later migrations");
+        }
+    }
+
     /// A design naming a pending change this build doesn't have is a newer build's, refused as
     /// such before anything else in it is checked (as a newer number is), so a newer build's
     /// fields never read as damage.
@@ -1313,16 +1514,14 @@ mod tests {
         file["format_pending"] = serde_json::json!(["not-a-change-anyone-made"]);
         file["features"] = serde_json::json!([{"type": "emboss", "face": {"body": "Body", "at": [0, 0, 0], "a_newer_key": true}}]);
         let error = read(&file.to_string()).unwrap_err().to_string();
-        if PENDING.is_empty() {
-            assert!(error.contains("emboss face"), "a list beside a folded format means nothing: {error}");
-        } else {
-            assert_eq!(
-                error,
-                format!(
-                    "this design was saved by a newer SolidCraft (file format {FORMAT} with `not-a-change-anyone-made`, which this version doesn't know): update SolidCraft to open it"
-                )
-            );
-        }
+        // With changes pending, FORMAT is made of them; once they are folded it is the folded
+        // format, which is made of changes too. Either way an unknown change is a newer build's.
+        assert_eq!(
+            error,
+            format!(
+                "this design was saved by a newer SolidCraft (file format {FORMAT} with `not-a-change-anyone-made`, which this version doesn't know): update SolidCraft to open it"
+            )
+        );
     }
 
     /// Drawings follow the same rules from their own first format: folded formats follow on from 1
@@ -1493,7 +1692,7 @@ mod tests {
             assert!(read(&file.to_string()).is_err());
         }
         file["format_pending"] = serde_json::json!(["not-a-change-anyone-made"]);
-        assert_eq!(read(&file.to_string()).is_err(), !PENDING.is_empty(), "only a pending format's list names changes");
+        assert!(read(&file.to_string()).is_err(), "unknown pending concepts are refused even after folding");
         file["format_pending"] = Value::from(pending_names());
         let opened = read(&file.to_string()).unwrap();
         assert_eq!(opened.format_pending, pending_names());
@@ -1513,6 +1712,7 @@ mod tests {
             body: None,
             corner_relief_shape: shape.map(Into::into),
             corner_relief: size.map(Into::into),
+            height_from: None,
         };
         let saved = |document: &Document| -> Value { serde_json::from_str(&document.to_json()).unwrap() };
         // A flange that follows the rule saves neither key, and a design of format 23 opens as it was.
@@ -2365,6 +2565,38 @@ mod tests {
             let error = read(&json).unwrap_err().to_string();
             assert!(error.contains("damaged design"), "{error}");
         }
+    }
+
+    /// An integer-valued coordinate is range-checked like a float one, while ids and counters
+    /// may still be large integers (solidcraft#5021).
+    #[test]
+    fn integer_valued_coordinates_are_range_checked_and_large_ids_still_load() {
+        let mut sketch = solidcraft_sketch::Sketch::new();
+        sketch.add_point(solidcraft_geom::Vec2::new(40.0, 0.0), None).unwrap();
+        let mut d = Document::new("range");
+        d.add_feature(crate::FeatureKind::Sketch { plane: crate::PlaneRef::Origin { name: "XY".into() }, sketch }, None).unwrap();
+        let last = |v: &Value| v["features"][0]["sketch"]["points"].as_array().map_or(0, |a| a.len() - 1);
+        for huge in ["9223372036854775808", "4294967295", "2000000000", "-2000000000"] {
+            let json = edited(&d, |v| {
+                let i = last(v);
+                v["features"][0]["sketch"]["points"][i]["pos"][1] = serde_json::from_str(huge).unwrap();
+            });
+            let error = read(&json).unwrap_err().to_string();
+            assert!(error.contains("damaged design") && error.contains("out of range"), "{huge}: {error}");
+        }
+        // In range, an integer-valued coordinate is fine.
+        let json = edited(&d, |v| {
+            let i = last(v);
+            v["features"][0]["sketch"]["points"][i]["pos"][1] = 1_000_000_000u64.into();
+        });
+        assert!(read(&json).is_ok());
+        // Ids and counters are integers and may be past the coordinate limit.
+        let json = edited(&d, |v| {
+            v["features"][0]["id"] = 5_000_000_000u64.into();
+            v["next_id"] = 5_000_000_001u64.into();
+        });
+        let back = read(&json).unwrap();
+        assert_eq!(back.features[0].id, 5_000_000_000);
     }
 
     #[test]

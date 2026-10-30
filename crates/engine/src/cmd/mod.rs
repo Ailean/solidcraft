@@ -43,18 +43,29 @@ mod edit;
 mod face;
 mod features;
 mod features_more;
+mod join_pieces;
 pub(crate) use bom::{SAME_AS_COMPONENT, occurrence_bom_type, record_item_numbers};
 pub(crate) use component::{path_ids, refuse_filled_virtual};
+pub(crate) use construct::{GeoForm, GeoFormError, REF as GEO_REF_FORMS, SKETCH_PART, geo_form, is_model_axis};
 pub(crate) use face::{FaceRefForm, face_ref_form};
 pub(crate) use features::profiles as feature_profiles;
-pub(crate) use features::{EdgeRefForm, edge_ref_form, sketch_key};
-pub use features::{auto_operation, extrude_reach};
-pub use sketch_modify::trim_piece;
+pub(crate) use features::{EdgeRefForm, PLANE_FORMS, axis_dir_form, axis_line_object, edge_ref_form, explicit_plane, plane_name_problem, sketch_key};
+pub use features::{auto_operation, extrude_reach, shown_scope};
+pub use join_pieces::{Addition, addition};
+pub use sketch::dimension_roles;
+pub(crate) use sketch::face::face_pick_form;
+pub use sketch_construction::{ConstructionLine, construction_line_choice, construction_line_mode, construction_line_solutions};
+pub use sketch_import::drawing_import_command;
+pub use sketch_modify::{extend_arc_preview, extend_preview, trim_piece};
 pub use view_dxf::sketch::exportable as view_dxf_exportable;
+pub use view_navigation::standard_view;
 mod component_link;
+pub use component_link::resolve_design_links;
 mod config;
+mod design_link;
 mod file;
-mod inspect;
+mod frame;
+pub(crate) mod inspect;
 mod interference;
 pub(crate) mod joints;
 mod libraries;
@@ -66,32 +77,45 @@ mod mesh;
 mod metadata;
 pub(crate) mod motion;
 mod parts;
+mod point_cloud;
 mod script;
 mod section;
-pub(crate) use measure_sel::measure_items;
+pub mod settings;
+pub(crate) use measure_sel::{measure_items, shape_of};
+pub(crate) use measure_shape::Shape;
 #[cfg(test)]
 mod kernel_heal_tests;
+mod parameter_sweep;
 mod parameters;
 mod plastic;
 mod render;
+mod render_ui;
 #[cfg(test)]
 mod script_tests;
 mod sheet;
+pub(crate) use sheet::{
+    FlangeType, ThenStep, flange_edge, flange_edge_list, flange_position, flange_type, fold_points, fold_position, perforation_pattern, sheet_points,
+    then_list,
+};
 mod silhouette;
 mod sketch;
 pub(crate) use sketch::author_path_for_rebind;
 pub(crate) use sketch::created as sketch_created;
+mod canvas_sketch;
 mod sketch_3d;
 mod sketch_canvas;
 pub mod sketch_clipboard;
 mod sketch_constraints;
+mod sketch_construction;
 mod sketch_create;
 mod sketch_ends;
+mod sketch_equation;
 mod sketch_freeform;
 mod sketch_import;
 mod sketch_inspect;
 mod sketch_modify;
 mod sketch_project;
+mod sketch_store;
 mod surface;
 mod surface_analysis;
 mod surface_boundary;
@@ -248,16 +272,25 @@ impl CommandSpec {
     /// undo step and the evaluation).
     pub(crate) fn run_nested(&self, s: &mut Session, p: &Value) -> Result<Value> {
         self.allowed(s).map_err(|why| crate::EngineError::Disabled(self.id.to_string(), why))?;
-        (self.run)(s, p)
+        let r = (self.run)(s, p);
+        // A parameter error that did not name the command names it here (see `Session::execute`).
+        match r {
+            Err(crate::EngineError::BadParams { cmd, msg }) if cmd.is_empty() => Err(crate::EngineError::BadParams { cmd: self.id.to_string(), msg }),
+            other => other,
+        }
     }
     pub fn info(&self, s: &Session) -> CommandInfo {
         let e = self.allowed(s);
+        let (label, icon) = match self.id {
+            "inspect.colored_components" if s.colored_components.is_some() => ("Disable Component Colors", "colored_components_off"),
+            _ => (self.label, self.icon),
+        };
         CommandInfo {
             id: self.id,
-            label: self.label,
+            label,
             tab: self.tab,
             panel: self.panel,
-            icon: self.icon,
+            icon,
             shortcut: self.shortcut,
             params: self.params,
             enabled: e.is_ok(),
@@ -301,11 +334,15 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     let mut v: Vec<&'static CommandSpec> = Vec::new();
     v.extend(sketch::COMMANDS.iter());
     v.extend(sketch_create::COMMANDS.iter());
+    v.extend(sketch_construction::COMMANDS.iter());
+    v.extend(sketch_equation::COMMANDS.iter());
     v.extend(sketch_constraints::COMMANDS.iter());
     v.extend(sketch_import::COMMANDS.iter());
     v.extend(sketch_inspect::COMMANDS.iter());
     v.extend(sketch_ends::COMMANDS.iter());
     v.extend(sketch_canvas::COMMANDS.iter());
+    v.extend(canvas_sketch::COMMANDS.iter());
+    v.extend(point_cloud::COMMANDS.iter());
     v.extend(sketch_3d::COMMANDS.iter());
     v.extend(surface_analysis::COMMANDS.iter());
     v.extend(surface_boundary::COMMANDS.iter());
@@ -319,6 +356,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(construct::COMMANDS.iter());
     v.extend(sheet::COMMANDS.iter());
     v.extend(plastic::COMMANDS.iter());
+    v.extend(frame::COMMANDS.iter());
     v.extend(component::COMMANDS.iter());
     v.extend(component_link::COMMANDS.iter());
     v.extend(joints::COMMANDS.iter());
@@ -334,6 +372,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(sketch_clipboard::COMMANDS.iter());
     v.extend(script::COMMANDS.iter());
     v.extend(parameters::COMMANDS.iter());
+    v.extend(parameter_sweep::COMMANDS.iter());
     v.extend(file::COMMANDS.iter());
     v.extend(metadata::COMMANDS.iter());
     v.extend(inspect::COMMANDS.iter());
@@ -353,8 +392,10 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(drawing_scene::COMMANDS.iter());
     v.extend(drawing_sheet::COMMANDS.iter());
     v.extend(drawing_view::COMMANDS.iter());
+    v.extend(settings::COMMANDS.iter());
     v.extend(diagnostics::COMMANDS.iter());
     v.extend(render::COMMANDS.iter());
+    v.extend(render_ui::COMMANDS.iter());
     v
 }
 

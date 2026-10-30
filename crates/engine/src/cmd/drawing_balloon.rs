@@ -26,7 +26,7 @@ const INSPECT: &str = "drawing.balloon.inspect";
 const INSPECT_CONTRACT: TypedContract<InspectParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new(ADD, "Add Balloon", crate::checked!("drawing.balloon.add", ADD_CONTRACT, add))
+    CommandSpec::new(ADD, "Add Balloon", crate::checked!("drawing.balloon.add", add))
         .icon("new")
         .in_drawing()
         .doc_only()
@@ -38,7 +38,7 @@ pub static COMMANDS: &[CommandSpec] = &[
              least one); at: [x, y], the balloon's centre on paper in mm from the view's centre → what drawing.balloon.inspect \
              answers for it. Saved by the edge's name, never the point picked. One undo step; no model is evaluated.",
         ),
-    CommandSpec::new(EDIT, "Edit Balloon", crate::checked!("drawing.balloon.edit", EDIT_CONTRACT, edit))
+    CommandSpec::new(EDIT, "Edit Balloon", crate::checked!("drawing.balloon.edit", edit))
         .icon("edit")
         .in_drawing()
         .doc_only()
@@ -48,7 +48,7 @@ pub static COMMANDS: &[CommandSpec] = &[
             "balloon: its id; set: {at?: [x, y]} → {balloon, changed: [fields]}. What it points at stays: to number another part, add \
              a new one. One undo step, none when nothing changes; no model is evaluated.",
         ),
-    CommandSpec::new(INSPECT, "Inspect Balloon", crate::checked!("drawing.balloon.inspect", INSPECT_CONTRACT, inspect))
+    CommandSpec::new(INSPECT, "Inspect Balloon", crate::checked!("drawing.balloon.inspect", inspect))
         .icon("inspect")
         .in_drawing()
         .noundo()

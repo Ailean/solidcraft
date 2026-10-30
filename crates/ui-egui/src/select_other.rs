@@ -4,13 +4,15 @@
 //!
 //! - Holding the left button still (or a finger, on touch screens) for [`HOLD_SECS`], or the
 //!   viewport menu's "Select Other…", opens a list at the cursor of every pickable thing there,
-//!   in the selection filter's and the open dialog's terms: sketch points and curves first, then
-//!   vertices, edges, faces, bodies, profiles, planes and axes, each kind nearest first. On a
-//!   dense mesh (a modelled thread, an imported mesh) thousands of facets can share one cursor,
-//!   so at most [`MAX_PER_KIND`] rows are kept per kind, nearest first, and the list reports how
-//!   many things there were in all.
+//!   in the selection filter's and the open dialog's terms, front to back like layers: sketch
+//!   points and curves first (drawn over the model), then what belongs to a body, one body at a
+//!   time and the nearest body first (its vertices, edges, face, then the body itself), then
+//!   profiles, planes and axes. On a dense mesh (a modelled thread, an imported mesh) thousands
+//!   of facets can share one cursor, so at most [`MAX_PER_KIND`] rows are kept per kind, nearest
+//!   first, and the list reports how many things there were in all.
 //! - Hovering a row lights its entity up in the viewport; clicking it selects it (Shift/Ctrl add,
-//!   as clicks do) or, with a dialog open, gives it to the dialog's active selection input.
+//!   as clicks do, held then or at the click or press that opened the list) or, with a dialog
+//!   open, gives it to the dialog's active selection input.
 //!   Esc or a click elsewhere closes the list.
 //! - Clicking again on the same spot with nothing changed selects the next thing in that list
 //!   (click cycling). The second click of a double-click keeps its own actions.
@@ -26,6 +28,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::SolveApp;
 use crate::theme::Tokens;
+use crate::tool_modifiers::Held;
 use crate::viewport::{Hit, Proj};
 
 /// How long the left button stays down, without moving, before the list opens.
@@ -60,6 +63,8 @@ pub struct Popup {
     dialog: bool,
     /// The browser's body highlight is ours to clear.
     lit_body: bool,
+    /// The keys held at the press or click that opened it.
+    held: Held,
 }
 
 /// The last plain click, for cycling.
@@ -74,8 +79,8 @@ struct Cycle {
 #[derive(Default)]
 pub struct State {
     pub popup: Option<Popup>,
-    /// A left press that may become a hold: where and when.
-    hold: Option<(Pos2, f64)>,
+    /// A left press that may become a hold: where, when and with which keys.
+    hold: Option<(Pos2, f64, Held)>,
     /// The current press belongs to Select Other (it opened or closed the list): the viewport
     /// doesn't also click, drag or box-select with it.
     held: bool,
@@ -86,7 +91,8 @@ pub struct State {
 // What is under the cursor
 // ---------------------------------------------------------------------------------------------
 
-/// Every pickable thing under `pos`, ordered by kind (the sketch being edited first), then depth.
+/// Every pickable thing under `pos`, front to back (the sketch being edited first): see
+/// [`order`].
 pub fn rows(app: &SolveApp, proj: &Proj, pos: Pos2) -> Vec<Row> {
     rows_capped(app, proj, pos).0
 }
@@ -114,7 +120,7 @@ fn rows_capped(app: &SolveApp, proj: &Proj, pos: Pos2) -> (Vec<Row>, usize) {
         }
     }
     let sketching = app.session.active_sketch.is_some();
-    out.sort_by_key(|(h, s)| rank(&shown_as(h, s), sketching));
+    let out = order(app, proj, pos, out, sketching);
     let total = out.len();
     // Nearest first within a kind, so capping drops the farther ones.
     let mut per_kind: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
@@ -137,6 +143,81 @@ fn rows_capped(app: &SolveApp, proj: &Proj, pos: Pos2) -> (Vec<Row>, usize) {
     (rows, total)
 }
 
+/// The list's order, front to back like layers (#5345). Sketch points and curves come first
+/// (drawn over the model, the sketch being edited before the rest), then each body's things
+/// together, bodies by their nearest hit along the pick ray; within a body by kind (vertices,
+/// edges, its face, the body), each kind keeping the pick's nearest-first order. Profiles,
+/// planes and axes follow. The sort is stable.
+fn order(app: &SolveApp, proj: &Proj, pos: Pos2, found: Vec<(Hit, Sel)>, sketching: bool) -> Vec<(Hit, Sel)> {
+    let (o, d) = proj.ray(pos);
+    let st = crate::open_meshing::shown_world(app);
+    let index: std::collections::HashMap<&str, usize> = st.bodies.iter().enumerate().map(|(i, b)| (b.name.as_str(), i)).collect();
+    let mut nearest: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for (h, _) in &found {
+        if let (Some(body), Some(t)) = (body_of(h), hit_depth(&st, &index, o, d, h)) {
+            let e = nearest.entry(body.to_string()).or_insert(t);
+            *e = e.min(t);
+        }
+    }
+    let mut keyed: Vec<((u8, u8, f64, u8), (Hit, Sel))> = found
+        .into_iter()
+        .map(|(h, s)| {
+            let (own, kind) = rank(&shown_as(&h, &s), sketching);
+            let key = match body_of(&h) {
+                Some(body) => (own, 1, nearest.get(body).copied().unwrap_or(f64::INFINITY), kind),
+                None => (own, if kind <= 3 { 0 } else { 2 }, 0.0, kind),
+            };
+            (key, (h, s))
+        })
+        .collect();
+    keyed.sort_by(|(a, _), (b, _)| (a.0, a.1).cmp(&(b.0, b.1)).then(a.2.total_cmp(&b.2)).then(a.3.cmp(&b.3)));
+    keyed.into_iter().map(|(_, x)| x).collect()
+}
+
+/// The body a hit lies on (the origin point, a vertex of no body, has none).
+fn body_of(h: &Hit) -> Option<&str> {
+    match h {
+        Hit::Vertex { body, .. } | Hit::Edge { body, .. } | Hit::Face { body, .. } if !body.is_empty() => Some(body),
+        _ => None,
+    }
+}
+
+/// How far along the pick ray (`o`, `d`) a body's hit lies: a face's or vertex's point, or an
+/// edge's point nearest the ray (its middle can lie much deeper or nearer).
+fn hit_depth(
+    st: &solidcraft_engine::doc::ModelState,
+    index: &std::collections::HashMap<&str, usize>,
+    o: solidcraft_engine::geom::Vec3,
+    d: solidcraft_engine::geom::Vec3,
+    h: &Hit,
+) -> Option<f64> {
+    let along = |p: solidcraft_engine::geom::Vec3| Some((p - o).dot(d)).filter(|t| t.is_finite());
+    match h {
+        Hit::Vertex { point, .. } | Hit::Face { point, .. } => along(*point),
+        Hit::Edge { body, index: ei, mid, .. } => {
+            let under = index.get(body.as_str()).and_then(|i| st.bodies.get(*i)).and_then(|b| {
+                let (m, place) = b.mesh_in_place();
+                let at = |p: solidcraft_engine::geom::Vec3| solidcraft_engine::doc::apply_point(&place, p);
+                let dd = d.dot(d);
+                m.edges
+                    .get(*ei)?
+                    .windows(2)
+                    .map(|w| crate::viewport::ray_segment_closest(o, d, at(w[0]), at(w[1])))
+                    .map(|q| {
+                        let t = (q - o).dot(d);
+                        // Squared distance from the ray, to take the segment under the cursor.
+                        ((q - o).dot(q - o) - t * t / dd, t)
+                    })
+                    .filter(|(off, t)| off.is_finite() && t.is_finite())
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                    .map(|(_, t)| t)
+            });
+            under.or_else(|| along(*mid))
+        }
+        _ => None,
+    }
+}
+
 /// What a row shows itself as: a face place a sketch point snapped is that point (ranked, capped
 /// and named with the points).
 fn shown_as(hit: &Hit, sel: &Sel) -> Sel {
@@ -149,10 +230,10 @@ fn shown_as(hit: &Hit, sel: &Sel) -> Sel {
 /// Sort key: in a sketch its own points and curves come first; then by kind.
 fn rank(s: &Sel, sketching: bool) -> (u8, u8) {
     let kind = match s {
-        Sel::SketchPoint { .. } | Sel::ExternalSketchPoint { .. } => 0,
+        Sel::SketchPoint { .. } | Sel::SketchMidpoint { .. } | Sel::ExternalSketchPoint { .. } => 0,
         Sel::SketchCurve { .. } | Sel::ExternalSketchCurve { .. } => 1,
         Sel::SketchConstraint { .. } => 2,
-        Sel::Vertex { .. } => 3,
+        Sel::Vertex { .. } | Sel::ConstructionPoint { .. } => 3,
         Sel::Edge { .. } => 4,
         Sel::Face { .. } | Sel::Feature { .. } => 5,
         Sel::Body { .. } | Sel::Occurrence { .. } => 6,
@@ -160,7 +241,7 @@ fn rank(s: &Sel, sketching: bool) -> (u8, u8) {
         Sel::Plane { .. } => 8,
         Sel::Axis { .. } => 9,
     };
-    let own = matches!(s, Sel::SketchPoint { .. } | Sel::SketchCurve { .. });
+    let own = matches!(s, Sel::SketchPoint { .. } | Sel::SketchMidpoint { .. } | Sel::SketchCurve { .. });
     (if sketching && !own { 1 } else { 0 }, kind)
 }
 
@@ -186,13 +267,14 @@ fn sketch_name(app: &SolveApp, sketch: u64) -> String {
 }
 
 /// "Line 3" (its kind and number), with what kind of geometry it is when that matters.
-fn curve_label(sk: &solidcraft_engine::sketch::Sketch, id: &str) -> String {
+pub(crate) fn curve_label(sk: &solidcraft_engine::sketch::Sketch, id: &str) -> String {
     if let Some((i, c)) = sk.curves.iter().enumerate().find(|(_, c)| c.id == id) {
         let kind = curve_kind_name(&c.kind);
         let n = id_number(id).unwrap_or_else(|| sk.curves.iter().take(i + 1).filter(|x| curve_kind_name(&x.kind) == kind).count() as u64);
         let mut s = format!("{kind} {n}");
-        if c.link.is_some() {
-            s.push_str(" (projected)");
+        if let Some(link) = &c.link {
+            let kind = sk.links.iter().find(|l| &l.id == link).map(|l| l.kind);
+            s.push_str(if kind == Some(solidcraft_engine::sketch::LinkKind::Intersect) { " (intersected)" } else { " (projected)" });
         } else if c.construction {
             s.push_str(" (construction)");
         }
@@ -229,14 +311,18 @@ fn point_label(sk: &solidcraft_engine::sketch::Sketch, id: &str) -> String {
     }
 }
 
-/// A row's name: "Line 3", "Point (arc 2 centre)", "Edge 4 · Body1", "XY Plane"…
+/// A row's name: "Line 3", "Point (arc 2 centre)", "Edge 4 · Body1", "XY Plane" (an origin plane
+/// by the name the preferences give it)…
 pub fn label(app: &SolveApp, sel: &Sel) -> String {
     let st = app.session.world_state();
     let in_sketch =
         |sketch: u64, f: &dyn Fn(&solidcraft_engine::sketch::Sketch) -> String| st.sketch(sketch).map(|ss| f(&ss.sketch)).unwrap_or_default();
     match sel {
+        Sel::SketchMidpoint { id } => {
+            format!("MID · {}", app.session.active_sketch.map(|s| in_sketch(s, &|sk| curve_label(sk, id))).unwrap_or_else(|| id.clone()))
+        }
         Sel::SketchPoint { id } => app.session.active_sketch.map(|s| in_sketch(s, &|sk| point_label(sk, id))).unwrap_or_else(|| id.clone()),
-        Sel::SketchCurve { id } => app.session.active_sketch.map(|s| in_sketch(s, &|sk| curve_label(sk, id))).unwrap_or_else(|| id.clone()),
+        Sel::SketchCurve { id, .. } => app.session.active_sketch.map(|s| in_sketch(s, &|sk| curve_label(sk, id))).unwrap_or_else(|| id.clone()),
         Sel::ExternalSketchPoint { sketch, id } => format!("{} · {}", in_sketch(*sketch, &|sk| point_label(sk, id)), sketch_name(app, *sketch)),
         Sel::ExternalSketchCurve { sketch, id } => format!("{} · {}", in_sketch(*sketch, &|sk| curve_label(sk, id)), sketch_name(app, *sketch)),
         Sel::SketchConstraint { id } => format!("Constraint {id}"),
@@ -247,9 +333,9 @@ pub fn label(app: &SolveApp, sel: &Sel) -> String {
         Sel::Occurrence { path } => format!("Occurrence {path:?}"),
         Sel::Feature { id } => app.session.doc.feature(*id).map(|f| f.name.clone()).unwrap_or_else(|| format!("Feature {id}")),
         Sel::Profile { sketch, index } => format!("Profile {} · {}", index + 1, sketch_name(app, *sketch)),
-        Sel::Plane { name } if matches!(name.as_str(), "XY" | "XZ" | "YZ") => format!("{name} Plane"),
+        Sel::Plane { name } if matches!(name.as_str(), "XY" | "XZ" | "YZ") => format!("{} Plane", app.preferences.origin_plane_names.label(name)),
         Sel::Axis { name } if matches!(name.as_str(), "X" | "Y" | "Z") => format!("{name} Axis"),
-        Sel::Plane { name } | Sel::Axis { name } => name.clone(),
+        Sel::Plane { name } | Sel::Axis { name } | Sel::ConstructionPoint { name } => name.clone(),
     }
 }
 
@@ -267,8 +353,12 @@ fn icon(app: &SolveApp, sel: &Sel) -> &'static str {
         }
     };
     match sel {
-        Sel::SketchPoint { .. } | Sel::ExternalSketchPoint { .. } | Sel::Vertex { .. } => "point",
-        Sel::SketchCurve { id } => curve(app.session.active_sketch, id),
+        Sel::SketchPoint { .. }
+        | Sel::SketchMidpoint { .. }
+        | Sel::ExternalSketchPoint { .. }
+        | Sel::Vertex { .. }
+        | Sel::ConstructionPoint { .. } => "point",
+        Sel::SketchCurve { id, .. } => curve(app.session.active_sketch, id),
         Sel::ExternalSketchCurve { sketch, id } => curve(Some(*sketch), id),
         Sel::SketchConstraint { .. } => "dimension",
         Sel::Edge { .. } => "fillet",
@@ -289,13 +379,14 @@ fn projection_now(app: &SolveApp) -> Option<Proj> {
     app.viewport.rect.map(|r| crate::viewport::projection(app, r))
 }
 
-/// Open the list at a screen point; false (with a status message) when nothing is there.
-pub fn open(app: &mut SolveApp, at: Pos2) -> bool {
+/// Open the list at a screen point; false (with a status message) when nothing is there. `held`:
+/// the keys held at the click that opened it.
+pub fn open(app: &mut SolveApp, at: Pos2, held: Held) -> bool {
     let Some(proj) = projection_now(app) else { return false };
-    open_with(app, &proj, at)
+    open_with(app, &proj, at, held)
 }
 
-fn open_with(app: &mut SolveApp, proj: &Proj, at: Pos2) -> bool {
+fn open_with(app: &mut SolveApp, proj: &Proj, at: Pos2, held: Held) -> bool {
     let (rows, total) = rows_capped(app, proj, at);
     if rows.is_empty() {
         app.set_status("Nothing to select here", false);
@@ -303,7 +394,7 @@ fn open_with(app: &mut SolveApp, proj: &Proj, at: Pos2) -> bool {
     }
     close(app);
     app.viewport.select_other.popup =
-        Some(Popup { at, rows, total, hovered: None, revision: app.session.revision, dialog: app.dialog.is_some(), lit_body: false });
+        Some(Popup { at, rows, total, hovered: None, revision: app.session.revision, dialog: app.dialog.is_some(), lit_body: false, held });
     true
 }
 
@@ -322,10 +413,12 @@ pub fn is_open(app: &SolveApp) -> bool {
 /// Pick row `i` of the open list and close it.
 ///
 /// `add` / `toggle` match viewport selection (Shift pure-add, Primary toggle when
-/// `selection_shift_add_only` is on).
+/// `selection_shift_add_only` is on); the keys held when the list opened add too.
 pub fn choose(app: &mut SolveApp, i: usize, add: bool, toggle: bool) -> Result<Row, String> {
     let Some(p) = app.viewport.select_other.popup.as_ref() else { return Err("Select Other is not open".into()) };
     let at = p.at;
+    let (opened_add, opened_toggle) = crate::tool_modifiers::selection_click(p.held, app.preferences.selection_shift_add_only);
+    let (add, toggle) = (add || opened_add, toggle || opened_toggle);
     let row = p.rows.get(i).cloned().ok_or_else(|| format!("no row {i} (the list has {})", p.rows.len()))?;
     close(app);
     apply(app, &row, add, toggle);
@@ -370,7 +463,7 @@ pub fn control(app: &mut SolveApp, p: &Value) -> Result<Value, String> {
         if app.viewport.rect.is_none() {
             return Err("no viewport".into());
         }
-        open(app, pos2(x as f32, y as f32));
+        open(app, pos2(x as f32, y as f32), Held::default());
         return Ok(describe(app));
     }
     if let Some(i) = p.get("hover").and_then(Value::as_u64) {
@@ -413,17 +506,20 @@ pub fn track_hold(
         && !is_open(app)
         && app.dialog.as_ref().is_none_or(|d| d.wants_picks())
         && app.viewport.point_drag.is_none();
-    if pressed && inside && free && !navigating {
-        app.viewport.select_other.hold = hover.map(|p| (p, now));
+    // A press on a canvas handle (a manipulator) drags it, and a still hold there is someone
+    // thinking about where to drag, not asking for the overlapping-pick list.
+    if pressed && inside && free && !navigating && !hover.is_some_and(|p| crate::canvas::owns_pointer(app, proj, p)) {
+        let held = Held::from_modifiers(ctx.input(|i| i.modifiers));
+        app.viewport.select_other.hold = hover.map(|p| (p, now, held));
     }
     let mut opened = false;
-    if let Some((p0, t0)) = app.viewport.select_other.hold {
+    if let Some((p0, t0, held)) = app.viewport.select_other.hold {
         let slop = ctx.options(|o| o.input_options.max_click_dist);
         if !down || navigating || !free || hover.is_some_and(|p| p.distance(p0) > slop) {
             app.viewport.select_other.hold = None;
         } else if now - t0 >= HOLD_SECS {
             app.viewport.select_other.hold = None;
-            opened = open_with(app, proj, p0);
+            opened = open_with(app, proj, p0, held);
             app.viewport.select_other.held = true;
         } else {
             ctx.request_repaint_after(std::time::Duration::from_millis(30));
@@ -539,7 +635,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         crate::scenario::publish_handle(&format!("select_other:{i}"), r.center());
                         if resp.hovered() {
                             hovered = Some(i);
-                            ui.painter().rect_filled(r.shrink2(vec2(2.0, 1.0)), 4.0, t.hover);
+                            ui.painter().rect_filled(r.shrink2(vec2(2.0, 1.0)), t.radius_sm, t.hover);
                         }
                         crate::icons::paint_icon(
                             ui.painter(),
@@ -547,13 +643,19 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             row.icon,
                             f32::from(t.icon.a()) / 255.0,
                         );
-                        ui.painter().text(
-                            pos2(r.left() + 32.0, r.center().y),
-                            Align2::LEFT_CENTER,
-                            &row.label,
-                            FontId::proportional(crate::theme::Tokens::get().font_button),
-                            t.text,
-                        );
+                        // Names can be wider than the list. Keep one line inside the row and
+                        // expose the full name on hover, as the browser tree does.
+                        let text_rect = Rect::from_min_max(pos2(r.left() + 32.0, r.top()), pos2(r.right() - 8.0, r.bottom()));
+                        let mut job =
+                            egui::text::LayoutJob::simple(row.label.clone(), FontId::proportional(t.font_button), t.text, text_rect.width());
+                        job.wrap.max_rows = 1;
+                        job.wrap.break_anywhere = true;
+                        job.wrap.overflow_character = Some('\u{2026}');
+                        let galley = ui.painter().layout_job(job);
+                        let elided = galley.elided;
+                        let at = pos2(text_rect.left(), r.center().y - galley.size().y / 2.0);
+                        ui.painter().with_clip_rect(ui.clip_rect().intersect(text_rect)).galley(at, galley, t.text);
+                        let resp = if elided { resp.on_hover_text(&row.label) } else { resp };
                         if resp.clicked() {
                             picked = Some(i);
                         }
@@ -569,7 +671,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     let (pressed, pointer, mods) = ctx.input(|i| (i.pointer.any_pressed(), i.pointer.interact_pos(), i.modifiers));
     if let Some(i) = picked {
-        let held = crate::tool_modifiers::Held::from_modifiers(mods);
+        let held = Held::from_modifiers(mods);
         let (add, toggle) = crate::tool_modifiers::selection_click(held, app.preferences.selection_shift_add_only);
         let _ = choose(app, i, add, toggle);
     } else if pressed && !pointer.is_some_and(|q| resp.response.rect.contains(q)) {

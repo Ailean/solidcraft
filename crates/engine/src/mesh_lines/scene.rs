@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Instant;
+use web_time::Instant;
 
 use solidcraft_doc::{apply_point, apply_vector};
 use solidcraft_geom::{Aabb3, Mesh, Vec3};

@@ -138,7 +138,7 @@ The same pattern moved the solar wings of the SELENE rover (`Rover-v7.solidcraft
 | `a joint needs two different occurrences` | Both origins found the same part. Give `occurrence` on both. If the parts are bodies of one component (an imported STEP file often brings them so), run `component.from_bodies {"bodies": [...]}` first. |
 | "unknown command" for `file.open` | Open a design with the `open` tool or `doc.open {path}`. |
 | Rigid hoses, cables or springs drift as the mechanism moves | Bodies don't bend. Hide them with `browser.visibility`, or model them per link. |
-| `solidcraft-cli snapshot SCRIPT --in design` runs on an empty design | `snapshot` ignores `--in`. Run `solidcraft-cli run SCRIPT --in design --save out.solidcraft` first. |
+| `solidcraft-cli snapshot SCRIPT --in design` runs on an empty design | `snapshot` ignores `--in`. Run `solidcraft-cli run SCRIPT --in design --save out.sc` first. |
 | A URDF export lacks a joint | `export` to `.urdf` leaves out each joint that closes a loop, with a warning, because URDF is a tree. |
 
 ## Reply cost
@@ -154,6 +154,6 @@ The same pattern moved the solar wings of the SELENE rover (`Rover-v7.solidcraft
 
 ## Showing it moving
 
-`motion.export_animation {"study":..., "path":"tour.gif"}` draws the whole motion as an animated GIF in one call, headless or bridged, and changes nothing: `{"joint":..., "from":0, "to":90, "path":...}` animates a drive instead. A path that does not end in `.gif` is a folder for PNG frames (`frame-0001.png`, ...). Pass `camera` (the reply of `ui.camera`, or any of its fields), `width`/`height` (default 800 x 500), `samples` (frames; default the study's steps + 1, or 100), `fps` (default 20), and `grid: false` / `axes: false` for a clean background. The reply is small: `frames`, `bytes`, and `stopped_at` with `stopped_by_loop`/`stopped_by_contact` where the motion first stopped short.
+`motion.export_animation {"study":..., "path":"tour.gif"}` draws the whole motion as an animated GIF in one call, headless or bridged, and changes nothing: `{"joint":..., "from":0, "to":90, "path":...}` animates a drive instead, and `{"view":..., "back":true, "path":...}` an exploded view coming apart and back together (the placements stay as they are). A path that does not end in `.gif` is a folder for PNG frames (`frame-0001.png`, ...). Pass `camera` (the reply of `ui.camera`, or any of its fields), `width`/`height` (default 800 x 500), `samples` (frames; default the study's steps + 1, 100 for a joint, 41 for a view or 81 with `back`), `fps` (default 20), and `grid: false` / `axes: false` for a clean background. The reply is small: `frames`, `bytes`, and `stopped_at` with `stopped_by_loop`/`stopped_by_contact` where the motion first stopped short.
 
 Bridged to the app, `motion.play {"study":..., "step":s}` moves the user's viewport, and `screenshot` captures the window at that step.

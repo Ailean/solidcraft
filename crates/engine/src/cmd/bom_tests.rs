@@ -124,6 +124,61 @@ fn part_properties_survive_save_and_open_and_undo_in_one_step() {
 }
 
 #[test]
+fn inserted_design_carries_its_part_properties_into_the_bom() {
+    let dir = scratch("insert-design");
+    let source = dir.join("plate.solidcraft");
+    let metadata = json!({
+        "part_number": "PL-6624", "description": "Mounting plate", "revision": "B",
+        "author": "Example author", "license": "CC0-1.0", "com.example.catalog": {"stock": 12}
+    });
+    let mut part = Session::default();
+    run(&mut part, "solid.box", json!({"length": 40, "width": 20, "height": 3}));
+    run(&mut part, "document.metadata.set", json!({"values": metadata}));
+    run(&mut part, "file.save", json!({"path": source}));
+
+    for reuse in [false, true] {
+        let mut s = Session::default();
+        run(&mut s, "document.metadata.set", json!({"values": {"part_number": "ASM-1", "description": "Assembly"}}));
+        let own_metadata = s.doc.metadata.clone();
+        let undo = s.undo.len();
+        let inserted = run(&mut s, "component.insert_design", json!({"path": source, "name": "Plate", "reuse": reuse}));
+        let component = inserted["component"].as_u64().unwrap();
+        assert_eq!(run(&mut s, "component.metadata", json!({"component": component}))["metadata"], metadata);
+        assert_eq!(s.doc.metadata, own_metadata, "the assembly keeps its own properties");
+        let bom = run(&mut s, "assembly.bom", json!({}));
+        assert_eq!(bom["rows"][0]["part_number"], "PL-6624");
+        assert_eq!(bom["rows"][0]["description"], "Mounting plate");
+        assert_eq!(bom["rows"][0]["revision"], "B");
+        assert_eq!(bom["rows"][0]["count"], 1);
+        assert_eq!(s.undo.len(), undo + 1, "insertion including properties is one undo step");
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.doc.components.is_empty());
+        assert!(s.doc.links.is_empty());
+        run(&mut s, "edit.redo", json!({}));
+        assert_eq!(run(&mut s, "component.metadata", json!({"component": component}))["metadata"], metadata);
+
+        for (file, format) in [("assembly.json", "json"), ("assembly.solidcraft", "container")] {
+            let path = dir.join(file);
+            run(&mut s, "file.save_as", json!({"path": path, "format": format}));
+            let mut back = Session::default();
+            run(&mut back, "doc.open", json!({"path": path}));
+            assert_eq!(run(&mut back, "component.metadata", json!({"component": component}))["metadata"], metadata, "{format}");
+            assert_eq!(run(&mut back, "assembly.bom", json!({}))["rows"], bom["rows"], "{format}");
+        }
+
+        // Reusing the link shares its definition, including locally edited part properties.
+        run(&mut s, "component.metadata.set", json!({"component": component, "description": "Assembly-specific description"}));
+        run(&mut s, "component.insert_design", json!({"path": source, "reuse": true, "translate": [50, 0, 0]}));
+        let bom = run(&mut s, "assembly.bom", json!({}));
+        assert_eq!(bom["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(bom["rows"][0]["count"], 2);
+        assert_eq!(bom["rows"][0]["part_number"], "PL-6624");
+        assert_eq!(bom["rows"][0]["description"], "Assembly-specific description");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn csv_quotes_every_field_and_json_writes_the_rows() {
     let dir = scratch("export");
     let mut s = assembly();
@@ -211,6 +266,74 @@ fn hostile_part_properties_are_refused_without_a_change() {
     assert_eq!(run(&mut s, "component.metadata", json!({"component": 0}))["part_number"], "ASM-1");
 }
 
+#[test]
+fn a_components_refusals_speak_of_part_properties() {
+    let mut s = assembly();
+    let undo = s.undo.len();
+    let refusal = |s: &mut Session, p: Value| s.execute("component.metadata.set", &p).unwrap_err().to_string();
+    let bogus = refusal(&mut s, json!({"component": "Pin", "values": {"bogus": "x"}}));
+    assert!(
+        bogus.ends_with(
+            "`bogus` is not a part property: SolidCraft's are project, part_number, revision, author, organization, description, \
+             license, bom_type, material, bom_quantity, virtual; another tool's data goes under a reverse-DNS key such as \
+             `com.example.tool`"
+        ),
+        "{bogus}"
+    );
+    assert!(!bogus.contains("design property"), "{bogus}");
+    assert!(refusal(&mut s, json!({"component": "Pin", "values": {"": "x"}})).contains("`` is not a part property"));
+    // Nothing to change: the same list as before the table.
+    assert!(refusal(&mut s, json!({"component": "Pin"})).ends_with(
+        "give part_number, description, revision, bom_type, material, bom_quantity, virtual, values or properties (project, \
+         part_number, revision, author, organization, description, license, bom_type, material, bom_quantity, virtual)"
+    ));
+    // Only the bill of materials' keys are parameters of their own; the others go in `values`.
+    assert!(refusal(&mut s, json!({"component": "Pin", "author": "Jane"})).contains("give part_number, description, revision"));
+    let long = refusal(&mut s, json!({"component": "Pin", "properties": {"finish": "x".repeat(5000)}}));
+    assert!(long.ends_with("property `finish` is longer than 4096 bytes"), "{long}");
+    let bell = refusal(&mut s, json!({"component": "Pin", "properties": {"finish": "a\u{7}"}}));
+    assert!(bell.ends_with("property `finish` has a control character"), "{bell}");
+    assert_eq!(s.undo.len(), undo, "nothing changed");
+    // The design keeps its own words.
+    let design = s.execute("document.metadata.set", &json!({"key": "bogus", "value": "x"})).unwrap_err().to_string();
+    assert!(design.contains("`bogus` is not a design property"), "{design}");
+}
+
+#[test]
+fn every_key_a_component_took_before_is_still_taken() {
+    let mut s = assembly();
+    let keys = ["project", "part_number", "revision", "author", "organization", "description", "license"];
+    let mut values: serde_json::Map<String, Value> = keys.iter().map(|k| (k.to_string(), json!(format!("{k} text")))).collect();
+    values.insert("com.acme.shop".into(), json!({"id": 7}));
+    let r = run(&mut s, "component.metadata.set", json!({"component": "Plate", "values": values}));
+    assert_eq!(r["changed"].as_array().map(Vec::len), Some(keys.len() + 1), "{r}");
+    let plate = run(&mut s, "component.metadata", json!({"component": "Plate"}));
+    for k in keys {
+        assert_eq!(plate["metadata"][k], format!("{k} text"), "{k}");
+    }
+    for k in ["part_number", "description", "revision"] {
+        assert_eq!(plate[k], format!("{k} text"), "the bill of materials' field {k}: {plate}");
+    }
+    assert!(plate.get("author").is_none(), "the others stay in metadata: {plate}");
+    // The shortcuts and the root read the same fields.
+    run(&mut s, "component.metadata.set", json!({"component": "Pin", "part_number": "", "description": "Pin", "revision": "D"}));
+    let pin = run(&mut s, "component.metadata", json!({"component": "Pin"}));
+    assert_eq!((&pin["part_number"], &pin["description"], &pin["revision"]), (&Value::Null, &json!("Pin"), &json!("D")), "{pin}");
+    let root = run(&mut s, "component.metadata", json!({"component": 0}));
+    assert_eq!((&root["component"], &root["part_number"], &root["properties"]), (&json!(0), &Value::Null, &json!({})), "{root}");
+}
+
+#[test]
+fn a_component_refused_past_its_limits_says_part_properties() {
+    let mut s = assembly();
+    // The pin holds a part number and a description: room for this many more keys.
+    let room = solidcraft_doc::metadata::MAX_KEYS - 2;
+    let values: serde_json::Map<String, Value> = (0..room).map(|i| (format!("org.k{i}"), json!({}))).collect();
+    run(&mut s, "component.metadata.set", json!({"component": "Pin", "values": values}));
+    let over = s.execute("component.metadata.set", &json!({"component": "Pin", "values": {"org.one_more": {}}})).unwrap_err().to_string();
+    assert!(over.ends_with("part properties are limited to 256 keys and 256 KiB"), "{over}");
+}
+
 /// Two hex bolts, each with a washer and a nut placed inside it, and a third bolt alone.
 fn bolts() -> Session {
     let mut s = Session::default();
@@ -283,13 +406,16 @@ fn body_owners_match_each_bodys_component() {
     run(&mut moved, "solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [0, -30, 0], "body_name": "Moved"}));
     run(&mut moved, "component.move_bodies", json!({"bodies": ["Moved"], "component": target}));
     let st = moved.model.state();
-    let owner = st.bodies.iter().position(|b| b.name == "Moved").map(|i| moved.doc.body_owners(&st)[i]);
+    let owner = st.bodies.iter().position(|b| b.name == "Moved").map(|i| moved.doc.model_body_components(&st)[i]);
     assert_eq!(owner, Some(target));
     for s in [assembly(), bolts(), moved] {
         let st = s.model.state();
-        let each: Vec<u64> = st.bodies.iter().map(|b| s.doc.model_body_component(b)).collect();
+        let each: std::collections::HashSet<u64> = st.bodies.iter().map(|b| s.doc.model_body_component(b)).collect();
         assert_eq!(s.doc.body_owners(&st), each);
-        assert!(each.iter().collect::<std::collections::HashSet<_>>().len() > 1);
+        assert!(each.len() > 1);
+        // The same answers body by body, in the state's order.
+        let in_order: Vec<u64> = st.bodies.iter().map(|b| s.doc.model_body_component(b)).collect();
+        assert_eq!(s.doc.model_body_components(&st), in_order);
     }
 }
 
@@ -1213,7 +1339,7 @@ fn a_row_names_the_material_its_mass_is_worked_out_with() {
     assert_eq!(row(&mut s, "Spacer"), Some(weight("Spacer", "Walnut", Some(0.65))));
     s.doc_mut().materials.insert("Spacer".into(), "Unobtainium".into());
     assert_eq!(row(&mut s, "Spacer"), Some(weight("Spacer", "Default", Some(1.29))), "a material the design doesn't have");
-    s.doc_mut().user_materials.push(solidcraft_doc::UserMaterial { name: "Broken".into(), density: -3.0, appearance: None });
+    s.doc_mut().user_materials.push(solidcraft_doc::UserMaterial { name: "Broken".into(), density: -3.0, appearance: None, physical_card: None });
     s.doc_mut().materials.insert("Spacer".into(), "Broken".into());
     assert_eq!(row(&mut s, "Spacer"), Some(weight("Spacer", "Default", Some(1.29))), "a design material with an unusable density");
     // The bracket's plate stored as "steel" beside its cube in "Steel": one material, and both

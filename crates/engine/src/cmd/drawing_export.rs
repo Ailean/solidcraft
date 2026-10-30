@@ -20,7 +20,7 @@ const CONTRACT: TypedContract<ExportParams> = TypedContract::new();
 /// The longest path taken, in bytes, as the view DXF's.
 const MAX_PATH_BYTES: usize = 4096;
 
-pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new(CMD, "Export Sheet", crate::checked!("drawing.export", CONTRACT, export))
+pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new(CMD, "Export Sheet", crate::checked!("drawing.export", export))
     .icon("export")
     .in_drawing()
     .noundo()

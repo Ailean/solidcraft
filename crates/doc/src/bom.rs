@@ -391,7 +391,7 @@ impl<'a> Tree<'a> {
             components.entry(c.id).or_insert(c);
         }
         let mut bodies: HashMap<u64, Vec<&ModelBody>> = HashMap::new();
-        for (body, owner) in state.bodies.iter().zip(doc.body_owners(state)) {
+        for (body, owner) in state.bodies.iter().zip(doc.model_body_components(state)) {
             bodies.entry(owner).or_default().push(body);
         }
         let values = std::cell::OnceCell::new();

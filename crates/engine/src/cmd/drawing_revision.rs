@@ -23,21 +23,21 @@ const DELETE: &str = "drawing.revision.delete";
 const DELETE_CONTRACT: TypedContract<RevisionDeleteParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new(ADD, "Add Revision", crate::checked!("drawing.revision.add", ADD_CONTRACT, add))
+    CommandSpec::new(ADD, "Add Revision", crate::checked!("drawing.revision.add", add))
         .icon("new")
         .in_drawing()
         .doc_only()
         .contract(&ADD_CONTRACT)
         .output(output_schema_for::<RevisionsResult>)
         .params("set?: {revision?, description?, designer?, checker?, date?, hidden?}: the new row's texts (the revision, when not given, the next one: after the highest the drawing has given) → {row: its id, rows, next}. One undo step."),
-    CommandSpec::new(EDIT, "Edit Revision", crate::checked!("drawing.revision.edit", EDIT_CONTRACT, edit))
+    CommandSpec::new(EDIT, "Edit Revision", crate::checked!("drawing.revision.edit", edit))
         .icon("edit")
         .in_drawing()
         .doc_only()
         .contract(&EDIT_CONTRACT)
         .output(output_schema_for::<RevisionsResult>)
         .params("row: a row's id; set: {revision?, description?, designer?, checker?, date?: each as typed (a revision is one line); hidden?: left out of the revision table} → {row, rows, next, changed: [fields], warnings?: a revision in letters with a letter the lettering skips}. One undo step, none when nothing changes."),
-    CommandSpec::new(DELETE, "Delete Revision", crate::checked!("drawing.revision.delete", DELETE_CONTRACT, delete))
+    CommandSpec::new(DELETE, "Delete Revision", crate::checked!("drawing.revision.delete", delete))
         .icon("delete")
         .in_drawing()
         .doc_only()

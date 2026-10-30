@@ -106,6 +106,9 @@ pub fn toggle_construction(app: &mut SolveApp) {
 
 /// Curves a drawing command just made take the drawing line type.
 pub fn apply_mode(app: &mut SolveApp, id: &str, result: &Value) {
+    if solidcraft_engine::cmd::construction_line_mode(id).is_some() {
+        return;
+    }
     let m = mode(app);
     if m == 0 || !solidcraft_engine::find_command(id).is_some_and(|c| c.tab == "SKETCH" && c.panel == "CREATE") {
         return;
@@ -145,7 +148,7 @@ pub fn apply_mode(app: &mut SolveApp, id: &str, result: &Value) {
 
 /// Selected curves of the active sketch.
 fn selected_curves(app: &SolveApp) -> Vec<String> {
-    app.session.selection.iter().filter_map(|s| if let Sel::SketchCurve { id } = s { Some(id.clone()) } else { None }).collect()
+    app.session.selection.iter().filter_map(|s| if let Sel::SketchCurve { id, .. } = s { Some(id.clone()) } else { None }).collect()
 }
 
 /// The line types among the selected curves of the active sketch, indexed like the palette's
@@ -253,9 +256,10 @@ pub fn fits_beside_a_dialog(app: &SolveApp, ctx: &egui::Context) -> bool {
 }
 
 /// Is the palette on screen? It stays for as long as a sketch is being edited, a command dialog
-/// open or not: the dialog takes the left edge of the viewport and the palette keeps the right.
+/// open or not: the dialog takes the left edge of the viewport (or the left column) and the
+/// palette keeps the right.
 pub fn visible(app: &SolveApp, ctx: &egui::Context) -> bool {
-    editing(app) && ((app.dialog.is_none() && app.tree.redefine.is_none()) || fits_beside_a_dialog(app, ctx))
+    editing(app) && ((app.dialog.is_none() && app.tree.redefine.is_none()) || fits_beside_a_dialog(app, ctx) || crate::dialog_column::holds(app))
 }
 
 /// The creation family of the tool that is running, and the exact variant it is running, when
@@ -401,7 +405,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.horizontal(|ui| {
                         let text = crate::i18n::format("sketch.untied_ends", &[("count", &untied_ends.to_string())]);
                         ui.label(egui::RichText::new(text).size(t.font_small).color(t.warning)).on_hover_text(app.tr("ui.untied_ends_tip"));
-                        let button = crate::ui_kit::button(ui, "ui.tie_ends", crate::ui_kit::Button::Normal).on_hover_text(app.tr("ui.tie_ends_tip"));
+                        let button =
+                            crate::ui_kit::button(ui, app.tr("ui.tie_ends"), crate::ui_kit::Button::Normal).on_hover_text(app.tr("ui.tie_ends_tip"));
                         crate::scenario::publish_handle("sketch_palette:tie_ends", button.rect.center());
                         tie = button.clicked();
                     });
@@ -511,6 +516,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         } else {
             set_mode(app, kind);
         }
+        // The button click would otherwise leave the shape's dimension box without the keyboard.
+        crate::sketch_dims::restore_box_focus(app, ctx);
     }
     if construction {
         toggle_construction(app);
@@ -610,7 +617,12 @@ mod tests {
         h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
         h.settle();
         let at = crate::scenario::handle_at("sketch_palette:finish").expect("the palette ends in Finish Sketch");
-        assert!(crate::scenario::rect_of("sketch_palette:look_at").is_some(), "Look At | Slice stay");
+        let look = crate::scenario::rect_of("sketch_palette:look_at").expect("Look At | Slice stay");
+        let slice = crate::scenario::rect_of("sketch_palette:slice").unwrap();
+        let finish = crate::scenario::rect_of("sketch_palette:finish").unwrap();
+        assert_eq!((finish.left(), finish.right()), (look.left(), slice.right()), "Finish {finish:?} shares the pair's inset");
+        assert_eq!(finish.height(), Tokens::get().form_button_height);
+        assert_eq!(look.top() - finish.bottom(), 2.0 * Tokens::get().space_6, "same spacing as the pair");
         assert!(crate::scenario::handle_at("button:sketch.finish").is_some(), "and so does the ribbon's Finish");
         h.call("ui.click", json!({"x":at.x,"y":at.y}));
         assert!(h.app.session.active_sketch.is_none());
@@ -732,7 +744,7 @@ mod tests {
         h.app.run("sketch.centerline", json!({"curves":[center],"value":true})).unwrap();
         // Which of Normal, Construction, Centerline and Infinite the palette shows pressed.
         let pressed = |h: &mut crate::scenario::Harness, ids: &[&String]| {
-            h.app.session.selection = ids.iter().map(|id| Sel::SketchCurve { id: (*id).clone() }).collect();
+            h.app.session.selection = ids.iter().map(|id| Sel::SketchCurve { id: (*id).clone(), sketch: None }).collect();
             h.settle();
             let tree = h.output.accesskit_update.as_ref().unwrap();
             ["normal", "construction", "centerline", "infinite"]
@@ -794,6 +806,7 @@ mod tests {
         h.settle();
         assert!(h.widget("Open 2").is_some(), "the status counts the open ends");
         assert!(h.widget("Untied 4").is_some(), "the status counts the untied ends");
+        assert!(h.widget("Tie").is_some(), "the Tie button shows its label, not its catalog key");
         let at = crate::scenario::handle_at("sketch_palette:tie_ends").unwrap();
         h.call("ui.click", json!({"x": at.x, "y": at.y}));
         h.settle();

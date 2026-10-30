@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "id": "cpu-camera-tir",
+  "authorship": "Worker #2, original analytic camera/box fixture",
+  "original_source_packet_index_sha256": "f75584bebdb174a6a1bd03852acecab7b8e588ee55947bf31143dcd812afd7f4",
+  "base": "cpu-progressive-optics image_tests52 candidate.",
+  "dependencies": [
+    "cpu-progressive-optics"
+  ],
+  "source_files": [
+    {
+      "path": "crates/render/src/raytrace/image_tests.rs",
+      "before_sha256": "3e6baf4404866e5e98b74d9f229cc0d1f85cf3d87e069b92f738ea0e4e03253d",
+      "candidate_sha256": "2ae7825e56de7a5f9a5210c1675b0e6ddb599d2ab905df8a73682745e2881d94",
+      "before_bytes": 95197,
+      "candidate_bytes": 105184
+    }
+  ],
+  "patch_sha256": "ee7ea9bf92d04e30e28946d62e1cafae33e7926d571b7e0b1e6e0a0719eb9910",
+  "patch_parts": [
+    {
+      "path": "candidate.patch",
+      "bytes": 10373,
+      "sha256": "ee7ea9bf92d04e30e28946d62e1cafae33e7926d571b7e0b1e6e0a0719eb9910"
+    }
+  ],
+  "new_test_declarations": 2,
+  "product_tests_executed_on_this_packet": 0,
+  "source_review": "Independent mathematical/source review requested; pending at preservation time.",
+  "limitations": [
+    "Not an observed GPU/GUI or final-quality result.",
+    "The full candidate is an ALTERNATIVE image_tests branch to the straight-path candidate, not a replacement for it; compose both additive suffixes after their common52-test prefix."
+  ],
+  "patch_line_ending_policy": "Strict byte replay; original patch bytes preserved.",
+  "CRLF_line_ending_adapter_paths": []
+}

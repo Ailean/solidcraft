@@ -1,0 +1,60 @@
+--- a/crates/render/src/job/photographic.rs
++++ b/crates/render/src/job/photographic.rs
+@@ -425,9 +425,15 @@
+             }
+             self.output.push(255);
+         }
++        self.commit_pixels(end)
++    }
++    // Output bytes are provisional until the final cancellation check succeeds.
++    // Keep the old cursor on failure so finish cannot return an unacknowledged
++    // terminal batch. Cancellation after an acknowledged completion is unchanged.
++    fn commit_pixels(&mut self, end: usize) -> Result<bool> {
++        self.cancel.check()?;
+         self.pixel = end;
+-        self.cancel.check()?;
+-        Ok(end == count)
++        Ok(end == self.width * self.height)
+     }
+     pub fn progress(&self) -> (u64, u64) {
+         (self.scanned as u64 + self.pixel as u64, (self.width * self.height * if self.options.flare.strength > 0.0 { 2 } else { 1 }) as u64)
+@@ -553,4 +559,38 @@
+         // not promise Cancelled precedence over that completeness guard.
+         assert!(task.finish().is_err(), "a cancelled incomplete image must never be returned");
+     }
+-}
++
++    #[test]
++    fn cancelled_photographic_cursor_commit_keeps_written_output_provisional() {
++        let cancel = CancelToken::default();
++        let options = Photographic { soft_focus: 0.5, ..Default::default() };
++        let rgba = vec![64, 128, 192, 255];
++        let mut state = PhotographicState::new(1, 1, rgba.clone(), vec![[0.1, 0.5, 2.0, 1.0]], options, cancel.clone(), GPU_PATH_LIMITS)
++            .unwrap();
++        let before_commit = state.progress();
++        assert_eq!(before_commit, (0, 1));
++        // Local commit-seam unit: valid bytes stand for the completed final
++        // batch, but its cursor has not been acknowledged. No scheduling race
++        // or end-to-end rendering is simulated or claimed by this fixture.
++        state.output.extend_from_slice(&rgba);
++        assert_eq!(state.output.len(), 4);
++        cancel.cancel();
++        assert_eq!(state.commit_pixels(1).unwrap_err().code, ErrorCode::Cancelled);
++        assert_eq!(state.progress(), before_commit);
++        assert!(state.finish().is_err(), "unacknowledged bytes cannot become a finished image");
++    }
++
++    #[test]
++    fn photographic_finish_after_acknowledged_completion_survives_later_cancel() {
++        let cancel = CancelToken::default();
++        let options = Photographic { soft_focus: 0.5, ..Default::default() };
++        let rgba = vec![64, 128, 192, 255];
++        let mut task = PhotographicTask::new_with_limits(
++            1, 1, rgba.clone(), vec![[0.1, 0.5, 2.0, 1.0]], options, cancel.clone(), GPU_PATH_LIMITS,
++        ).unwrap();
++        assert!(task.step(1).unwrap(), "the real step must acknowledge completion first");
++        assert_eq!(task.progress(), (1, 1));
++        cancel.cancel();
++        assert_eq!(task.finish().unwrap(), rgba, "later cancellation preserves the historical completed finish contract");
++    }
++}

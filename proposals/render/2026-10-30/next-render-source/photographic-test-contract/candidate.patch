@@ -1,0 +1,32 @@
+--- a/crates/render/src/job/photographic.rs
++++ b/crates/render/src/job/photographic.rs
+@@ -531,10 +531,26 @@
+         while !legacy.step(1).unwrap() {}
+         while !explicit.step(16).unwrap() {}
+         assert_eq!(legacy.finish().unwrap(), explicit.finish().unwrap());
++        // A pre-cancelled request is independently valid: matching 3x2 opaque
++        // buffers, finite samples and an active in-range effect. Cancellation
++        // is the constructor's refusal, not invalid fixture data.
++        let pre_cancelled = CancelToken::default();
++        pre_cancelled.cancel();
++        assert_eq!(
++            PhotographicTask::new_with_limits(3, 2, rgba.clone(), linear.clone(), options, pre_cancelled, GPU_PATH_LIMITS)
++                .err().unwrap().code,
++            ErrorCode::Cancelled,
++        );
+         let cancel = CancelToken::default();
+         let mut task = PhotographicTask::new_with_limits(3, 2, rgba, linear, options, cancel.clone(), GPU_PATH_LIMITS).unwrap();
++        assert!(!task.step(1).unwrap());
++        let before_cancel = task.progress();
++        assert!(before_cancel.0 > 0 && before_cancel.0 < before_cancel.1, "cancel real in-flight work");
+         cancel.cancel();
+         assert_eq!(task.step(1).unwrap_err().code, ErrorCode::Cancelled);
+-        assert_eq!(task.finish().err().unwrap().code, ErrorCode::Cancelled);
+-    }
+-}
++        assert_eq!(task.progress(), before_cancel, "cancelled work must not advance");
++        // The historical finish contract rejects an incomplete image; it does
++        // not promise Cancelled precedence over that completeness guard.
++        assert!(task.finish().is_err(), "a cancelled incomplete image must never be returned");
++    }
++}

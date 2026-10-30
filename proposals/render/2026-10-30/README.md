@@ -64,3 +64,8 @@ The original 516-case core result remains bound to its exact unchanged core sour
 ## Protected CPU progressive-feedback source
 
 [Complete27-file source checkpoint](protected-combined-source/README.md), including31 new unrun producer/host regressions and the protected receiver over the previous reviewed A2 foundation. Exact text composition only: unapplied, unformatted, uncompiled and unrun; cross-module review pending. Manual-final streaming, general/progressive glass, library routing, finishing and native long-scene cadence/quality remain open. This cumulative patch is an alternative to overlapping earlier increments, never an extra layer on top of them.
+
+<!-- next-render-source-20261030-v1 -->
+## Next Render source packets
+
+[Source-only continuation](next-render-source/README.md) preserves progressive certified optics, the exact-index straight-path correction and original camera-TIR tests; explicit CPU material routing and its progressive/caption deltas; manual-final feedback V1 plus mandatory V2 corrections; the receiver-bound Raster perspective fix; and separate Photographic test-contract/cursor-commit corrections. Before/candidate hashes and dependencies distinguish cumulative alternatives from incremental deltas. All new packets remain unapplied, unformatted, uncompiled and unrun. Actual C14 is separately36PASS/1FAIL/108unrun after a successful three-library build and original Pause regression; it is not full CI or current-source native/GPU acceptance.

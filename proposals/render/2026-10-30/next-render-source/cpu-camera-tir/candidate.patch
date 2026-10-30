@@ -1,0 +1,203 @@
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -1990,3 +1990,200 @@
+     }
+     panic!("interior progressive camera not refused");
+ }
++
++// Original camera-to-final TIR supplement, AFTER frozen progressive optics.
++// WRITTEN NOT COMPILED/RUN. Observations below never mutate the renderer.
++fn camera_tir_source(samples: Option<u32>, seed: u32, intensity: f64) -> (ProductScene, ImageRequest, RaytraceOptions) {
++    let mut body = dielectric::tests::box_body(2.0);
++    for point in &mut std::sync::Arc::make_mut(&mut body.mesh).positions {
++        point.x = if point.x < 0.0 { 0.0 } else { 1.0 };
++    }
++    let options = RaytraceOptions {
++        progressive: samples.map(|samples_per_pixel| job::CpuProgressiveOptions { samples_per_pixel, seed }),
++        dielectrics: vec![dielectric::tests::input(job::DielectricBoundary::ClosedBox)],
++        environment: Some(job::RaytraceEnvironmentOptions {color:[1.0;3],intensity}),
++        lights: Some(Vec::new()), shadows:false,
++        ..Default::default()
++    };
++    let mut request = dielectric::tests::request(options.clone());
++    request.camera = crate::Camera {
++        target:Vec3::new(0.9,0.37,2.0), yaw:std::f64::consts::FRAC_PI_2,
++        pitch:0.8_f64.asin(), roll:0.0, distance:10.0, fov:1e-6,
++        ..Default::default()
++    };
++    (dielectric::tests::scene(body),request,options)
++}
++
++#[derive(Clone,Default)]
++struct CameraTirEvidence {
++    started:bool,
++    first_entry:Option<(Vec3,Vec3,u16)>,
++    tir:bool,
++    transmitted_escape:bool,
++    truncated_top_hit:bool,
++    finite_scalar:f64,
++    physical_tail_bound:f64,
++}
++
++/// Independent public-equation oracle, conditional on the REAL camera direction.
++/// No dielectric::interface/attenuation/thin_sheet call or renderer state mutation.
++fn camera_tir_oracle(ray:Ray) -> (f64,f64) {
++    let d=ray.direction();
++    assert!((d.x-0.6).abs()<2e-6 && (d.z+0.8).abs()<2e-6 && d.y.abs()<2e-6);
++    let enter=ray.origin()+d*((2.0-ray.origin().z)/d.z);
++    assert!((enter.x-0.9).abs()<2e-5 && (enter.y-0.37).abs()<2e-5);
++    let cosine=-d.z;
++    let tx=d.x/1.5;
++    let ct=(1.0-(1.0-cosine*cosine)/2.25).sqrt();
++    assert!(2.25*(1.0-tx*tx)>1.0, "glass-to-air SIDE incidence is beyond critical");
++    // All possible jittered rays in this narrow public-camera cone retain one
++    // lateral TIR per horizontal crossing, with three escapes before depth8.
++    let q=2.0*tx/ct;
++    assert!((1.0..2.0).contains(&(enter.x+q)));
++    let bottom1=2.0-enter.x-q;
++    assert!((-1.0..0.0).contains(&(bottom1-q)));
++    let top2=q-bottom1;
++    assert!((1.0..2.0).contains(&(top2+q)));
++    let bottom3=2.0-top2-q;
++    assert!((-1.0..0.0).contains(&(bottom3-q)));
++    // s/p Fresnel *power* from first principles, then the declared scalar
++    // unpolarized model's three-term geometric return series. Eta² cancels on
++    // each complete air/glass/air escape. Lossless unit exterior radiance has
++    // infinite-depth physical answer1; finite omission <=max(Rs,Rp)^3.
++    let rs=((cosine-1.5*ct)/(cosine+1.5*ct)).powi(2);
++    let rp=((1.5*cosine-ct)/(1.5*cosine+ct)).powi(2);
++    let f=(rs+rp)*0.5;
++    let finite=f+(1.0-f).powi(2)*(1.0+f+f*f);
++    assert!((finite-(1.0-(1.0-f)*f.powi(3))).abs()<16.0*f64::EPSILON);
++    (finite,rs.max(rp).powi(3))
++}
++
++fn complete_camera_tir(scene:ProductScene,request:ImageRequest,options:RaytraceOptions) -> Vec<u8> {
++    assert_eq!(MAX_BOUNDARIES,8,"this oracle is derived for the actual eight-event model");
++    let count=options.progressive.map_or(1,|p|p.samples_per_pixel) as usize;
++    let intensity=options.environment.unwrap().intensity;
++    let progressive=options.progressive.is_some();
++    let mut evidence=vec![CameraTirEvidence::default();count];
++    let mut final_linear=None;
++    let mut checkpoints=0;
++    let mut task=ImageTask::new(scene,request,CancelToken::default(),options).unwrap();
++    // Deliberately use the public task poll to completion. The only writes to
++    // task state are its own API calls, never injected rays/paths/media/cursors.
++    for _ in 0..2_000_000 {
++        if let Some(p)=&task.progressive
++            && p.film.ready() && p.film.samples() as usize==count
++        {
++            let (rgb,covered,samples)=p.film.pixel(0).unwrap();
++            assert_eq!((covered as usize,samples as usize),(count,count));
++            final_linear=Some(rgb);
++        }
++        let poll=if progressive {
++            task.step_with_previews(1).unwrap()
++        } else {
++            match task.step(1).unwrap() {
++                TaskPoll::Pending(p)=>ImagePoll::Pending(p),
++                TaskPoll::Complete(png)=>ImagePoll::Complete(png),
++            }
++        };
++        if let Some(state)=task.optical.first().and_then(|o|o.pending.as_ref()) {
++            let ordinal=state.camera_sample.map_or(0,|identity| {
++                assert_eq!(identity.0,0);
++                identity.1 as usize
++            });
++            let seen=&mut evidence[ordinal];
++            assert!(state.path.boundaries<=8);
++            if !seen.started {
++                assert_eq!(state.path.boundaries,0);
++                let (finite,tail)=camera_tir_oracle(state.path.ray);
++                seen.finite_scalar=finite;
++                seen.physical_tail_bound=tail;
++                seen.started=true;
++            }
++            if state.path.boundaries==1 && state.path.medium==Some(0) && seen.first_entry.is_none() {
++                let d=state.path.ray.direction();
++                assert!((d.x-0.4).abs()<2e-6 && (d.z+(0.84_f64).sqrt()).abs()<2e-6);
++                assert!((state.path.segment_start.z-2.0).abs()<1e-12);
++                seen.first_entry=Some((d,state.path.throughput,state.paths));
++            }
++            if state.path.boundaries==2 && state.path.medium==Some(0) {
++                let (before,throughput,paths)=seen.first_entry.unwrap();
++                let after=state.path.ray.direction();
++                assert!((state.path.segment_start.x-1.0).abs()<1e-12,"real ray hit lateral face");
++                assert!(2.25*(1.0-before.x*before.x)>1.0);
++                assert!((after-Vec3::new(-before.x,before.y,before.z)).len()<1e-12);
++                assert!((state.path.throughput-throughput).len()<1e-12,"TIR retains all current branch power");
++                assert_eq!(state.paths,paths+1,"only reflected path was created at TIR");
++                // The primary reflection is still waiting; TIR itself leaves no
++                // transmitted child in addition to this resumed internal path.
++                assert_eq!(state.stack_len,1);
++                seen.tir=true;
++            }
++            if state.path.boundaries==3 && state.path.medium.is_none() {
++                assert!(seen.tir);
++                assert!(state.path.segment_start.z.abs()<1e-12,"TIR branch really escaped through bottom");
++                assert!(state.path.ray.direction().z<0.0 && state.path.ray.direction().x<0.0);
++                seen.transmitted_escape=true;
++            }
++            if state.path.boundaries==8 && state.path.medium==Some(0)
++                && let Some(hit)=task.pending.as_ref().and_then(|p|p.hit)
++            {
++                let vertices=task.looks[hit.primitive_index].vertices;
++                if vertices.iter().all(|v|v.z==2.0) {
++                    seen.truncated_top_hit=true;
++                }
++            }
++        }
++        match poll {
++            ImagePoll::Pending(_)=>{},
++            ImagePoll::Preview { .. }=>{
++                assert!(task.optical.first().unwrap().pending.is_none());
++                checkpoints+=1;
++            },
++            ImagePoll::Complete(png)=>{
++                assert!(evidence.iter().all(|s|s.started && s.tir && s.transmitted_escape && s.truncated_top_hit));
++                if progressive {
++                    assert!(checkpoints>0);
++                    let expected=intensity*evidence.iter().map(|s|s.finite_scalar).sum::<f64>()/count as f64;
++                    let omitted_bound=intensity*evidence.iter().map(|s|s.physical_tail_bound).sum::<f64>()/count as f64;
++                    // Preselected absolute roundoff allowance, independent of
++                    // product output. This is no numerical-certification claim.
++                    let roundoff=4096.0*f64::EPSILON;
++                    for actual in final_linear.unwrap() {
++                        assert!((actual-expected).abs()<=roundoff,"independent finite scalar Fresnel series");
++                        assert!(actual<=intensity+roundoff);
++                        assert!(actual>=intensity-omitted_bound-roundoff,"physical lossless energy with explicit finite-depth omission bound");
++                    }
++                    if intensity==1.0 {
++                        assert!(expected<1.0,"eight-event truncation is NOT perfect conservation");
++                        assert!(omitted_bound>1e-5 && omitted_bound<1e-3);
++                    }
++                }
++                let image=::image::load_from_memory(&png).unwrap().to_rgba8();
++                let expected=if intensity==0.0 {[0,0,0,255]} else {[188,188,188,255]};
++                assert_eq!(image.get_pixel(0,0).0,expected,"black/white secondary environment controls, covered pixel");
++                return png;
++            }
++        }
++    }
++    panic!("public-camera TIR fixture failed to produce complete image");
++}
++
++#[test]
++fn camera_originated_tir_survives_fixed_render_to_final_png_with_environment_controls() {
++    let mut outputs=Vec::new();
++    for intensity in [0.0,1.0] {
++        let (scene,request,options)=camera_tir_source(None,0,intensity);
++        outputs.push(complete_camera_tir(scene,request,options));
++    }
++    assert_ne!(outputs[0],outputs[1]);
++}
++
++#[test]
++fn camera_originated_tir_progressive_final_obeys_physical_energy_and_explicit_depth_tail() {
++    for seed in [0,97] {
++        for intensity in [0.0,1.0] {
++            let (scene,request,options)=camera_tir_source(Some(5),seed,intensity);
++            let _=complete_camera_tir(scene,request,options);
++        }
++    }
++}

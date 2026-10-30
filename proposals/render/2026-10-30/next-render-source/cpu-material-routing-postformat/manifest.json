@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "id": "cpu-material-routing-postformat",
+  "authorship": "Worker #3, SolidCraft Render team",
+  "original_source_packet_index_sha256": "21f2122f40e8d1d8d984bb8e5cb32d7588baba28fce50e3ee48829174be67c09",
+  "base": "Actual C14 post-format source manifest78a09f83c809f11e919c5d6957438389f442d42b05694aebcd39fcdb1786010d; original224 UI declarations preserved byte-for-byte.",
+  "dependencies": [],
+  "source_files": [
+    {
+      "path": "crates/ui-egui/src/render_workspace_materials.rs",
+      "before_sha256": "fec97d2e2ae25068b8024e432457fa6496d659e22a1beb3b312f25eacea5c138",
+      "candidate_sha256": "148a44dd7cac8b75d744b7d6e5ba841a4515acdae72e360c7e6354de1f8d8da2",
+      "before_bytes": 42669,
+      "candidate_bytes": 49152
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_cpu.rs",
+      "before_sha256": "a1534b73a972fffbfad50b831a00e3166c3d668ae7fb978b1286a3f390f4ade8",
+      "candidate_sha256": "000f776d03454fb0cacdcdea6c5ed15ccbe8203dbb273a1f2ab3123c763221c3",
+      "before_bytes": 27471,
+      "candidate_bytes": 27900
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before_sha256": "06e0e59b561b84f358a12961d51eda2cab7f70fe4930fea0959d91c11b589cac",
+      "candidate_sha256": "bbeb9ecb8cfd677362f21cb21c589a052e09b8f1315efb682eb895a95a1cfc52",
+      "before_bytes": 478983,
+      "candidate_bytes": 516045
+    },
+    {
+      "path": "assets/locales/pending/cpu-optical-materials.json",
+      "before_sha256": null,
+      "candidate_sha256": "f1f3792afd9f98e186d53d0c3a96fabaf006fe791d1c99bfa4104128c369e436",
+      "before_bytes": 0,
+      "candidate_bytes": 14343
+    }
+  ],
+  "patch_sha256": "9400334b350ae17e48257659dd4a258ca8324d67cdbd7350eb0306fcbe496367",
+  "patch_parts": [
+    {
+      "path": "candidate.patch",
+      "bytes": 65966,
+      "sha256": "9400334b350ae17e48257659dd4a258ca8324d67cdbd7350eb0306fcbe496367"
+    }
+  ],
+  "new_test_declarations": 23,
+  "product_tests_executed_on_this_packet": 0,
+  "source_review": "Corrected V2 and post-format rebind have independent source review f9a5ce2546721e5dfa5dc9713de2785867be37522b48f94de446631b372f1abf. Its caption finding is corrected by the later certification-note packet.",
+  "limitations": [
+    "ALTERNATIVE to the earlier pre-format corrected V2 material patch plus prefix-only rebind; never apply both cumulative forms.",
+    "The new appended test module still needs additive Value/StandardView imports in the separately owned UI append; these are source findings, not observed compiler errors.",
+    "Three new fixed-only negative assertions become obsolete only after both the progressive producer and progressive UI bridge are composed; their explicit adaptation is pending."
+  ],
+  "patch_line_ending_policy": "Strict byte replay; original patch bytes preserved.",
+  "CRLF_line_ending_adapter_paths": []
+}

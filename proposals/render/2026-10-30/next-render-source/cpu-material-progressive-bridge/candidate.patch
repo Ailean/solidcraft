@@ -1,0 +1,181 @@
+diff --git a/crates/ui-egui/src/render_workspace_materials.rs b/crates/ui-egui/src/render_workspace_materials.rs
+--- a/crates/ui-egui/src/render_workspace_materials.rs
++++ b/crates/ui-egui/src/render_workspace_materials.rs
+@@ -219,6 +219,9 @@
+         return Ok(());
+     }
+     if app.render_workspace.view.method == super::ImageMethod::CpuRaytrace {
++        if !cpu_optics_active(app) {
++            return Err(app.tr("render.cpu_optics_explicit").into());
++        }
+         return cpu_params(app, params);
+     }
+     if app.render_workspace.view.method != super::ImageMethod::GpuRaytrace {
+@@ -336,9 +339,6 @@
+     let mut options: RaytraceOptions = serde_json::from_value(
+         params.get("raytrace").cloned().ok_or_else(|| app.tr("render.cpu_optics_request").to_string())?,
+     ).map_err(|error| error.to_string())?;
+-    if options.progressive.is_some() {
+-        return Err(app.tr("render.cpu_optics_fixed").into());
+-    }
+     if !options.dielectrics.is_empty() {
+         return Err(app.tr("render.cpu_optics_conflict").into());
+     }
+@@ -392,6 +392,9 @@
+         });
+     }
+     options.dielectrics = dielectrics;
++    // The composed typed request, not the editor's sampling label, decides
++    // sampling compatibility. Progressive optics requires the separately
++    // reviewed producer; geometry and installed capability still need admission.
+     options.validate().map_err(|error| error.to_string())?;
+     // Commit only the fully validated composition. Capture/admission still owns
+     // opacity, triangle certification, nesting and all resource/capability gates.
+diff --git a/crates/ui-egui/src/render_workspace_cpu.rs b/crates/ui-egui/src/render_workspace_cpu.rs
+--- a/crates/ui-egui/src/render_workspace_cpu.rs
++++ b/crates/ui-egui/src/render_workspace_cpu.rs
+@@ -323,11 +323,10 @@
+ /// Interactive-only wire lowering. This does not requalify final Check/Start,
+ /// change a stored binding or read an HDR file; the engine still captures and admits it.
+ pub(super) fn params_interactive(app: &SolveApp, params: &mut Value) -> Result<(), String> {
+-    // The editor can be in Fixed mode when Interactive asks for its own
+-    // progressive request. Never strip physical optics during that conversion.
+-    if super::materials::cpu_optics_active(app) {
+-        return Err(app.tr("render.cpu_optics_fixed").into());
+-    }
++    // runtime_image_request composes the explicit material DTO immediately
++    // after these numerical controls, exactly once. The engine then converts
++    // the separate Interactive request to progressive sampling and admits its
++    // complete optics; a Fixed editor never licenses dropping that intent.
+     // Refuse unproved bound worlds before shared lowering checks visibility via
+     // target()/world_state(). Empty reflections never require a warm world.
+     if app
+diff --git a/assets/locales/pending/cpu-optical-materials.json b/assets/locales/pending/cpu-optical-materials.json
+--- a/assets/locales/pending/cpu-optical-materials.json
++++ b/assets/locales/pending/cpu-optical-materials.json
+@@ -2,10 +2,10 @@
+   "en": {
+     "render.cpu_optics_boundary": "CPU requires an explicit Thin sheet or Box boundary. The captured geometry must pass certification.",
+     "render.cpu_optics_conflict": "CPU optical assignments cannot replace existing dielectric overrides.",
+-    "render.cpu_optics_enable": "Use these optics on CPU (fixed sampling)",
++    "render.cpu_optics_enable": "Use these optics on CPU",
+     "render.cpu_optics_explicit": "Review this assignment and explicitly enable its CPU optical route.",
+-    "render.cpu_optics_fixed": "These CPU optics require fixed sampling. Progressive and Interactive glass are not supported by this route.",
+-    "render.cpu_optics_help": "Temporary CPU optics: fixed sampling, opaque body and face appearances, certified sheets or axis-aligned boxes. Transmitted shadows, subsurface, coats and maps are unsupported. Box nesting needs explicit opt-in and certification.",
++    "render.cpu_optics_fixed": "The installed CPU transport cannot admit this optical sampling request.",
++    "render.cpu_optics_help": "Temporary CPU optics: fixed or progressive sampling, opaque body and face appearances, certified sheets or axis-aligned boxes. Transmitted shadows, subsurface, coats and maps are unsupported. Box nesting needs explicit opt-in and certification. Accumulation retains the finite-depth transport limits.",
+     "render.cpu_optics_limit": "CPU supports at most eight optical body assignments.",
+     "render.cpu_optics_request": "CPU optics require the typed CPU image request and its existing options.",
+     "render.cpu_optics_saved": "Saved GPU optics cannot be mixed with temporary CPU optical assignments.",
+@@ -14,10 +14,10 @@
+   "es": {
+     "render.cpu_optics_boundary": "CPU requiere elegir explícitamente Lámina fina o Caja. La geometría capturada debe superar la certificación.",
+     "render.cpu_optics_conflict": "Las asignaciones ópticas CPU no pueden sustituir las modificaciones dieléctricas existentes.",
+-    "render.cpu_optics_enable": "Usar esta óptica en CPU (muestreo fijo)",
++    "render.cpu_optics_enable": "Usar esta óptica en CPU",
+     "render.cpu_optics_explicit": "Revisa esta asignación y activa explícitamente su ruta óptica CPU.",
+-    "render.cpu_optics_fixed": "Esta óptica CPU requiere muestreo fijo. Esta ruta no admite vidrio progresivo ni interactivo.",
+-    "render.cpu_optics_help": "Óptica CPU temporal: muestreo fijo, aspectos opacos de cuerpo y caras, láminas o cajas alineadas con los ejes certificadas. No admite sombras transmitidas, dispersión subsuperficial, capas ni mapas. Las cajas anidadas requieren activación explícita y certificación.",
++    "render.cpu_optics_fixed": "El transporte CPU instalado no puede admitir esta solicitud de muestreo óptico.",
++    "render.cpu_optics_help": "Óptica CPU temporal: muestreo fijo o progresivo, aspectos opacos de cuerpo y caras, láminas o cajas alineadas con los ejes certificadas. No admite sombras transmitidas, dispersión subsuperficial, capas ni mapas. Las cajas anidadas requieren activación explícita y certificación. La acumulación conserva los límites de profundidad del transporte.",
+     "render.cpu_optics_limit": "CPU admite como máximo ocho asignaciones ópticas de cuerpo.",
+     "render.cpu_optics_request": "La óptica CPU requiere la solicitud de imagen CPU tipada y sus opciones existentes.",
+     "render.cpu_optics_saved": "La óptica GPU guardada no se puede mezclar con asignaciones ópticas CPU temporales.",
+@@ -26,10 +26,10 @@
+   "de": {
+     "render.cpu_optics_boundary": "CPU erfordert die ausdrückliche Wahl von Dünner Scheibe oder Quader. Die erfasste Geometrie muss zertifiziert werden.",
+     "render.cpu_optics_conflict": "Optische CPU-Zuweisungen können vorhandene dielektrische Überschreibungen nicht ersetzen.",
+-    "render.cpu_optics_enable": "Diese Optik auf der CPU verwenden (feste Abtastung)",
++    "render.cpu_optics_enable": "Diese Optik auf der CPU verwenden",
+     "render.cpu_optics_explicit": "Prüfen Sie diese Zuweisung und aktivieren Sie ihren optischen CPU-Pfad ausdrücklich.",
+-    "render.cpu_optics_fixed": "Diese CPU-Optik erfordert feste Abtastung. Dieser Pfad unterstützt kein progressives oder interaktives Glas.",
+-    "render.cpu_optics_help": "Temporäre CPU-Optik: feste Abtastung, opake Körper- und Flächenerscheinungen, zertifizierte Scheiben oder achsenparallele Quader. Durchgelassene Schatten, Subsurface-Streuung, Beschichtungen und Maps werden nicht unterstützt. Verschachtelte Quader erfordern ausdrückliche Aktivierung und Zertifizierung.",
++    "render.cpu_optics_fixed": "Der installierte CPU-Transport kann diese optische Abtastanforderung nicht zulassen.",
++    "render.cpu_optics_help": "Temporäre CPU-Optik: feste oder progressive Abtastung, opake Körper- und Flächenerscheinungen, zertifizierte Scheiben oder achsenparallele Quader. Durchgelassene Schatten, Subsurface-Streuung, Beschichtungen und Maps werden nicht unterstützt. Verschachtelte Quader erfordern ausdrückliche Aktivierung und Zertifizierung. Die Akkumulation behält die endliche Transporttiefe bei.",
+     "render.cpu_optics_limit": "CPU unterstützt höchstens acht optische Körperzuweisungen.",
+     "render.cpu_optics_request": "CPU-Optik erfordert die typisierte CPU-Bildanforderung und deren vorhandene Optionen.",
+     "render.cpu_optics_saved": "Gespeicherte GPU-Optik kann nicht mit temporären optischen CPU-Zuweisungen kombiniert werden.",
+@@ -38,10 +38,10 @@
+   "ko": {
+     "render.cpu_optics_boundary": "CPU에서는 얇은 판 또는 상자 경계를 명시적으로 선택해야 합니다. 캡처한 형상은 인증을 통과해야 합니다.",
+     "render.cpu_optics_conflict": "CPU 광학 할당은 기존 유전체 재정의를 대체할 수 없습니다.",
+-    "render.cpu_optics_enable": "이 광학 설정을 CPU에서 사용(고정 샘플링)",
++    "render.cpu_optics_enable": "이 광학 설정을 CPU에서 사용",
+     "render.cpu_optics_explicit": "이 할당을 검토하고 CPU 광학 경로를 명시적으로 활성화하세요.",
+-    "render.cpu_optics_fixed": "이 CPU 광학 설정에는 고정 샘플링이 필요합니다. 이 경로는 점진적 또는 대화형 유리를 지원하지 않습니다.",
+-    "render.cpu_optics_help": "임시 CPU 광학: 고정 샘플링, 불투명한 바디와 면 외관, 인증된 판 또는 축 정렬 상자. 투과 그림자, 표면하 산란, 코팅 및 맵은 지원하지 않습니다. 중첩 상자는 명시적 활성화와 인증이 필요합니다.",
++    "render.cpu_optics_fixed": "설치된 CPU 전송 모델은 이 광학 샘플링 요청을 허용할 수 없습니다.",
++    "render.cpu_optics_help": "임시 CPU 광학: 고정 또는 점진적 샘플링, 불투명한 바디와 면 외관, 인증된 판 또는 축 정렬 상자. 투과 그림자, 표면하 산란, 코팅 및 맵은 지원하지 않습니다. 중첩 상자는 명시적 활성화와 인증이 필요합니다. 누적해도 전송의 유한 깊이 제한은 유지됩니다.",
+     "render.cpu_optics_limit": "CPU는 최대 8개의 광학 바디 할당을 지원합니다.",
+     "render.cpu_optics_request": "CPU 광학에는 형식화된 CPU 이미지 요청과 기존 옵션이 필요합니다.",
+     "render.cpu_optics_saved": "저장된 GPU 광학을 임시 CPU 광학 할당과 혼합할 수 없습니다.",
+@@ -50,10 +50,10 @@
+   "ar": {
+     "render.cpu_optics_boundary": "يتطلب CPU اختيار حد صفيحة رقيقة أو صندوق صراحةً. يجب أن تجتاز الهندسة الملتقطة التحقق.",
+     "render.cpu_optics_conflict": "لا يمكن لتعيينات البصريات على CPU استبدال تجاوزات العوازل الموجودة.",
+-    "render.cpu_optics_enable": "استخدام هذه البصريات على CPU (أخذ عينات ثابت)",
++    "render.cpu_optics_enable": "استخدام هذه البصريات على CPU",
+     "render.cpu_optics_explicit": "راجع هذا التعيين وفعّل مساره البصري على CPU صراحةً.",
+-    "render.cpu_optics_fixed": "تتطلب هذه البصريات على CPU أخذ عينات ثابتًا. لا يدعم هذا المسار الزجاج التدريجي أو التفاعلي.",
+-    "render.cpu_optics_help": "بصريات CPU مؤقتة: أخذ عينات ثابت، ومظاهر معتمة للجسم والأوجه، وصفائح أو صناديق محاذية للمحاور اجتازت التحقق. الظلال النافذة والتشتت تحت السطحي والطلاءات والخرائط غير مدعومة. تتطلب الصناديق المتداخلة تفعيلًا صريحًا والتحقق.",
++    "render.cpu_optics_fixed": "لا يمكن لنموذج النقل المثبت على CPU قبول طلب أخذ العينات البصري هذا.",
++    "render.cpu_optics_help": "بصريات CPU مؤقتة: أخذ عينات ثابت أو تدريجي، ومظاهر معتمة للجسم والأوجه، وصفائح أو صناديق محاذية للمحاور اجتازت التحقق. الظلال النافذة والتشتت تحت السطحي والطلاءات والخرائط غير مدعومة. تتطلب الصناديق المتداخلة تفعيلًا صريحًا والتحقق. يبقى عمق النقل محدودًا حتى مع التراكم.",
+     "render.cpu_optics_limit": "يدعم CPU ثمانية تعيينات بصرية للأجسام كحد أقصى.",
+     "render.cpu_optics_request": "تتطلب بصريات CPU طلب صورة CPU محدد النوع وخياراته الموجودة.",
+     "render.cpu_optics_saved": "لا يمكن خلط بصريات GPU المحفوظة مع تعيينات بصريات CPU المؤقتة.",
+@@ -62,10 +62,10 @@
+   "he": {
+     "render.cpu_optics_boundary": "CPU דורש בחירה מפורשת בגבול יריעה דקה או תיבה. הגאומטריה שנלכדה חייבת לעבור אימות.",
+     "render.cpu_optics_conflict": "הקצאות אופטיות של CPU אינן יכולות להחליף דריסות דיאלקטריות קיימות.",
+-    "render.cpu_optics_enable": "שימוש באופטיקה זו ב-CPU (דגימה קבועה)",
++    "render.cpu_optics_enable": "שימוש באופטיקה זו ב-CPU",
+     "render.cpu_optics_explicit": "יש לבדוק הקצאה זו ולהפעיל במפורש את הנתיב האופטי שלה ב-CPU.",
+-    "render.cpu_optics_fixed": "אופטיקה זו ב-CPU דורשת דגימה קבועה. נתיב זה אינו תומך בזכוכית הדרגתית או אינטראקטיבית.",
+-    "render.cpu_optics_help": "אופטיקה זמנית ב-CPU: דגימה קבועה, מראה אטום של הגוף והפאות, יריעות או תיבות מיושרות לצירים שעברו אימות. צללים מועברים, פיזור תת-משטחי, ציפויים ומפות אינם נתמכים. תיבות מקוננות דורשות הפעלה מפורשת ואימות.",
++    "render.cpu_optics_fixed": "מודל התעבורה המותקן ב-CPU אינו יכול לאשר בקשת דגימה אופטית זו.",
++    "render.cpu_optics_help": "אופטיקה זמנית ב-CPU: דגימה קבועה או הדרגתית, מראה אטום של הגוף והפאות, יריעות או תיבות מיושרות לצירים שעברו אימות. צללים מועברים, פיזור תת-משטחי, ציפויים ומפות אינם נתמכים. תיבות מקוננות דורשות הפעלה מפורשת ואימות. הצבירה שומרת על מגבלת עומק התעבורה הסופית.",
+     "render.cpu_optics_limit": "CPU תומך בעד שמונה הקצאות אופטיות לגופים.",
+     "render.cpu_optics_request": "אופטיקת CPU דורשת בקשת תמונת CPU מטיפוס מוגדר ואת האפשרויות הקיימות שלה.",
+     "render.cpu_optics_saved": "לא ניתן לערבב אופטיקת GPU שמורה עם הקצאות אופטיות זמניות של CPU.",
+@@ -74,10 +74,10 @@
+   "ja": {
+     "render.cpu_optics_boundary": "CPU では薄板またはボックス境界を明示的に選択する必要があります。取得した形状は認証に合格する必要があります。",
+     "render.cpu_optics_conflict": "CPU の光学割り当てで既存の誘電体オーバーライドを置き換えることはできません。",
+-    "render.cpu_optics_enable": "この光学設定を CPU で使用（固定サンプリング）",
++    "render.cpu_optics_enable": "この光学設定を CPU で使用",
+     "render.cpu_optics_explicit": "この割り当てを確認し、CPU 光学経路を明示的に有効にしてください。",
+-    "render.cpu_optics_fixed": "この CPU 光学設定には固定サンプリングが必要です。この経路はプログレッシブまたはインタラクティブなガラスに対応していません。",
+-    "render.cpu_optics_help": "一時的な CPU 光学設定：固定サンプリング、不透明なボディと面の外観、認証済みの薄板または軸に平行なボックス。透過シャドウ、表面下散乱、コート、マップは非対応です。入れ子のボックスには明示的な有効化と認証が必要です。",
++    "render.cpu_optics_fixed": "インストール済みの CPU 光輸送では、この光学サンプリング要求を受け付けられません。",
++    "render.cpu_optics_help": "一時的な CPU 光学設定：固定またはプログレッシブサンプリング、不透明なボディと面の外観、認証済みの薄板または軸に平行なボックス。透過シャドウ、表面下散乱、コート、マップは非対応です。入れ子のボックスには明示的な有効化と認証が必要です。累積しても光輸送の有限深度制限は残ります。",
+     "render.cpu_optics_limit": "CPU はボディへの光学割り当てを最大 8 個までサポートします。",
+     "render.cpu_optics_request": "CPU 光学設定には型付きの CPU 画像リクエストと既存のオプションが必要です。",
+     "render.cpu_optics_saved": "保存済み GPU 光学設定と一時的な CPU 光学割り当ては混在できません。",
+@@ -86,10 +86,10 @@
+   "vi": {
+     "render.cpu_optics_boundary": "CPU yêu cầu chọn rõ ràng biên Tấm mỏng hoặc Hộp. Hình học đã chụp phải vượt qua kiểm chứng.",
+     "render.cpu_optics_conflict": "Các gán quang học CPU không thể thay thế các ghi đè điện môi hiện có.",
+-    "render.cpu_optics_enable": "Dùng quang học này trên CPU (lấy mẫu cố định)",
++    "render.cpu_optics_enable": "Dùng quang học này trên CPU",
+     "render.cpu_optics_explicit": "Hãy xem lại phép gán này và bật rõ ràng tuyến quang học CPU của nó.",
+-    "render.cpu_optics_fixed": "Quang học CPU này yêu cầu lấy mẫu cố định. Tuyến này không hỗ trợ kính lũy tiến hoặc tương tác.",
+-    "render.cpu_optics_help": "Quang học CPU tạm thời: lấy mẫu cố định, diện mạo thân và mặt đục, tấm hoặc hộp song song các trục đã được kiểm chứng. Không hỗ trợ bóng truyền qua, tán xạ dưới bề mặt, lớp phủ và bản đồ. Hộp lồng nhau cần được bật rõ ràng và kiểm chứng.",
++    "render.cpu_optics_fixed": "Mô hình truyền ánh sáng CPU đã cài không thể chấp nhận yêu cầu lấy mẫu quang học này.",
++    "render.cpu_optics_help": "Quang học CPU tạm thời: lấy mẫu cố định hoặc lũy tiến, diện mạo thân và mặt đục, tấm hoặc hộp song song các trục đã được kiểm chứng. Không hỗ trợ bóng truyền qua, tán xạ dưới bề mặt, lớp phủ và bản đồ. Hộp lồng nhau cần được bật rõ ràng và kiểm chứng. Tích lũy vẫn giữ giới hạn độ sâu hữu hạn của truyền ánh sáng.",
+     "render.cpu_optics_limit": "CPU hỗ trợ tối đa tám phép gán quang học cho thân.",
+     "render.cpu_optics_request": "Quang học CPU yêu cầu yêu cầu ảnh CPU có kiểu cùng các tùy chọn hiện có.",
+     "render.cpu_optics_saved": "Không thể trộn quang học GPU đã lưu với các gán quang học CPU tạm thời.",
+@@ -98,10 +98,10 @@
+   "zh": {
+     "render.cpu_optics_boundary": "CPU 要求明确选择薄片或盒体边界。捕获的几何体必须通过认证。",
+     "render.cpu_optics_conflict": "CPU 光学分配不能替换现有的电介质覆盖设置。",
+-    "render.cpu_optics_enable": "在 CPU 上使用此光学设置（固定采样）",
++    "render.cpu_optics_enable": "在 CPU 上使用此光学设置",
+     "render.cpu_optics_explicit": "请检查此分配并明确启用其 CPU 光学路径。",
+-    "render.cpu_optics_fixed": "此 CPU 光学设置要求固定采样。此路径不支持渐进或交互式玻璃。",
+-    "render.cpu_optics_help": "临时 CPU 光学设置：固定采样、不透明的实体和面外观、通过认证的薄片或轴对齐盒体。不支持透射阴影、次表面散射、涂层或贴图。嵌套盒体需要明确启用并通过认证。",
++    "render.cpu_optics_fixed": "已安装的 CPU 光传输无法接受此光学采样请求。",
++    "render.cpu_optics_help": "临时 CPU 光学设置：固定或渐进采样、不透明的实体和面外观、通过认证的薄片或轴对齐盒体。不支持透射阴影、次表面散射、涂层或贴图。嵌套盒体需要明确启用并通过认证。累积仍保留光传输的有限深度限制。",
+     "render.cpu_optics_limit": "CPU 最多支持八个实体光学分配。",
+     "render.cpu_optics_request": "CPU 光学设置要求类型化的 CPU 图像请求及其现有选项。",
+     "render.cpu_optics_saved": "已保存的 GPU 光学设置不能与临时 CPU 光学分配混用。",

@@ -1,0 +1,185 @@
+{
+  "status": "ROOT_SOURCE_REVIEWS_CLOSED_NO_NEW_RUNTIME_QUALIFICATION",
+  "C14": {
+    "passed": 36,
+    "failed": 1,
+    "unrun": 108,
+    "own_three_library_build_finished_success": true,
+    "original_Pause_case_passed_two_CPU_true_markers": true,
+    "Clippy_wasm_fullCI_native_GPU": "UNEXECUTED"
+  },
+  "reviews": {
+    "manual_final_V2": "4d3c8f57d0ac7ef8968a0e7bbd48e89ee618dda208e8da4fbd401e150409eea9",
+    "photographic_test_and_cursor": "81d78d0010632a23dd513931ac90a3562dc1639b5f32f5ee2d1ef420c5af45ff",
+    "UI_progressive_bridge": "4cd082ad97ab220cc9dc6635d9c5467b8b82c6dc80b31f73d32aa2b231e77311",
+    "index_matched_and_camera_TIR": "4dcfd53fa691e7c092a08bae1cfb08029542135adfafe52d09331d967ba2cc12"
+  },
+  "before_source": "Adjacent protected-combined-source candidate, followed by the formatter-only delta in this directory. RAW endpoint hashes record EOL. New authored packets require their explicit dependencies/rebinds; do not apply all overlapping complete candidates blindly.",
+  "formatter_delta": {
+    "path": "c14-postformat-delta.patch",
+    "sha256": "9a6ebe80092fa5262ddb61bb40dcad7e17c98c0b05e67e61a3a9d98a6d47a1cd",
+    "EOL": "Patch hunks normalized LF; preserve or restore each endpoint line ending recorded by RAW hashes. No fuzzy/context matching or whitespace-based conflict resolution authorized.",
+    "files": [
+      {
+        "path": "crates/ui-egui/src/render_workspace_interactive.rs",
+        "before_sha256": "743f8e03d422e22450c690e572d6a4bee6247419bae72547c829dabf9df045b5",
+        "candidate_sha256": "ca191e803c2c9dceb96e85668b5c77d31f24475e5048f573e2ca5ed75059e813",
+        "before_CRLF": 1089,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/engine/src/cmd/render/jobs.rs",
+        "before_sha256": "81dea315e28b07e57b1fc6563f4875611095666eba52616ee530a63b4fc50f52",
+        "candidate_sha256": "1e38222a2b825264e3cab0308fc73141b2fb4546c06600fe370e7da4dddffbb3",
+        "before_CRLF": 0,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/film_primary.rs",
+        "before_sha256": "e7cca9354ae514004f5fe5a2c9fd47d7def45c37147f8dbb08871d99e9612145",
+        "candidate_sha256": "2c8b7cf8b1d6aff1d58f4137b05973467b23072c2caff9467256606058fb8f88",
+        "before_CRLF": 186,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/film_tests.rs",
+        "before_sha256": "c5506561bf59c76e9952bb0660f09d12fa5a4777d00332b7f1e6fba13046e752",
+        "candidate_sha256": "3fc4f5251f04f63a2a43a1f141fdccd3f66c50d3d8d42eff77754d21c4bdb2b7",
+        "before_CRLF": 441,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/job/bloom.rs",
+        "before_sha256": "fa14ded73c398d5f4663995918d1af8065222098ce3fe809b7e153cd0ecc3d5e",
+        "candidate_sha256": "583990e5860834767b2506e917343392faded2457ce21710150d4229f0dcecbb",
+        "before_CRLF": 298,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/job/host.rs",
+        "before_sha256": "58a0125a986232dfe683c1541bc9b7da854ffb231e34a29d94c7ccd4c41965e8",
+        "candidate_sha256": "617532ab0cbe34a2a6faed82675ca45cf0324aecec3f3c5a8a77c1b69fefef21",
+        "before_CRLF": 2369,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/job/host_tests.rs",
+        "before_sha256": "cad9e3abe289937cfcd6d9b3f6e11f5ae4bbc652c39ecab0b8d39bdf80e238d6",
+        "candidate_sha256": "d35a649443908a80db0b061c8ab111d45271bbb941b47f48eed2aca55f6f4f14",
+        "before_CRLF": 0,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/job/linear_exr.rs",
+        "before_sha256": "b716c8f5c17423e55dc12427b938b1837b6072e8f37975e4e479b361ebf8133e",
+        "candidate_sha256": "b0655c6c873820d03497c533f158dff57fa95e498c0ab73329f0b5e894f67181",
+        "before_CRLF": 313,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/job/mod.rs",
+        "before_sha256": "6a4416a7683a5edf1735906fea49c3a8650d029390f716c05d38d5b8fd1cff58",
+        "candidate_sha256": "282667b026f548dbf3167a2a6e06d3526e71065a0826f9a2ee787c726e032b26",
+        "before_CRLF": 0,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/job/photographic.rs",
+        "before_sha256": "1e3a0d630621f423768390d7c932ad10252a030de4286480b2165a8a2369471a",
+        "candidate_sha256": "4baeb099d56c6310c85bd0931276e41a8aba5f5fbd223956dabe2c0b2c00c061",
+        "before_CRLF": 507,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/job/png.rs",
+        "before_sha256": "4f3baeffdd05aaabc38ce654c412abd6a7df158b74c8324206b60fe1be9178af",
+        "candidate_sha256": "2d8c7204b6524515b9f13e0219bde0983f67562f8f49b8b7fae6a0d9ccb470fc",
+        "before_CRLF": 139,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/job/presentation.rs",
+        "before_sha256": "33647bbb3cebd6edc89997fc2d9febd3b723df1a8c0c87f7f4b56c6b4c0f1acd",
+        "candidate_sha256": "ac25d932cc16c25fe92b2665f4533597adb2535c1aa901406c179f815ccfa7ea",
+        "before_CRLF": 209,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/job/regrade.rs",
+        "before_sha256": "7524d60753e33db5ee057a7ff5c19685752be1f6b19e883349bc94e358b286ed",
+        "candidate_sha256": "0f5e83d3d0ecbd0f0235ba6befcc2c34781a75c611ae26ab49e1f13a7c5a32d3",
+        "before_CRLF": 197,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/raytrace/dielectric.rs",
+        "before_sha256": "aadf54d50b5e284edd42516d5ec167294653779c6e2c0f9f682e504faaa56b4d",
+        "candidate_sha256": "2063f440d7a9e495e0a0398ae9bb5084379731473f80d86ffb5be95f38dad0bc",
+        "before_CRLF": 400,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/raytrace/dielectric_tests.rs",
+        "before_sha256": "c6ba6cc63d7cfa9b61d0d5770efa96b029c2f4835d03744ea7e565280a231bc2",
+        "candidate_sha256": "376e5382471300aef16a8b09ec0de756ee597197ab94f5b69ad7a020fad49b70",
+        "before_CRLF": 725,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/raytrace/image.rs",
+        "before_sha256": "ca84ce568e4cad62c78c0a860cb6be1de9ff8e03fff2910c721fad5455d43309",
+        "candidate_sha256": "b12ef2844d8fa08e5bf99f58d09402d420a05321e62bfe38fb7abbdcc970ab82",
+        "before_CRLF": 2236,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/raytrace/image_tests.rs",
+        "before_sha256": "3b4a6340a7b15bac7f37a15e092b66dc6c376ebd6ffd9bf998316ed80e13d71b",
+        "candidate_sha256": "b3a7ce98e799cdaca59674e029c93845ebb28728df3e742694e16a9b3ca63d41",
+        "before_CRLF": 1661,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/raytrace/mod.rs",
+        "before_sha256": "a07795792d098490c47e5f12f607840c6674ecdcb3088c7a645bd2a89cd3f918",
+        "candidate_sha256": "d7f8ed95a60384d1e8f896ec0637af39682778adf4546c646104ae22ab53fbb8",
+        "before_CRLF": 456,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/raytrace/primary_aa_tests.rs",
+        "before_sha256": "a7898dc04e0f3cb0881e82694753d55c22a0e6f613ceea75fa61afa3be7b6eaa",
+        "candidate_sha256": "4e74a020643d5b5e7dede2e3a2ced39023ac3f40044a207e19a66c11c921b526",
+        "before_CRLF": 0,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/raytrace/progressive.rs",
+        "before_sha256": "5dc40f1cdca6cc0041d23607d639401fdd1bce8883112a8af79396ab0ccab68f",
+        "candidate_sha256": "8ee8fd60c78d93d02ab3b15270b27491bd993d5fc4e0e36217f8653c4881993a",
+        "before_CRLF": 94,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/render/src/raytrace/tests.rs",
+        "before_sha256": "3ba9e4c5e848c275ef181779df20eeb4fe6b63c959226678c69631bd95bef8b9",
+        "candidate_sha256": "2a105d16f476821e15962c6014d3b8fa8e124447ba36a8ee1d393bb2715d8e79",
+        "before_CRLF": 414,
+        "candidate_CRLF": 0
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_tests.rs",
+        "before_sha256": "ffc2017c5a2e5fd150b37582c7a6f21a25ce74639f50cf28b3ce52e5234baef2",
+        "candidate_sha256": "06e0e59b561b84f358a12961d51eda2cab7f70fe4930fea0959d91c11b589cac",
+        "before_CRLF": 431,
+        "candidate_CRLF": 0
+      }
+    ]
+  },
+  "pending": [
+    "Exact combined source rebind",
+    "Separate UI append/import corrections and obsolete feature-negative adaptation",
+    "One serial cached build and actual current test selection",
+    "Full repository and native mouse/keyboard acceptance"
+  ]
+}

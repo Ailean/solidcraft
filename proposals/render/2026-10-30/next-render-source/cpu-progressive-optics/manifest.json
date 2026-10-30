@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "id": "cpu-progressive-optics",
+  "authorship": "Worker #2, SolidCraft Render team",
+  "original_source_packet_index_sha256": "eb2666aafd71b2979a832f2568dc1da8514f321011c4eccb53c2f2b666541222",
+  "base": "The protected27 pre-format source checkpoint in ../protected-combined-source; NOT production HEAD alone. Explicit rebind is required over actual C14 post-format source.",
+  "dependencies": [],
+  "source_files": [
+    {
+      "path": "crates/render/src/raytrace/image.rs",
+      "before_sha256": "ca84ce568e4cad62c78c0a860cb6be1de9ff8e03fff2910c721fad5455d43309",
+      "candidate_sha256": "47f8593b7c74c3978f9d81dc73b5be27cef984dae1882110ddb1bb743ed514c5",
+      "before_bytes": 110563,
+      "candidate_bytes": 111934
+    },
+    {
+      "path": "crates/render/src/raytrace/progressive.rs",
+      "before_sha256": "5dc40f1cdca6cc0041d23607d639401fdd1bce8883112a8af79396ab0ccab68f",
+      "candidate_sha256": "5dc40f1cdca6cc0041d23607d639401fdd1bce8883112a8af79396ab0ccab68f",
+      "before_bytes": 4338,
+      "candidate_bytes": 4338
+    },
+    {
+      "path": "crates/render/src/raytrace/dielectric.rs",
+      "before_sha256": "aadf54d50b5e284edd42516d5ec167294653779c6e2c0f9f682e504faaa56b4d",
+      "candidate_sha256": "aadf54d50b5e284edd42516d5ec167294653779c6e2c0f9f682e504faaa56b4d",
+      "before_bytes": 18555,
+      "candidate_bytes": 18555
+    },
+    {
+      "path": "crates/render/src/raytrace/image_tests.rs",
+      "before_sha256": "3b4a6340a7b15bac7f37a15e092b66dc6c376ebd6ffd9bf998316ed80e13d71b",
+      "candidate_sha256": "3e6baf4404866e5e98b74d9f229cc0d1f85cf3d87e069b92f738ea0e4e03253d",
+      "before_bytes": 76723,
+      "candidate_bytes": 95197
+    },
+    {
+      "path": "crates/render/src/raytrace/primary_aa_tests.rs",
+      "before_sha256": "a7898dc04e0f3cb0881e82694753d55c22a0e6f613ceea75fa61afa3be7b6eaa",
+      "candidate_sha256": "f89de84b722625a7264af8d1b912ce367174e0a0f835c06bb8b31176da22b59e",
+      "before_bytes": 76141,
+      "candidate_bytes": 84284
+    },
+    {
+      "path": "crates/render/src/raytrace/dielectric_tests.rs",
+      "before_sha256": "c6ba6cc63d7cfa9b61d0d5770efa96b029c2f4835d03744ea7e565280a231bc2",
+      "candidate_sha256": "aa07413811b1a3fe9a5cf7129c6f6c828b43e7ab17bee268eb3bdd9def6064d2",
+      "before_bytes": 34227,
+      "candidate_bytes": 34687
+    },
+    {
+      "path": "crates/render/src/job/mod.rs",
+      "before_sha256": "6a4416a7683a5edf1735906fea49c3a8650d029390f716c05d38d5b8fd1cff58",
+      "candidate_sha256": "2c6900111870ade586104f015a16ee342ba8a6599276ca47d9e28932d3b5a6cd",
+      "before_bytes": 61460,
+      "candidate_bytes": 61779
+    }
+  ],
+  "patch_sha256": "abb106f5d08b1db028db8810bc5df06b92ce074048eef56b917070ac362754ff",
+  "patch_parts": [
+    {
+      "path": "candidate.patch",
+      "bytes": 34771,
+      "sha256": "abb106f5d08b1db028db8810bc5df06b92ce074048eef56b917070ac362754ff"
+    }
+  ],
+  "new_test_declarations": 14,
+  "product_tests_executed_on_this_packet": 0,
+  "source_review": "Independent source/math review 332ff9cb0140ea63242f33d7a0e665895e319e0a46a2caff28c4dd527b89d698 found no blocker in the admitted subset. No compiler/runtime result.",
+  "limitations": [
+    "Finite branching depth8/path511 remains quality-limited.",
+    "Certified sheets/boxes only; general mesh glass, transmitted shadows, rough dielectric and full indirect transport are not delivered."
+  ],
+  "patch_line_ending_policy": "Strict byte replay; original patch bytes preserved.",
+  "CRLF_line_ending_adapter_paths": []
+}

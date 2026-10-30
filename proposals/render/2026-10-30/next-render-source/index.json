@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "status": "SOURCE_ONLY_NOT_PRODUCTION_QUALIFIED",
+  "production_head": "a077906234972dbbf11e80c54893f85ece97c8b7",
+  "actual_C14_post_format_manifest_sha256": "78a09f83c809f11e919c5d6957438389f442d42b05694aebcd39fcdb1786010d",
+  "C14_tests": {
+    "passed": 36,
+    "failed": 1,
+    "unrun": 108
+  },
+  "new_packet_execution_claimed": false,
+  "packets": [
+    {
+      "id": "cpu-progressive-optics",
+      "manifest": "cpu-progressive-optics/manifest.json",
+      "readme": "cpu-progressive-optics/README.md",
+      "new_test_declarations": 14,
+      "patch_sha256": "abb106f5d08b1db028db8810bc5df06b92ce074048eef56b917070ac362754ff",
+      "dependencies": []
+    },
+    {
+      "id": "cpu-unit-index-straight",
+      "manifest": "cpu-unit-index-straight/manifest.json",
+      "readme": "cpu-unit-index-straight/README.md",
+      "new_test_declarations": 7,
+      "patch_sha256": "a0a75179b14822fca9fdbf0d5ee6360267d7e08f4fcc5231bac9e8e0d8606cf6",
+      "dependencies": [
+        "cpu-progressive-optics"
+      ]
+    },
+    {
+      "id": "cpu-camera-tir",
+      "manifest": "cpu-camera-tir/manifest.json",
+      "readme": "cpu-camera-tir/README.md",
+      "new_test_declarations": 2,
+      "patch_sha256": "ee7ea9bf92d04e30e28946d62e1cafae33e7926d571b7e0b1e6e0a0719eb9910",
+      "dependencies": [
+        "cpu-progressive-optics"
+      ]
+    },
+    {
+      "id": "cpu-material-routing-postformat",
+      "manifest": "cpu-material-routing-postformat/manifest.json",
+      "readme": "cpu-material-routing-postformat/README.md",
+      "new_test_declarations": 23,
+      "patch_sha256": "9400334b350ae17e48257659dd4a258ca8324d67cdbd7350eb0306fcbe496367",
+      "dependencies": []
+    },
+    {
+      "id": "cpu-material-progressive-bridge",
+      "manifest": "cpu-material-progressive-bridge/manifest.json",
+      "readme": "cpu-material-progressive-bridge/README.md",
+      "new_test_declarations": 0,
+      "patch_sha256": "0b4686c085cc226bb54b6544d0f50966b9108479ac4a670060eefbffd2edd8e4",
+      "dependencies": [
+        "cpu-material-routing-postformat",
+        "cpu-progressive-optics"
+      ]
+    },
+    {
+      "id": "cpu-material-certification-note",
+      "manifest": "cpu-material-certification-note/manifest.json",
+      "readme": "cpu-material-certification-note/README.md",
+      "new_test_declarations": 0,
+      "patch_sha256": "be2921da310838b7347139f2a28e8a8c3baa6c58529452bd410037baba431a33",
+      "dependencies": [
+        "cpu-material-progressive-bridge"
+      ]
+    },
+    {
+      "id": "raster-perspective",
+      "manifest": "raster-perspective/manifest.json",
+      "readme": "raster-perspective/README.md",
+      "new_test_declarations": 4,
+      "patch_sha256": "8c2308586311b2a39c5e47bb4b6785db54bad58d8875ff82a4c59c44f10fcf14",
+      "dependencies": []
+    },
+    {
+      "id": "photographic-test-contract",
+      "manifest": "photographic-test-contract/manifest.json",
+      "readme": "photographic-test-contract/README.md",
+      "new_test_declarations": 0,
+      "patch_sha256": "8f2534d7459e961dd00b0ea9c604ef45d70fdce84b1cfd1abaa0a26832c449fd",
+      "dependencies": []
+    },
+    {
+      "id": "photographic-cursor-commit",
+      "manifest": "photographic-cursor-commit/manifest.json",
+      "readme": "photographic-cursor-commit/README.md",
+      "new_test_declarations": 2,
+      "patch_sha256": "66f7cf862a34d3e0295ffde47f3c7885049684ec09131b900c51b387f0174da8",
+      "dependencies": [
+        "photographic-test-contract"
+      ]
+    },
+    {
+      "id": "manual-final-feedback-v1",
+      "manifest": "manual-final-feedback-v1/manifest.json",
+      "readme": "manual-final-feedback-v1/README.md",
+      "new_test_declarations": 3,
+      "patch_sha256": "e941003ba731ea06f9b2f2ff14e4e30035323e7722b4810931e398275a3b9132",
+      "dependencies": []
+    },
+    {
+      "id": "manual-final-feedback-v2",
+      "manifest": "manual-final-feedback-v2/manifest.json",
+      "readme": "manual-final-feedback-v2/README.md",
+      "new_test_declarations": 0,
+      "patch_sha256": "140fd054b027a3ed33df57ad4d0d1c756e88a5705c63be16d675caadd703ee9d",
+      "dependencies": [
+        "manual-final-feedback-v1"
+      ]
+    }
+  ]
+}

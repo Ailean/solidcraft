@@ -1,0 +1,772 @@
+diff --git a/crates/engine/src/render_jobs.rs b/crates/engine/src/render_jobs.rs
+--- a/crates/engine/src/render_jobs.rs
++++ b/crates/engine/src/render_jobs.rs
+@@ -183,6 +183,22 @@
+         replace: bool,
+         execution: Execution,
+     ) -> Result<JobStatus, JobError> {
++        self.start_with_environment_and_feedback(revision, scene, request, replace, execution, false)
++    }
++
++    pub(crate) fn start_with_environment_and_feedback(
++        &mut self,
++        revision: u64,
++        scene: solidcraft_render::ProductScene,
++        request: solidcraft_render::job::ImageRequest,
++        replace: bool,
++        execution: Execution,
++        progressive_feedback: bool,
++    ) -> Result<JobStatus, JobError> {
++        if progressive_feedback && (request.integrator != Integrator::Raytrace
++            || request.raytrace.as_ref().and_then(|options| options.progressive).is_none()) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "progressive_feedback requires CPU progressive raytracing"));
++        }
+         let Execution { executor, options, environment } = execution;
+         self.collect()?;
+         let host = self.host_for(&executor).ok_or_else(|| JobError::new(ErrorCode::HostUnavailable, "resolved image host is not installed"))?.clone();
+@@ -210,14 +226,12 @@
+         let serial = self.serial.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "render job identity exhausted"))?;
+         let generation = self.generation.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "render generation exhausted"))?;
+         self.suspend_interactive()?;
+-        let handle = host.submit_with_environment_and_options(
+-            JobId { session: self.owner, serial, generation },
+-            revision,
+-            scene,
+-            request,
+-            options,
+-            environment,
+-        )?;
++        let id = JobId { session: self.owner, serial, generation };
++        let handle = if progressive_feedback {
++            host.submit_cpu_protected_partial_with_environment_and_options(id, revision, scene, request, options, environment)?
++        } else {
++            host.submit_with_environment_and_options(id, revision, scene, request, options, environment)?
++        };
+         let status = handle.status()?;
+         self.serial = serial;
+         self.generation = generation;
+@@ -687,4 +701,127 @@
+         assert!(world.body("Source").unwrap().cached_mesh().is_none());
+         assert_eq!(host.admitted_bytes(), 0);
+     }
++    #[test]
++    fn final_cpu_feedback_preserves_full_request_owner_and_exact_final_pixels() {
++        let (mut session, host) = native().unwrap();
++        assert_eq!(host.kind(), HostKind::NativeWorker);
++        let before = session.doc.to_json();
++        let history = (session.revision, session.undo.len(), session.redo.len());
++        let request = json!({
++            "integrator":"raytrace", "settings":{"width":13,"height":7,"background":[17,89,203]},
++            "raytrace":{"lights":[],"shadows":false,"primary_samples":1,"progressive":{"samples_per_pixel":9,"seed":83}}
++        });
++        let mut baseline: Option<Vec<u8>> = None;
++        for feedback in [false, true] {
++            let mut params = request.clone();
++            params["progressive_feedback"] = json!(feedback);
++            let checked = session.execute("render.preflight", &params).unwrap();
++            if feedback {
++                let captured: solidcraft_render::job::ImageRequest = serde_json::from_value(checked["request"].clone()).unwrap();
++                let scene = solidcraft_render::ProductScene { meshes:Vec::new(),bounds:solidcraft_geom::Aabb3::EMPTY };
++                let admitted = host.admit_cpu_protected_partial_with_environment_and_options(
++                    &scene,&captured,solidcraft_render::job::JobOptions::default(),None,
++                ).unwrap();
++                assert_eq!(checked["admission"],serde_json::to_value(admitted).unwrap(), "Check uses the same authoritative protected admission");
++            }
++            let started = session.execute("render.start", &params).unwrap();
++            let job: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++            assert_eq!(job.session, session.render_jobs.owner);
++            let handle = session.render_job_handle(job).unwrap();
++            assert_eq!(serde_json::to_value(handle.status().unwrap().request).unwrap(), checked["request"]);
++            assert_eq!(terminal(&handle).unwrap(), Phase::Completed);
++            let status = handle.status().unwrap();
++            assert_eq!((status.request.width,status.request.height), (13,7));
++            let options = status.request.raytrace.as_ref().unwrap().progressive.unwrap();
++            assert_eq!((options.samples_per_pixel,options.seed), (9,83));
++            let frame = handle.frame().unwrap().unwrap();
++            let image = image::load_from_memory(frame.png()).unwrap().to_rgba8();
++            assert_eq!(image.dimensions(), (13,7));
++            assert!(image.pixels().all(|pixel| pixel.0 == [17,89,203,255]), "independent constant-background miss oracle");
++            if let Some(bytes) = &baseline { assert_eq!(frame.png(), bytes.as_slice()); }
++            else { baseline = Some(frame.png().to_vec()); }
++            let report = handle.protected_preview_report().unwrap();
++            assert_eq!(report.is_some(), feedback);
++            if let Some(report) = report {
++                assert_eq!(report.quota_limit,64);
++                assert!(report.ordinary_used <= report.ordinary_limit);
++                assert!(report.presentation_used <= report.presentation_limit);
++                assert_eq!(report.quota_exhausted, report.accepted_snapshots == report.quota_limit);
++            }
++            assert!(!handle.request_partial_preview().unwrap(), "terminal demand cannot restart work");
++            let foreign = JobId { session: job.session + 1, ..job };
++            assert!(session.render_job_handle(foreign).is_err());
++            assert!(session.execute("render.result.pin",&json!({"job":foreign})).is_err());
++            session.execute("render.result.pin",&json!({"job":job})).unwrap();
++        }
++        assert_eq!(before,session.doc.to_json());
++        assert_eq!(history,(session.revision,session.undo.len(),session.redo.len()));
++    }
++
++    #[test]
++    fn final_cpu_feedback_saved_normalization_and_legacy_omission_are_explicit() {
++        let (mut session, _) = native().unwrap();
++        let typed = json!({"settings":{"width":13,"height":7,"background":[17,89,203],
++            "job":{"method":"cpu_raytrace","options":{"primary_samples":1,"lights":[],"shadows":false,
++                "progressive":{"samples_per_pixel":9,"seed":83}}}}});
++        for feedback in [None,Some(false),Some(true)] {
++            let mut params = typed.clone();
++            if let Some(feedback) = feedback { params["progressive_feedback"] = json!(feedback); }
++            let checked = session.execute("render.preflight",&params).unwrap();
++            let started = session.execute("render.start",&params).unwrap();
++            let job: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++            let handle = session.render_job_handle(job).unwrap();
++            assert_eq!(terminal(&handle).unwrap(),Phase::Completed);
++            assert_eq!(serde_json::to_value(handle.status().unwrap().request).unwrap(),checked["request"]);
++            assert_eq!(handle.protected_preview_report().unwrap().is_some(),feedback == Some(true));
++        }
++        for mut invalid in [
++            json!({"settings":{"width":13,"height":7}}),
++            wire([17,89,203]),
++            json!({"progressive":true,"settings":{"width":13,"height":7}}),
++        ] {
++            invalid["progressive_feedback"] = json!(true);
++            for command in ["render.preflight","render.start"] {
++                let error = session.execute(command,&invalid).unwrap_err().to_string();
++                assert!(error.contains("progressive_feedback"),"{error}");
++            }
++        }
++        let mut malformed = typed;
++        malformed["progressive_feedback"] = json!("true");
++        assert!(session.execute("render.preflight",&malformed).is_err());
++    }
++
++    #[test]
++    fn final_cpu_protected_admission_accounts_captured_hdr_once_and_runs_real_host() {
++        use solidcraft_render::job::{ImageRequest, JobOptions, RaytraceOptions, CpuProgressiveOptions};
++        let (session, host) = native().unwrap();
++        let request = ImageRequest {
++            integrator: Integrator::Raytrace, width:13, height:7, background:[17,89,203],
++            raytrace: Some(RaytraceOptions {
++                lights:Some(Vec::new()), shadows:false, primary_samples:1,
++                progressive:Some(CpuProgressiveOptions {samples_per_pixel:9,seed:83}), ..Default::default()
++            }), studio_weights:None, environment:None, textures:None,
++            camera:Default::default(), transparent_background:false,
++        };
++        let scene = solidcraft_render::ProductScene { meshes:Vec::new(),bounds:solidcraft_geom::Aabb3::EMPTY };
++        let mut bytes = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\nPRIMARIES=0.64 0.33 0.30 0.60 0.15 0.06 0.3127 0.3290\n\n-Y 1 +X 1\n".to_vec();
++        bytes.extend_from_slice(&[96,64,32,129]);
++        let source = solidcraft_render::lighting::HdrSource::new(bytes).unwrap();
++        let environment = solidcraft_render::lighting::environment_input::EnvironmentInput::new(source,0.25,0.5,1).unwrap();
++        let plain = host.admit_cpu_protected_partial_with_environment_and_options(&scene,&request,JobOptions::default(),None).unwrap();
++        let lit = host.admit_cpu_protected_partial_with_environment_and_options(&scene,&request,JobOptions::default(),Some(&environment)).unwrap();
++        let source_bytes = environment.required_bytes().unwrap();
++        assert_eq!(lit.preparation_bytes-plain.preparation_bytes,source_bytes);
++        assert_eq!(lit.estimated_total_bytes-plain.estimated_total_bytes,
++            source_bytes + std::mem::size_of::<solidcraft_render::lighting::environment_input::EnvironmentInfo>() as u64);
++        let job = host.submit_cpu_protected_partial_with_environment_and_options(
++            JobId {session:session.render_jobs.owner,serial:1,generation:1},session.revision,scene,request,
++            JobOptions::default(),Some(environment),
++        ).unwrap();
++        assert_eq!(terminal(&job).unwrap(),Phase::Completed);
++        assert!(job.status().unwrap().environment.is_some());
++        assert!(job.protected_preview_report().unwrap().is_some());
++        assert_eq!(job.frame().unwrap().unwrap().info.width,13);
++    }
++
+ }
+diff --git a/crates/engine/src/cmd/render/jobs.rs b/crates/engine/src/cmd/render/jobs.rs
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -11,6 +11,7 @@
+ #[derive(Default, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ struct Start {
++    progressive_feedback: bool,
+     nested_media: bool,
+     studio_weights: Option<[f64; 3]>,
+     progressive: bool,
+@@ -48,6 +49,7 @@
+ #[derive(Default, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ struct ProgressiveStart {
++    progressive_feedback: bool,
+     studio_weights: Option<[f64; 3]>,
+     aging: solidcraft_doc::render_aging::SavedAgingStack,
+     #[serde(default)]
+@@ -76,6 +78,7 @@
+ }
+ 
+ struct Prepared {
++    progressive_feedback: bool,
+     replace: bool,
+     scene: solidcraft_render::ProductScene,
+     request: ImageRequest,
+@@ -533,7 +536,7 @@
+     } else {
+         return Ok(None);
+     };
+-    if let Some(key) = object.keys().find(|key| !matches!(key.as_str(), "setup" | "settings" | "replace" | "studio_weights")) {
++    if let Some(key) = object.keys().find(|key| !matches!(key.as_str(), "setup" | "settings" | "replace" | "studio_weights" | "progressive_feedback")) {
+         return Err(bad(
+             command,
+             format!(
+@@ -578,6 +581,9 @@
+     if let Some(replace) = object.get("replace") {
+         lowered["replace"] = replace.clone();
+     }
++    if let Some(feedback) = object.get("progressive_feedback") {
++        lowered["progressive_feedback"] = feedback.clone();
++    }
+     Ok(Some(Normalized { params: lowered, hdr, surfaces, optics }))
+ }
+ 
+@@ -614,6 +620,10 @@
+         ));
+     }
+     let mut input: Start = serde_json::from_value(params.clone()).map_err(|e| bad(command, e.to_string()))?;
++    if input.progressive_feedback && (input.integrator != Integrator::Raytrace
++        || input.raytrace.as_ref().and_then(|options| options.progressive).is_none()) {
++        return Err(bad(command, "progressive_feedback requires CPU progressive raytracing"));
++    }
+     validate_studio_weights(input.studio_weights, command)?;
+     if input.integrator == Integrator::Raytrace && input.studio_weights.is_some() {
+         return Err(bad(command, "studio_weights apply to raster or the implicit GPU studio; use explicit CPU light intensities"));
+@@ -792,28 +802,34 @@
+         transparent_background: input.transparent_background,
+     };
+     let options = solidcraft_render::job::JobOptions { nested_media: input.nested_media, ..Default::default() };
+-    let mut admission = host.admit(&scene, &request, options).map_err(job_error)?;
+-    let environment_bytes = environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| bad(command, e.to_string()))?;
++    let mut admission = if input.progressive_feedback {
++        host.admit_cpu_protected_partial_with_environment_and_options(&scene, &request, options, environment.as_ref()).map_err(job_error)?
++    } else {
++        host.admit(&scene, &request, options).map_err(job_error)?
++    };
+     let retained_lights = request.raytrace.as_ref().map_or(Ok(0), |o| o.retained_bytes()).map_err(job_error)?;
+     let retained_environment =
+         if environment_info.is_some() { std::mem::size_of::<solidcraft_render::lighting::environment_input::EnvironmentInfo>() as u64 } else { 0 };
+     let retained_request_bytes = retained_lights.checked_add(retained_environment).ok_or_else(|| bad(command, "request metadata overflow"))?;
+ 
+-    admission.estimated_total_bytes = admission
+-        .estimated_total_bytes
+-        .checked_add(environment_bytes)
+-        .and_then(|v| v.checked_add(retained_request_bytes))
+-        .filter(|v| *v <= budget.limits().max_job_bytes)
+-        .ok_or_else(|| bad(command, "environment job exceeds per-job memory limit"))?;
+-    admission.preparation_bytes =
+-        admission.preparation_bytes.checked_add(environment_bytes).ok_or_else(|| bad(command, "environment admission overflow"))?;
++    if !input.progressive_feedback {
++        let environment_bytes = environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| bad(command, e.to_string()))?;
++        admission.estimated_total_bytes = admission
++            .estimated_total_bytes
++            .checked_add(environment_bytes)
++            .and_then(|v| v.checked_add(retained_request_bytes))
++            .filter(|v| *v <= budget.limits().max_job_bytes)
++            .ok_or_else(|| bad(command, "environment job exceeds per-job memory limit"))?;
++        admission.preparation_bytes =
++            admission.preparation_bytes.checked_add(environment_bytes).ok_or_else(|| bad(command, "environment admission overflow"))?;
++    }
+     let transparency = match input.integrator {
+         Integrator::Raster => "sorted_alpha_approximation",
+         Integrator::Raytrace if refraction => "physical_transmission",
+         Integrator::Raytrace => "opaque_only",
+     };
+     let reply = json!({"ignored_controls":ignored,"stage_panels":settings.stage.len(),"stage_transport":"CPU direct/specular only; no diffuse interreflection", "cpu_budget":budget,"cpu_limits":budget.limits(),"environment":environment_info,"retained_request_bytes":retained_request_bytes,"resolved":resolved,"admission":admission,"request":request,"scene_generation":s.revision,"host":host.kind(),"transparency":transparency,"refraction":refraction,"dielectric_boundaries":if refraction {vec!["thin_sheet","closed_box"]} else {Vec::<&str>::new()}});
+-    Ok(Prepared { replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options })
++    Ok(Prepared { progressive_feedback: input.progressive_feedback, replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options })
+ }
+ 
+ fn prepare_progressive(
+@@ -838,6 +854,9 @@
+         return Err(bad(command, "progressive rendering does not accept CPU raytrace, environment or LED options"));
+     }
+     let mut input: ProgressiveStart = serde_json::from_value(params.clone()).map_err(|e| bad(command, e.to_string()))?;
++    if input.progressive_feedback {
++        return Err(bad(command, "progressive_feedback requires CPU progressive raytracing, not GPU progressive rendering"));
++    }
+     validate_studio_weights(input.studio_weights, command)?;
+     if input.studio_weights.is_some() && (input.lighting.is_some() || input.environment.is_some() || saved_hdr.is_some()) {
+         return Err(bad(command, "studio_weights require the implicit GPU studio without environment lighting"));
+@@ -1017,7 +1036,7 @@
+             "raw_linear_accumulator_preserved":true, "output_stage":"linear_before_tone_map"
+         });
+     }
+-    Ok(Prepared { replace: input.replace, scene, request, reply, executor: resolved.executor, options, environment: None })
++    Ok(Prepared { progressive_feedback: false, replace: input.replace, scene, request, reply, executor: resolved.executor, options, environment: None })
+ }
+ 
+ /// The setup's controls the raster image executor doesn't apply: those not at their neutral value.
+@@ -1041,16 +1060,12 @@
+ 
+ pub(super) fn start(s: &mut Session, params: &Value) -> Result<Value> {
+     let p = prepare(s, params, "render.start")?;
+-    let status = s
+-        .render_jobs
+-        .start_with_environment(
+-            s.revision,
+-            p.scene,
+-            p.request,
+-            p.replace,
+-            crate::render_jobs::Execution { executor: p.executor, options: p.options, environment: p.environment },
+-        )
+-        .map_err(job_error)?;
++    let execution = crate::render_jobs::Execution { executor: p.executor, options: p.options, environment: p.environment };
++    let status = if p.progressive_feedback {
++        s.render_jobs.start_with_environment_and_feedback(s.revision, p.scene, p.request, p.replace, execution, true)
++    } else {
++        s.render_jobs.start_with_environment(s.revision, p.scene, p.request, p.replace, execution)
++    }.map_err(job_error)?;
+     let mut status = json!(status);
+     if let (Some(out), Some(ignored)) = (status.as_object_mut(), p.reply.get("ignored_controls")) {
+         out.insert("ignored_controls".into(), ignored.clone());
+diff --git a/crates/render/src/job/host.rs b/crates/render/src/job/host.rs
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -1216,6 +1216,65 @@
+     pub fn admit(&self, scene: &ProductScene, request: &ImageRequest, options: JobOptions) -> Result<Admission> {
+         self.admit_with_policy(scene, request, options, None)
+     }
++    /// Same canonical policy and complete retained/HDR accounting as protected submit.
++    /// Non-reserving estimate: submission still admits against the live pool.
++    pub fn admit_cpu_protected_partial_with_environment_and_options(
++        &self, scene: &ProductScene, request: &ImageRequest, options: JobOptions,
++        environment: Option<&crate::lighting::environment_input::EnvironmentInput>,
++    ) -> Result<Admission> {
++        self.validate_submission_environment(scene, request, environment)?;
++        let policy = Self::protected_preview_policy(request)?;
++        let (mut admission, request_bytes) = self.admit_submission(scene, request, options, environment, Some(policy))?;
++        admission.estimated_total_bytes = admission.estimated_total_bytes.checked_add(request_bytes)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "retained request admission overflow"))?;
++        Ok(admission)
++    }
++
++    fn protected_preview_policy(request: &ImageRequest) -> Result<CpuPreviewPolicy> {
++        let samples = request.raytrace.as_ref().and_then(|v| v.progressive)
++            .ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "protected previews require CPU progressive intent"))?.samples_per_pixel;
++        let plan = super::ProtectedPreviewPlan::new(request.width, request.height, samples, request.cpu_budget())?;
++        Ok(CpuPreviewPolicy::Protected(plan))
++    }
++
++    fn validate_submission_environment(
++        &self, scene: &ProductScene, request: &ImageRequest,
++        environment: Option<&crate::lighting::environment_input::EnvironmentInput>,
++    ) -> Result<()> {
++        if self.0.executor.is_some() && environment.is_some() {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "registered image executors do not accept CPU environments"));
++        }
++        if environment.is_some() && request.integrator != Integrator::Raytrace {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "environment lighting requires CPU raytrace"));
++        }
++        self.validate_integrator(request.integrator)?;
++        if environment.is_some() {
++            request.raytrace.as_ref().unwrap_or(&super::RaytraceOptions::default()).validate_environment_reflections(scene)?;
++        }
++        Ok(())
++    }
++
++    fn admit_submission(
++        &self, scene: &ProductScene, request: &ImageRequest, options: JobOptions,
++        environment: Option<&crate::lighting::environment_input::EnvironmentInput>,
++        partial: Option<CpuPreviewPolicy>,
++    ) -> Result<(Admission, u64)> {
++        let metadata_bytes = (if environment.is_some() {
++            std::mem::size_of::<crate::lighting::environment_input::EnvironmentInfo>() as u64
++        } else { 0 }) + request.retained_resource_metadata_bytes();
++        let request_bytes = retained_request_bytes(request)?.checked_add(metadata_bytes)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "environment metadata overflow"))?;
++        let mut admission = self.admit_with_policy(scene, request, options, partial)?;
++        let environment_bytes = environment.map_or(Ok(0), |value| value.required_bytes())
++            .map_err(|error| JobError::new(ErrorCode::InvalidRequest, error.to_string()))?;
++        admission.estimated_total_bytes = admission.estimated_total_bytes.checked_add(environment_bytes)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "environment admission overflow"))?;
++        admission.preparation_bytes = admission.preparation_bytes.checked_add(environment_bytes)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "environment admission overflow"))?;
++        self.check_request_sum(admission.estimated_total_bytes, request_bytes, request.cpu_budget())?;
++        Ok((admission, request_bytes))
++    }
++
+     fn admit_with_policy(&self, scene: &ProductScene, request: &ImageRequest, options: JobOptions, partial: Option<CpuPreviewPolicy>) -> Result<Admission> {
+         if let Some(policy) = partial {
+             let plan = policy.preview_plan();
+@@ -1461,23 +1520,12 @@
+         &self, id: JobId, scene_generation: u64, scene: ProductScene, request: ImageRequest, options: JobOptions,
+         environment: Option<crate::lighting::environment_input::EnvironmentInput>,
+     ) -> Result<JobHandle> {
+-        let samples = request.raytrace.as_ref().and_then(|v| v.progressive)
+-            .ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "protected previews require CPU progressive intent"))?.samples_per_pixel;
+-        let plan = super::ProtectedPreviewPlan::new(request.width, request.height, samples, request.cpu_budget())?;
+-        self.submit_with_policy(Submission { id, scene_generation, scene, request, options, environment }, Some(CpuPreviewPolicy::Protected(plan)))
++        let policy = Self::protected_preview_policy(&request)?;
++        self.submit_with_policy(Submission { id, scene_generation, scene, request, options, environment }, Some(policy))
+     }
+     fn submit_with_policy(&self, input: Submission, partial_plan: Option<CpuPreviewPolicy>) -> Result<JobHandle> {
+         let Submission { id, scene_generation, scene, request, options, environment } = input;
+-        if self.0.executor.is_some() && environment.is_some() {
+-            return Err(JobError::new(ErrorCode::InvalidRequest, "registered image executors do not accept CPU environments"));
+-        }
+-        if environment.is_some() && request.integrator != Integrator::Raytrace {
+-            return Err(JobError::new(ErrorCode::InvalidRequest, "environment lighting requires CPU raytrace"));
+-        }
+-        self.validate_integrator(request.integrator)?;
+-        if environment.is_some() {
+-            request.raytrace.as_ref().unwrap_or(&super::RaytraceOptions::default()).validate_environment_reflections(&scene)?;
+-        }
++        self.validate_submission_environment(&scene, &request, environment.as_ref())?;
+         if id.session == 0 || id.serial == 0 || id.generation == 0 {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "invalid render job identity"));
+         }
+@@ -1486,12 +1534,6 @@
+             .map(|e| JobEnvironmentInfo::Cpu(e.metadata()))
+             .or_else(|| request.environment.as_ref().map(|source| JobEnvironmentInfo::Gpu(source.info().clone())));
+         let textures = request.textures.as_ref().map(|source| source.summary());
+-        let metadata_bytes =
+-            if environment.is_some() { std::mem::size_of::<crate::lighting::environment_input::EnvironmentInfo>() as u64 } else { 0 }
+-                + request.retained_resource_metadata_bytes();
+-        let request_bytes = retained_request_bytes(&request)?
+-            .checked_add(metadata_bytes)
+-            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "environment metadata overflow"))?;
+         let mut features = scene.required_features();
+         if environment.is_some() || request.environment.is_some() {
+             features.push(crate::RenderFeature::Hdri);
+@@ -1502,13 +1544,8 @@
+         {
+             features.push(crate::RenderFeature::Refraction);
+         }
+-        let Admission { estimated_total_bytes, .. } = self.admit_with_policy(&scene, &request, options, partial_plan)?;
+-        let environment_bytes =
+-            environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| JobError::new(ErrorCode::InvalidRequest, e.to_string()))?;
+-        let estimated_total_bytes = estimated_total_bytes
+-            .checked_add(environment_bytes)
+-            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "environment admission overflow"))?;
+-        self.check_request_sum(estimated_total_bytes, request_bytes, request.cpu_budget())?;
++        let (Admission { estimated_total_bytes, .. }, request_bytes) =
++            self.admit_submission(&scene, &request, options, environment.as_ref(), partial_plan)?;
+         let mut backend = crate::builtin_backend();
+         let descriptor = self.descriptor_for_request(&request)?;
+         let expected_executor = descriptor.id.clone();
+diff --git a/crates/ui-egui/src/render_workspace.rs b/crates/ui-egui/src/render_workspace.rs
+--- a/crates/ui-egui/src/render_workspace.rs
++++ b/crates/ui-egui/src/render_workspace.rs
+@@ -2,13 +2,14 @@
+ 
+ use std::hash::{Hash, Hasher};
+ use std::sync::{Arc, Mutex};
++use std::time::Duration;
+ 
+ use egui::{Color32, Sense};
+ use serde_json::json;
+ use solidcraft_engine::doc::render_settings::RenderSetup;
+ #[cfg(test)]
+ use solidcraft_engine::render::job::LightingPreset;
+-use solidcraft_engine::render::job::{ImageHost, Integrator, PreviewInfo, RaytraceOptions};
++use solidcraft_engine::render::job::{ImageHost, Integrator, JobId, PartialPreviewInfo, PreviewInfo, ProtectedPreviewReport, RaytraceOptions};
+ use solidcraft_engine::render::{
+     Availability, Camera, ExecutorDescriptor, ExecutorId, ProductScene, RenderLimits, RenderMode, RenderOperation, RenderProfile, RenderRequest,
+     ScratchLayout,
+@@ -147,6 +148,10 @@
+     image: Option<(solidcraft_engine::render::job::JobId, Result<egui::TextureHandle, String>)>,
+     image_info: Option<solidcraft_engine::render::job::FrameInfo>,
+     preview_image: Option<PreviewImage>,
++    final_partial: Option<FinalPartialImage>,
++    final_partial_request: Option<(JobId, Duration)>,
++    final_feedback_clock: Duration,
++    final_feedback_report: Option<(JobId, ProtectedPreviewReport)>,
+     clipboard_image: Option<egui::ColorImage>,
+     clipboard_text: Option<String>,
+ }
+@@ -157,12 +162,24 @@
+     image: Result<egui::TextureHandle, String>,
+ }
+ 
++struct FinalPartialImage {
++    info: PartialPreviewInfo,
++    sampling: interactive::PartialSampling,
++    image: Result<egui::TextureHandle, String>,
++}
++
+ struct DisplayImage<'a> {
+     info: &'a solidcraft_engine::render::job::FrameInfo,
+     image: &'a Result<egui::TextureHandle, String>,
+     preview: Option<&'a PreviewInfo>,
++    partial: Option<(&'a PartialPreviewInfo, interactive::PartialSampling)>,
++    logical_size: [u32; 2],
+ }
+ 
++impl DisplayImage<'_> {
++    fn provisional(&self) -> bool { self.preview.is_some() || self.partial.is_some() }
++}
++
+ /// Application-wide setup, retained across document changes. The worker owns a
+ /// cloned adapter and initializes the job device; the UI receives the finished host.
+ #[derive(Default)]
+@@ -477,6 +494,10 @@
+             image: None,
+             image_info: None,
+             preview_image: None,
++            final_partial: None,
++            final_partial_request: None,
++            final_feedback_clock: Duration::ZERO,
++            final_feedback_report: None,
+             clipboard_image: None,
+             clipboard_text: None,
+         }
+@@ -533,6 +554,8 @@
+         "active": active(app), "stage": view.stage.key(), "setup": view.name, "draft_dirty": view.dirty,
+         "method": method, "job": view.job, "completed": view.completed,
+         "interactive": interactive::inspect(app),
++        "final_partial": app.render_workspace.final_partial.as_ref().map(|partial| &partial.info),
++        "final_feedback_report": app.render_workspace.final_feedback_report.map(|(job, report)| json!({"job":job,"report":report})),
+         "showing_result": view.result, "export_format": if view.studio.export_exr {"exr"} else {"png"},
+     })
+ }
+@@ -643,6 +666,7 @@
+     app.render_workspace.image = None;
+     app.render_workspace.image_info = None;
+     app.render_workspace.preview_image = None;
++    app.render_workspace.final_partial = None;
+ }
+ 
+ pub fn invalidate_scene(app: &mut SolveApp) {
+@@ -860,7 +884,12 @@
+     if app.session.model.is_stale() {
+         return Err(app.tr("render.image_scene_stale").to_string());
+     }
+-    image_request(app)
++    let mut request = image_request(app)?;
++    if view.method == ImageMethod::CpuRaytrace && view.raytrace.progressive.is_some() {
++        request.as_object_mut().ok_or_else(|| app.tr("render.error_provisional_identity").to_string())?
++            .insert("progressive_feedback".into(), json!(true));
++    }
++    Ok(request)
+ }
+ 
+ /// Pure request construction is shared with offline setup editing; host checks stay above.
+@@ -1263,7 +1292,7 @@
+ fn completed_image(app: &mut SolveApp, ui: &mut egui::Ui) {
+     cache_render_images(app, ui.ctx());
+     if let Some(display) = displayed_image(app) {
+-        if display.preview.is_some() {
++        if display.provisional() {
+             ui.small(app.tr("render.result_provisional"));
+         }
+         match display.image {
+@@ -1314,14 +1343,57 @@
+ 
+ fn displayed_image(app: &SolveApp) -> Option<DisplayImage<'_>> {
+     let state = &app.render_workspace;
+-    if let Some(preview) = &state.preview_image
+-        && state.view.job == Some(preview.info.frame.job)
+-    {
+-        return Some(DisplayImage { info: &preview.info.frame, image: &preview.image, preview: Some(&preview.info) });
++    let preview = state.preview_image.as_ref().filter(|image| state.view.job == Some(image.info.frame.job));
++    let partial = state.final_partial.as_ref().filter(|image| state.view.job == Some(image.info.frame.job));
++    if let Some(partial) = partial {
++        let pixels = u64::from(partial.info.source_width) * u64::from(partial.info.source_height);
++        let frontier = u64::from(partial.info.completed_passes) * pixels + partial.info.updated_prefix;
++        // Complete-pass and partial sequence numbers have different namespaces.
++        // Equal source evidence prefers the established complete-pass image.
++        if preview.is_none_or(|image| u64::from(image.info.samples_per_pixel) * pixels < frontier) {
++            return Some(DisplayImage {
++                info: &partial.info.frame, image: &partial.image, preview: None,
++                partial: Some((&partial.info, partial.sampling)),
++                logical_size: [partial.info.source_width, partial.info.source_height],
++            });
++        }
+     }
+-    Some(DisplayImage { info: state.image_info.as_ref()?, image: &state.image.as_ref()?.1, preview: None })
++    if let Some(preview) = preview {
++        return Some(DisplayImage {
++            info: &preview.info.frame, image: &preview.image, preview: Some(&preview.info), partial: None,
++            logical_size: [preview.info.frame.width, preview.info.frame.height],
++        });
++    }
++    let info = state.image_info.as_ref()?;
++    Some(DisplayImage { info, image: &state.image.as_ref()?.1, preview: None, partial: None, logical_size: [info.width, info.height] })
+ }
+ 
++fn cache_final_partial(
++    app: &mut SolveApp, ctx: &egui::Context, handle: &solidcraft_engine::render::job::JobHandle,
++    status: &solidcraft_engine::render::job::JobStatus,
++    partial: &solidcraft_engine::render::job::RenderPartialPreview,
++) -> Result<(), String> {
++    let job = handle.id();
++    if app.render_workspace.view.job != Some(job) { return Ok(()); }
++    let previous = app.render_workspace.final_partial.as_ref()
++        .filter(|cached| cached.info.frame.job == job).map(|cached| cached.sampling);
++    let expected = interactive::PartialExpectation {
++        job, scene_generation: status.scene_generation, request: &status.request,
++        final_dimensions: [status.request.width, status.request.height],
++    };
++    let Some(sampling) = interactive::validate_partial_metadata(
++        &expected, &partial.info, partial.png().len(), partial.covered().len(), previous,
++    )? else { return Ok(()); };
++    let image = interactive::decode_partial_image(
++        &status.request, &partial.info, partial.png(), partial.covered(), sampling, ctx.input(|input| input.max_texture_side),
++    ).map(|pixels| ctx.load_texture("sc_render_final_partial", pixels, egui::TextureOptions::NEAREST));
++    if app.render_workspace.view.job == Some(job) {
++        app.render_workspace.final_partial = Some(FinalPartialImage { info: partial.info.clone(), sampling, image });
++    }
++    // Only texture/provenance survives: the borrowed PNG/coverage/lease is not retained.
++    Ok(())
++}
++
+ fn cache_preview_frame(app: &mut SolveApp, ctx: &egui::Context, info: &PreviewInfo, png: &[u8]) {
+     if app.render_workspace.view.job != Some(info.frame.job) {
+         return;
+@@ -1361,19 +1433,49 @@
+ fn cache_preview_image(app: &mut SolveApp, ctx: &egui::Context) {
+     if let Some(job) = app.render_workspace.view.job
+         && let Ok(handle) = app.session.render_job_handle(job)
++        && let Ok(status) = handle.status()
+     {
++        if app.render_workspace.final_partial.as_ref().is_some_and(|cached| cached.info.frame.job != job) {
++            app.render_workspace.final_partial = None;
++        }
++        let now = interactive::monotonic(app.render_workspace.final_feedback_clock, ctx.input(|input| input.time));
++        app.render_workspace.final_feedback_clock = now;
++        if !status.progress.phase.terminal() && status.request.integrator == Integrator::Raytrace
++            && status.request.raytrace.as_ref().and_then(|options| options.progressive).is_some()
++            && interactive::partial_request_due(app.render_workspace.final_partial_request, job, now)
++        {
++            app.render_workspace.final_partial_request = Some((job, now));
++            if let Err(error) = handle.request_partial_preview() { app.set_status(error.to_string(), true); }
++        }
++        app.render_workspace.final_feedback_report = handle.protected_preview_report().ok().flatten().map(|report| (job, report));
+         let preview = handle.preview().ok().flatten();
+-        // Read the final after the checkpoint: completion may occur after the panel's
+-        // earlier status query. Promote the real final before dropping its preview,
+-        // rather than briefly falling back to an older job and losing result framing.
++        let partial = handle.partial_preview().ok().flatten();
++        // Read completion AFTER both provisional slots: neither can be promoted to a final.
+         if handle.frame().ok().flatten().is_some() {
+             app.render_workspace.view.completed = Some(job);
+-        } else if let Some(preview) = preview {
+-            cache_preview_frame(app, ctx, &preview.info, preview.png());
+-            return;
++        } else if !status.progress.phase.terminal() {
++            if let Some(preview) = preview {
++                cache_preview_frame(app, ctx, &preview.info, preview.png());
++            } else {
++                app.render_workspace.preview_image = None;
++            }
++            if let Some(partial) = partial
++                && let Err(error) = cache_final_partial(app, ctx, &handle, &status, &partial)
++            {
++                app.set_status(error, true);
++            }
++            // Decoding can race final publication/cancellation. Recheck the real job.
++            if handle.frame().ok().flatten().is_some() {
++                app.render_workspace.view.completed = Some(job);
++            } else if handle.status().is_ok_and(|current| !current.progress.phase.terminal()) {
++                return;
++            }
+         }
++    } else {
++        app.render_workspace.final_feedback_report = None;
+     }
+     app.render_workspace.preview_image = None;
++    app.render_workspace.final_partial = None;
+ }
+ 
+ fn remember_displayed_job(app: &mut SolveApp, preserve_view: bool) {
+@@ -1387,8 +1489,9 @@
+ }
+ 
+ fn cache_render_images(app: &mut SolveApp, ctx: &egui::Context) {
+-    let preserve_view = app.render_workspace.preview_image.as_ref().is_some_and(|preview| {
+-        app.render_workspace.view.result_job == Some(preview.info.frame.job) && app.render_workspace.view.job == Some(preview.info.frame.job)
++    let preserve_view = displayed_image(app).is_some_and(|display| {
++        display.provisional() && app.render_workspace.view.result_job == Some(display.info.job)
++            && app.render_workspace.view.job == Some(display.info.job)
+     });
+     cache_preview_image(app, ctx);
+     cache_completed_image(app, ctx);
+@@ -1450,7 +1553,7 @@
+ 
+ fn reduced_display(app: &SolveApp) -> bool {
+     displayed_image(app).is_some_and(|display| {
+-        display.image.as_ref().is_ok_and(|texture| texture.size() != [display.info.width as usize, display.info.height as usize])
++        display.image.as_ref().is_ok_and(|texture| texture.size() != [display.logical_size[0] as usize, display.logical_size[1] as usize])
+     })
+ }
+ 
+@@ -1547,7 +1650,8 @@
+     }
+     let mut content = ui.new_child(egui::UiBuilder::new().max_rect(free).id_salt("render_result_content"));
+     let ui = &mut content;
+-    let Some((info, preview)) = displayed_image(app).map(|display| (display.info.clone(), display.preview.cloned())) else {
++    let Some((info, preview, partial, logical_size)) = displayed_image(app)
++        .map(|display| (display.info.clone(), display.preview.cloned(), display.partial.map(|(info, sampling)| (info.clone(), sampling)), display.logical_size)) else {
+         let message = match &app.render_workspace.image {
+             Some((_, Err(error))) => error.clone(),
+             _ if ribbon::busy(app) => app.tr("render.state_in_progress").to_string(),
+@@ -1574,7 +1678,7 @@
+         ui.horizontal_wrapped(|ui| {
+             crate::ui_kit::text(
+                 ui,
+-                app.tr(if preview.is_some() { "render.state_in_progress" } else { "render.state_completed" }),
++                app.tr(if preview.is_some() || partial.is_some() { "render.state_in_progress" } else { "render.state_completed" }),
+                 crate::ui_kit::Text::Inline,
+             );
+             result_actions(app, ui);
+@@ -1593,13 +1697,39 @@
+             );
+             ui.small(app.tr("render.result_provisional_help"));
+         }
++        if let Some((info, sampling)) = &partial {
++            ui.colored_label(t.warning, app.tr("render.result_provisional"));
++            let (min, max) = sampling.sample_range();
++            ui.small(crate::i18n::format("render.interactive_partial_samples", &[
++                ("min", &min.to_string()), ("max", &max.to_string()),
++                ("known", &sampling.sampled_source_pixels().to_string()),
++                ("pixels", &(u64::from(info.source_width) * u64::from(info.source_height)).to_string()),
++            ]));
++            ui.small(crate::i18n::format("render.interactive_partial_dimensions", &[
++                ("display_width", &info.frame.width.to_string()), ("display_height", &info.frame.height.to_string()),
++                ("source_width", &info.source_width.to_string()), ("source_height", &info.source_height.to_string()),
++                ("final_width", &logical_size[0].to_string()), ("final_height", &logical_size[1].to_string()),
++            ]));
++            ui.small(app.tr("render.result_provisional_help"));
++        }
++        if let Some((job, report)) = app.render_workspace.final_feedback_report
++            && job == info.job && (preview.is_some() || partial.is_some())
++        {
++            ui.small(crate::i18n::format("render.interactive_feedback_usage", &[
++                ("started", &report.accepted_snapshots.to_string()), ("limit", &report.quota_limit.to_string()),
++            ]));
++            let reason = if report.quota_exhausted { Some("render.interactive_feedback_quota_exhausted") }
++                else if report.milestones_complete { Some("render.interactive_feedback_milestones_complete") }
++                else { None };
++            if let Some(reason) = reason { ui.small(app.tr(reason)); }
++        }
+         if let Some(display) = displayed_image(app)
+             && let Err(error) = display.image
+         {
+             ui.colored_label(t.warning, error);
+         }
+         ui.horizontal_wrapped(|ui| {
+-            ui.strong(format!("{} × {} px · PNG · {}", info.width, info.height, info.executor.as_str()));
++            ui.strong(format!("{} × {} px · PNG · {}", logical_size[0], logical_size[1], info.executor.as_str()));
+             ui.label(format!(
+                 "{} {}:{}:{} · {} {}",
+                 app.tr("render.result_job"),
+@@ -1626,7 +1756,7 @@
+     let response = ui.allocate_rect(rect, Sense::click_and_drag());
+     app.viewport.rect = Some(rect);
+     crate::viewport::refresh_layout(app, ui.ctx());
+-    let size = [info.width, info.height];
++    let size = logical_size;
+     let scale = app.render_workspace.view.result_scale;
+     if scale != ResultScale::Free {
+         app.render_workspace.view.result_camera = result_camera(size, rect, ui.ctx().pixels_per_point(), scale);
+diff --git a/crates/engine/src/cmd/render.rs b/crates/engine/src/cmd/render.rs
+--- a/crates/engine/src/cmd/render.rs
++++ b/crates/engine/src/cmd/render.rs
+@@ -124,7 +124,7 @@
+ CommandSpec::new("render.settings.capture_hdr", "Save Render Settings with HDR", resources::capture_settings).icon("settings").doc_only()
+     .params("name, set: typed CPU/GPU setup patch with hdr/environment unset; path: scoped HDR; expected_sha256?: digest returned by render.hdr.inspect (changed sources refuse); rotation_rad?:0, intensity?:1; samples?:1/4/16/64 for CPU only (default16); assume_linear_srgb?:false for GPU only. Captures immutable bytes and saves resource plus setup atomically in one undo, without a host; returns name/setup/resource metadata, never source bytes"),
+ CommandSpec::new("render.preflight", "Check Render Request", jobs::preflight).icon("inspect").noundo().doc_only()
+-    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace and transient studio_weights may accompany it. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy and dielectrics require fixed sampling. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; dielectric progressive and Interactive requests still refuse. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
++    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace, transient studio_weights and progressive_feedback may accompany it. progressive_feedback?: false; transient protected display updates during CPU progressive rendering only; true refuses raster, GPU and fixed CPU requests. Omission preserves legacy admission/submission. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy and dielectrics require fixed sampling. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; dielectric progressive and Interactive requests still refuse. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
+ CommandSpec::new("render.start", "Render Image", jobs::start).key("R").noundo().doc_only().at("RENDER", "IMAGE").icon("render_image")
+     .params("Same request as render.preflight. Captures an immutable product scene and queues a bounded image job. Returns its session-scoped job identity, captured scene_generation and progress. Does not change the design. See docs/render-jobs.md"),
+ CommandSpec::new("render.status", "Render Progress", jobs::status).icon("list").noundo().doc_only()

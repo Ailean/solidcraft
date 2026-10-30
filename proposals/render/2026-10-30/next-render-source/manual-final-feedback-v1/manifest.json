@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "id": "manual-final-feedback-v1",
+  "authorship": "Worker #1, SolidCraft Render team",
+  "original_source_packet_index_sha256": "636b1f32a73a9ac564c2271919ef6305327d852427dad4065b900daa4ba8f0b6",
+  "base": "Protected27 pre-format source composition4e84502804d5a3348a41a23d9627f6623e76514f9ac7e835bdb369f766dcada7; NOT production HEAD alone. Explicit rebind needed over actual C14 formatted files.",
+  "dependencies": [],
+  "source_files": [
+    {
+      "path": "crates/engine/src/render_jobs.rs",
+      "before_sha256": "b11fd62f42692c5701a08f391c2876de060fde766bf3b3639b3b3eabb2558bd2",
+      "candidate_sha256": "6bf53c040fff3b1dba096f30708b09c1cf796540ef8d59d488a451a03dffb9cc",
+      "before_bytes": 32996,
+      "candidate_bytes": 42117
+    },
+    {
+      "path": "crates/engine/src/cmd/render/jobs.rs",
+      "before_sha256": "81dea315e28b07e57b1fc6563f4875611095666eba52616ee530a63b4fc50f52",
+      "candidate_sha256": "4dc40dcaddf6c7e8dc54459e0c3f72ce38627c986d7875263eb2d42d36a700bb",
+      "before_bytes": 60298,
+      "candidate_bytes": 61446
+    },
+    {
+      "path": "crates/render/src/job/host.rs",
+      "before_sha256": "58a0125a986232dfe683c1541bc9b7da854ffb231e34a29d94c7ccd4c41965e8",
+      "candidate_sha256": "577295a655ab5a8f6204da2b9d2a6a18d3d2bfeb877993a0dfffdc58462a2551",
+      "before_bytes": 113709,
+      "candidate_bytes": 115822
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace.rs",
+      "before_sha256": "a2ddd1f7c61c973d638162c115e58d20cab1060568727b13bea0d1506186a950",
+      "candidate_sha256": "b491c0d616d342ff5b49d777647eb4caa483698baf8d3d8404d44133a4e8e3b7",
+      "before_bytes": 100730,
+      "candidate_bytes": 108496
+    },
+    {
+      "path": "crates/engine/src/cmd/render.rs",
+      "before_sha256": "3c9d5ff6a12618d51e8842c509a314f8e6f4bb56026d77c7c77eb350f3e8d87a",
+      "candidate_sha256": "7bcb645895de1c577cf69b73d05291a26d25b4145608160d9dd9b44a460a8163",
+      "before_bytes": 41055,
+      "candidate_bytes": 41279
+    }
+  ],
+  "patch_sha256": "e941003ba731ea06f9b2f2ff14e4e30035323e7722b4810931e398275a3b9132",
+  "patch_parts": [
+    {
+      "path": "candidate.patch",
+      "bytes": 53857,
+      "sha256": "e941003ba731ea06f9b2f2ff14e4e30035323e7722b4810931e398275a3b9132"
+    }
+  ],
+  "new_test_declarations": 3,
+  "product_tests_executed_on_this_packet": 0,
+  "source_review": "V1 has two source blockers: late completion could clear feedback before accepting the actual final frame; a new HDR fixture used an invalid1x1 shape. They are corrected in manual-final-feedback-v2. DO NOT APPLY V1 ALONE.",
+  "limitations": [
+    "V1 is preserved for continuity, not an accepted standalone candidate.",
+    "The protected finite64-milestone/1024 preview envelope is an unmeasured prototype; no real-time cadence or final-quality acceptance.",
+    "Separate owned UI append/integration tests are not part of this sealed packet."
+  ],
+  "patch_line_ending_policy": "Original patch LF hunks for listed uniformly CRLF source files. Replay those files only by explicit CRLF-to-LF adaptation and restoring CRLF; exact RAW before/candidate hashes must still match. All other files replay byte-strictly.",
+  "CRLF_line_ending_adapter_paths": [
+    "crates/engine/src/render_jobs.rs",
+    "crates/render/src/job/host.rs",
+    "crates/ui-egui/src/render_workspace.rs",
+    "crates/engine/src/cmd/render.rs"
+  ]
+}

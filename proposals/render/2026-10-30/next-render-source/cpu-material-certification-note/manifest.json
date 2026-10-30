@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "id": "cpu-material-certification-note",
+  "authorship": "Worker #3, SolidCraft Render team",
+  "original_source_packet_index_sha256": "7e48cf80e3a565a4b81f0237dd66d5e74336bb74645ffed9631e6e8747bbcde1",
+  "base": "cpu-material-progressive-bridge candidate.",
+  "dependencies": [
+    "cpu-material-progressive-bridge"
+  ],
+  "source_files": [
+    {
+      "path": "crates/ui-egui/src/render_workspace_materials.rs",
+      "before_sha256": "5965924cbcc62524c5c08704b3eb3b6953d606f3bf08ddef43970ed69db72db0",
+      "candidate_sha256": "e290b9e2404d68524a6a6cb4355b3f11f8bb989e370c869b2a262b1faafa8519",
+      "before_bytes": 49396,
+      "candidate_bytes": 49558
+    },
+    {
+      "path": "assets/locales/pending/cpu-optical-certification.json",
+      "before_sha256": null,
+      "candidate_sha256": "8eb71a90f0ac0d497c9bffc922e99871d802942c8c85d4213a66a61ceb79a764",
+      "before_bytes": 0,
+      "candidate_bytes": 3542
+    }
+  ],
+  "patch_sha256": "be2921da310838b7347139f2a28e8a8c3baa6c58529452bd410037baba431a33",
+  "patch_parts": [
+    {
+      "path": "candidate.patch",
+      "bytes": 4529,
+      "sha256": "be2921da310838b7347139f2a28e8a8c3baa6c58529452bd410037baba431a33"
+    }
+  ],
+  "new_test_declarations": 0,
+  "product_tests_executed_on_this_packet": 0,
+  "source_review": "Designer independent source review9f14f47d8ac043f1d44300242f0bcb3e48690032071c0b3a49472d09cd3f18a1 closes the earlier caption finding only.",
+  "limitations": [
+    "No new runtime, translation gate or visible native acceptance result."
+  ],
+  "patch_line_ending_policy": "Strict byte replay; original patch bytes preserved.",
+  "CRLF_line_ending_adapter_paths": []
+}

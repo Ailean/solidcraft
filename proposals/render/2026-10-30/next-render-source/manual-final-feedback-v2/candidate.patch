@@ -1,0 +1,75 @@
+diff --git a/crates/ui-egui/src/render_workspace.rs b/crates/ui-egui/src/render_workspace.rs
+--- a/crates/ui-egui/src/render_workspace.rs
++++ b/crates/ui-egui/src/render_workspace.rs
+@@ -1467,7 +1467,7 @@
+             // Decoding can race final publication/cancellation. Recheck the real job.
+             if handle.frame().ok().flatten().is_some() {
+                 app.render_workspace.view.completed = Some(job);
+-            } else if handle.status().is_ok_and(|current| !current.progress.phase.terminal()) {
++            } else if final_job_still_running(app, &handle) {
+                 return;
+             }
+         }
+@@ -1476,6 +1476,29 @@
+     }
+     app.render_workspace.preview_image = None;
+     app.render_workspace.final_partial = None;
++}
++
++/// Reconcile a terminal observation made after a frame read returned None.
++/// Complete publishes its real frame under the same host data lock; read that
++/// frame again before the caller clears provisional caches or falls back.
++fn final_job_still_running(app: &mut SolveApp, handle: &solidcraft_engine::render::job::JobHandle) -> bool {
++    let job = handle.id();
++    if app.render_workspace.view.job != Some(job) { return false; }
++    let status = match handle.status() {
++        Ok(status) => status,
++        Err(error) => { app.set_status(error.to_string(), true); return false; }
++    };
++    if status.progress.phase == solidcraft_engine::render::job::Phase::Completed {
++        match handle.frame() {
++            Ok(Some(frame)) if app.render_workspace.view.job == Some(frame.info.job) => {
++                app.render_workspace.view.completed = Some(frame.info.job);
++            }
++            Err(error) => app.set_status(error.to_string(), true),
++            _ => {}
++        }
++        return false;
++    }
++    !status.progress.phase.terminal()
+ }
+ 
+ fn remember_displayed_job(app: &mut SolveApp, preserve_view: bool) {
+diff --git a/crates/engine/src/render_jobs.rs b/crates/engine/src/render_jobs.rs
+--- a/crates/engine/src/render_jobs.rs
++++ b/crates/engine/src/render_jobs.rs
+@@ -804,16 +804,24 @@
+             camera:Default::default(), transparent_background:false,
+         };
+         let scene = solidcraft_render::ProductScene { meshes:Vec::new(),bounds:solidcraft_geom::Aabb3::EMPTY };
+-        let mut bytes = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\nPRIMARIES=0.64 0.33 0.30 0.60 0.15 0.06 0.3127 0.3290\n\n-Y 1 +X 1\n".to_vec();
+-        bytes.extend_from_slice(&[96,64,32,129]);
++        // Original equirectangular 2x1 RGBE source: two distinct texels, eight payload bytes.
++        let mut bytes = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\nPRIMARIES=0.64 0.33 0.30 0.60 0.15 0.06 0.3127 0.3290\n\n-Y 1 +X 2\n".to_vec();
++        bytes.extend_from_slice(&[96,64,32,129, 32,64,96,129]);
++        let encoded_capacity = bytes.capacity() as u64;
++        // Independent allocation contract: 2 RGB f32 texels = 24 bytes, one
++        // 2-pixel RGBE scanline = 8 bytes, plus the fixed 8192-byte task envelope.
++        let expected_hdr_bytes = encoded_capacity + 24 + 8 + 8192;
+         let source = solidcraft_render::lighting::HdrSource::new(bytes).unwrap();
++        assert_eq!((source.info().width, source.info().height), (2,1));
++        assert_eq!(source.retained_encoded_bytes(),encoded_capacity);
++        assert_eq!(source.info().decoded_rgb_bytes,24);
+         let environment = solidcraft_render::lighting::environment_input::EnvironmentInput::new(source,0.25,0.5,1).unwrap();
+         let plain = host.admit_cpu_protected_partial_with_environment_and_options(&scene,&request,JobOptions::default(),None).unwrap();
+         let lit = host.admit_cpu_protected_partial_with_environment_and_options(&scene,&request,JobOptions::default(),Some(&environment)).unwrap();
+-        let source_bytes = environment.required_bytes().unwrap();
+-        assert_eq!(lit.preparation_bytes-plain.preparation_bytes,source_bytes);
++        assert_eq!(environment.required_bytes().unwrap(),expected_hdr_bytes);
++        assert_eq!(lit.preparation_bytes-plain.preparation_bytes,expected_hdr_bytes);
+         assert_eq!(lit.estimated_total_bytes-plain.estimated_total_bytes,
+-            source_bytes + std::mem::size_of::<solidcraft_render::lighting::environment_input::EnvironmentInfo>() as u64);
++            expected_hdr_bytes + std::mem::size_of::<solidcraft_render::lighting::environment_input::EnvironmentInfo>() as u64);
+         let job = host.submit_cpu_protected_partial_with_environment_and_options(
+             JobId {session:session.render_jobs.owner,serial:1,generation:1},session.revision,scene,request,
+             JobOptions::default(),Some(environment),

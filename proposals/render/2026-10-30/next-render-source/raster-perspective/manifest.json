@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "id": "raster-perspective",
+  "authorship": "Engineer; original independent geometric/acceptance reviews by Kernel Specialist and Designer",
+  "original_source_packet_index_sha256": "143f709294d383e372fa4871990e288a3db4dc1068218946780656c908366c72",
+  "base": "Actual adopted receiver image.rs/image_tests.rs, unchanged by the C14 formatter.",
+  "dependencies": [],
+  "source_files": [
+    {
+      "path": "crates/render/src/job/image.rs",
+      "before_sha256": "c8c30589c1f25c034115badf3833f7a44f20b03513957ac6f735a3c776a4c2d9",
+      "candidate_sha256": "0e6fa062eba9d5c0f4899fc92d7e7e667bbad295b35ff6bc8addbc9db7fd6285",
+      "before_bytes": 34328,
+      "candidate_bytes": 34526
+    },
+    {
+      "path": "crates/render/src/job/image_tests.rs",
+      "before_sha256": "4630dd681b2655fabbc8d4eb1f5e28b9d668f137ba7f8ba76c5cdfcaa22a37a0",
+      "candidate_sha256": "4878271823870137cddb4f7f96c61b7e7e17bbfe46488858fcaedd9448c505dd",
+      "before_bytes": 9587,
+      "candidate_bytes": 19561
+    }
+  ],
+  "patch_sha256": "8c2308586311b2a39c5e47bb4b6785db54bad58d8875ff82a4c59c44f10fcf14",
+  "patch_parts": [
+    {
+      "path": "candidate.patch",
+      "bytes": 11458,
+      "sha256": "8c2308586311b2a39c5e47bb4b6785db54bad58d8875ff82a4c59c44f10fcf14"
+    }
+  ],
+  "new_test_declarations": 4,
+  "product_tests_executed_on_this_packet": 0,
+  "source_review": "Designer source rebind review4cf99c07128eb36acfb4ccfeff11f84ac50a1c04dbe0d5aa489da0e75d788052 found no actionable source blocker.",
+  "limitations": [
+    "ALTERNATIVE to the earlier main66bd64-specific perspective packet, not an additional application of it.",
+    "No Rust/native/GPU execution; does not establish all Raster feature parity."
+  ],
+  "patch_line_ending_policy": "Original patch LF hunks for listed uniformly CRLF source files. Replay those files only by explicit CRLF-to-LF adaptation and restoring CRLF; exact RAW before/candidate hashes must still match. All other files replay byte-strictly.",
+  "CRLF_line_ending_adapter_paths": [
+    "crates/render/src/job/image.rs",
+    "crates/render/src/job/image_tests.rs"
+  ]
+}

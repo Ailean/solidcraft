@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "id": "manual-final-feedback-v2",
+  "authorship": "Worker #1; V1 findings from independent Engineer review",
+  "original_source_packet_index_sha256": "e06bf4d2787157e733a7a8b95cec0aa89f41025b38dbde4c297209605660b655",
+  "base": "manual-final-feedback-v1 exact candidate; this is an ADDITIVE correction, not a cumulative replacement.",
+  "dependencies": [
+    "manual-final-feedback-v1"
+  ],
+  "source_files": [
+    {
+      "path": "crates/ui-egui/src/render_workspace.rs",
+      "before_sha256": "b491c0d616d342ff5b49d777647eb4caa483698baf8d3d8404d44133a4e8e3b7",
+      "candidate_sha256": "dd3dc088fdc1080a493eb52f87978fbe8bd36abdfe844f7bbf47b56a986aa7ed",
+      "before_bytes": 108496,
+      "candidate_bytes": 109538
+    },
+    {
+      "path": "crates/engine/src/render_jobs.rs",
+      "before_sha256": "6bf53c040fff3b1dba096f30708b09c1cf796540ef8d59d488a451a03dffb9cc",
+      "candidate_sha256": "5655d5f5ae2c80560f9e067ca24424c0561cc5969260ff0343660e4d198909aa",
+      "before_bytes": 42117,
+      "candidate_bytes": 42740
+    }
+  ],
+  "patch_sha256": "140fd054b027a3ed33df57ad4d0d1c756e88a5705c63be16d675caadd703ee9d",
+  "patch_parts": [
+    {
+      "path": "candidate.patch",
+      "bytes": 4652,
+      "sha256": "140fd054b027a3ed33df57ad4d0d1c756e88a5705c63be16d675caadd703ee9d"
+    }
+  ],
+  "new_test_declarations": 0,
+  "product_tests_executed_on_this_packet": 0,
+  "source_review": "Independent closure review in progress at preservation time.",
+  "limitations": [
+    "Apply both V1 and V2 only after exact source rebind/composition review.",
+    "No GUI, native render timing, full test or output-quality qualification."
+  ],
+  "patch_line_ending_policy": "Original patch LF hunks for listed uniformly CRLF source files. Replay those files only by explicit CRLF-to-LF adaptation and restoring CRLF; exact RAW before/candidate hashes must still match. All other files replay byte-strictly.",
+  "CRLF_line_ending_adapter_paths": [
+    "crates/ui-egui/src/render_workspace.rs",
+    "crates/engine/src/render_jobs.rs"
+  ]
+}

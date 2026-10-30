@@ -1,0 +1,356 @@
+--- a/crates/render/src/raytrace/image.rs
++++ b/crates/render/src/raytrace/image.rs
+@@ -455,9 +455,35 @@
+     ready: bool,
+ }
+ 
++/// At most2 crossings per certified convex box and1 per certified planar sheet
++/// on a single straight camera segment. Equal indices preserve direction; no
++/// selected opaque reflector may generate another segment. Certificates and
++/// strict parent validation precede this bounded, allocation-free policy.
++fn straight_boundary_limit(options: &RaytraceOptions, certificates: &[Option<Certificate>; MAX_OVERRIDES]) -> job::Result<Option<u8>> {
++    if options.dielectrics.is_empty()
++        || options.dielectrics.iter().any(|input| input.ior != 1.0)
++        || options.reflections.as_ref().is_some_and(|r| !r.bodies.is_empty())
++    {
++        return Ok(None);
++    }
++    let mut limit = 0_u8;
++    for (index, input) in options.dielectrics.iter().enumerate() {
++        let certificate = certificates.get(index).copied().flatten().ok_or_else(|| invalid("missing straight optical certificate"))?;
++        let crossings = match (input.boundary, certificate) {
++            (job::DielectricBoundary::ClosedBox, Certificate::ClosedBox(_)) => 2,
++            (job::DielectricBoundary::ThinSheet, Certificate::ThinSheet) => 1,
++            _ => return Err(invalid("straight optical certificate disagrees with boundary")),
++        };
++        limit = limit.checked_add(crossings).filter(|n| *n <= 16).ok_or_else(|| invalid("straight optical crossing bound exceeds sixteen"))?;
++    }
++    Ok(Some(limit))
++}
++
+ /// One fallibly reserved optional slot. Branches do not copy PendingPixel, own
+ /// lighting state, encode pixels, or allocate outside the existing job reservation.
+ struct OpticalTask {
++    /// None retains the original eight-event branching model unchanged.
++    straight_limit: Option<u8>,
+     certificates: [Option<Certificate>; MAX_OVERRIDES],
+     parents: [Option<usize>; MAX_OVERRIDES],
+     nested: bool,
+@@ -678,11 +704,12 @@
+         let mut optical = Vec::new();
+         if !options.dielectrics.is_empty() {
+             let (certificates, parents) = certificates(&scene, &options, nested)?;
++            let straight_limit = straight_boundary_limit(&options, &certificates)?;
+             optical.try_reserve_exact(1).map_err(|_| error(TraceError::AllocationFailed))?;
+             if optical.capacity() != 1 {
+                 return Err(error(TraceError::MemoryLimit));
+             }
+-            optical.push(OpticalTask { certificates, parents, nested, pending: None });
++            optical.push(OpticalTask { straight_limit, certificates, parents, nested, pending: None });
+         }
+         if input.is_some() {
+             options.validate_environment_reflections(&scene)?;
+@@ -1521,14 +1548,27 @@
+         state.path.ray = pending.ray;
+         state.path.throughput = pending.throughput;
+         state.path.bounce = pending.bounce;
+-        if state.path.boundaries == MAX_BOUNDARIES {
+-            // Explicit finite-depth preview: unresolved continuation is black, while
+-            // already accumulated terms and the other bounded branches remain intact.
+-            let radiance = pending.radiance;
+-            return self.finish_transport_path(radiance);
+-        }
+-        if state.path.boundaries > MAX_BOUNDARIES {
+-            return Err(invalid("invalid dielectric boundary depth"));
++        if let Some(limit) = optical.straight_limit {
++            // The active transmitted path was popped immediately; a nonzero
++            // stack or opaque bounce would invalidate the one-segment proof.
++            // Preserve all real interfaces/Beer/parent checks below. No tint or
++            // environment shortcut and no expansion of the branching stack.
++            if state.path.bounce != 0 || state.stack_len != 0 || state.paths != u16::from(state.path.boundaries) + 1 {
++                return Err(invalid("unexpected branch in certified straight optical transport"));
++            }
++            if state.path.boundaries >= limit {
++                return Err(invalid("certified straight optical crossing bound exceeded"));
++            }
++        } else {
++            if state.path.boundaries == MAX_BOUNDARIES {
++                // Original bounded reflecting/refracting model: its positive
++                // residual remains a quality limitation, not convergence proof.
++                let radiance = pending.radiance;
++                return self.finish_transport_path(radiance);
++            }
++            if state.path.boundaries > MAX_BOUNDARIES {
++                return Err(invalid("invalid dielectric boundary depth"));
++            }
+         }
+         let next_depth = state.path.boundaries + 1;
+         let normal = shared.oriented_geometric_normal();
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -1990,3 +1990,217 @@
+     }
+     panic!("interior progressive camera not refused");
+ }
++
++
++// Original regression implementation guided by Kernel Specialist's analytic
++// identity-shell counterexample (FINDING5282bf86 / proposal dae7f679). SOURCE
++// ONLY, WRITTEN NOT RUN; expectations are physical, never recorded output.
++pub(super) fn straight_identity_shells_source(count:usize,progressive:bool,absorbing:bool) -> (ProductScene,ImageRequest,RaytraceOptions) {
++    assert!((1..=8).contains(&count));
++    let mut meshes=Vec::with_capacity(8);
++    let mut dielectrics=Vec::with_capacity(8);
++    for index in 0..count {
++        let h=(count-index) as f64;
++        let mut body=dielectric::tests::box_body(2.0*h);
++        body.name=format!("Straight identity shell {index}");
++        for point in &mut std::sync::Arc::make_mut(&mut body.mesh).positions {
++            *point=Vec3::new(if point.x<0.0 {-(16.0+h)} else {16.0+h},
++                if point.y<0.0 {-(16.0+h)} else {16.0+h},point.z-h);
++        }
++        let sigma=if absorbing {0.01*(index+1) as f64} else {0.0};
++        dielectrics.push(job::DielectricOptions {body_index:index,body_name:body.name.clone(),
++            boundary:job::DielectricBoundary::ClosedBox,ior:1.0,
++            absorption_per_mm:[sigma,2.0*sigma,0.0],thickness_mm:0.0});
++        meshes.push(body);
++    }
++    assert!(dielectrics.capacity()<=8);
++    let bounds=meshes.iter().fold(Aabb3::EMPTY,|a,body|a.union(&body.mesh.bounds()));
++    let options=RaytraceOptions {
++        dielectrics,
++        progressive:progressive.then_some(job::CpuProgressiveOptions {samples_per_pixel:3,seed:71}),
++        lights:Some(Vec::new()),shadows:false,
++        environment:Some(job::RaytraceEnvironmentOptions {color:[1.0;3],intensity:1.0}),
++        ..Default::default()
++    };
++    let mut request=dielectric::tests::request(options.clone());
++    request.background=[188;3];
++    request.camera.target=Vec3::ZERO;
++    request.camera.distance=20.0;
++    request.camera.yaw=0.0;
++    request.camera.pitch=std::f64::consts::FRAC_PI_2;
++    request.camera.fov=0.0;
++    (ProductScene {meshes,bounds},request,options)
++}
++
++pub(super) fn straight_shells_expected_linear(count:usize,absorbing:bool) -> [f64;3] {
++    // Each shell's active parent interval totals2mm, including the innermost
++    // 2mm slab. Sum 2*.01*(1+...+N)=.01*N*(N+1); green doubles sigma.
++    let tau=if absorbing {0.01*(count*(count+1)) as f64} else {0.0};
++    [(-tau).exp(),(-2.0*tau).exp(),1.0]
++}
++
++pub(super) fn straight_expected_pixel(linear:[f64;3]) -> [u8;4] {
++    // Independent documented zero-EV Reinhard and IEC sRGB equations, not the
++    // renderer's compositor/map_to_display/encode8 or a prior output capture.
++    let rgb=linear.map(|v| {
++        let mapped=v/(1.0+v);
++        let encoded=if mapped<=0.0031308 {12.92*mapped} else {1.055*mapped.powf(1.0/2.4)-0.055};
++        (encoded*255.0+0.5).floor() as u8
++    });
++    [rgb[0],rgb[1],rgb[2],255]
++}
++
++fn complete_straight_shells(mut task:ImageTask,expected_crossings:u8,expected_linear:[f64;3]) -> Vec<u8> {
++    let progressive=task.options.progressive;
++    let mut final_linear=None;
++    let mut maximum=0;
++    let mut final_png=None;
++    assert_eq!(task.optical.first().unwrap().straight_limit,Some(expected_crossings));
++    for _ in 0..1_000_000 {
++        if let Some(p)=&task.progressive && p.film.ready() && p.film.samples()==progressive.unwrap().samples_per_pixel {
++            let (rgb,covered,samples)=p.film.pixel(0).unwrap();
++            assert_eq!((covered,samples),(3,3));
++            final_linear=Some(rgb);
++        }
++        let before=task.work.used();
++        let poll=task.step_with_previews(1).unwrap();
++        // PNG row/hash charges are the unchanged resolve contract. During
++        // optical traversal/interface stages one unit cannot overspend.
++        if let Some(state)=task.optical.first().and_then(|o|o.pending.as_ref()) {
++            assert!(task.work.used()-before<=1);
++            assert_eq!(state.stack_len,0,"zero Fresnel reflection creates no pending branch");
++            assert_eq!(state.paths,u16::from(state.path.boundaries)+1);
++            maximum=maximum.max(state.path.boundaries);
++        }
++        match poll {
++            ImagePoll::Pending(_)=>{},
++            ImagePoll::Preview {png,..}=>{
++                assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0,0).0,straight_expected_pixel(expected_linear));
++                assert!(task.optical.first().unwrap().pending.is_none());
++            },
++            ImagePoll::Complete(png)=>{final_png=Some(png);break;}
++        }
++    }
++    assert_eq!(maximum,expected_crossings,"every real geometric interface was traversed");
++    if progressive.is_some() {
++        for (actual,expected) in final_linear.unwrap().into_iter().zip(expected_linear) {
++            assert!((actual-expected).abs()<1e-11,"physical parent-only Beer path length");
++        }
++    }
++    let png=final_png.expect("certified finite straight path must complete");
++    assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0,0).0,straight_expected_pixel(expected_linear));
++    png
++}
++
++#[test]
++fn straight_identity_shells_four_control_five_minimum_and_eight_maximum_reach_environment() {
++    for progressive in [false,true] {
++        for count in [4,5,8] {
++            let (scene,request,options)=straight_identity_shells_source(count,progressive,false);
++            options.validate().unwrap();
++            assert!(admit(&scene,&request,&options).is_err(),"nesting still requires explicit opt-in");
++            admit_with_nested(&scene,&request,&options,true).unwrap();
++            let task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),options,None,true).unwrap();
++            let png=complete_straight_shells(task,(2*count) as u8,[1.0;3]);
++            assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0,0).0,[188,188,188,255]);
++        }
++    }
++}
++
++#[test]
++fn straight_identity_shells_keep_actual_beer_parent_intervals_past_eight_crossings() {
++    for progressive in [false,true] {
++        for count in [4,5,8] {
++            let (scene,request,options)=straight_identity_shells_source(count,progressive,true);
++            let task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),options,None,true).unwrap();
++            let _=complete_straight_shells(task,(2*count) as u8,straight_shells_expected_linear(count,true));
++        }
++    }
++}
++
++#[test]
++fn straight_mixed_certificates_derive_two_per_box_and_one_per_sheet_without_extra_stack() {
++    let (mut scene,mut request,mut options)=straight_identity_shells_source(5,true,false);
++    for index in 0..3 {
++        let name=format!("Straight external sheet {index}");
++        let body_index=scene.meshes.len();
++        scene.meshes.push(optical_sheet(&name,0.0,6.0+index as f64));
++        options.dielectrics.push(optical_input(body_index,&name,1.0));
++    }
++    assert_eq!(options.dielectrics.len(),8);
++    assert!(options.dielectrics.capacity()<=8);
++    scene.bounds=scene.meshes.iter().fold(Aabb3::EMPTY,|a,body|a.union(&body.mesh.bounds()));
++    request.raytrace=Some(options.clone());
++    let task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),options,None,true).unwrap();
++    let _=complete_straight_shells(task,13,[1.0;3]);
++}
++
++#[test]
++fn straight_policy_requires_exact_unit_indices_and_no_selected_opaque_reflector() {
++    assert_eq!(MAX_BOUNDARIES,8);
++    assert_eq!(MAX_PATHS,511);
++    let (scene,request,options)=straight_identity_shells_source(5,false,false);
++    for ior in [1.0_f64.next_up(),1.5] {
++        let mut changed=options.clone();
++        changed.dielectrics[2].ior=ior;
++        let request=ImageRequest {raytrace:Some(changed.clone()),..request.clone()};
++        let task=ImageTask::new_with_environment_and_nested(scene.clone(),request,CancelToken::default(),changed,None,true).unwrap();
++        assert_eq!(task.optical.first().unwrap().straight_limit,None,"no epsilon-index shortcut or new rejection of legacy refracting input");
++    }
++    let mut scene=scene;
++    let mut changed=options;
++    scene.meshes.push(optical_sheet("Separate opaque reflector",100.0,0.0));
++    scene.bounds=scene.meshes.iter().fold(Aabb3::EMPTY,|a,body|a.union(&body.mesh.bounds()));
++    changed.reflections=Some(job::ReflectionOptions {bodies:vec![job::ReflectionBody {body:"Separate opaque reflector".into(),mode:job::ReflectionMode::Mirror}],max_bounces:1,samples:1});
++    let request=ImageRequest {raytrace:Some(changed.clone()),..request};
++    let task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),changed,None,true).unwrap();
++    assert_eq!(task.optical.first().unwrap().straight_limit,None);
++    assert!(task.optical.first().unwrap().pending.is_none());
++}
++
++#[test]
++fn straight_identity_transport_still_charges_and_can_cancel_or_exhaust_inside_deep_chain() {
++    for cancel in [false,true] {
++        let (scene,request,options)=straight_identity_shells_source(8,true,true);
++        let mut task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),options,None,true).unwrap();
++        let mut observed=false;
++        for _ in 0..200_000 {
++            let before=task.work.used();
++            assert!(matches!(task.step_with_previews(1).unwrap(),ImagePoll::Pending(_)));
++            assert!(task.work.used()-before<=1);
++            if task.optical.first().and_then(|o|o.pending.as_ref()).is_some_and(|s|s.path.boundaries==9) {
++                let frontier=task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++                if cancel {task.cancel.cancel();} else {task.work.limit=task.work.used();}
++                assert_eq!(task.step_with_previews(1).err().unwrap().code,if cancel {ErrorCode::Cancelled} else {ErrorCode::LimitExceeded});
++                assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(),frontier);
++                assert!(!task.done);
++                observed=true;
++                break;
++            }
++        }
++        assert!(observed,"real ninth crossing must be reached before the stop");
++    }
++}
++
++#[test]
++fn straight_crossing_bound_corruption_is_typed_error_not_a_successful_black_tail() {
++    let (scene,request,options)=straight_identity_shells_source(5,true,false);
++    let mut task=ImageTask::new_with_environment_and_nested(scene,request,CancelToken::default(),options,None,true).unwrap();
++    // Controlled invariant unit, distinct from the unchanged valid E2E fixtures:
++    // an impossible internal policy must fail at a real subsequent interface.
++    task.optical.first_mut().unwrap().straight_limit=Some(1);
++    for _ in 0..200_000 {
++        match task.step_with_previews(1) {
++            Err(error)=>{
++                assert_eq!(error.code,ErrorCode::InvalidScene);
++                assert!(error.message.contains("straight optical crossing bound exceeded"));
++                assert_eq!(task.progressive.as_ref().unwrap().film.samples(),0);
++                assert!(!task.done);
++                return;
++            },
++            Ok(ImagePoll::Pending(_))=>{},
++            Ok(_)=>panic!("bound inconsistency cannot publish success"),
++        }
++    }
++    panic!("unexpected extra crossing was not refused");
++}
+--- a/crates/render/src/raytrace/primary_aa_tests.rs
++++ b/crates/render/src/raytrace/primary_aa_tests.rs
+@@ -1615,3 +1615,45 @@
+     assert_eq!(snapshot,expected.0[0].1);
+     assert_eq!(actual.0,expected.1);
+ }
++
++
++#[test]
++fn protected_deep_identity_shells_preserve_partial_final_rays_film_and_real_work() {
++    for absorbing in [false,true] {
++        let (scene,mut request,options)=super::tests::straight_identity_shells_source(8,true,absorbing);
++        request.width=2; // orthographic X range[-16,16] remains inside innermost[-17,17].
++        let plan=job::ProtectedPreviewPlan::new(2,1,3,options.budget).unwrap();
++        let mut task=ImageTask::new_with_environment_and_nested_and_protected_partial(
++            scene.clone(),request.clone(),CancelToken::default(),options.clone(),None,true,plan).unwrap();
++        let mut control=ImageTask::new_with_environment_and_nested_and_partial(
++            scene,request,CancelToken::default(),options,None,true,plan.preview_plan()).unwrap();
++        let mut rays=Vec::new();
++        let mut control_rays=Vec::new();
++        reach_partial_frontier(&mut task,0,1,&mut rays);
++        assert!(task.optical.first().unwrap().pending.is_none());
++        assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++        let ordinary=task.protected_preview_report().unwrap().ordinary_used;
++        let (_,covered,passes,prefix)=finish_partial_snapshot(&mut task);
++        assert_eq!((passes,prefix),(0,1));
++        assert_eq!(covered,[1,0]);
++        assert_eq!(task.protected_preview_report().unwrap().ordinary_used,ordinary);
++        let actual=finish_partial_final(&mut task,true,&mut rays);
++        let expected=finish_partial_final(&mut control,true,&mut control_rays);
++        assert_eq!(actual,expected,"exact final PNG and film bits with optional observation");
++        assert_eq!(rays,control_rays);
++        assert_eq!(rays.len(),6);
++        let linear=super::tests::straight_shells_expected_linear(8,absorbing);
++        let expected_pixel=super::tests::straight_expected_pixel(linear);
++        for rgb in &actual.1 {
++            for (value,physical) in rgb.iter().copied().map(f64::from_bits).zip(linear) {
++                assert!((value-physical).abs()<1e-11);
++            }
++        }
++        let image=::image::load_from_memory(&actual.0).unwrap().to_rgba8();
++        assert_eq!(image.get_pixel(0,0).0,expected_pixel);
++        assert_eq!(image.get_pixel(1,0).0,expected_pixel);
++        let report=task.protected_preview_report().unwrap();
++        assert_eq!(report.ordinary_used,control.work.used());
++        assert_eq!(report.presentation_used,plan.snapshot_work().unwrap());
++    }
++}

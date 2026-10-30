@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "id": "photographic-cursor-commit",
+  "authorship": "Designer, SolidCraft Render team",
+  "original_source_packet_index_sha256": "e2c069db6665aefc2c66b655b2c7982bfea288e478c9b8808d8eed440d1f569a",
+  "base": "photographic-test-contract candidateb12cc1818b8e1a2ebf791cfe50728f6ba9f6a5eb3f25e74001bffac4d357f6ab.",
+  "dependencies": [
+    "photographic-test-contract"
+  ],
+  "source_files": [
+    {
+      "path": "crates/render/src/job/photographic.rs",
+      "before_sha256": "b12cc1818b8e1a2ebf791cfe50728f6ba9f6a5eb3f25e74001bffac4d357f6ab",
+      "candidate_sha256": "74756050d449a3333130e54d54b72aed9de2d54ca535d5b50803c30a9ec35c4b",
+      "before_bytes": 25978,
+      "candidate_bytes": 28171
+    }
+  ],
+  "patch_sha256": "66f7cf862a34d3e0295ffde47f3c7885049684ec09131b900c51b387f0174da8",
+  "patch_parts": [
+    {
+      "path": "candidate.patch",
+      "bytes": 2944,
+      "sha256": "66f7cf862a34d3e0295ffde47f3c7885049684ec09131b900c51b387f0174da8"
+    }
+  ],
+  "new_test_declarations": 2,
+  "product_tests_executed_on_this_packet": 0,
+  "source_review": "Independent source review in progress at preservation time.",
+  "limitations": [
+    "Not the cause of C14 test37.",
+    "The current host propagates step errors and rechecks cancellation before publication; no host leak or real scheduling-race reproduction is claimed."
+  ],
+  "patch_line_ending_policy": "Strict byte replay; original patch bytes preserved.",
+  "CRLF_line_ending_adapter_paths": []
+}

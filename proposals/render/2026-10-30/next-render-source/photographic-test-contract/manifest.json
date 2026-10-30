@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "id": "photographic-test-contract",
+  "authorship": "Designer; independent contract/source review by Engineer review agent",
+  "original_source_packet_index_sha256": "5d0d064e7d936df9e55e3aabd64e646a5314647e57cb6c51a82e6400b8b18415",
+  "base": "Actual C14 post-format photographic.rs4baeb099d56c6310c85bd0931276e41a8aba5f5fbd223956dabe2c0b2c00c061.",
+  "dependencies": [],
+  "source_files": [
+    {
+      "path": "crates/render/src/job/photographic.rs",
+      "before_sha256": "4baeb099d56c6310c85bd0931276e41a8aba5f5fbd223956dabe2c0b2c00c061",
+      "candidate_sha256": "b12cc1818b8e1a2ebf791cfe50728f6ba9f6a5eb3f25e74001bffac4d357f6ab",
+      "before_bytes": 24993,
+      "candidate_bytes": 25978
+    }
+  ],
+  "patch_sha256": "8f2534d7459e961dd00b0ea9c604ef45d70fdce84b1cfd1abaa0a26832c449fd",
+  "patch_parts": [
+    {
+      "path": "candidate.patch",
+      "bytes": 1728,
+      "sha256": "8f2534d7459e961dd00b0ea9c604ef45d70fdce84b1cfd1abaa0a26832c449fd"
+    }
+  ],
+  "new_test_declarations": 0,
+  "product_tests_executed_on_this_packet": 0,
+  "source_review": "Independent source review confirms the contract diagnosis. The original C14 failure remains failed and is not rerun by this packet.",
+  "limitations": [
+    "This is not a production fix and does not merely change the expected code to InvalidRequest.",
+    "A separately discovered historical terminal cursor race is addressed only in the following independent packet."
+  ],
+  "patch_line_ending_policy": "Strict byte replay; original patch bytes preserved.",
+  "CRLF_line_ending_adapter_paths": []
+}

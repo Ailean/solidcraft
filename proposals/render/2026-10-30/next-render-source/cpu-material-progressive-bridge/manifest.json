@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "id": "cpu-material-progressive-bridge",
+  "authorship": "Worker #3, SolidCraft Render team",
+  "original_source_packet_index_sha256": "c966c69eba46862feb5e9b09631b05bc14a89249943aa90d84fae500edc9fcfe",
+  "base": "Corrected CPU material routing modules/locales, identical in its pre-format and post-format forms.",
+  "dependencies": [
+    "cpu-material-routing-postformat",
+    "cpu-progressive-optics"
+  ],
+  "source_files": [
+    {
+      "path": "crates/ui-egui/src/render_workspace_materials.rs",
+      "before_sha256": "148a44dd7cac8b75d744b7d6e5ba841a4515acdae72e360c7e6354de1f8d8da2",
+      "candidate_sha256": "5965924cbcc62524c5c08704b3eb3b6953d606f3bf08ddef43970ed69db72db0",
+      "before_bytes": 49152,
+      "candidate_bytes": 49396
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_cpu.rs",
+      "before_sha256": "000f776d03454fb0cacdcdea6c5ed15ccbe8203dbb273a1f2ab3123c763221c3",
+      "candidate_sha256": "aa110b13e97c6887f64f449c170c3cdcdf7ba11ec0399372bd0c6134152f158b",
+      "before_bytes": 27900,
+      "candidate_bytes": 27938
+    },
+    {
+      "path": "assets/locales/pending/cpu-optical-materials.json",
+      "before_sha256": "f1f3792afd9f98e186d53d0c3a96fabaf006fe791d1c99bfa4104128c369e436",
+      "candidate_sha256": "5e8a44d004fd2f7d865f244c91a9fb1cf55b4bcea32810f7b9f9eff90c778067",
+      "before_bytes": 14343,
+      "candidate_bytes": 14577
+    }
+  ],
+  "patch_sha256": "0b4686c085cc226bb54b6544d0f50966b9108479ac4a670060eefbffd2edd8e4",
+  "patch_parts": [
+    {
+      "path": "candidate.patch",
+      "bytes": 21253,
+      "sha256": "0b4686c085cc226bb54b6544d0f50966b9108479ac4a670060eefbffd2edd8e4"
+    }
+  ],
+  "new_test_declarations": 0,
+  "product_tests_executed_on_this_packet": 0,
+  "source_review": "Root source review4cd082ad97ab220cc9dc6635d9c5467b8b82c6dc80b31f73d32aa2b231e77311 found no new actionable production blocker, with explicit pending integration obligations.",
+  "limitations": [
+    "Not effective or qualified on C14, which lacks this progressive optical consumer.",
+    "Three new UI fixed-only negatives and one existing engine progressive-glass negative require explicit feature-aware adaptation; do not weaken unrelated unsupported-input/default/certificate assertions."
+  ],
+  "patch_line_ending_policy": "Strict byte replay; original patch bytes preserved.",
+  "CRLF_line_ending_adapter_paths": []
+}

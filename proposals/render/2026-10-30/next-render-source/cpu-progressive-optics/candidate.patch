@@ -1,0 +1,618 @@
+--- a/crates/render/src/raytrace/image.rs
++++ b/crates/render/src/raytrace/image.rs
+@@ -442,6 +442,9 @@
+ }
+ 
+ struct DielectricPixel {
++    /// A whole Fresnel tree belongs to one absolute camera sample. Fixed paths
++    /// keep None; work quanta and presentation never enter this identity.
++    camera_sample: Option<(usize, u32)>,
+     path: OpticalPath,
+     stack: [Option<OpticalPath>; MAX_BOUNDARIES as usize + 1],
+     stack_len: usize,
+@@ -465,6 +468,7 @@
+     fn new(ray: Ray) -> Self {
+         Self {
+             path: OpticalPath { ray, throughput: Vec3::new(1.0, 1.0, 1.0), medium: None, segment_start: ray.origin(), boundaries: 0, bounce: 0 },
++            camera_sample: None,
+             stack: [None; MAX_BOUNDARIES as usize + 1],
+             stack_len: 0,
+             paths: 1,
+@@ -473,6 +477,13 @@
+             selected: None,
+             ready: false,
+         }
++    }
++
++    fn check_camera_sample(&self, actual: Option<(usize, u32)>) -> job::Result<()> {
++        if self.camera_sample != actual {
++            return Err(invalid("optical tree differs from its absolute camera sample"));
++        }
++        Ok(())
+     }
+ 
+     fn push(&mut self, path: OpticalPath) -> job::Result<()> {
+@@ -877,6 +888,12 @@
+         self.options.reflections.as_ref().filter(|r| !r.bodies.is_empty()).map_or(1, |r| r.samples)
+     }
+     fn finish_sample(&mut self, radiance: Vec3) -> job::Result<()> {
++        // A Fresnel leaf is not a camera observation. The existing transport
++        // drains every reflected/transmitted branch into one linear sum first.
++        // Reject a premature commit rather than averaging branches into film.
++        if self.progressive.is_some() && self.optical.first().is_some_and(|o| o.pending.is_some()) {
++            return Err(invalid("progressive film cannot commit an undrained optical tree"));
++        }
+         if let Some(progressive) = &mut self.progressive {
+             if self.primary_coverage > 1 {
+                 return Err(invalid("progressive camera sample has duplicate primary coverage"));
+@@ -1045,7 +1062,9 @@
+                 if optical.pending.is_some() {
+                     return Err(invalid("previous optical sample was not drained"));
+                 }
+-                optical.pending = Some(DielectricPixel::new(ray));
++                let mut state = DielectricPixel::new(ray);
++                state.camera_sample = self.progressive.as_ref().map(|p| (self.pixel, p.film.samples()));
++                optical.pending = Some(state);
+             }
+             self.pending.insert(PendingPixel {
+                 surface_cursor: 0,
+@@ -1080,6 +1099,7 @@
+         }
+         if let Some(optical) = self.optical.first_mut() {
+             let state = optical.pending.as_mut().ok_or_else(|| invalid("missing optical primary state"))?;
++            state.check_camera_sample(self.progressive.as_ref().map(|p| (self.pixel, p.film.samples())))?;
+             if state.primary_check < self.options.dielectrics.len() {
+                 self.work.tick(&self.cancel).map_err(error)?;
+                 if let Some(Certificate::ClosedBox(bounds)) = optical.certificates.get(state.primary_check).copied().flatten()
+@@ -1417,6 +1437,7 @@
+     fn finish_transport_path(&mut self, radiance: Vec3) -> job::Result<()> {
+         if let Some(optical) = self.optical.first_mut() {
+             let state = optical.pending.as_mut().ok_or_else(|| invalid("missing optical sample"))?;
++            state.check_camera_sample(self.progressive.as_ref().map(|p| (self.pixel, p.film.samples())))?;
+             if state.advance()? {
+                 let pending = self.pending.as_mut().ok_or_else(|| invalid("missing optical continuation"))?;
+                 resume_optical_path(pending, state.path);
+@@ -1641,6 +1662,7 @@
+             return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview plan differs from the task policy"));
+         }
+         if self.done || !progressive.film.ready() || !self.pending.is_none()
++            || self.optical.first().is_some_and(|o| o.pending.is_some())
+             || self.encoder.is_some() || progressive.partial.is_some() || progressive.resolving || !self.pixels.is_empty()
+         {
+             return Ok(false);
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -1659,3 +1659,334 @@
+         assert!(observed, "first box entry was not observed");
+     }
+ }
++
++
++// Progressive smooth-optics unit: original tests WRITTEN, NOT COMPILED OR RUN.
++pub(super) fn progressive_optics_source(
++    boundary: job::DielectricBoundary,
++    thickness: f64,
++    ior: f64,
++    samples: u32,
++) -> (ProductScene, ImageRequest, RaytraceOptions) {
++    let body = match boundary {
++        job::DielectricBoundary::ThinSheet => optical_sheet("captured slab@occurrence-2", 0.0, 0.0),
++        job::DielectricBoundary::ClosedBox => dielectric::tests::box_body(thickness),
++    };
++    let mut medium = dielectric::tests::input(boundary);
++    medium.ior = ior;
++    medium.thickness_mm = if boundary == job::DielectricBoundary::ThinSheet { thickness } else { 0.0 };
++    let options = RaytraceOptions {
++        progressive: Some(job::CpuProgressiveOptions { samples_per_pixel: samples, seed: 97 }),
++        dielectrics: vec![medium],
++        lights: Some(Vec::new()),
++        shadows: false,
++        environment: Some(job::RaytraceEnvironmentOptions { color: [1.0; 3], intensity: 1.0 }),
++        ..Default::default()
++    };
++    let mut request = dielectric::tests::request(options.clone());
++    request.camera.distance = 10.0;
++    request.camera.fov = 0.0;
++    request.camera.pitch = std::f64::consts::FRAC_PI_2;
++    (dielectric::tests::scene(body), request, options)
++}
++
++#[derive(Debug, PartialEq)]
++struct OpticalProgressiveRun {
++    checkpoints: Vec<(u32, Vec<u8>)>,
++    png: Vec<u8>,
++    film: Vec<[u64; 3]>,
++    primaries: Vec<(usize, u32, [u64; 6])>,
++    work: u64,
++}
++
++fn finish_optical_progressive(mut task: ImageTask, quantum: usize) -> OpticalProgressiveRun {
++    let mut checkpoints = Vec::new();
++    let mut film = None;
++    let mut primaries = Vec::new();
++    let mut previous_sample = None;
++    let target = task.options.progressive.unwrap().samples_per_pixel;
++    for _ in 0..2_000_000 {
++        if let Some(progressive) = &task.progressive
++            && progressive.film.ready() && progressive.film.samples() == target
++        {
++            film.get_or_insert_with(|| (0..task.request.width as usize * task.request.height as usize)
++                .map(|pixel| progressive.film.pixel(pixel).unwrap().0.map(f64::to_bits)).collect());
++        }
++        let poll = task.step_with_previews(quantum).unwrap();
++        if let Some(state) = task.optical.first().and_then(|o| o.pending.as_ref()) {
++            let identity = state.camera_sample.unwrap();
++            assert_eq!(identity, (task.pixel, task.progressive.as_ref().unwrap().film.samples()));
++            assert!(task.primary_coverage <= 1, "Fresnel branches cannot become coverage samples");
++            if previous_sample != Some(identity) {
++                // Each fixture hits certified geometry; even the four-unit call
++                // yields before the first boundary can replace its camera ray.
++                assert_eq!(state.path.boundaries, 0);
++                let origin = state.path.ray.origin();
++                let direction = state.path.ray.direction();
++                primaries.push((identity.0, identity.1, [origin.x.to_bits(), origin.y.to_bits(), origin.z.to_bits(),
++                    direction.x.to_bits(), direction.y.to_bits(), direction.z.to_bits()]));
++                previous_sample = Some(identity);
++            }
++        }
++        match poll {
++            ImagePoll::Pending(_) => {}
++            ImagePoll::Preview { png, samples_per_pixel } => {
++                assert!(task.pending.is_none());
++                assert!(task.optical.first().unwrap().pending.is_none());
++                let (_, covered, count) = task.progressive.as_ref().unwrap().film.pixel(0).unwrap();
++                assert_eq!((u32::from(covered), u32::from(count)), (samples_per_pixel, samples_per_pixel));
++                checkpoints.push((samples_per_pixel, png));
++            }
++            ImagePoll::Complete(png) => {
++                assert!(task.optical.is_empty() && task.progressive.is_none());
++                return OpticalProgressiveRun { checkpoints, png, film: film.unwrap(), primaries, work: task.work.used() };
++            }
++        }
++    }
++    panic!("original optical progressive fixture did not complete");
++}
++
++#[test]
++fn progressive_optical_trees_commit_once_and_keep_absolute_rays_across_quanta() {
++    for boundary in [job::DielectricBoundary::ThinSheet, job::DielectricBoundary::ClosedBox] {
++        let (scene, request, options) = progressive_optics_source(boundary, 2.0, 1.5, 5);
++        let one = finish_optical_progressive(ImageTask::new(scene.clone(), request.clone(), CancelToken::default(), options.clone()).unwrap(), 1);
++        let four = finish_optical_progressive(ImageTask::new(scene, request, CancelToken::default(), options).unwrap(), 4);
++        assert_eq!(one, four, "film bits, actual primary rays, checkpoints, final and total work agree");
++        assert_eq!(one.primaries.len(), 5);
++        assert_eq!(one.checkpoints.iter().map(|c| c.0).collect::<Vec<_>>(), [1, 2, 4]);
++        assert_ne!(one.primaries[0].2, one.primaries[1].2, "fresh camera jitter, no repeated completed sample");
++        let linear = f64::from_bits(one.film[0][0]);
++        assert!(linear > 0.999 && linear <= 1.0 + 1e-12, "bounded eight-boundary lossless response, not alpha or branch averaging");
++        assert_eq!(::image::load_from_memory(&one.png).unwrap().to_rgba8().get_pixel(0, 0).0, [188, 188, 188, 255]);
++    }
++}
++
++#[test]
++fn progressive_optical_checkpoint_is_the_exact_shorter_job_prefix() {
++    let (scene, request, options) = progressive_optics_source(job::DielectricBoundary::ClosedBox, 2.0, 1.5, 5);
++    let run = finish_optical_progressive(ImageTask::new(scene.clone(), request.clone(), CancelToken::default(), options.clone()).unwrap(), 1);
++    for (samples, png) in &run.checkpoints {
++        let mut prefix_options = options.clone();
++        prefix_options.progressive.as_mut().unwrap().samples_per_pixel = *samples;
++        let prefix_request = ImageRequest { raytrace: Some(prefix_options.clone()), ..request.clone() };
++        let prefix = finish_optical_progressive(ImageTask::new(scene.clone(), prefix_request, CancelToken::default(), prefix_options).unwrap(), 2);
++        assert_eq!(&prefix.png, png);
++        assert_eq!(prefix.primaries, run.primaries[..*samples as usize]);
++    }
++}
++
++#[test]
++fn progressive_optical_film_uses_real_beer_distance_for_thin_and_closed_controls() {
++    for boundary in [job::DielectricBoundary::ThinSheet, job::DielectricBoundary::ClosedBox] {
++        for thickness in [2.0, 8.0] {
++            let (scene, mut request, mut options) = progressive_optics_source(boundary, thickness, 1.0, 3);
++            options.dielectrics[0].absorption_per_mm = [0.1, 0.2, 0.0];
++            request.raytrace = Some(options.clone());
++            let run = finish_optical_progressive(ImageTask::new(scene, request, CancelToken::default(), options).unwrap(), 1);
++            for (actual, sigma) in run.film[0].into_iter().zip([0.1_f64, 0.2, 0.0]) {
++                assert!((f64::from_bits(actual) - (-sigma * thickness).exp()).abs() < 1e-10);
++            }
++            assert_eq!(run.primaries.len(), 3);
++        }
++    }
++}
++
++#[test]
++fn progressive_closed_optics_use_four_percent_fresnel_and_snell_eta_transport() {
++    let (scene, request, options) = progressive_optics_source(job::DielectricBoundary::ClosedBox, 2.0, 1.5, 3);
++    let mut task = ImageTask::new(scene, request, CancelToken::default(), options).unwrap();
++    let mut saw_entry = false;
++    for _ in 0..100_000 {
++        assert!(matches!(task.step_with_previews(1).unwrap(), ImagePoll::Pending(_)));
++        if let Some(state) = task.optical.first().and_then(|o| o.pending.as_ref()) {
++            if state.path.boundaries == 1 && state.path.medium == Some(0) {
++                let entry = 0.96 / 2.25;
++                assert!((state.path.throughput.x - entry).abs() < 1e-13);
++                assert!((state.path.ray.direction() + Vec3::Z).len() < 1e-12);
++                let reflected = state.stack.iter().flatten().find(|path| path.boundaries == 1 && path.medium.is_none()).unwrap();
++                assert!((reflected.throughput.x - 0.04).abs() < 1e-13);
++                saw_entry = true;
++            }
++            if saw_entry && state.path.boundaries == 2 && state.path.medium.is_none() {
++                assert!((state.path.throughput.x - 0.96 * 0.96).abs() < 1e-12);
++                assert_eq!(task.progressive.as_ref().unwrap().film.samples(), 0, "first transmitted leaf is not a complete film sample");
++                return;
++            }
++        }
++    }
++    panic!("real progressive slab interfaces not reached");
++}
++
++#[test]
++fn progressive_nested_optics_preserve_parent_beer_distance_and_require_opt_in() {
++    for reverse in [false, true] {
++        let (scene, mut options) = dielectric::tests::nested_fixture(reverse);
++        options.progressive = Some(job::CpuProgressiveOptions { samples_per_pixel: 3, seed: 19 });
++        let mut request = dielectric::tests::request(options.clone());
++        request.camera.target = Vec3::new(0.0, 0.0, 2.0);
++        request.camera.distance = 6.0;
++        request.camera.fov = 0.0;
++        assert!(admit(&scene, &request, &options).is_err());
++        let run = finish_optical_progressive(ImageTask::new_with_environment_and_nested(
++            scene, request, CancelToken::default(), options, None, true).unwrap(), 1);
++        for (actual, exponent) in run.film[0].into_iter().zip([-0.8_f64, -1.2, 0.0]) {
++            assert!((f64::from_bits(actual) - exponent.exp()).abs() < 1e-10);
++        }
++        assert_eq!(::image::load_from_memory(&run.png).unwrap().to_rgba8().get_pixel(0, 0).0, [151, 132, 188, 255]);
++    }
++}
++
++#[test]
++fn progressive_optical_sample_identity_and_commit_barriers_refuse_partial_trees() {
++    let (scene, request, options) = progressive_optics_source(job::DielectricBoundary::ThinSheet, 1.0, 1.5, 3);
++    let mut task = ImageTask::new(scene, request, CancelToken::default(), options).unwrap();
++    for _ in 0..100_000 {
++        assert!(matches!(task.step_with_previews(1).unwrap(), ImagePoll::Pending(_)));
++        if task.optical.first().and_then(|o| o.pending.as_ref()).is_some() {
++            let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++            assert!(task.finish_sample(Vec3::new(1.0, 1.0, 1.0)).is_err());
++            assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(), frontier);
++            task.optical.first_mut().unwrap().pending.as_mut().unwrap().camera_sample = Some((0, 1));
++            let error = task.step_with_previews(1).err().unwrap();
++            assert_eq!(error.code, ErrorCode::InvalidScene);
++            assert!(error.message.contains("absolute camera sample"));
++            assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(), frontier);
++            return;
++        }
++    }
++    panic!("optical camera sample not reached");
++}
++
++#[test]
++fn progressive_optics_keep_cancellation_work_exhaustion_and_geometry_refusals() {
++    for cancel in [false, true] {
++        let (scene, request, options) = progressive_optics_source(job::DielectricBoundary::ClosedBox, 2.0, 1.5, 3);
++        let mut task = ImageTask::new(scene, request, CancelToken::default(), options).unwrap();
++        let mut stopped = false;
++        for _ in 0..100_000 {
++            let before = task.work.used();
++            assert!(matches!(task.step_with_previews(1).unwrap(), ImagePoll::Pending(_)));
++            assert!(task.work.used() - before <= 1);
++            if task.optical.first().and_then(|o| o.pending.as_ref()).is_some_and(|s| s.path.medium.is_some()) {
++                let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++                if cancel { task.cancel.cancel(); } else { task.work.limit = task.work.used(); }
++                assert_eq!(task.step_with_previews(1).err().unwrap().code, if cancel { ErrorCode::Cancelled } else { ErrorCode::LimitExceeded });
++                assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(), frontier);
++                assert!(!task.done);
++                stopped = true;
++                break;
++            }
++        }
++        assert!(stopped);
++    }
++    let (scene, request, options) = progressive_optics_source(job::DielectricBoundary::ClosedBox, 2.0, 1.5, 3);
++    let mut open = scene.clone();
++    std::sync::Arc::make_mut(&mut open.meshes[0].mesh).triangles.pop();
++    assert!(admit(&open, &request, &options).is_err());
++    let mut alpha = scene.clone();
++    alpha.meshes[0].opacity = 0.5;
++    assert!(admit(&alpha, &request, &options).is_err());
++    let mut identity = options.clone();
++    identity.dielectrics[0].body_name = "stale optical target".into();
++    let wrong = ImageRequest { raytrace: Some(identity.clone()), ..request };
++    assert!(admit(&scene, &wrong, &identity).is_err());
++}
++
++#[test]
++fn progressive_closed_optics_tir_keeps_medium_and_generates_no_transmitted_branch() {
++    let (scene, request, options) = progressive_optics_source(job::DielectricBoundary::ClosedBox, 2.0, 1.5, 3);
++    let mut task = ImageTask::new(scene, request, CancelToken::default(), options).unwrap();
++    // Observe a real certified transmitted interior, then exercise its actual
++    // consumer with an analytic 3-4-5 internal direction at the top face.
++    // Camera-inside admission is not bypassed for any submitted request.
++    for _ in 0..100_000 {
++        assert!(matches!(task.step_with_previews(1).unwrap(), ImagePoll::Pending(_)));
++        if task.optical.first().and_then(|o| o.pending.as_ref()).is_some_and(|s| s.path.boundaries == 1 && s.path.medium == Some(0)) {
++            let ray = Ray::new(Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.8, 0.0, 0.6), 0.0, 100.0).unwrap();
++            let state = task.optical.first_mut().unwrap().pending.as_mut().unwrap();
++            state.stack.fill(None);
++            state.stack_len = 0;
++            state.path.ray = ray;
++            state.path.segment_start = ray.origin();
++            state.ready = false;
++            resume_optical_path(task.pending.as_mut().unwrap(), state.path);
++            for _ in 0..100_000 {
++                assert!(matches!(task.step_with_previews(1).unwrap(), ImagePoll::Pending(_)));
++                let state = task.optical.first().unwrap().pending.as_ref().unwrap();
++                if state.path.boundaries == 2 {
++                    assert_eq!(state.path.medium, Some(0));
++                    assert!(state.path.ray.direction().z < 0.0);
++                    assert_eq!(state.stack_len, 0, "TIR cannot enqueue a transmitted path");
++                    assert_eq!(task.progressive.as_ref().unwrap().film.samples(), 0);
++                    return;
++                }
++            }
++            panic!("TIR boundary not consumed");
++        }
++    }
++    panic!("certified interior not reached");
++}
++
++#[test]
++fn progressive_oblique_box_uses_snell_direction_and_geometric_path_length() {
++    let (scene, mut request, mut options) = progressive_optics_source(job::DielectricBoundary::ClosedBox, 2.0, 1.5, 3);
++    options.dielectrics[0].absorption_per_mm = [0.1, 0.0, 0.0];
++    request.raytrace = Some(options.clone());
++    request.camera.pitch = std::f64::consts::FRAC_PI_3;
++    let mut task = ImageTask::new(scene, request, CancelToken::default(), options).unwrap();
++    let mut incident = None;
++    let mut entry = None;
++    for _ in 0..100_000 {
++        assert!(matches!(task.step_with_previews(1).unwrap(), ImagePoll::Pending(_)));
++        let Some(state) = task.optical.first().and_then(|o| o.pending.as_ref()) else { continue };
++        if state.path.boundaries == 0 { incident = Some(state.path.ray.direction()); }
++        if state.path.boundaries == 1 && state.path.medium == Some(0) {
++            let d = incident.unwrap();
++            let tx = d.x / 1.5;
++            let ty = d.y / 1.5;
++            let tz = -(1.0 - tx*tx - ty*ty).sqrt();
++            assert!((state.path.ray.direction() - Vec3::new(tx,ty,tz)).len() < 1e-12);
++            entry = Some((state.path.segment_start,state.path.throughput,tz));
++        }
++        if state.path.boundaries == 2 && state.path.medium.is_none() {
++            let (point,throughput,tz) = entry.unwrap();
++            let distance = 2.0 / -tz;
++            assert!((state.path.segment_start.dist(point) - distance).abs() < 1e-10);
++            assert!((state.path.ray.direction() - incident.unwrap()).len() < 1e-12);
++            // Exit Fresnel and eta factors are achromatic. Their ratio cancels
++            // between red and green, leaving only exp(-sigma * REAL distance).
++            let attenuation = (state.path.throughput.x / state.path.throughput.y) / (throughput.x / throughput.y);
++            assert!((attenuation - (-0.1 * distance).exp()).abs() < 1e-10);
++            return;
++        }
++    }
++    panic!("oblique progressive entry/exit not reached");
++}
++
++#[test]
++fn progressive_nested_optics_still_refuse_contacts_and_interior_cameras() {
++    let (mut scene, mut options) = dielectric::tests::nested_fixture(false);
++    options.progressive = Some(job::CpuProgressiveOptions { samples_per_pixel:3, seed:19 });
++    let request = dielectric::tests::request(options.clone());
++    for point in &mut std::sync::Arc::make_mut(&mut scene.meshes[1].mesh).positions { point.z += 1.0; }
++    assert!(admit_with_nested(&scene,&request,&options,true).is_err(), "inner top touches outer top");
++    let (scene, mut request, options) = progressive_optics_source(job::DielectricBoundary::ClosedBox,2.0,1.5,3);
++    request.camera.target = Vec3::new(0.0,0.0,1.0);
++    request.camera.distance = 0.1;
++    let mut task = ImageTask::new(scene,request,CancelToken::default(),options).unwrap();
++    for _ in 0..100_000 {
++        match task.step_with_previews(1) {
++            Err(error) => {
++                assert_eq!(error.code,ErrorCode::InvalidScene);
++                assert!(error.message.contains("inside a dielectric"));
++                assert_eq!(task.progressive.as_ref().unwrap().film.samples(),0);
++                assert!(!task.done);
++                return;
++            }
++            Ok(ImagePoll::Pending(_)) => {}
++            Ok(_) => panic!("interior camera cannot publish a checkpoint or final"),
++        }
++    }
++    panic!("interior progressive camera not refused");
++}
+--- a/crates/render/src/raytrace/primary_aa_tests.rs
++++ b/crates/render/src/raytrace/primary_aa_tests.rs
+@@ -1476,3 +1476,142 @@
+         assert!(report.quota_exhausted && report.milestones_complete);
+     }
+ }
++
++
++// Original progressive optics / presentation combinations. WRITTEN, NOT RUN.
++fn optical_partial_source(samples: u32) -> (ProductScene, ImageRequest, RaytraceOptions) {
++    let (scene, mut request, options) = super::tests::progressive_optics_source(job::DielectricBoundary::ClosedBox, 2.0, 1.5, samples);
++    request.width = 2;
++    (scene, request, options)
++}
++
++#[test]
++fn protected_optical_partial_contains_only_whole_drained_camera_trees() {
++    let (scene, request, options) = optical_partial_source(3);
++    let plan = job::ProtectedPreviewPlan::new(2, 1, 3, options.budget).unwrap();
++    let mut task = ImageTask::new_with_environment_and_nested_and_protected_partial(
++        scene.clone(), request.clone(), CancelToken::default(), options.clone(), None, false, plan).unwrap();
++    let mut control = ImageTask::new_with_environment_and_nested_and_partial(
++        scene, request, CancelToken::default(), options, None, false, plan.preview_plan()).unwrap();
++    let mut rays = Vec::new();
++    let mut control_rays = Vec::new();
++    let mut saw_interior = false;
++    for _ in 0..100_000 {
++        let was_empty = task.pending.is_none();
++        assert!(matches!(task.step_with_partial_previews(1).unwrap(), PartialImagePoll::Pending(_)));
++        record_partial_primary(&task, was_empty, &mut rays);
++        if task.optical.first().and_then(|o| o.pending.as_ref()).is_some_and(|s| s.path.medium.is_some()) {
++            assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap().updated_prefix, 0);
++            assert!(!task.partial_preview_ready(plan.preview_plan()).unwrap());
++            saw_interior = true;
++            break;
++        }
++    }
++    assert!(saw_interior);
++    reach_partial_frontier(&mut task, 0, 1, &mut rays);
++    let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++    assert!(task.optical.first().unwrap().pending.is_none());
++    assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(), PartialBegin::Started));
++    let ordinary = task.protected_preview_report().unwrap().ordinary_used;
++    let (_, covered, passes, prefix) = finish_partial_snapshot(&mut task);
++    assert_eq!((passes, prefix), (0, 1));
++    assert_eq!(covered, [1, 0], "second pixel is Unknown, never a fabricated optical sample");
++    assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(), frontier);
++    assert_eq!(task.protected_preview_report().unwrap().ordinary_used, ordinary);
++    let actual = finish_partial_final(&mut task, true, &mut rays);
++    let expected = finish_partial_final(&mut control, true, &mut control_rays);
++    assert_eq!(actual, expected, "exact final PNG and linear film bits with observer on/off");
++    assert_eq!(rays, control_rays);
++    assert_eq!(rays.len(), 6);
++    let report = task.protected_preview_report().unwrap();
++    assert_eq!(report.ordinary_used, control.work.used());
++    assert_eq!(report.presentation_used, plan.snapshot_work().unwrap());
++}
++
++#[test]
++fn protected_optical_snapshot_cancellation_cannot_emit_or_commit_another_sample() {
++    let (scene, request, options) = optical_partial_source(3);
++    let plan = job::ProtectedPreviewPlan::new(2, 1, 3, options.budget).unwrap();
++    let mut task = ImageTask::new_with_environment_and_nested_and_protected_partial(
++        scene, request, CancelToken::default(), options, None, false, plan).unwrap();
++    reach_partial_frontier(&mut task, 0, 1, &mut Vec::new());
++    assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(), PartialBegin::Started));
++    let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++    let report = task.protected_preview_report().unwrap();
++    task.cancel.cancel();
++    assert_eq!(task.step_with_partial_previews(1).err().unwrap().code, ErrorCode::Cancelled);
++    assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(), frontier);
++    assert_eq!(task.protected_preview_report().unwrap(), report);
++    assert!(!task.done);
++}
++
++fn with_unit_optical_sheet(source: &ImageTask) -> (ProductScene, ImageRequest, RaytraceOptions) {
++    let mut scene = source.scene.clone();
++    let mut options = source.options.clone();
++    // Original two-triangle rectangle between camera and receiver. It is
++    // index-matched and lossless: the independent control has no sheet at all.
++    scene.meshes.push(ProductMesh {
++        transmission: None, name: "Progressive optical sheet".into(),
++        mesh: Arc::new(Mesh {
++            positions: vec![Vec3::new(-20.0,-20.0,2.0),Vec3::new(20.0,-20.0,2.0),
++                Vec3::new(20.0,20.0,2.0),Vec3::new(-20.0,20.0,2.0)],
++            normals: vec![Vec3::Z;4], triangles:vec![[0,1,2],[0,2,3]], ..Default::default()
++        }),
++        color:[255;3], opacity:1.0, surface:None, faces:Vec::new(),
++    });
++    options.dielectrics.push(job::DielectricOptions {
++        body_index:scene.meshes.len()-1, body_name:"Progressive optical sheet".into(),
++        boundary:job::DielectricBoundary::ThinSheet, ior:1.0, absorption_per_mm:[0.0;3], thickness_mm:0.0,
++    });
++    scene.bounds = scene.meshes.iter().fold(Aabb3::EMPTY, |bounds, body| bounds.union(&body.mesh.bounds()));
++    let request = ImageRequest {raytrace:Some(options.clone()), ..source.request.clone()};
++    (scene,request,options)
++}
++
++#[test]
++fn progressive_unit_optics_rejoin_real_area_consumers_at_every_admitted_sample_count() {
++    for count in [1,4,16,64] {
++        for seed in [0,23] {
++            // Conservative opaque shadow visibility is deliberately off. This
++            // feature does not invent transmitted illumination or caustics.
++            let source = progressive_area_fixture(count,3,seed,false);
++            let (scene,request,options) = with_unit_optical_sheet(&source);
++            let optical = ImageTask::new(scene,request,CancelToken::default(),options).unwrap();
++            let expected = progressive_complete(source,1);
++            let actual = progressive_complete(optical,4);
++            assert_eq!(actual.0,expected.0);
++            assert_eq!(actual.1,expected.1, "unit transmission preserves independently lit receiver; count={count}, seed={seed}");
++            assert!(actual.2 > expected.2, "real optical traversal is charged, never bypassed");
++        }
++    }
++}
++
++#[test]
++fn progressive_unit_optics_rejoin_hdr_receiver_and_preserve_feedback_film_and_seed() {
++    let mut source = progressive_area_fixture(4,3,23,false);
++    source.options.area_lights = None;
++    source.options.area_samples = None;
++    source.options.seed = None;
++    source.request.raytrace = Some(source.options.clone());
++    let (scene,request,options) = with_unit_optical_sheet(&source);
++    let plan = job::ProtectedPreviewPlan::new(1,1,3,options.budget).unwrap();
++    let mut observed = ImageTask::new_with_environment_and_nested_and_protected_partial(
++        scene.clone(),request.clone(),CancelToken::default(),options.clone(),Some(partial_original_hdr()),false,plan).unwrap();
++    let mut control = ImageTask::new_with_environment_and_nested_and_partial(
++        scene,request,CancelToken::default(),options,Some(partial_original_hdr()),false,plan.preview_plan()).unwrap();
++    let mut rays = Vec::new();
++    let mut control_rays = Vec::new();
++    reach_partial_frontier(&mut observed,1,0,&mut rays);
++    assert!(matches!(observed.begin_partial_preview(plan.preview_plan()).unwrap(),PartialBegin::Started));
++    let (snapshot,covered,passes,prefix) = finish_partial_snapshot(&mut observed);
++    assert_eq!((passes,prefix),(1,0));
++    assert_eq!(covered,[1]);
++    let actual = finish_partial_final(&mut observed,true,&mut rays);
++    assert_eq!(actual,finish_partial_final(&mut control,true,&mut control_rays));
++    assert_eq!(rays,control_rays);
++    assert_eq!(observed.protected_preview_report().unwrap().ordinary_used,control.work.used());
++    let without_sheet = ImageTask::new_with_environment(source.scene.clone(),source.request.clone(),CancelToken::default(),source.options.clone(),Some(partial_original_hdr())).unwrap();
++    let expected = progressive_complete(without_sheet,1);
++    assert_eq!(snapshot,expected.0[0].1);
++    assert_eq!(actual.0,expected.1);
++}
+--- a/crates/render/src/raytrace/dielectric_tests.rs
++++ b/crates/render/src/raytrace/dielectric_tests.rs
+@@ -600,12 +600,17 @@
+ }
+ 
+ #[test]
+-fn nested_opt_in_does_not_enable_dielectric_progressive_or_interactive() {
+-    let (_, mut options) = nested_fixture(false);
++fn progressive_optics_keep_the_nested_certificate_opt_in_and_interactive_intent() {
++    let (scene, mut options) = nested_fixture(false);
+     options.progressive = Some(Default::default());
+-    assert!(options.validate().is_err());
+-    let (_, options) = nested_fixture(false);
+-    assert!(crate::job::interactive::cpu_request(&request(options)).is_err());
++    options.validate().unwrap();
++    let request = request(options.clone());
++    // A DTO succeeding never grants a nesting certificate to an ordinary job.
++    assert!(super::super::image::admit(&scene, &request, &options).is_err());
++    assert!(super::super::image::admit_with_nested(&scene, &request, &options, true).is_ok());
++    let interactive = crate::job::interactive::cpu_request(&request).unwrap();
++    assert_eq!(interactive.raytrace.as_ref().unwrap().dielectrics, options.dielectrics);
++    assert!(super::super::image::admit(&scene, &interactive, interactive.raytrace.as_ref().unwrap()).is_err());
+ }
+ 
+ #[cfg(not(target_arch = "wasm32"))]
+--- a/crates/render/src/job/mod.rs
++++ b/crates/render/src/job/mod.rs
+@@ -892,10 +892,13 @@
+                     "CPU progressive requires primary_samples: 1 and one reflection attempt per camera sample",
+                 ));
+             }
+-            if !self.dielectrics.is_empty() || self.anisotropic_faces.iter().any(Option::is_some) {
++            // Smooth certified dielectric trees now complete one real camera
++            // sample before film accumulation. Anisotropic progressive transport
++            // remains unsupported; geometry/identity certificates run at capture.
++            if self.anisotropic_faces.iter().any(Option::is_some) {
+                 return Err(JobError::new(
+                     ErrorCode::InvalidRequest,
+-                    "CPU progressive currently supports isotropic opaque surfaces; use fixed sampling for dielectric or anisotropic inputs",
++                    "CPU progressive does not support anisotropic inputs; use fixed sampling",
+                 ));
+             }
+         }
+@@ -1193,7 +1196,9 @@
+             absorption_per_mm: [0.0; 3],
+             thickness_mm: 1.0,
+         };
+-        assert!(RaytraceOptions { progressive, dielectrics: vec![dielectric], ..Default::default() }.validate().is_err());
++        // Superseded global rejection: smooth optical trees are implemented per
++        // camera sample; capture-time certification remains separately required.
++        RaytraceOptions { progressive, dielectrics: vec![dielectric], ..Default::default() }.validate().unwrap();
+         let face = AnisotropicFaceOptions {
+             body_index: 0,
+             body_name: "Body".into(),

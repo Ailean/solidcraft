@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CHECKPOINT_UNAPPLIED_UNFORMATTED_UNCOMPILED_UNRUN",
+  "id": "cpu-unit-index-straight",
+  "authorship": "Worker #2; original five-shell counterexample from Kernel Specialist",
+  "original_source_packet_index_sha256": "c603995c84004b6ba811e176c00866599c1b69e78219d0656c4ea4d7896388bf",
+  "base": "cpu-progressive-optics candidate, before its formatting/rebind.",
+  "dependencies": [
+    "cpu-progressive-optics"
+  ],
+  "source_files": [
+    {
+      "path": "crates/render/src/raytrace/image.rs",
+      "before_sha256": "47f8593b7c74c3978f9d81dc73b5be27cef984dae1882110ddb1bb743ed514c5",
+      "candidate_sha256": "27c46a89f1d1b352bebaf9f9bc9ceb3ec429194592a322595acf995eb78509f9",
+      "before_bytes": 111934,
+      "candidate_bytes": 114364
+    },
+    {
+      "path": "crates/render/src/raytrace/image_tests.rs",
+      "before_sha256": "3e6baf4404866e5e98b74d9f229cc0d1f85cf3d87e069b92f738ea0e4e03253d",
+      "candidate_sha256": "6544f83153e5eab1706558faed42a213e23dd04ea3949aa340aec452de90a0a1",
+      "before_bytes": 95197,
+      "candidate_bytes": 106580
+    },
+    {
+      "path": "crates/render/src/raytrace/primary_aa_tests.rs",
+      "before_sha256": "f89de84b722625a7264af8d1b912ce367174e0a0f835c06bb8b31176da22b59e",
+      "candidate_sha256": "d3aaa11a62dd06ccae7476834f077dae249286ef1d9a81b7e54a4c011ee03b4e",
+      "before_bytes": 84284,
+      "candidate_bytes": 86750
+    }
+  ],
+  "patch_sha256": "a0a75179b14822fca9fdbf0d5ee6360267d7e08f4fcc5231bac9e8e0d8606cf6",
+  "patch_parts": [
+    {
+      "path": "candidate.patch",
+      "bytes": 19363,
+      "sha256": "a0a75179b14822fca9fdbf0d5ee6360267d7e08f4fcc5231bac9e8e0d8606cf6"
+    }
+  ],
+  "new_test_declarations": 7,
+  "product_tests_executed_on_this_packet": 0,
+  "source_review": "Independent source review requested; pending at preservation time.",
+  "limitations": [
+    "The index-matched special case does not fix all finite-depth bias for IOR1.5 or arbitrary media.",
+    "Its image_tests suffix and camera-TIR suffix both start at the same52-test prefix; retain both when composing."
+  ],
+  "patch_line_ending_policy": "Strict byte replay; original patch bytes preserved.",
+  "CRLF_line_ending_adapter_paths": []
+}

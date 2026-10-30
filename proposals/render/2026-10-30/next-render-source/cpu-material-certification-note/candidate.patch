@@ -1,0 +1,50 @@
+diff --git a/crates/ui-egui/src/render_workspace_materials.rs b/crates/ui-egui/src/render_workspace_materials.rs
+--- a/crates/ui-egui/src/render_workspace_materials.rs
++++ b/crates/ui-egui/src/render_workspace_materials.rs
+@@ -620,7 +620,11 @@
+         note(app, ui, "render.cpu_optics_help");
+     }
+     note(app, ui, "render.appearance_editor.glass_note");
+-    note(app, ui, "render.material_certification");
++    if app.render_workspace.view.method == super::ImageMethod::CpuRaytrace {
++        note(app, ui, "render.cpu_optics_certification");
++    } else {
++        note(app, ui, "render.material_certification");
++    }
+ }
+ 
+ fn coat_controls(app: &SolveApp, ui: &mut egui::Ui, binding: &mut Binding) {
+diff --git a/assets/locales/pending/cpu-optical-certification.json b/assets/locales/pending/cpu-optical-certification.json
+new file mode 100644
+--- /dev/null
++++ b/assets/locales/pending/cpu-optical-certification.json
+@@ -0,0 +1,29 @@
++{
++  "en": {
++    "render.cpu_optics_certification": "CPU Check and Start validate captured identity, opaque body and face appearances, and the requested sheet or axis-aligned box certificate. Choosing a boundary does not certify geometry. Start rechecks the capture; passing Check does not guarantee later admission."
++  },
++  "es": {
++    "render.cpu_optics_certification": "Comprobar e Iniciar en CPU validan la identidad capturada, los aspectos opacos del cuerpo y sus caras, y el certificado de lámina o caja alineada con los ejes solicitado. Elegir una frontera no certifica la geometría. Iniciar comprueba de nuevo la captura; superar Comprobar no garantiza una admisión posterior."
++  },
++  "de": {
++    "render.cpu_optics_certification": "Prüfen und Starten auf der CPU validieren die erfasste Identität, opake Körper- und Flächenerscheinungen sowie das angeforderte Zertifikat für Scheiben oder achsenparallele Quader. Die Wahl einer Grenze zertifiziert keine Geometrie. Starten prüft die Erfassung erneut; erfolgreiches Prüfen garantiert keine spätere Zulassung."
++  },
++  "ko": {
++    "render.cpu_optics_certification": "CPU의 확인과 시작은 캡처한 식별 정보, 불투명한 바디와 면 외관, 요청한 판 또는 축 정렬 상자의 인증을 검증합니다. 경계를 선택하는 것만으로 형상이 인증되지는 않습니다. 시작 시 캡처를 다시 확인하며, 확인에 성공해도 이후 승인이 보장되지는 않습니다."
++  },
++  "ar": {
++    "render.cpu_optics_certification": "يتحقق الفحص والبدء على CPU من الهوية الملتقطة ومظاهر الجسم والأوجه المعتمة وشهادة الصفيحة أو الصندوق المحاذي للمحاور المطلوبة. اختيار حد لا يثبت صلاحية الهندسة. يعيد البدء فحص اللقطة؛ نجاح الفحص لا يضمن القبول لاحقًا."
++  },
++  "he": {
++    "render.cpu_optics_certification": "בדיקה והתחלה ב-CPU מאמתות את הזהות שנלכדה, מראה אטום של הגוף והפאות ואת האישור המבוקש ליריעה או לתיבה מיושרת לצירים. בחירת גבול אינה מאשרת את הגאומטריה. התחלה בודקת שוב את הלכידה; הצלחה בבדיקה אינה מבטיחה אישור מאוחר יותר."
++  },
++  "ja": {
++    "render.cpu_optics_certification": "CPU の確認と開始では、取得した識別情報、不透明なボディと面の外観、要求された薄板または軸に平行なボックスの認証を検証します。境界の選択だけでは形状は認証されません。開始時に取得内容を再確認するため、確認の成功は後の受け入れを保証しません。"
++  },
++  "vi": {
++    "render.cpu_optics_certification": "Kiểm tra và Bắt đầu trên CPU xác thực danh tính đã chụp, diện mạo thân và mặt đục, cùng chứng nhận tấm hoặc hộp song song các trục được yêu cầu. Chọn biên không chứng nhận hình học. Bắt đầu kiểm tra lại bản chụp; vượt qua Kiểm tra không bảo đảm được chấp nhận về sau."
++  },
++  "zh": {
++    "render.cpu_optics_certification": "CPU 的检查和开始会验证捕获的身份、不透明的实体和面外观，以及请求的薄片或轴对齐盒体认证。选择边界本身并不能认证几何体。开始时会重新检查捕获内容；通过检查并不保证之后仍能获准执行。"
++  }
++}

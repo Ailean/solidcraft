@@ -490,6 +490,17 @@ fn offset_surface_cube_import_is_closed_and_editable() {
     assert!(rel(measure(&result).unwrap().volume, 1000.0 - 40.0 * std::f64::consts::PI) < 1e-3);
 }
 
+/// A solid whose B-rep SMLib refuses, its faces too (here every SMLib call: the build has no
+/// SMLib), is refused with the kernel's reason, naming the solid. It once came in as a mesh of
+/// its faces, which the planner could still triangulate.
+#[cfg(not(feature = "smlib"))]
+#[test]
+fn a_solid_smlib_refuses_with_its_faces_is_refused_not_meshed() {
+    let text = format!("{HEAD}{}#60=SHAPE_REPRESENTATION('',(#101),$);\n{TAIL}", cube_entities());
+    let why = step_import(&text).map(|imp| imp.warnings).unwrap_err().to_string();
+    assert!(why.contains("solid 'Cube': not imported: ") && why.contains("SMLib"), "{why}");
+}
+
 /// A hand-written unit cube brep (`#100`…) in a representation with the given unit and items.
 fn cube_entities() -> String {
     let mut s = String::new();
@@ -1748,7 +1759,9 @@ fn periodic_knot_tube(first: u64, x: f64, r: f64, h: f64) -> (String, u64) {
 /// Two such tubes far apart in one body: the body's size sets a chord tolerance coarse beside
 /// the tubes, and meshing a face at it divided the surface's whole parameter box, whose
 /// corners lay outside the domain. The division never converged there (#1374's recursion),
-/// and the import grew by gigabytes without end.
+/// and the import grew by gigabytes without end. SMLib does not give the sheet's faces back in
+/// the file's order, so the import refuses it with that reason (it once came in as a mesh of
+/// its faces); the faces as read are meshed at the body's display tolerance, the coarse one.
 #[test]
 fn periodic_knot_tube_faces_import_and_mesh() {
     let t0 = std::time::Instant::now();
@@ -1758,11 +1771,13 @@ fn periodic_knot_tube_faces_import_and_mesh() {
     let text = format!(
         "{HEAD}{a}{b}#1=OPEN_SHELL('',(#{fa},#{fb}));\n#2=SHELL_BASED_SURFACE_MODEL('Tubes',(#1));\n#3=SHAPE_REPRESENTATION('',(#2),$);\n{TAIL}"
     );
-    let imp = step_import(&text).unwrap();
-    assert_eq!(imp.bodies.len(), 1, "{:?}", imp.warnings);
-    let m = measure(&imp.bodies[0].body).unwrap();
+    let why = step_import(&text).map(|imp| imp.warnings).unwrap_err().to_string();
+    assert!(why.contains("solid 'Tubes': not imported: ") && why.contains("renumbered"), "{why}");
+    let ex = p21::parse(&text).unwrap();
+    let sheet = Body::from_record(solidcraft_step::topology::read_solid(&ex, 2, Units::default()).unwrap().brep).unwrap();
+    let mesh = sheet.mesh(&crate::MeshTolerance::display_of(sheet.size())).unwrap();
     let area = 2.0 * std::f64::consts::TAU * r * h;
-    assert!(rel(m.area, area) < 0.02, "area {} (expected {area})", m.area);
+    assert!(rel(mesh.measure().area, area) < 0.02, "area {} (expected {area})", mesh.measure().area);
     assert!(t0.elapsed().as_secs_f64() < 60.0, "took {:?}", t0.elapsed());
 }
 

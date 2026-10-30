@@ -1,0 +1,41 @@
+{
+  "scope": "Original source subset; no product execution or native file exists in this packet",
+  "files": [
+    {
+      "name": "geometry.commands.json",
+      "sha256": "c5d5af480765c33c0734072f79836f6376048945729027339d5492d9c90dc678",
+      "bytes": 11119,
+      "context": "Original editable fixture asset; not product-executed."
+    },
+    {
+      "name": "fixture-spec.json",
+      "sha256": "860743c24973e335b5d045533062b65c5040d803f067920f0b5a2ca6f050ff93",
+      "bytes": 16813,
+      "context": "Original editable fixture asset; not product-executed."
+    },
+    {
+      "name": "original-asymmetric-srgb.hdr",
+      "sha256": "490b25949e482b432fa49c67fc814fe0201b835f8f59716837af425fc6ca0de2",
+      "bytes": 2277,
+      "context": "Original editable fixture asset; not product-executed."
+    },
+    {
+      "name": "raster-comparison.request.json",
+      "sha256": "cbba703c823a8b4c0941a2a19c0dd7c76857f1af39e0962a61156e2ab1f9e1d0",
+      "bytes": 380,
+      "context": "Geometry/framing comparison only, not CPU/GPU radiometry."
+    },
+    {
+      "name": "optional-glass-probe.commands.json",
+      "sha256": "bcaa884ad7054f89096e3ba83526e60d2d25c0ca6304782e5dae2a51cf07656b",
+      "bytes": 615,
+      "context": "Negative limitation probe geometry only, not accepted glass transport."
+    },
+    {
+      "name": "static-checks.json",
+      "sha256": "1286b9d600373c461e7dc34c48ae76648860691f91806fa0d8db35f1b5660f45",
+      "bytes": 611,
+      "context": "Static artifact evidence only, no product or runtime pass."
+    }
+  ]
+}

@@ -1,0 +1,590 @@
+{
+  "commands": [
+    {
+      "command": "file.new",
+      "params": {
+        "name": "Original CPU edge and radiance bench"
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench floor",
+        "operation": "new",
+        "corner": [
+          -52,
+          -32,
+          -2
+        ],
+        "length": 104,
+        "width": 72,
+        "height": 2
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench floor"
+        ],
+        "color": "#7c828b",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.8,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench rear",
+        "operation": "new",
+        "corner": [
+          -52,
+          38,
+          0
+        ],
+        "length": 104,
+        "width": 2,
+        "height": 24
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench rear"
+        ],
+        "color": "#576472",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.8,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.sphere",
+      "params": {
+        "body_name": "Bench N12",
+        "operation": "new",
+        "center": [
+          -30,
+          0,
+          8.05
+        ],
+        "radius": 8
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench N12"
+        ],
+        "color": "#b8a798",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.12,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.sphere",
+      "params": {
+        "body_name": "Bench N65",
+        "operation": "new",
+        "center": [
+          -10,
+          0,
+          8.05
+        ],
+        "radius": 8
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench N65"
+        ],
+        "color": "#b8a798",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.65,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.sphere",
+      "params": {
+        "body_name": "Bench M12",
+        "operation": "new",
+        "center": [
+          10,
+          0,
+          8.05
+        ],
+        "radius": 8
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench M12"
+        ],
+        "color": "#b8a798",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 1,
+          "roughness": 0.12,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.sphere",
+      "params": {
+        "body_name": "Bench M65",
+        "operation": "new",
+        "center": [
+          30,
+          0,
+          8.05
+        ],
+        "radius": 8
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench M65"
+        ],
+        "color": "#b8a798",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 1,
+          "roughness": 0.65,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench step 3",
+        "operation": "new",
+        "corner": [
+          -46,
+          22,
+          0.05
+        ],
+        "length": 8,
+        "width": 10,
+        "height": 3
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench step 3"
+        ],
+        "color": "#a58b72",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.55,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench step 6",
+        "operation": "new",
+        "corner": [
+          -36,
+          22,
+          0.05
+        ],
+        "length": 8,
+        "width": 10,
+        "height": 6
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench step 6"
+        ],
+        "color": "#a58b72",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.55,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench step 12",
+        "operation": "new",
+        "corner": [
+          -26,
+          22,
+          0.05
+        ],
+        "length": 8,
+        "width": 10,
+        "height": 12
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench step 12"
+        ],
+        "color": "#a58b72",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.55,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench fin 0.4",
+        "operation": "new",
+        "corner": [
+          14,
+          -22,
+          0.05
+        ],
+        "length": 0.4,
+        "width": 8,
+        "height": 6
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench fin 0.4"
+        ],
+        "color": "#728ca0",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench fin 0.8",
+        "operation": "new",
+        "corner": [
+          14.8,
+          -22,
+          0.05
+        ],
+        "length": 0.8,
+        "width": 8,
+        "height": 6
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench fin 0.8"
+        ],
+        "color": "#728ca0",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench fin 1.6",
+        "operation": "new",
+        "corner": [
+          16.4,
+          -22,
+          0.05
+        ],
+        "length": 1.6,
+        "width": 8,
+        "height": 6
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench fin 1.6"
+        ],
+        "color": "#728ca0",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench fin 3.2",
+        "operation": "new",
+        "corner": [
+          19.6,
+          -22,
+          0.05
+        ],
+        "length": 3.2,
+        "width": 8,
+        "height": 6
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench fin 3.2"
+        ],
+        "color": "#728ca0",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.cylinder",
+      "params": {
+        "body_name": "Bench post 0.4",
+        "operation": "new",
+        "base": [
+          -44,
+          -12,
+          0.05
+        ],
+        "radius": 0.4,
+        "height": 12,
+        "axis": "Z"
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench post 0.4"
+        ],
+        "color": "#8095a5",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.cylinder",
+      "params": {
+        "body_name": "Bench post 0.8",
+        "operation": "new",
+        "base": [
+          -40,
+          -12,
+          0.05
+        ],
+        "radius": 0.8,
+        "height": 12,
+        "axis": "Z"
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench post 0.8"
+        ],
+        "color": "#8095a5",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.cylinder",
+      "params": {
+        "body_name": "Bench post 1.6",
+        "operation": "new",
+        "base": [
+          -34,
+          -12,
+          0.05
+        ],
+        "radius": 1.6,
+        "height": 12,
+        "axis": "Z"
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench post 1.6"
+        ],
+        "color": "#8095a5",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench bridge left",
+        "operation": "new",
+        "corner": [
+          -8,
+          -20,
+          0.05
+        ],
+        "length": 2,
+        "width": 3,
+        "height": 10
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench bridge left"
+        ],
+        "color": "#a5896d",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.5,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench bridge right",
+        "operation": "new",
+        "corner": [
+          6,
+          -20,
+          0.05
+        ],
+        "length": 2,
+        "width": 3,
+        "height": 10
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench bridge right"
+        ],
+        "color": "#a5896d",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.5,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench bridge span",
+        "operation": "new",
+        "corner": [
+          -8,
+          -20,
+          10.05
+        ],
+        "length": 16,
+        "width": 3,
+        "height": 2
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench bridge span"
+        ],
+        "color": "#a5896d",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.5,
+          "dielectric_ior": 1.5
+        }
+      }
+    },
+    {
+      "command": "view.apply",
+      "params": {
+        "camera": {
+          "target": [
+            0,
+            4,
+            8
+          ],
+          "yaw": -0.35,
+          "pitch": 0.55,
+          "roll": 0,
+          "distance": 155,
+          "fov": 0.7,
+          "up": "z"
+        }
+      }
+    }
+  ]
+}

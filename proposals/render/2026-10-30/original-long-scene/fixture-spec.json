@@ -1,0 +1,994 @@
+{
+  "status": "ORIGINAL_SOURCE_FIXTURE_NOT_PRODUCT_EXECUTED",
+  "name": "Original CPU edge and radiance bench",
+  "units": "mm",
+  "body_count": 19,
+  "expected_scene_bbox_mm": {
+    "min": [
+      -52,
+      -32,
+      -2
+    ],
+    "max": [
+      52,
+      40,
+      24
+    ]
+  },
+  "expected_sum_body_volumes_mm3": 30857.311355195277,
+  "expected_sum_body_volumes_formula": "22152 + (8192/3 + 40.32)*pi",
+  "expected_volume_weighted_centroid_mm": [
+    -1.4790086271627052,
+    9.373855307124394,
+    4.049011818934791
+  ],
+  "bodies": [
+    {
+      "name": "Bench floor",
+      "kind": "box",
+      "corner": [
+        -52,
+        -32,
+        -2
+      ],
+      "size": [
+        104,
+        72,
+        2
+      ],
+      "look": {
+        "color": "#7c828b",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.8,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 14976,
+      "bbox": {
+        "min": [
+          -52,
+          -32,
+          -2
+        ],
+        "max": [
+          52,
+          40,
+          0
+        ]
+      },
+      "centroid": [
+        0,
+        4,
+        -1
+      ]
+    },
+    {
+      "name": "Bench rear",
+      "kind": "box",
+      "corner": [
+        -52,
+        38,
+        0
+      ],
+      "size": [
+        104,
+        2,
+        24
+      ],
+      "look": {
+        "color": "#576472",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.8,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 4992,
+      "bbox": {
+        "min": [
+          -52,
+          38,
+          0
+        ],
+        "max": [
+          52,
+          40,
+          24
+        ]
+      },
+      "centroid": [
+        0,
+        39,
+        12
+      ]
+    },
+    {
+      "name": "Bench N12",
+      "kind": "sphere",
+      "center": [
+        -30,
+        0,
+        8.05
+      ],
+      "radius": 8,
+      "look": {
+        "color": "#b8a798",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.12,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 2144.660584850632,
+      "bbox": {
+        "min": [
+          -38,
+          -8,
+          0.05000000000000071
+        ],
+        "max": [
+          -22,
+          8,
+          16.05
+        ]
+      },
+      "centroid": [
+        -30,
+        0,
+        8.05
+      ]
+    },
+    {
+      "name": "Bench N65",
+      "kind": "sphere",
+      "center": [
+        -10,
+        0,
+        8.05
+      ],
+      "radius": 8,
+      "look": {
+        "color": "#b8a798",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.65,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 2144.660584850632,
+      "bbox": {
+        "min": [
+          -18,
+          -8,
+          0.05000000000000071
+        ],
+        "max": [
+          -2,
+          8,
+          16.05
+        ]
+      },
+      "centroid": [
+        -10,
+        0,
+        8.05
+      ]
+    },
+    {
+      "name": "Bench M12",
+      "kind": "sphere",
+      "center": [
+        10,
+        0,
+        8.05
+      ],
+      "radius": 8,
+      "look": {
+        "color": "#b8a798",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 1,
+          "roughness": 0.12,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 2144.660584850632,
+      "bbox": {
+        "min": [
+          2,
+          -8,
+          0.05000000000000071
+        ],
+        "max": [
+          18,
+          8,
+          16.05
+        ]
+      },
+      "centroid": [
+        10,
+        0,
+        8.05
+      ]
+    },
+    {
+      "name": "Bench M65",
+      "kind": "sphere",
+      "center": [
+        30,
+        0,
+        8.05
+      ],
+      "radius": 8,
+      "look": {
+        "color": "#b8a798",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 1,
+          "roughness": 0.65,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 2144.660584850632,
+      "bbox": {
+        "min": [
+          22,
+          -8,
+          0.05000000000000071
+        ],
+        "max": [
+          38,
+          8,
+          16.05
+        ]
+      },
+      "centroid": [
+        30,
+        0,
+        8.05
+      ]
+    },
+    {
+      "name": "Bench step 3",
+      "kind": "box",
+      "corner": [
+        -46,
+        22,
+        0.05
+      ],
+      "size": [
+        8,
+        10,
+        3
+      ],
+      "look": {
+        "color": "#a58b72",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.55,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 240,
+      "bbox": {
+        "min": [
+          -46,
+          22,
+          0.05
+        ],
+        "max": [
+          -38,
+          32,
+          3.05
+        ]
+      },
+      "centroid": [
+        -42,
+        27,
+        1.55
+      ]
+    },
+    {
+      "name": "Bench step 6",
+      "kind": "box",
+      "corner": [
+        -36,
+        22,
+        0.05
+      ],
+      "size": [
+        8,
+        10,
+        6
+      ],
+      "look": {
+        "color": "#a58b72",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.55,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 480,
+      "bbox": {
+        "min": [
+          -36,
+          22,
+          0.05
+        ],
+        "max": [
+          -28,
+          32,
+          6.05
+        ]
+      },
+      "centroid": [
+        -32,
+        27,
+        3.05
+      ]
+    },
+    {
+      "name": "Bench step 12",
+      "kind": "box",
+      "corner": [
+        -26,
+        22,
+        0.05
+      ],
+      "size": [
+        8,
+        10,
+        12
+      ],
+      "look": {
+        "color": "#a58b72",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.55,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 960,
+      "bbox": {
+        "min": [
+          -26,
+          22,
+          0.05
+        ],
+        "max": [
+          -18,
+          32,
+          12.05
+        ]
+      },
+      "centroid": [
+        -22,
+        27,
+        6.05
+      ]
+    },
+    {
+      "name": "Bench fin 0.4",
+      "kind": "box",
+      "corner": [
+        14,
+        -22,
+        0.05
+      ],
+      "size": [
+        0.4,
+        8,
+        6
+      ],
+      "look": {
+        "color": "#728ca0",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 19.200000000000003,
+      "bbox": {
+        "min": [
+          14,
+          -22,
+          0.05
+        ],
+        "max": [
+          14.4,
+          -14,
+          6.05
+        ]
+      },
+      "centroid": [
+        14.2,
+        -18,
+        3.05
+      ]
+    },
+    {
+      "name": "Bench fin 0.8",
+      "kind": "box",
+      "corner": [
+        14.8,
+        -22,
+        0.05
+      ],
+      "size": [
+        0.8,
+        8,
+        6
+      ],
+      "look": {
+        "color": "#728ca0",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 38.400000000000006,
+      "bbox": {
+        "min": [
+          14.8,
+          -22,
+          0.05
+        ],
+        "max": [
+          15.600000000000001,
+          -14,
+          6.05
+        ]
+      },
+      "centroid": [
+        15.200000000000001,
+        -18,
+        3.05
+      ]
+    },
+    {
+      "name": "Bench fin 1.6",
+      "kind": "box",
+      "corner": [
+        16.4,
+        -22,
+        0.05
+      ],
+      "size": [
+        1.6,
+        8,
+        6
+      ],
+      "look": {
+        "color": "#728ca0",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 76.80000000000001,
+      "bbox": {
+        "min": [
+          16.4,
+          -22,
+          0.05
+        ],
+        "max": [
+          18,
+          -14,
+          6.05
+        ]
+      },
+      "centroid": [
+        17.2,
+        -18,
+        3.05
+      ]
+    },
+    {
+      "name": "Bench fin 3.2",
+      "kind": "box",
+      "corner": [
+        19.6,
+        -22,
+        0.05
+      ],
+      "size": [
+        3.2,
+        8,
+        6
+      ],
+      "look": {
+        "color": "#728ca0",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 153.60000000000002,
+      "bbox": {
+        "min": [
+          19.6,
+          -22,
+          0.05
+        ],
+        "max": [
+          22.8,
+          -14,
+          6.05
+        ]
+      },
+      "centroid": [
+        21.200000000000003,
+        -18,
+        3.05
+      ]
+    },
+    {
+      "name": "Bench post 0.4",
+      "kind": "cylinder",
+      "base": [
+        -44,
+        -12,
+        0.05
+      ],
+      "radius": 0.4,
+      "height": 12,
+      "look": {
+        "color": "#8095a5",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 6.031857894892403,
+      "bbox": {
+        "min": [
+          -44.4,
+          -12.4,
+          0.05
+        ],
+        "max": [
+          -43.6,
+          -11.6,
+          12.05
+        ]
+      },
+      "centroid": [
+        -44,
+        -12,
+        6.05
+      ]
+    },
+    {
+      "name": "Bench post 0.8",
+      "kind": "cylinder",
+      "base": [
+        -40,
+        -12,
+        0.05
+      ],
+      "radius": 0.8,
+      "height": 12,
+      "look": {
+        "color": "#8095a5",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 24.127431579569613,
+      "bbox": {
+        "min": [
+          -40.8,
+          -12.8,
+          0.05
+        ],
+        "max": [
+          -39.2,
+          -11.2,
+          12.05
+        ]
+      },
+      "centroid": [
+        -40,
+        -12,
+        6.05
+      ]
+    },
+    {
+      "name": "Bench post 1.6",
+      "kind": "cylinder",
+      "base": [
+        -34,
+        -12,
+        0.05
+      ],
+      "radius": 1.6,
+      "height": 12,
+      "look": {
+        "color": "#8095a5",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.4,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 96.50972631827845,
+      "bbox": {
+        "min": [
+          -35.6,
+          -13.6,
+          0.05
+        ],
+        "max": [
+          -32.4,
+          -10.4,
+          12.05
+        ]
+      },
+      "centroid": [
+        -34,
+        -12,
+        6.05
+      ]
+    },
+    {
+      "name": "Bench bridge left",
+      "kind": "box",
+      "corner": [
+        -8,
+        -20,
+        0.05
+      ],
+      "size": [
+        2,
+        3,
+        10
+      ],
+      "look": {
+        "color": "#a5896d",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.5,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 60,
+      "bbox": {
+        "min": [
+          -8,
+          -20,
+          0.05
+        ],
+        "max": [
+          -6,
+          -17,
+          10.05
+        ]
+      },
+      "centroid": [
+        -7,
+        -18.5,
+        5.05
+      ]
+    },
+    {
+      "name": "Bench bridge right",
+      "kind": "box",
+      "corner": [
+        6,
+        -20,
+        0.05
+      ],
+      "size": [
+        2,
+        3,
+        10
+      ],
+      "look": {
+        "color": "#a5896d",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.5,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 60,
+      "bbox": {
+        "min": [
+          6,
+          -20,
+          0.05
+        ],
+        "max": [
+          8,
+          -17,
+          10.05
+        ]
+      },
+      "centroid": [
+        7,
+        -18.5,
+        5.05
+      ]
+    },
+    {
+      "name": "Bench bridge span",
+      "kind": "box",
+      "corner": [
+        -8,
+        -20,
+        10.05
+      ],
+      "size": [
+        16,
+        3,
+        2
+      ],
+      "look": {
+        "color": "#a5896d",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.5,
+          "dielectric_ior": 1.5
+        }
+      },
+      "volume_mm3": 96,
+      "bbox": {
+        "min": [
+          -8,
+          -20,
+          10.05
+        ],
+        "max": [
+          8,
+          -17,
+          12.05
+        ]
+      },
+      "centroid": [
+        0,
+        -18.5,
+        11.05
+      ]
+    }
+  ],
+  "light": {
+    "one_source_only": true,
+    "source": {
+      "center_mm": [
+        0,
+        -5,
+        55
+      ],
+      "edge_u_mm": [
+        70,
+        0,
+        0
+      ],
+      "edge_v_mm": [
+        0,
+        -4,
+        0
+      ],
+      "color": [
+        1,
+        0.8,
+        0.6
+      ],
+      "intensity": 6
+    },
+    "area_mm2": 280,
+    "normal": [
+      0,
+      0,
+      -1
+    ],
+    "geometric_equivalent_led": {
+      "center_mm": [
+        0,
+        -5,
+        55
+      ],
+      "length_mm": 70,
+      "width_mm": 4,
+      "length_axis": [
+        1,
+        0,
+        0
+      ],
+      "width_axis": [
+        0,
+        -1,
+        0
+      ],
+      "color": [
+        1,
+        0.8,
+        0.6
+      ],
+      "intensity": 6
+    },
+    "note": "The LED is an equivalent recipe, not an additional emitter; use exactly one representation. area_samples=16, area seed907."
+  },
+  "hdr": {
+    "file": "original-asymmetric-srgb.hdr",
+    "raw_sha256": "490b25949e482b432fa49c67fc814fe0201b835f8f59716837af425fc6ca0de2",
+    "width": 32,
+    "height": 16,
+    "primaries": [
+      0.64,
+      0.33,
+      0.3,
+      0.6,
+      0.15,
+      0.06,
+      0.3127,
+      0.329
+    ],
+    "orientation": "-Y +X",
+    "encoding": "Radiance RGBE; each scanline 2,2,0,32 then four literal packets of length32",
+    "regions_priority_order": [
+      {
+        "rect_inclusive": [
+          5,
+          3,
+          10,
+          6
+        ],
+        "rgbe": [
+          128,
+          64,
+          32,
+          132
+        ],
+        "design_linear_rgb": [
+          8,
+          4,
+          2
+        ]
+      },
+      {
+        "rect_inclusive": [
+          22,
+          5,
+          25,
+          9
+        ],
+        "rgbe": [
+          32,
+          64,
+          128,
+          130
+        ],
+        "design_linear_rgb": [
+          0.5,
+          1,
+          2
+        ]
+      },
+      {
+        "rows_inclusive": [
+          7,
+          8
+        ],
+        "rgbe": [
+          128,
+          128,
+          128,
+          127
+        ],
+        "design_linear_rgb": [
+          0.25,
+          0.25,
+          0.25
+        ]
+      },
+      {
+        "otherwise": true,
+        "rgbe": [
+          128,
+          128,
+          128,
+          125
+        ],
+        "design_linear_rgb": [
+          0.0625,
+          0.0625,
+          0.0625
+        ]
+      }
+    ],
+    "provenance": "Original procedural pixel values authored for this fixture, no external image/texture or copied product asset. Static packet/RGBE verification is not SolidCraft HDR admission."
+  },
+  "camera": {
+    "target": [
+      0,
+      4,
+      8
+    ],
+    "yaw": -0.35,
+    "pitch": 0.55,
+    "roll": 0,
+    "distance": 155,
+    "fov": 0.7,
+    "up": "z"
+  },
+  "requests": {
+    "long_final": {
+      "profile": "studio",
+      "width": 1536,
+      "height": 1024,
+      "spp": 128,
+      "camera_evaluations": 201326592,
+      "checkpoints": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        64
+      ],
+      "final_spp": 128
+    },
+    "interactive": {
+      "max_edge": 1024,
+      "expected_width": 1024,
+      "expected_height": 683,
+      "spp": 16,
+      "camera_evaluations": 11190272,
+      "not_final": true
+    },
+    "baseline": {
+      "profile": "compact",
+      "width": 384,
+      "height": 256,
+      "spp": 16
+    }
+  },
+  "glass": {
+    "status": "CURRENT_PROGRESSIVE_REFUSAL_LIMITATION_NOT_GLASS_ACCEPTANCE",
+    "main_fixture_has_no_glass": true,
+    "probe": "optional-glass-probe.commands.json",
+    "opaque_surface_alpha": 1,
+    "nominal_volume_mm3": 768,
+    "required_actual_body_index": "Resolve from the fresh real scene; never hard-code an ordinal or use alpha as glass.",
+    "override_when_correctly_bound": {
+      "boundary": "closed_box",
+      "ior": 1.5,
+      "absorption_per_mm": [
+        0.02,
+        0.005,
+        0.001
+      ],
+      "thickness_mm": 0
+    },
+    "expected_validation_message": "CPU progressive currently supports isotropic opaque surfaces; use fixed sampling for dielectric or anisotropic inputs"
+  }
+}

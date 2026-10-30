@@ -1,0 +1,27 @@
+{
+  "integrator": "raster",
+  "settings": {
+    "width": 1536,
+    "height": 1024,
+    "camera": {
+      "target": [
+        0,
+        4,
+        8
+      ],
+      "yaw": -0.35,
+      "pitch": 0.55,
+      "roll": 0,
+      "distance": 155,
+      "fov": 0.7,
+      "up": "z"
+    },
+    "background": [
+      26,
+      31,
+      40
+    ],
+    "exposure_ev": 0,
+    "job": null
+  }
+}

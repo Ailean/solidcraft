@@ -1,0 +1,17 @@
+{
+  "status": "STATIC_ARTIFACT_CHECKS_ONLY_NOT_PRODUCT_VALIDATION",
+  "json_parsed": 8,
+  "geometry_commands": 40,
+  "new_bodies": 19,
+  "nominal_body_volume_arithmetic_matches_spec": true,
+  "nominal_total_volume_mm3": 30857.311355195277,
+  "hdr_bytes": 2277,
+  "hdr_values_checked": 2048,
+  "hdr_raw_sha256": "490b25949e482b432fa49c67fc814fe0201b835f8f59716837af425fc6ca0de2",
+  "hdr_literal_packets_and_original_pixels_verified": true,
+  "hdr_checked_by_solidcraft": false,
+  "cad_created": false,
+  "native_sc_created": false,
+  "render_started": false,
+  "runtime_or_quality_pass": false
+}

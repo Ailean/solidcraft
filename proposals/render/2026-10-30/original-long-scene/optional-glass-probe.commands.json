@@ -1,0 +1,34 @@
+{
+  "commands": [
+    {
+      "command": "solid.box",
+      "params": {
+        "body_name": "Bench glass refusal probe",
+        "corner": [
+          -4,
+          22,
+          0.05
+        ],
+        "length": 8,
+        "width": 6,
+        "height": 16,
+        "operation": "new"
+      }
+    },
+    {
+      "command": "appearance.assign",
+      "params": {
+        "bodies": [
+          "Bench glass refusal probe"
+        ],
+        "color": "#ffffff",
+        "opacity": 1,
+        "pbr": {
+          "metallic": 0,
+          "roughness": 0.08,
+          "dielectric_ior": 1.5
+        }
+      }
+    }
+  ]
+}

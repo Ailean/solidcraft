@@ -1,0 +1,133 @@
+--- a/crates/gpu/src/path/mod.rs
++++ b/crates/gpu/src/path/mod.rs
+@@ -100,7 +100,10 @@
+     let policy = crate::select::Policy::from_env().map_err(gpu)?;
+     let info = adapter.get_info();
+     if !viewport_path_backends(info.backend, cfg!(target_os = "windows")).intersects(crate::select::path_backends()) {
+-        return Err(gpu(format!("{VULKAN_ONLY}; the viewport uses {:?}", info.backend)));
++        return Err(gpu(format!(
++            "GPU path tracing is unavailable in this {:?} viewport session; Vulkan has not been tested; select a CPU image method",
++            info.backend
++        )));
+     }
+     if !policy.admits(crate::select::tier_of(info.device_type)) {
+         return Err(gpu(format!("viewport adapter does not satisfy SOLIDCRAFT_GPU={}", policy.name())));
+--- a/crates/ui-egui/src/render_workspace.rs
++++ b/crates/ui-egui/src/render_workspace.rs
+@@ -833,8 +833,10 @@
+ 
+ fn image_host(app: &SolveApp, method: ImageMethod) -> Result<&ImageHost, String> {
+     if method == ImageMethod::GpuRaytrace {
+-        let PathHost::Ready(host) = &app.render_workspace.path_host else {
+-            return Err(app.tr("render.gpu_unavailable").to_string());
++        let host = match &app.render_workspace.path_host {
++            PathHost::Ready(host) => host,
++            PathHost::Failed(error) => return Err(error.clone()),
++            _ => return Err(app.tr("render.gpu_unavailable").to_string()),
+         };
+         let descriptor = host.descriptor().map_err(|error| error.to_string())?;
+         if !host.is_available()
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -8169,3 +8169,101 @@
+     assert!(!h.app.render_workspace.interactive.pending());
+     h.app.run("render.interactive", json!({"action":"off"})).unwrap();
+ }
++
++
++#[test]
++fn gpu_failed_host_keeps_specific_reason_in_image_params_and_disabled_commands() {
++    let mut h = Harness::new();
++    enter(&mut h.app, true).unwrap();
++    h.app.render_workspace.view.method = ImageMethod::GpuRaytrace;
++    let document = h.app.session.doc.clone();
++    let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len());
++    for reason in [
++        "This Direct3D 12 session has not tested Vulkan.",
++        "Vulkan device creation failed: deliberate independent diagnostic 47.",
++    ] {
++        h.app.render_workspace.path_host = PathHost::Failed(reason.into());
++        assert_ne!(reason, h.app.tr("render.gpu_unavailable"));
++        assert_eq!(image_params(&h.app).unwrap_err(), reason);
++        for id in ["render.preflight", "render.start"] {
++            let command = solidcraft_engine::find_command(id).unwrap();
++            assert!(command.info(&h.app.session).enabled, "the engine must not hide the UI readiness check");
++            let info = interactive_command_info(&h.app, command);
++            assert!(!info.enabled, "{id}");
++            assert_eq!(info.disabled_reason.as_deref(), Some(reason), "{id}");
++        }
++        assert!(matches!(&h.app.render_workspace.path_host, PathHost::Failed(stored) if stored == reason));
++        assert_eq!(h.app.render_workspace.view.method, ImageMethod::GpuRaytrace);
++    }
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len()), history);
++    assert!(h.app.render_workspace.view.job.is_none());
++}
++
++#[test]
++fn gpu_pending_hosts_keep_generic_disabled_reason_without_starting_setup() {
++    let mut h = Harness::new();
++    enter(&mut h.app, true).unwrap();
++    h.app.render_workspace.view.method = ImageMethod::GpuRaytrace;
++    let generic = h.app.tr("render.gpu_unavailable").to_string();
++    // This channel represents a still-pending answer; no worker or GPU factory is created.
++    let (_sender, receiver) = std::sync::mpsc::channel();
++    for host in [PathHost::NotStarted, PathHost::Preparing(receiver, std::time::Instant::now())] {
++        let preparing = matches!(&host, PathHost::Preparing(..));
++        h.app.render_workspace.path_host = host;
++        assert_eq!(image_params(&h.app).unwrap_err(), generic);
++        for id in ["render.preflight", "render.start"] {
++            let info = interactive_command_info(&h.app, solidcraft_engine::find_command(id).unwrap());
++            assert!(!info.enabled, "{id}");
++            assert_eq!(info.disabled_reason.as_deref(), Some(generic.as_str()), "{id}");
++        }
++        assert_eq!(matches!(&h.app.render_workspace.path_host, PathHost::Preparing(..)), preparing);
++        assert!(matches!(&h.app.render_workspace.path_host, PathHost::NotStarted | PathHost::Preparing(..)));
++        assert!(h.app.render_workspace.view.job.is_none());
++    }
++}
++
++#[test]
++fn gpu_failed_host_preserves_raster_readiness_and_cooperative_cpu_refusal() {
++    let mut h = Harness::new();
++    h.app.run("solid.box", json!({"length":10,"width":12,"height":3})).unwrap();
++    enter(&mut h.app, true).unwrap();
++    h.app.render_workspace.image_host = Some(solidcraft_engine::render::job::CpuHost::cooperative());
++    sync_backend(&mut h.app);
++    h.app.render_workspace.view.draft.width = 16;
++    h.app.render_workspace.view.draft.height = 16;
++    for method in [ImageMethod::Raster, ImageMethod::CpuRaytrace] {
++        h.app.render_workspace.view.method = method;
++        h.app.render_workspace.path_host = PathHost::NotStarted;
++        let baseline = image_params(&h.app);
++        if method == ImageMethod::Raster {
++            assert!(baseline.is_ok(), "cooperative Raster must be available: {baseline:?}");
++        } else {
++            assert_eq!(method, ImageMethod::CpuRaytrace);
++            let error = baseline.as_ref().unwrap_err();
++            assert!(error.contains("CPU raytracing"), "cooperative CPU must retain its own host refusal: {error}");
++            assert_ne!(error, h.app.tr("render.gpu_unavailable"));
++        }
++        let baseline_commands = ["render.preflight", "render.start"].map(|id| {
++            let info = interactive_command_info(&h.app, solidcraft_engine::find_command(id).unwrap());
++            assert_eq!(info.enabled, method == ImageMethod::Raster, "{method:?}: {id}");
++            assert_eq!(info.disabled_reason.as_deref(), baseline.as_ref().err().map(String::as_str), "{method:?}: {id}");
++            (id, info.enabled, info.disabled_reason)
++        });
++        let document = h.app.session.doc.clone();
++        let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len());
++        let reason = "Deliberate GPU-only refusal must not replace another method's readiness.";
++        h.app.render_workspace.path_host = PathHost::Failed(reason.into());
++        assert_eq!(image_params(&h.app), baseline, "{method:?}: preserve the exact success or rejection");
++        for (id, enabled, disabled_reason) in baseline_commands {
++            let info = interactive_command_info(&h.app, solidcraft_engine::find_command(id).unwrap());
++            assert_eq!(info.enabled, enabled, "{method:?}: {id}");
++            assert_eq!(info.disabled_reason, disabled_reason, "{method:?}: {id}");
++        }
++        assert!(matches!(&h.app.render_workspace.path_host, PathHost::Failed(stored) if stored == reason));
++        assert_eq!(h.app.render_workspace.view.method, method);
++        assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++        assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len()), history);
++        assert!(h.app.render_workspace.view.job.is_none());
++    }
++}

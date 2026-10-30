@@ -1,0 +1,90 @@
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -7842,7 +7842,9 @@
+     let projection = crate::viewport::projection(&h.app, rect);
+     let at = projection.to_screen(h.app.cam.target).unwrap();
+     assert!(!crate::shell::covered(&h.app, at));
+-    assert!(crate::viewport::pick(&h.app, &projection, at).iter().any(|hit| matches!(hit, crate::viewport::Hit::Face { body, .. } if body == "Subject")));
++    assert!(
++        crate::viewport::pick(&h.app, &projection, at).iter().any(|hit| matches!(hit, crate::viewport::Hit::Face { body, .. } if body == "Subject"))
++    );
+     interactive_canvas_input_frame(&mut h, &mut time, vec![egui::Event::PointerMoved(at)]);
+     Some((h, time, at))
+ }
+@@ -7851,18 +7853,16 @@
+ fn interactive_canvas_input_click(h: &mut Harness, time: &mut f64, at: egui::Pos2, button: egui::PointerButton, mods: egui::Modifiers) {
+     interactive_canvas_input_frame(h, time, vec![egui::Event::ModifiersChanged(mods), egui::Event::PointerMoved(at)]);
+     for pressed in [true, false] {
+-        interactive_canvas_input_frame(
+-            h,
+-            time,
+-            vec![egui::Event::PointerButton { pos: at, button, pressed, modifiers: mods }],
+-        );
++        interactive_canvas_input_frame(h, time, vec![egui::Event::PointerButton { pos: at, button, pressed, modifiers: mods }]);
+     }
+ }
+ 
+ #[cfg(not(target_arch = "wasm32"))]
+ #[test]
+ fn interactive_blank_canvas_blocks_hover_selection_and_context_but_off_keeps_real_targets() {
+-    let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_blank_canvas_blocks_hover_selection_and_context_but_off_keeps_real_targets") else {
++    let Some((mut h, mut time, at)) =
++        interactive_canvas_input_fixture("interactive_blank_canvas_blocks_hover_selection_and_context_but_off_keeps_real_targets")
++    else {
+         return;
+     };
+     h.app.run("render.interactive", json!({"action":"on"})).unwrap();
+@@ -7892,7 +7892,9 @@
+ #[test]
+ fn interactive_blank_canvas_neither_paints_nor_samples_and_escape_and_off_still_work() {
+     for sampling in [false, true] {
+-        let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_blank_canvas_neither_paints_nor_samples_and_escape_and_off_still_work") else {
++        let Some((mut h, mut time, at)) =
++            interactive_canvas_input_fixture("interactive_blank_canvas_neither_paints_nor_samples_and_escape_and_off_still_work")
++        else {
+             return;
+         };
+         if sampling {
+@@ -7944,7 +7946,9 @@
+ #[cfg(not(target_arch = "wasm32"))]
+ #[test]
+ fn interactive_blank_canvas_clears_real_drag_preview_and_release_cannot_apply_hidden_target() {
+-    let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_blank_canvas_clears_real_drag_preview_and_release_cannot_apply_hidden_target") else {
++    let Some((mut h, mut time, at)) =
++        interactive_canvas_input_fixture("interactive_blank_canvas_clears_real_drag_preview_and_release_cannot_apply_hidden_target")
++    else {
+         return;
+     };
+     let document = h.app.session.doc.clone();
+@@ -7977,7 +7981,9 @@
+ #[test]
+ fn interactive_current_and_paused_images_keep_canvas_paint_and_final_observation() {
+     for paused in [false, true] {
+-        let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_current_and_paused_images_keep_canvas_paint_and_final_observation") else {
++        let Some((mut h, mut time, at)) =
++            interactive_canvas_input_fixture("interactive_current_and_paused_images_keep_canvas_paint_and_final_observation")
++        else {
+             return;
+         };
+         h.app.run("render.interactive", json!({"action":"on"})).unwrap();
+@@ -8012,7 +8018,9 @@
+ #[cfg(not(target_arch = "wasm32"))]
+ #[test]
+ fn interactive_canvas_reobserves_pending_edit_before_release_and_navigation_still_updates_camera() {
+-    let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_canvas_reobserves_pending_edit_before_release_and_navigation_still_updates_camera") else {
++    let Some((mut h, mut time, at)) =
++        interactive_canvas_input_fixture("interactive_canvas_reobserves_pending_edit_before_release_and_navigation_still_updates_camera")
++    else {
+         return;
+     };
+     h.app.run("render.interactive", json!({"action":"on"})).unwrap();
+@@ -8131,7 +8139,8 @@
+ #[cfg(not(target_arch = "wasm32"))]
+ #[test]
+ fn interactive_blank_canvas_clicks_preserve_selection_created_on_the_accepted_image() {
+-    let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_blank_canvas_clicks_preserve_selection_created_on_the_accepted_image")
++    let Some((mut h, mut time, at)) =
++        interactive_canvas_input_fixture("interactive_blank_canvas_clicks_preserve_selection_created_on_the_accepted_image")
+     else {
+         return;
+     };

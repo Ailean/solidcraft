@@ -1,0 +1,655 @@
+diff --git a/assets/locales/en.json b/assets/locales/en.json
+--- a/assets/locales/en.json
++++ b/assets/locales/en.json
+@@ -2925,8 +2925,8 @@
+   "render.post_vignette": "Vignette",
+   "render.preview": "Integrated preview",
+   "render.preview_help": "Raster shading and blended transparency. Refraction, HDRI and final rendering are not available yet.",
+-  "render.preview_image_settings_help": "Live Preview keeps fixed studio lighting. Exposure and image lighting apply to the image job when you Check or Start.",
+-  "render.preview_lighting_help": "The live preview shows direct light only and no shadows.",
++  "render.preview_image_settings_help": "Model Preview uses approximate direct lighting. When enabled, Interactive Render on the CPU updates a provisional image using supported image settings, including exposure. Final rendering is separate.",
++  "render.preview_lighting_help": "Model Preview uses direct lighting without shadows. Interactive Render on the CPU uses supported image settings for its provisional image.",
+   "render.preview_retry": "Retry live preview",
+   "render.preview_unavailable_help": "The live preview is unavailable. Saved setups and image-job controls remain accessible. Change the scene or explicitly retry; a refused scene is not rebuilt on every frame.",
+   "render.preview_upload": "Live-preview vertex payload",
+@@ -3190,7 +3190,7 @@
+   "render.stage_panels.use_budget": "Use this budget",
+   "render.stage_panels.use_maps": "Use GPU maps",
+   "render.stage_panels.use_uniform": "Use uniform",
+-  "render.stage_preview_note": "Integrated preview · direct light",
++  "render.stage_preview_note": "Render preview",
+   "render.state_completed": "Completed image",
+   "render.state_in_progress": "Image in progress",
+   "render.state_model": "Model Preview",
+diff --git a/assets/locales/ar.json b/assets/locales/ar.json
+--- a/assets/locales/ar.json
++++ b/assets/locales/ar.json
+@@ -2925,8 +2925,8 @@
+   "render.post_vignette": "التعتيم الطرفي",
+   "render.preview": "المعاينة المدمجة",
+   "render.preview_help": "تظليل نقطي وشفافية ممزوجة. الانكسار وHDRI والتصيير النهائي غير متاحة بعد.",
+-  "render.preview_image_settings_help": "تحافظ المعاينة الحية على إضاءة استوديو ثابتة. يُطبّق التعريض وإضاءة الصورة على مهمة الصورة عند «فحص» أو «بدء».",
+-  "render.preview_lighting_help": "المعاينة الحية تعرض الضوء المباشر فقط وبلا ظلال.",
++  "render.preview_image_settings_help": "تستخدم معاينة النموذج إضاءة مباشرة تقريبية. عند تفعيله، يحدّث التصيير التفاعلي على CPU صورة مؤقتة باستخدام إعدادات الصورة المدعومة، بما فيها التعريض. التصيير النهائي منفصل.",
++  "render.preview_lighting_help": "تستخدم معاينة النموذج إضاءة مباشرة بلا ظلال. يستخدم التصيير التفاعلي على CPU إعدادات الصورة المدعومة لصورته المؤقتة.",
+   "render.preview_retry": "إعادة محاولة المعاينة الحية",
+   "render.preview_unavailable_help": "المعاينة الحية غير متاحة. تبقى الإعدادات المحفوظة وعناصر التحكم في مهمة الصورة متاحة. غيّر المشهد أو أعد المحاولة صراحةً؛ لا يُعاد بناء المشهد المرفوض في كل إطار.",
+   "render.preview_upload": "حمولة رؤوس المعاينة الحية",
+@@ -3190,7 +3190,7 @@
+   "render.stage_panels.use_budget": "استخدام هذه الميزانية",
+   "render.stage_panels.use_maps": "استخدام خرائط GPU",
+   "render.stage_panels.use_uniform": "استخدام المظهر الموحّد",
+-  "render.stage_preview_note": "معاينة مدمجة · ضوء مباشر",
++  "render.stage_preview_note": "معاينة التصيير",
+   "render.state_completed": "صورة مكتملة",
+   "render.state_in_progress": "صورة قيد الإنجاز",
+   "render.state_model": "معاينة النموذج",
+diff --git a/assets/locales/bs.json b/assets/locales/bs.json
+--- a/assets/locales/bs.json
++++ b/assets/locales/bs.json
+@@ -2677,8 +2677,8 @@
+   "render.post_vignette": "Vinjeta",
+   "render.preview": "Integrisani pregled",
+   "render.preview_help": "Raster sjenčenje i miješana prozirnost. Prelamanje, HDRI i završno renderovanje još nisu dostupni.",
+-  "render.preview_image_settings_help": "Pregled uživo zadržava fiksno osvjetljenje studija. Ekspozicija i osvjetljenje slike primjenjuju se na posao slike kada kliknete Provjeri ili Pokreni.",
+-  "render.preview_lighting_help": "Pregled uživo prikazuje samo direktno svjetlo, bez sjena.",
++  "render.preview_image_settings_help": "Pregled modela koristi približno direktno osvjetljenje. Kada je uključeno, interaktivno renderiranje na CPU-u ažurira privremenu sliku koristeći podržane postavke slike, uključujući ekspoziciju. Završno renderiranje je odvojeno.",
++  "render.preview_lighting_help": "Pregled modela koristi direktno osvjetljenje bez sjena. Interaktivno renderiranje na CPU-u koristi podržane postavke slike za privremenu sliku.",
+   "render.preview_retry": "Ponovo pokušaj pregled uživo",
+   "render.preview_unavailable_help": "Pregled uživo nije dostupan. Sačuvane postavke i kontrole posla slike ostaju dostupne. Promijenite scenu ili izričito pokušajte ponovo; odbijena scena se ne gradi ponovo u svakom kadru.",
+   "render.preview_upload": "Podaci vrhova pregleda uživo",
+@@ -2906,7 +2906,7 @@
+   "render.stage_panels.use_budget": "Koristi ovaj budžet",
+   "render.stage_panels.use_maps": "Koristi GPU mape",
+   "render.stage_panels.use_uniform": "Koristi ujednačeno",
+-  "render.stage_preview_note": "Integrisani pregled · direktno svjetlo",
++  "render.stage_preview_note": "Pregled renderiranja",
+   "render.state_completed": "Završena slika",
+   "render.state_in_progress": "Slika u izradi",
+   "render.state_model": "Pregled modela",
+diff --git a/assets/locales/cs.json b/assets/locales/cs.json
+--- a/assets/locales/cs.json
++++ b/assets/locales/cs.json
+@@ -2662,8 +2662,8 @@
+   "render.post_vignette": "Vinětace",
+   "render.preview": "Integrovaný náhled",
+   "render.preview_help": "Rastrové stínování a smíšená průhlednost. Lom světla, HDRI a finální render zatím nejsou k dispozici.",
+-  "render.preview_image_settings_help": "Živý náhled zachovává pevné studiové osvětlení. Expozice a osvětlení obrazu se použijí na úlohu obrazu při kontrole nebo spuštění.",
+-  "render.preview_lighting_help": "Živý náhled zobrazuje pouze přímé světlo a žádné stíny.",
++  "render.preview_image_settings_help": "Náhled modelu používá přibližné přímé osvětlení. Po zapnutí interaktivní renderování na CPU aktualizuje prozatímní obraz pomocí podporovaných nastavení obrazu včetně expozice. Finální renderování je samostatné.",
++  "render.preview_lighting_help": "Náhled modelu používá přímé osvětlení bez stínů. Interaktivní renderování na CPU používá pro prozatímní obraz podporovaná nastavení obrazu.",
+   "render.preview_retry": "Zkusit znovu živý náhled",
+   "render.preview_unavailable_help": "Živý náhled není k dispozici. Uložená nastavení a ovládací prvky úlohy obrazu zůstávají přístupné. Změňte scénu nebo to výslovně zkuste znovu; odmítnutá scéna se nesestavuje při každém snímku.",
+   "render.preview_upload": "Data vrcholů živého náhledu",
+@@ -2891,7 +2891,7 @@
+   "render.stage_panels.use_budget": "Použít tento rozpočet",
+   "render.stage_panels.use_maps": "Použít mapy GPU",
+   "render.stage_panels.use_uniform": "Použít jednotný",
+-  "render.stage_preview_note": "Integrovaný náhled · přímé světlo",
++  "render.stage_preview_note": "Náhled renderování",
+   "render.state_completed": "Dokončený obrázek",
+   "render.state_in_progress": "Obrázek se vykresluje",
+   "render.state_model": "Náhled modelu",
+diff --git a/assets/locales/de.json b/assets/locales/de.json
+--- a/assets/locales/de.json
++++ b/assets/locales/de.json
+@@ -2460,7 +2460,8 @@
+   "render.pick_waiting": "Die Produktauswahl wird noch nicht unterstützt.",
+   "render.preview": "Integrierte Vorschau",
+   "render.preview_help": "Rasterdarstellung mit gemischter Transparenz. Brechung, HDRI und finales Rendering sind noch nicht verfügbar.",
+-  "render.preview_lighting_help": "Die Live-Vorschau zeigt nur direktes Licht und keine Schatten.",
++  "render.preview_image_settings_help": "Die Modellvorschau verwendet eine Näherung der direkten Beleuchtung. Wenn aktiviert, aktualisiert Interaktives Rendering auf der CPU ein vorläufiges Bild mit den unterstützten Bildeinstellungen, einschließlich Belichtung. Das endgültige Rendering erfolgt separat.",
++  "render.preview_lighting_help": "Die Modellvorschau verwendet direkte Beleuchtung ohne Schatten. Interaktives Rendering auf der CPU nutzt die unterstützten Bildeinstellungen für sein vorläufiges Bild.",
+   "render.property_conditions": "Bedingungen: {value}",
+   "render.property_fallback": "Eigenschaft",
+   "render.property_qualifier": "Qualifikator: {value}",
+@@ -2664,7 +2665,7 @@
+   "render.stage_panels.use_budget": "Dieses Budget verwenden",
+   "render.stage_panels.use_maps": "GPU-Texturen verwenden",
+   "render.stage_panels.use_uniform": "Einheitlich verwenden",
+-  "render.stage_preview_note": "Integrierte Vorschau · direktes Licht",
++  "render.stage_preview_note": "Render-Vorschau",
+   "render.state_completed": "Fertiges Bild",
+   "render.state_in_progress": "Bild in Bearbeitung",
+   "render.state_model": "Modellvorschau",
+diff --git a/assets/locales/es.json b/assets/locales/es.json
+--- a/assets/locales/es.json
++++ b/assets/locales/es.json
+@@ -2258,8 +2258,8 @@
+   "render.post_vignette": "Viñeta",
+   "render.preview": "Vista previa integrada",
+   "render.preview_help": "Sombreado por rasterización y transparencia combinada. La refracción, HDRI y el renderizado final aún no están disponibles.",
+-  "render.preview_image_settings_help": "La vista previa mantiene una iluminación de estudio fija. La exposición y la iluminación de imagen se aplican al trabajo al Comprobar o Iniciar.",
+-  "render.preview_lighting_help": "La vista previa en vivo muestra solo luz directa y nada de sombras.",
++  "render.preview_image_settings_help": "La vista previa del modelo usa una aproximación de la iluminación directa. Al activarse, el render interactivo en CPU actualiza una imagen provisional con los ajustes de imagen compatibles, incluida la exposición. El render final es independiente.",
++  "render.preview_lighting_help": "La vista previa del modelo usa iluminación directa sin sombras. El render interactivo en CPU usa los ajustes de imagen compatibles para su imagen provisional.",
+   "render.preview_retry": "Reintentar vista previa",
+   "render.preview_unavailable_help": "La vista previa no está disponible. Los ajustes guardados y los controles de imagen siguen accesibles. Cambia la escena o reintenta expresamente; una escena rechazada no se reconstruye en cada fotograma.",
+   "render.preview_upload": "Datos de vértices de la vista previa",
+@@ -2364,7 +2364,7 @@
+   "render.stage_orthographic": "Ortográfica",
+   "render.stage_output": "Salida",
+   "render.stage_panel_count": "Paneles guardados",
+-  "render.stage_preview_note": "Vista previa integrada · luz directa",
++  "render.stage_preview_note": "Vista previa del render",
+   "render.strip_label": "Tira",
+   "render.studio_add_area": "Añadir luz de área",
+   "render.studio_ambient": "Radiancia constante del entorno",
+diff --git a/assets/locales/fr.json b/assets/locales/fr.json
+--- a/assets/locales/fr.json
++++ b/assets/locales/fr.json
+@@ -2687,8 +2687,8 @@
+   "render.post_vignette": "Vignettage",
+   "render.preview": "Aperçu intégré",
+   "render.preview_help": "Ombrage par rastérisation et transparence mélangée. La réfraction, l'HDRI et le rendu final ne sont pas encore disponibles.",
+-  "render.preview_image_settings_help": "L'aperçu en direct garde un éclairage de studio fixe. L'exposition et l'éclairage de l'image s'appliquent à la tâche d'image quand vous cliquez sur Vérifier ou Démarrer.",
+-  "render.preview_lighting_help": "L'aperçu en direct n'affiche que la lumière directe, sans ombres.",
++  "render.preview_image_settings_help": "L’aperçu du modèle utilise une approximation de l’éclairage direct. Lorsqu’il est activé, le rendu interactif sur CPU actualise une image provisoire avec les paramètres d’image pris en charge, dont l’exposition. Le rendu final est distinct.",
++  "render.preview_lighting_help": "L’aperçu du modèle utilise un éclairage direct sans ombres. Le rendu interactif sur CPU utilise les paramètres d’image pris en charge pour son image provisoire.",
+   "render.preview_retry": "Réessayer l'aperçu en direct",
+   "render.preview_unavailable_help": "L'aperçu en direct est indisponible. Les préréglages enregistrés et les réglages de tâche d'image restent accessibles. Modifiez la scène ou réessayez explicitement ; une scène refusée n'est pas reconstruite à chaque image.",
+   "render.preview_upload": "Charge de sommets de l'aperçu en direct",
+@@ -2916,7 +2916,7 @@
+   "render.stage_panels.use_budget": "Utiliser ce budget",
+   "render.stage_panels.use_maps": "Utiliser les textures GPU",
+   "render.stage_panels.use_uniform": "Utiliser l'uniforme",
+-  "render.stage_preview_note": "Aperçu intégré · lumière directe",
++  "render.stage_preview_note": "Aperçu du rendu",
+   "render.state_completed": "Image terminée",
+   "render.state_in_progress": "Image en cours",
+   "render.state_model": "Aperçu du modèle",
+diff --git a/assets/locales/gl.json b/assets/locales/gl.json
+--- a/assets/locales/gl.json
++++ b/assets/locales/gl.json
+@@ -2662,8 +2662,8 @@
+   "render.post_vignette": "Viñeta",
+   "render.preview": "Previsualización integrada",
+   "render.preview_help": "Sombreado ráster e transparencia mesturada. A refracción, o HDRI e o render final aínda non están dispoñibles.",
+-  "render.preview_image_settings_help": "A vista previa en directo mantén unha iluminación de estudo fixa. A exposición e a iluminación da imaxe aplícanse á tarefa de imaxe ao usar Comprobar ou Iniciar.",
+-  "render.preview_lighting_help": "A vista previa en directo só mostra luz directa e non hai sombras.",
++  "render.preview_image_settings_help": "A previsualización do modelo usa unha aproximación da iluminación directa. Ao activarse, a renderización interactiva na CPU actualiza unha imaxe provisional cos axustes de imaxe compatibles, incluída a exposición. A renderización final é independente.",
++  "render.preview_lighting_help": "A previsualización do modelo usa iluminación directa sen sombras. A renderización interactiva na CPU usa os axustes de imaxe compatibles para a súa imaxe provisional.",
+   "render.preview_retry": "Reintentar a vista previa en directo",
+   "render.preview_unavailable_help": "A vista previa en directo non está dispoñible. As configuracións gardadas e os controis das tarefas de imaxe seguen accesibles. Cambia a escena ou reinténtao explicitamente; unha escena rexeitada non se reconstrúe en cada fotograma.",
+   "render.preview_upload": "Datos de vértices da vista previa en directo",
+@@ -2891,7 +2891,7 @@
+   "render.stage_panels.use_budget": "Usar este orzamento",
+   "render.stage_panels.use_maps": "Usar os mapas da GPU",
+   "render.stage_panels.use_uniform": "Usar uniforme",
+-  "render.stage_preview_note": "Vista previa integrada · luz directa",
++  "render.stage_preview_note": "Previsualización da renderización",
+   "render.state_completed": "Imaxe completada",
+   "render.state_in_progress": "Imaxe en curso",
+   "render.state_model": "Vista previa do modelo",
+diff --git a/assets/locales/he.json b/assets/locales/he.json
+--- a/assets/locales/he.json
++++ b/assets/locales/he.json
+@@ -2925,8 +2925,8 @@
+   "render.post_vignette": "הצללת שוליים",
+   "render.preview": "תצוגה מקדימה מובנית",
+   "render.preview_help": "הצללת רסטר ושקיפות ממוזגת. שבירת אור, HDRI והדמיה סופית עדיין אינם זמינים.",
+-  "render.preview_image_settings_help": "התצוגה המקדימה החיה שומרת על תאורת סטודיו קבועה. החשיפה ותאורת התמונה חלות על משימת התמונה בעת בדיקה או התחלה.",
+-  "render.preview_lighting_help": "התצוגה המקדימה החיה מציגה אור ישיר בלבד וללא צללים.",
++  "render.preview_image_settings_help": "התצוגה המקדימה של המודל משתמשת בקירוב של תאורה ישירה. כאשר הוא מופעל, רינדור אינטראקטיבי במעבד CPU מעדכן תמונה זמנית באמצעות הגדרות התמונה הנתמכות, כולל חשיפה. הרינדור הסופי נפרד.",
++  "render.preview_lighting_help": "התצוגה המקדימה של המודל משתמשת בתאורה ישירה ללא צללים. רינדור אינטראקטיבי במעבד CPU משתמש בהגדרות התמונה הנתמכות לתמונה הזמנית שלו.",
+   "render.preview_retry": "ניסיון חוזר של התצוגה המקדימה החיה",
+   "render.preview_unavailable_help": "התצוגה המקדימה החיה אינה זמינה. ההגדרות השמורות ופקדי משימת התמונה נשארים זמינים. יש לשנות את הסצנה או לנסות שוב במפורש; סצנה שנדחתה אינה נבנית מחדש בכל פריים.",
+   "render.preview_upload": "מטען הקודקודים של התצוגה המקדימה החיה",
+@@ -3190,7 +3190,7 @@
+   "render.stage_panels.use_budget": "שימוש בתקציב זה",
+   "render.stage_panels.use_maps": "שימוש במפות GPU",
+   "render.stage_panels.use_uniform": "שימוש במראה אחיד",
+-  "render.stage_preview_note": "תצוגה מקדימה משולבת · אור ישיר",
++  "render.stage_preview_note": "תצוגה מקדימה של הרינדור",
+   "render.state_completed": "תמונה שהושלמה",
+   "render.state_in_progress": "תמונה בתהליך",
+   "render.state_model": "תצוגת מודל",
+diff --git a/assets/locales/hr.json b/assets/locales/hr.json
+--- a/assets/locales/hr.json
++++ b/assets/locales/hr.json
+@@ -2677,8 +2677,8 @@
+   "render.post_vignette": "Vinjeta",
+   "render.preview": "Integrirani pregled",
+   "render.preview_help": "Raster sjenčanje i miješana prozirnost. Lom, HDRI i završno renderiranje još nisu dostupni.",
+-  "render.preview_image_settings_help": "Pregled uživo zadržava fiksno osvjetljenje studija. Ekspozicija i osvjetljenje slike primjenjuju se na posao slike kad kliknete Provjeri ili Pokreni.",
+-  "render.preview_lighting_help": "Pregled uživo prikazuje samo izravno svjetlo, bez sjena.",
++  "render.preview_image_settings_help": "Pregled modela koristi približno izravno osvjetljenje. Kada je uključeno, interaktivno renderiranje na CPU-u ažurira privremenu sliku pomoću podržanih postavki slike, uključujući ekspoziciju. Završno renderiranje je odvojeno.",
++  "render.preview_lighting_help": "Pregled modela koristi izravno osvjetljenje bez sjena. Interaktivno renderiranje na CPU-u koristi podržane postavke slike za privremenu sliku.",
+   "render.preview_retry": "Ponovno pokušaj pregled uživo",
+   "render.preview_unavailable_help": "Pregled uživo nije dostupan. Spremljene postavke i kontrole posla slike ostaju dostupne. Promijenite scenu ili izričito pokušajte ponovno; odbijena scena ne gradi se ponovno u svakom kadru.",
+   "render.preview_upload": "Podaci vrhova pregleda uživo",
+@@ -2906,7 +2906,7 @@
+   "render.stage_panels.use_budget": "Upotrijebi ovaj proračun",
+   "render.stage_panels.use_maps": "Upotrijebi GPU mape",
+   "render.stage_panels.use_uniform": "Upotrijebi jednoliko",
+-  "render.stage_preview_note": "Integrirani pregled · izravno svjetlo",
++  "render.stage_preview_note": "Pregled renderiranja",
+   "render.state_completed": "Dovršena slika",
+   "render.state_in_progress": "Slika u izradi",
+   "render.state_model": "Pregled modela",
+diff --git a/assets/locales/hu.json b/assets/locales/hu.json
+--- a/assets/locales/hu.json
++++ b/assets/locales/hu.json
+@@ -2662,8 +2662,8 @@
+   "render.post_vignette": "Vignetta",
+   "render.preview": "Beépített előnézet",
+   "render.preview_help": "Raszteres árnyalás és kevert átlátszóság. A fénytörés, a HDRI és a végső renderelés még nem érhető el.",
+-  "render.preview_image_settings_help": "Az élő előnézet rögzített stúdiómegvilágítást használ. Az expozíció és a képmegvilágítás az Ellenőrzéskor vagy az Indításkor érvényesül a képfeladaton.",
+-  "render.preview_lighting_help": "Az élő előnézet csak közvetlen fényt mutat, árnyékok nélkül.",
++  "render.preview_image_settings_help": "A modell előnézete közelítő közvetlen megvilágítást használ. Bekapcsolva a CPU-n futó interaktív renderelés a támogatott képbeállításokkal, köztük az expozícióval frissít egy ideiglenes képet. A végső renderelés külön történik.",
++  "render.preview_lighting_help": "A modell előnézete árnyékok nélküli közvetlen megvilágítást használ. A CPU-n futó interaktív renderelés a támogatott képbeállításokat használja az ideiglenes képhez.",
+   "render.preview_retry": "Élő előnézet újrapróbálása",
+   "render.preview_unavailable_help": "Az élő előnézet nem érhető el. A mentett beállítások és a képfeladat vezérlői továbbra is elérhetők. Módosítsa a jelenetet, vagy kifejezetten próbálja újra; az elutasított jelenetet a program nem építi újra minden képkockánál.",
+   "render.preview_upload": "Élő előnézet csúcspontadatai",
+@@ -2891,7 +2891,7 @@
+   "render.stage_panels.use_budget": "Ezen keret használata",
+   "render.stage_panels.use_maps": "GPU-s térképek használata",
+   "render.stage_panels.use_uniform": "Egyenletes érték használata",
+-  "render.stage_preview_note": "Integrált előnézet · közvetlen fény",
++  "render.stage_preview_note": "Renderelési előnézet",
+   "render.state_completed": "Kész kép",
+   "render.state_in_progress": "Kép készül",
+   "render.state_model": "Modell előnézete",
+diff --git a/assets/locales/id.json b/assets/locales/id.json
+--- a/assets/locales/id.json
++++ b/assets/locales/id.json
+@@ -2662,8 +2662,8 @@
+   "render.post_vignette": "Vinyet",
+   "render.preview": "Pratinjau terintegrasi",
+   "render.preview_help": "Shading raster dan transparansi campuran. Refraksi, HDRI, dan render akhir belum tersedia.",
+-  "render.preview_image_settings_help": "Pratinjau Langsung mempertahankan pencahayaan studio yang tetap. Eksposur dan pencahayaan gambar berlaku untuk tugas gambar saat Anda memilih Periksa atau Mulai.",
+-  "render.preview_lighting_help": "Pratinjau langsung hanya menampilkan cahaya langsung dan tanpa bayangan.",
++  "render.preview_image_settings_help": "Pratinjau model menggunakan perkiraan pencahayaan langsung. Saat diaktifkan, render interaktif pada CPU memperbarui gambar sementara dengan pengaturan gambar yang didukung, termasuk eksposur. Render akhir dilakukan secara terpisah.",
++  "render.preview_lighting_help": "Pratinjau model menggunakan pencahayaan langsung tanpa bayangan. Render interaktif pada CPU menggunakan pengaturan gambar yang didukung untuk gambar sementaranya.",
+   "render.preview_retry": "Coba lagi pratinjau langsung",
+   "render.preview_unavailable_help": "Pratinjau langsung tidak tersedia. Setup tersimpan dan kontrol tugas gambar tetap dapat diakses. Ubah adegan atau coba lagi secara eksplisit; adegan yang ditolak tidak dibangun ulang di setiap frame.",
+   "render.preview_upload": "Payload vertex pratinjau langsung",
+@@ -2891,7 +2891,7 @@
+   "render.stage_panels.use_budget": "Gunakan anggaran ini",
+   "render.stage_panels.use_maps": "Gunakan peta GPU",
+   "render.stage_panels.use_uniform": "Gunakan seragam",
+-  "render.stage_preview_note": "Pratinjau terintegrasi · cahaya langsung",
++  "render.stage_preview_note": "Pratinjau render",
+   "render.state_completed": "Gambar selesai",
+   "render.state_in_progress": "Gambar sedang diproses",
+   "render.state_model": "Pratinjau Model",
+diff --git a/assets/locales/it.json b/assets/locales/it.json
+--- a/assets/locales/it.json
++++ b/assets/locales/it.json
+@@ -2668,8 +2668,8 @@
+   "render.post_vignette": "Vignettatura",
+   "render.preview": "Anteprima integrata",
+   "render.preview_help": "Ombreggiatura raster e trasparenza miscelata. Rifrazione, HDRI e rendering finale non sono ancora disponibili.",
+-  "render.preview_image_settings_help": "L'anteprima live mantiene un'illuminazione da studio fissa. L'esposizione e l'illuminazione dell'immagine si applicano al lavoro immagine quando scegli Verifica o Avvia.",
+-  "render.preview_lighting_help": "L'anteprima live mostra solo la luce diretta e nessuna ombra.",
++  "render.preview_image_settings_help": "L’anteprima del modello usa un’approssimazione dell’illuminazione diretta. Quando è attivo, il rendering interattivo sulla CPU aggiorna un’immagine provvisoria con le impostazioni immagine supportate, inclusa l’esposizione. Il rendering finale è separato.",
++  "render.preview_lighting_help": "L’anteprima del modello usa illuminazione diretta senza ombre. Il rendering interattivo sulla CPU usa le impostazioni immagine supportate per l’immagine provvisoria.",
+   "render.preview_retry": "Riprova l'anteprima live",
+   "render.preview_unavailable_help": "L'anteprima live non è disponibile. Le impostazioni salvate e i controlli del lavoro immagine restano accessibili. Modifica la scena o riprova esplicitamente; una scena rifiutata non viene ricostruita a ogni fotogramma.",
+   "render.preview_upload": "Payload dei vertici dell'anteprima live",
+@@ -2897,7 +2897,7 @@
+   "render.stage_panels.use_budget": "Usa questo budget",
+   "render.stage_panels.use_maps": "Usa mappe GPU",
+   "render.stage_panels.use_uniform": "Usa uniforme",
+-  "render.stage_preview_note": "Anteprima integrata · luce diretta",
++  "render.stage_preview_note": "Anteprima del rendering",
+   "render.state_completed": "Immagine completata",
+   "render.state_in_progress": "Immagine in corso",
+   "render.state_model": "Anteprima del modello",
+diff --git a/assets/locales/ja.json b/assets/locales/ja.json
+--- a/assets/locales/ja.json
++++ b/assets/locales/ja.json
+@@ -2925,8 +2925,8 @@
+   "render.post_vignette": "ビネット",
+   "render.preview": "統合プレビュー",
+   "render.preview_help": "ラスタシェーディングとブレンド透明度を使用します。屈折、HDRI、最終レンダリングはまだ利用できません。",
+-  "render.preview_image_settings_help": "ライブプレビューは固定のスタジオ照明を使用します。画像の露出と照明は、確認または開始時に画像ジョブへ適用されます。",
+-  "render.preview_lighting_help": "ライブプレビューは直接光のみを表示し、影は表示しません。",
++  "render.preview_image_settings_help": "モデルプレビューは近似的な直接照明を使用します。CPUのインタラクティブレンダリングを有効にすると、露出などの対応する画像設定を使って暫定画像を更新します。最終レンダリングは別に行います。",
++  "render.preview_lighting_help": "モデルプレビューは影のない直接照明を使用します。CPUのインタラクティブレンダリングは、対応する画像設定を暫定画像に使用します。",
+   "render.preview_retry": "ライブプレビューを再試行",
+   "render.preview_unavailable_help": "ライブプレビューは利用できません。保存設定と画像ジョブの操作は使用できます。シーンを変更するか明示的に再試行してください。拒否されたシーンを毎フレーム再構築しません。",
+   "render.preview_upload": "ライブプレビューの頂点データ量",
+@@ -3190,7 +3190,7 @@
+   "render.stage_panels.use_budget": "この予算を使用",
+   "render.stage_panels.use_maps": "GPUマップを使用",
+   "render.stage_panels.use_uniform": "均一な外観を使用",
+-  "render.stage_preview_note": "統合プレビュー · 直接光",
++  "render.stage_preview_note": "レンダリングプレビュー",
+   "render.state_completed": "完成画像",
+   "render.state_in_progress": "画像を生成中",
+   "render.state_model": "モデルプレビュー",
+diff --git a/assets/locales/ko.json b/assets/locales/ko.json
+--- a/assets/locales/ko.json
++++ b/assets/locales/ko.json
+@@ -2244,7 +2244,8 @@
+   "render.pick_waiting": "제품 선택은 아직 지원되지 않습니다.",
+   "render.preview": "통합 미리보기",
+   "render.preview_help": "래스터 셰이딩과 블렌딩 투명도를 사용합니다. 굴절, HDRI 및 최종 렌더링은 아직 지원하지 않습니다.",
+-  "render.preview_lighting_help": "실시간 미리 보기에는 직접 조명만 표시되며 그림자는 표시되지 않습니다.",
++  "render.preview_image_settings_help": "모델 미리 보기는 근사 직접 조명을 사용합니다. CPU 대화형 렌더링을 켜면 노출을 비롯한 지원 이미지 설정으로 임시 이미지를 갱신합니다. 최종 렌더링은 별도입니다.",
++  "render.preview_lighting_help": "모델 미리 보기는 그림자 없는 직접 조명을 사용합니다. CPU 대화형 렌더링은 임시 이미지에 지원 이미지 설정을 사용합니다.",
+   "render.property_conditions": "조건: {value}",
+   "render.property_fallback": "속성",
+   "render.property_qualifier": "한정 조건: {value}",
+@@ -2448,7 +2449,7 @@
+   "render.stage_panels.use_budget": "이 예산 사용",
+   "render.stage_panels.use_maps": "GPU 맵 사용",
+   "render.stage_panels.use_uniform": "균일한 외관 사용",
+-  "render.stage_preview_note": "통합 미리 보기 · 직접광",
++  "render.stage_preview_note": "렌더링 미리 보기",
+   "render.state_completed": "완료된 이미지",
+   "render.state_in_progress": "이미지 생성 중",
+   "render.state_model": "모델 미리보기",
+diff --git a/assets/locales/ms.json b/assets/locales/ms.json
+--- a/assets/locales/ms.json
++++ b/assets/locales/ms.json
+@@ -2662,8 +2662,8 @@
+   "render.post_vignette": "Vinyet",
+   "render.preview": "Pratonton bersepadu",
+   "render.preview_help": "Lorekan raster dan ketelusan campuran. Pembiasan, HDRI dan render akhir belum tersedia.",
+-  "render.preview_image_settings_help": "Pratonton Langsung mengekalkan pencahayaan studio tetap. Pendedahan dan pencahayaan imej digunakan pada kerja imej apabila anda menekan Semak atau Mula.",
+-  "render.preview_lighting_help": "Pratonton langsung hanya menunjukkan cahaya langsung dan tiada bayang.",
++  "render.preview_image_settings_help": "Pratonton model menggunakan anggaran pencahayaan langsung. Apabila diaktifkan, render interaktif pada CPU mengemas kini imej sementara dengan tetapan imej yang disokong, termasuk dedahan. Render akhir dibuat secara berasingan.",
++  "render.preview_lighting_help": "Pratonton model menggunakan pencahayaan langsung tanpa bayang. Render interaktif pada CPU menggunakan tetapan imej yang disokong untuk imej sementaranya.",
+   "render.preview_retry": "Cuba semula pratonton langsung",
+   "render.preview_unavailable_help": "Pratonton langsung tidak tersedia. Persediaan tersimpan dan kawalan kerja imej kekal boleh diakses. Ubah adegan atau cuba semula secara eksplisit; adegan yang ditolak tidak dibina semula pada setiap bingkai.",
+   "render.preview_upload": "Muatan bucu pratonton langsung",
+@@ -2891,7 +2891,7 @@
+   "render.stage_panels.use_budget": "Gunakan bajet ini",
+   "render.stage_panels.use_maps": "Gunakan peta GPU",
+   "render.stage_panels.use_uniform": "Gunakan seragam",
+-  "render.stage_preview_note": "Pratonton bersepadu · cahaya langsung",
++  "render.stage_preview_note": "Pratonton render",
+   "render.state_completed": "Imej siap",
+   "render.state_in_progress": "Imej dalam proses",
+   "render.state_model": "Pratonton Model",
+diff --git a/assets/locales/nb.json b/assets/locales/nb.json
+--- a/assets/locales/nb.json
++++ b/assets/locales/nb.json
+@@ -2662,8 +2662,8 @@
+   "render.post_vignette": "Vignettering",
+   "render.preview": "Integrert forhåndsvisning",
+   "render.preview_help": "Rasterskyggelegging og blandet transparens. Lysbrytning, HDRI og sluttrendring er ikke tilgjengelig ennå.",
+-  "render.preview_image_settings_help": "Live-forhåndsvisningen beholder fast studiobelysning. Eksponering og bildebelysning gjelder for bildejobben når du velger Sjekk eller Start.",
+-  "render.preview_lighting_help": "Live-forhåndsvisningen viser bare direkte lys og ingen skygger.",
++  "render.preview_image_settings_help": "Modellforhåndsvisningen bruker en tilnærming av direkte belysning. Når interaktiv gjengivelse på CPU er aktivert, oppdateres et foreløpig bilde med støttede bildeinnstillinger, inkludert eksponering. Endelig gjengivelse kjøres separat.",
++  "render.preview_lighting_help": "Modellforhåndsvisningen bruker direkte belysning uten skygger. Interaktiv gjengivelse på CPU bruker støttede bildeinnstillinger for det foreløpige bildet.",
+   "render.preview_retry": "Prøv live-forhåndsvisning igjen",
+   "render.preview_unavailable_help": "Live-forhåndsvisningen er utilgjengelig. Lagrede oppsett og kontroller for bildejobber er fortsatt tilgjengelige. Endre scenen eller prøv eksplisitt på nytt; en avvist scene bygges ikke på nytt for hver bilderute.",
+   "render.preview_upload": "Verteksdata for live-forhåndsvisning",
+@@ -2891,7 +2891,7 @@
+   "render.stage_panels.use_budget": "Bruk dette budsjettet",
+   "render.stage_panels.use_maps": "Bruk GPU-kart",
+   "render.stage_panels.use_uniform": "Bruk ensartet",
+-  "render.stage_preview_note": "Integrert forhåndsvisning · direkte lys",
++  "render.stage_preview_note": "Forhåndsvisning av gjengivelse",
+   "render.state_completed": "Ferdig bilde",
+   "render.state_in_progress": "Bilde under arbeid",
+   "render.state_model": "Modellforhåndsvisning",
+diff --git a/assets/locales/nl.json b/assets/locales/nl.json
+--- a/assets/locales/nl.json
++++ b/assets/locales/nl.json
+@@ -2666,8 +2666,8 @@
+   "render.post_vignette": "Vignettering",
+   "render.preview": "Geïntegreerd voorbeeld",
+   "render.preview_help": "Rasterschaduw en gemengde transparantie. Breking, HDRI en eindrendering zijn nog niet beschikbaar.",
+-  "render.preview_image_settings_help": "Het live voorbeeld behoudt vaste studioverlichting. Belichting en beeldverlichting gelden voor de afbeeldingstaak wanneer je Controleren of Starten kiest.",
+-  "render.preview_lighting_help": "Het live voorbeeld toont alleen direct licht en geen schaduwen.",
++  "render.preview_image_settings_help": "Het modelvoorbeeld gebruikt een benadering van directe verlichting. Als interactief renderen op de CPU is ingeschakeld, wordt een voorlopig beeld bijgewerkt met de ondersteunde beeldinstellingen, waaronder belichting. De definitieve rendering staat hier los van.",
++  "render.preview_lighting_help": "Het modelvoorbeeld gebruikt directe verlichting zonder schaduwen. Interactief renderen op de CPU gebruikt de ondersteunde beeldinstellingen voor het voorlopige beeld.",
+   "render.preview_retry": "Live voorbeeld opnieuw proberen",
+   "render.preview_unavailable_help": "Het live voorbeeld is niet beschikbaar. Opgeslagen opstellingen en de besturing van afbeeldingstaken blijven toegankelijk. Wijzig de scène of probeer het expliciet opnieuw; een geweigerde scène wordt niet bij elk frame opnieuw opgebouwd.",
+   "render.preview_upload": "Hoekpuntgegevens van live voorbeeld",
+@@ -2895,7 +2895,7 @@
+   "render.stage_panels.use_budget": "Dit budget gebruiken",
+   "render.stage_panels.use_maps": "GPU-kaarten gebruiken",
+   "render.stage_panels.use_uniform": "Uniform gebruiken",
+-  "render.stage_preview_note": "Geïntegreerd voorbeeld · direct licht",
++  "render.stage_preview_note": "Rendervoorbeeld",
+   "render.state_completed": "Voltooide afbeelding",
+   "render.state_in_progress": "Afbeelding in uitvoering",
+   "render.state_model": "Modelvoorbeeld",
+diff --git a/assets/locales/ro.json b/assets/locales/ro.json
+--- a/assets/locales/ro.json
++++ b/assets/locales/ro.json
+@@ -2662,8 +2662,8 @@
+   "render.post_vignette": "Vinietă",
+   "render.preview": "Previzualizare integrată",
+   "render.preview_help": "Umbrire raster și transparență amestecată. Refracția, HDRI și randarea finală nu sunt încă disponibile.",
+-  "render.preview_image_settings_help": "Previzualizarea live păstrează iluminarea fixă de studio. Expunerea și iluminarea imaginii se aplică sarcinii de imagine când o verificați sau o porniți.",
+-  "render.preview_lighting_help": "Previzualizarea live afișează doar lumina directă, fără umbre.",
++  "render.preview_image_settings_help": "Previzualizarea modelului folosește o aproximare a iluminării directe. Când este activată, randarea interactivă pe CPU actualizează o imagine provizorie cu setările de imagine acceptate, inclusiv expunerea. Randarea finală este separată.",
++  "render.preview_lighting_help": "Previzualizarea modelului folosește iluminare directă fără umbre. Randarea interactivă pe CPU folosește setările de imagine acceptate pentru imaginea provizorie.",
+   "render.preview_retry": "Reîncearcă previzualizarea live",
+   "render.preview_unavailable_help": "Previzualizarea live nu este disponibilă. Configurațiile salvate și comenzile sarcinii de imagine rămân accesibile. Modificați scena sau reîncercați explicit; o scenă refuzată nu este reconstruită la fiecare cadru.",
+   "render.preview_upload": "Date de vârfuri pentru previzualizarea live",
+@@ -2891,7 +2891,7 @@
+   "render.stage_panels.use_budget": "Folosește acest buget",
+   "render.stage_panels.use_maps": "Folosește hărțile GPU",
+   "render.stage_panels.use_uniform": "Folosește uniform",
+-  "render.stage_preview_note": "Previzualizare integrată · lumină directă",
++  "render.stage_preview_note": "Previzualizarea randării",
+   "render.state_completed": "Imagine finalizată",
+   "render.state_in_progress": "Imagine în curs",
+   "render.state_model": "Previzualizare model",
+diff --git a/assets/locales/ru.json b/assets/locales/ru.json
+--- a/assets/locales/ru.json
++++ b/assets/locales/ru.json
+@@ -2527,8 +2527,8 @@
+   "render.post_vignette": "Виньетирование",
+   "render.preview": "Встроенный предпросмотр",
+   "render.preview_help": "Растровое затенение и смешанная прозрачность. Преломление, HDRI и финальный рендеринг пока недоступны.",
+-  "render.preview_image_settings_help": "Интерактивный просмотр использует фиксированное студийное освещение. Экспозиция и освещение изображения применяются к задаче рендера при «Проверить» или «Начать».",
+-  "render.preview_lighting_help": "Интерактивный просмотр показывает только прямой свет, без теней.",
++  "render.preview_image_settings_help": "Предпросмотр модели использует приближённое прямое освещение. При включении интерактивный рендеринг на CPU обновляет предварительное изображение с поддерживаемыми настройками изображения, включая экспозицию. Финальный рендеринг выполняется отдельно.",
++  "render.preview_lighting_help": "Предпросмотр модели использует прямое освещение без теней. Интерактивный рендеринг на CPU использует поддерживаемые настройки изображения для предварительного изображения.",
+   "render.preview_retry": "Повторить интерактивный просмотр",
+   "render.preview_unavailable_help": "Интерактивный просмотр недоступен. Сохранённые настройки и элементы управления задачей рендера остаются доступными. Измените сцену или явно повторите попытку; отклонённая сцена не перестраивается при каждой перерисовке.",
+   "render.preview_upload": "Вершинные данные интерактивного просмотра",
+@@ -2655,7 +2655,7 @@
+   "render.stage_orthographic": "Ортографическая",
+   "render.stage_output": "Вывод",
+   "render.stage_panel_count": "Сохранённые панели",
+-  "render.stage_preview_note": "Встроенный просмотр · прямой свет",
++  "render.stage_preview_note": "Предпросмотр рендеринга",
+   "render.strip_label": "Лента",
+   "render.studio_add_area": "Добавить площадной источник света",
+   "render.studio_ambient": "Постоянная яркость окружения",
+diff --git a/assets/locales/sr.json b/assets/locales/sr.json
+--- a/assets/locales/sr.json
++++ b/assets/locales/sr.json
+@@ -2677,8 +2677,8 @@
+   "render.post_vignette": "Вињета",
+   "render.preview": "Интегрисани преглед",
+   "render.preview_help": "Растер сенчење и мешана провидност. Преламање, HDRI и завршно рендеровање још нису доступни.",
+-  "render.preview_image_settings_help": "Преглед уживо задржава фиксно осветљење студија. Експозиција и осветљење слике примењују се на посао слике када кликнете Провери или Покрени.",
+-  "render.preview_lighting_help": "Преглед уживо приказује само директно светло, без сенки.",
++  "render.preview_image_settings_help": "Преглед модела користи приближно директно осветљење. Када је укључено, интерактивно рендеровање на CPU ажурира привремену слику помоћу подржаних поставки слике, укључујући експозицију. Завршно рендеровање је одвојено.",
++  "render.preview_lighting_help": "Преглед модела користи директно осветљење без сенки. Интерактивно рендеровање на CPU користи подржане поставке слике за привремену слику.",
+   "render.preview_retry": "Поново покушај преглед уживо",
+   "render.preview_unavailable_help": "Преглед уживо није доступан. Сачувана подешавања и контроле посла слике остају доступни. Промените сцену или изричито покушајте поново; одбијена сцена се не гради поново у сваком кадру.",
+   "render.preview_upload": "Подаци врхова прегледа уживо",
+@@ -2906,7 +2906,7 @@
+   "render.stage_panels.use_budget": "Користи овај буџет",
+   "render.stage_panels.use_maps": "Користи GPU мапе",
+   "render.stage_panels.use_uniform": "Користи уједначено",
+-  "render.stage_preview_note": "Интегрисани преглед · директно светло",
++  "render.stage_preview_note": "Преглед рендеровања",
+   "render.state_completed": "Завршена слика",
+   "render.state_in_progress": "Слика у току",
+   "render.state_model": "Преглед модела",
+diff --git a/assets/locales/sv.json b/assets/locales/sv.json
+--- a/assets/locales/sv.json
++++ b/assets/locales/sv.json
+@@ -2662,8 +2662,8 @@
+   "render.post_vignette": "Vinjettering",
+   "render.preview": "Integrerad förhandsvisning",
+   "render.preview_help": "Rasterskuggning och blandad transparens. Refraktion, HDRI och slutrendering är inte tillgängliga ännu.",
+-  "render.preview_image_settings_help": "Liveförhandsvisningen behåller fast studiobelysning. Exponering och bildbelysning tillämpas på bildjobbet när du väljer Kontrollera eller Starta.",
+-  "render.preview_lighting_help": "Liveförhandsvisningen visar endast direkt ljus och inga skuggor.",
++  "render.preview_image_settings_help": "Modellförhandsvisningen använder en approximation av direkt belysning. När interaktiv rendering på CPU är aktiverad uppdateras en preliminär bild med de bildinställningar som stöds, inklusive exponering. Slutlig rendering är separat.",
++  "render.preview_lighting_help": "Modellförhandsvisningen använder direkt belysning utan skuggor. Interaktiv rendering på CPU använder de bildinställningar som stöds för sin preliminära bild.",
+   "render.preview_retry": "Försök igen med liveförhandsvisning",
+   "render.preview_unavailable_help": "Liveförhandsvisningen är inte tillgänglig. Sparade uppsättningar och bildjobbens kontroller förblir åtkomliga. Ändra scenen eller försök uttryckligen igen; en avvisad scen byggs inte om vid varje bildruta.",
+   "render.preview_upload": "Vertexdata för liveförhandsvisning",
+@@ -2891,7 +2891,7 @@
+   "render.stage_panels.use_budget": "Använd den här budgeten",
+   "render.stage_panels.use_maps": "Använd GPU-kartor",
+   "render.stage_panels.use_uniform": "Använd enhetlig",
+-  "render.stage_preview_note": "Integrerad förhandsvisning · direkt belysning",
++  "render.stage_preview_note": "Renderingsförhandsvisning",
+   "render.state_completed": "Färdig bild",
+   "render.state_in_progress": "Bild under rendering",
+   "render.state_model": "Modellförhandsvisning",
+diff --git a/assets/locales/tr.json b/assets/locales/tr.json
+--- a/assets/locales/tr.json
++++ b/assets/locales/tr.json
+@@ -2681,8 +2681,8 @@
+   "render.post_vignette": "Vinyet",
+   "render.preview": "Yerleşik önizleme",
+   "render.preview_help": "Harmanlanmış saydamlıkla raster görüntü. Kırılma, HDRI ve son render henüz kullanılamıyor.",
+-  "render.preview_image_settings_help": "Canlı Önizleme, sabit stüdyo aydınlatmasını korur. Pozlama ve görüntü aydınlatması, Kontrol veya Başlat sırasında görüntü işine uygulanır.",
+-  "render.preview_lighting_help": "Canlı önizleme yalnızca doğrudan ışığı gösterir, gölge göstermez.",
++  "render.preview_image_settings_help": "Model önizlemesi yaklaşık doğrudan aydınlatma kullanır. Etkinleştirildiğinde CPU üzerinde etkileşimli işleme, pozlama dahil desteklenen görüntü ayarlarıyla geçici bir görüntüyü günceller. Son işleme ayrıdır.",
++  "render.preview_lighting_help": "Model önizlemesi gölgesiz doğrudan aydınlatma kullanır. CPU üzerinde etkileşimli işleme, geçici görüntüsü için desteklenen görüntü ayarlarını kullanır.",
+   "render.preview_retry": "Canlı önizlemeyi yeniden dene",
+   "render.preview_unavailable_help": "Canlı önizleme kullanılamıyor. Kaydedilmiş kurulumlar ve görüntü işi kontrolleri erişilebilir kalır. Sahneyi değiştirin veya açıkça yeniden deneyin; reddedilen sahne her karede yeniden kurulmaz.",
+   "render.preview_upload": "Canlı önizleme tepe noktası yükü",
+@@ -2910,7 +2910,7 @@
+   "render.stage_panels.use_budget": "Bu bütçeyi kullan",
+   "render.stage_panels.use_maps": "GPU haritalarını kullan",
+   "render.stage_panels.use_uniform": "Tekdüzeyi kullan",
+-  "render.stage_preview_note": "Entegre önizleme · doğrudan ışık",
++  "render.stage_preview_note": "İşleme önizlemesi",
+   "render.state_completed": "Tamamlanan görüntü",
+   "render.state_in_progress": "Görüntü hazırlanıyor",
+   "render.state_model": "Model Önizlemesi",
+diff --git a/assets/locales/uk.json b/assets/locales/uk.json
+--- a/assets/locales/uk.json
++++ b/assets/locales/uk.json
+@@ -2662,8 +2662,8 @@
+   "render.post_vignette": "Віньєтування",
+   "render.preview": "Вбудований попередній перегляд",
+   "render.preview_help": "Растрове затінення та змішана прозорість. Заломлення, HDRI та фінальний рендеринг поки недоступні.",
+-  "render.preview_image_settings_help": "Живий перегляд зберігає фіксоване студійне освітлення. Експозиція та освітлення зображення застосовуються до завдання зображення під час перевірки або запуску.",
+-  "render.preview_lighting_help": "Живий попередній перегляд показує лише пряме світло й без тіней.",
++  "render.preview_image_settings_help": "Попередній перегляд моделі використовує наближене пряме освітлення. Коли ввімкнено інтерактивний рендеринг на CPU, тимчасове зображення оновлюється з підтримуваними налаштуваннями зображення, зокрема експозицією. Фінальний рендеринг виконується окремо.",
++  "render.preview_lighting_help": "Попередній перегляд моделі використовує пряме освітлення без тіней. Інтерактивний рендеринг на CPU використовує підтримувані налаштування зображення для тимчасового зображення.",
+   "render.preview_retry": "Повторити живий перегляд",
+   "render.preview_unavailable_help": "Живий перегляд недоступний. Збережені налаштування та керування завданням зображення залишаються доступними. Змініть сцену або явно повторіть спробу; відхилена сцена не перебудовується в кожному кадрі.",
+   "render.preview_upload": "Дані вершин живого перегляду",
+@@ -2891,7 +2891,7 @@
+   "render.stage_panels.use_budget": "Використати цей бюджет",
+   "render.stage_panels.use_maps": "Використати карти GPU",
+   "render.stage_panels.use_uniform": "Використати однорідний",
+-  "render.stage_preview_note": "Інтегрований попередній перегляд · пряме світло",
++  "render.stage_preview_note": "Попередній перегляд рендерингу",
+   "render.state_completed": "Готове зображення",
+   "render.state_in_progress": "Зображення створюється",
+   "render.state_model": "Попередній перегляд моделі",
+diff --git a/assets/locales/vi.json b/assets/locales/vi.json
+--- a/assets/locales/vi.json
++++ b/assets/locales/vi.json
+@@ -2925,8 +2925,8 @@
+   "render.post_vignette": "Hiệu ứng tối góc (Vignette)",
+   "render.preview": "Xem trước tích hợp",
+   "render.preview_help": "Đổ bóng raster và trộn độ trong suốt. Khúc xạ, HDRI và kết xuất cuối cùng hiện chưa khả dụng.",
+-  "render.preview_image_settings_help": "Xem trước trực tiếp giữ nguyên ánh sáng studio cố định. Độ phơi sáng và ánh sáng hình ảnh sẽ áp dụng cho tác vụ khi bạn Kiểm tra hoặc Bắt đầu.",
+-  "render.preview_lighting_help": "Bản xem trước trực tiếp chỉ hiện ánh sáng trực tiếp và không có bóng đổ.",
++  "render.preview_image_settings_help": "Bản xem trước mô hình dùng ánh sáng trực tiếp gần đúng. Khi được bật, kết xuất tương tác trên CPU cập nhật ảnh tạm bằng các thiết lập ảnh được hỗ trợ, gồm độ phơi sáng. Kết xuất cuối cùng được thực hiện riêng.",
++  "render.preview_lighting_help": "Bản xem trước mô hình dùng ánh sáng trực tiếp không có bóng. Kết xuất tương tác trên CPU dùng các thiết lập ảnh được hỗ trợ cho ảnh tạm.",
+   "render.preview_retry": "Thử lại xem trước trực tiếp",
+   "render.preview_unavailable_help": "Bản xem trước trực tiếp không khả dụng. Các thiết lập đã lưu và điều khiển tác vụ ảnh vẫn có thể truy cập. Hãy thay đổi cảnh hoặc thử lại; cảnh bị từ chối sẽ không được dựng lại trên mỗi khung hình.",
+   "render.preview_upload": "Dung lượng đỉnh xem trước trực tiếp",
+@@ -3190,7 +3190,7 @@
+   "render.stage_panels.use_budget": "Sử dụng ngân sách này",
+   "render.stage_panels.use_maps": "Sử dụng bản đồ GPU",
+   "render.stage_panels.use_uniform": "Sử dụng diện mạo đồng nhất",
+-  "render.stage_preview_note": "Xem trước tích hợp · ánh sáng trực tiếp",
++  "render.stage_preview_note": "Xem trước kết xuất",
+   "render.state_completed": "Ảnh đã hoàn tất",
+   "render.state_in_progress": "Ảnh đang tạo",
+   "render.state_model": "Xem trước mô hình",
+diff --git a/assets/locales/zh-TW.json b/assets/locales/zh-TW.json
+--- a/assets/locales/zh-TW.json
++++ b/assets/locales/zh-TW.json
+@@ -2662,8 +2662,8 @@
+   "render.post_vignette": "暈影",
+   "render.preview": "整合預覽",
+   "render.preview_help": "光柵著色和混合透明度。暫不支援折射、HDRI 和最終彩現。",
+-  "render.preview_image_settings_help": "即時預覽維持固定的攝影棚照明。曝光與影像照明會在您按下「檢查」或「開始」時套用於影像工作。",
+-  "render.preview_lighting_help": "即時預覽僅顯示直接光，不含陰影。",
++  "render.preview_image_settings_help": "模型預覽使用近似的直接照明。啟用 CPU 互動式渲染後，會使用曝光等受支援的影像設定更新暫時影像。最終渲染另行執行。",
++  "render.preview_lighting_help": "模型預覽使用無陰影的直接照明。CPU 互動式渲染會將受支援的影像設定用於暫時影像。",
+   "render.preview_retry": "重試即時預覽",
+   "render.preview_unavailable_help": "無法使用即時預覽。已儲存的設定與影像工作控制項仍可使用。請變更場景或明確重試；遭拒絕的場景不會在每個影格重新建構。",
+   "render.preview_upload": "即時預覽頂點資料",
+@@ -2891,7 +2891,7 @@
+   "render.stage_panels.use_budget": "使用此預算",
+   "render.stage_panels.use_maps": "使用 GPU 貼圖",
+   "render.stage_panels.use_uniform": "使用均勻外觀",
+-  "render.stage_preview_note": "整合式預覽 · 直接光",
++  "render.stage_preview_note": "渲染預覽",
+   "render.state_completed": "已完成影像",
+   "render.state_in_progress": "影像進行中",
+   "render.state_model": "模型預覽",
+diff --git a/assets/locales/zh.json b/assets/locales/zh.json
+--- a/assets/locales/zh.json
++++ b/assets/locales/zh.json
+@@ -2925,8 +2925,8 @@
+   "render.post_vignette": "暗角",
+   "render.preview": "集成预览",
+   "render.preview_help": "光栅着色和混合透明度。暂不支持折射、HDRI 和最终渲染。",
+-  "render.preview_image_settings_help": "实时预览使用固定工作室照明。曝光和图像照明在检查或开始时应用于图像任务。",
+-  "render.preview_lighting_help": "实时预览仅显示直接光照，不显示阴影。",
++  "render.preview_image_settings_help": "模型预览使用近似的直接照明。启用 CPU 交互式渲染后，会使用曝光等受支持的图像设置更新临时图像。最终渲染单独执行。",
++  "render.preview_lighting_help": "模型预览使用无阴影的直接照明。CPU 交互式渲染会将受支持的图像设置用于临时图像。",
+   "render.preview_retry": "重试实时预览",
+   "render.preview_unavailable_help": "实时预览不可用，但已保存设置和图像任务控件仍可访问。请修改场景或明确重试；被拒绝的场景不会每帧重建。",
+   "render.preview_upload": "实时预览顶点数据量",
+@@ -3190,7 +3190,7 @@
+   "render.stage_panels.use_budget": "使用此预算",
+   "render.stage_panels.use_maps": "使用 GPU 贴图",
+   "render.stage_panels.use_uniform": "使用均匀外观",
+-  "render.stage_preview_note": "集成预览 · 直接光照",
++  "render.stage_preview_note": "渲染预览",
+   "render.state_completed": "已完成图像",
+   "render.state_in_progress": "图像生成中",
+   "render.state_model": "模型预览",
+diff --git a/crates/ui-egui/src/i18n.rs b/crates/ui-egui/src/i18n.rs
+--- a/crates/ui-egui/src/i18n.rs
++++ b/crates/ui-egui/src/i18n.rs
+@@ -672,7 +672,22 @@
+     }
+ 
+     #[test]
+-    fn render_shell_labels_and_planned_reasons_translate_in_required_catalogs() {
++    fn render_preview_explanations_are_translated_in_every_required_catalog() {
++        let source_locale = Locale::for_language("en");
++        for id in ["render.preview_image_settings_help", "render.preview_lighting_help", "render.stage_preview_note"] {
++            let source = source_locale.text(id);
++            assert_ne!(source, id, "{id}: missing English source");
++            for language in ["ar", "de", "he", "ja", "ko", "vi", "zh"] {
++                let locale = Locale::for_language(language);
++                assert!(locale.0.messages().contains_key(id), "{language}: missing {id}");
++                assert_ne!(locale.text(id), source, "{language}: {id} must not fall back to English");
++            }
++        }
++    }
++
++    #[test]
++    fn render_shell_labels_and_planned_reasons_translate_in_required_catalogs() {
++        let source_locale = Locale::for_language("en");
+         for language in ["ja", "zh", "de", "ko"] {
+             let locale = Locale::for_language(language);
+             for label in [
+@@ -691,7 +706,7 @@
+                 "Shots Strip",
+                 "Pick",
+                 "Component",
+-                "The live preview shows direct light only and no shadows.",
++                source_locale.text("render.preview_lighting_help"),
+             ] {
+                 assert_ne!(locale.label(label), label, "{language}: {label}");
+             }

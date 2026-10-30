@@ -28,3 +28,10 @@ These folders deliberately remain outside production module registration. Each R
 ### P2/B1 typed text-plan preservation — 30 October
 
 [Source-only adapter packet](2026-10-30/P2-B1-text-plan/README.md): actual B1a `8da9e989` / B1b `df3eff1c`, original typed helper and thirteen unrun cases. Unformatted, uncompiled and unregistered; a compatibility scaffold, with final B1 width-provider migration, DW policy and Cam-owned content/allocator integration still pending. The older P2 52-case appendix remains separate and must be preserved. [Bounded positive multi-glyph acceptance gap](2026-10-30/P2-B1-text-plan/multi-glyph-acceptance-next.md).
+
+## Additive P2 B1 widths and many-page references
+
+[Source checkpoint](2026-10-30/P2-width-Refs-composition/README.md) preserves the
+owned width-provider and actual #9647 Refs seam without changing Cam's builder.
+Mixed per-file bases, strict DW/trust blockers and79 unrun source declarations
+are explicit. This is not a registered, tested or merged implementation.

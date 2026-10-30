@@ -1,0 +1,113 @@
+{
+  "repository": "tangency-labs/solidcraft",
+  "status": "PRIVATE_ADDITIVE_COMPOSITION_SOURCE_ONLY_UNFORMATTED_UNCOMPILED_UNRUN_UNREGISTERED",
+  "component_manifests": [
+    {
+      "name": "B1 width provider",
+      "sha256": "9379fd44c71be48739eb4b9f66f548fcc17e0bfb56e191fe9873fc3325faabe6"
+    },
+    {
+      "name": "actual9647 Refs seam",
+      "sha256": "8ebe216ff83edef5afe30cf96331c0a5155e80e2375371cb8927c493f42a71b0"
+    },
+    {
+      "name": "original B1 compatibility plan",
+      "sha256": "b68f29cf6f28159a04996a4466724ef0ad1a0f4c34f904cf7e966c4e9ff72b89"
+    }
+  ],
+  "actual_sources": {
+    "B1a": {
+      "PR": 9512,
+      "head": "8da9e9893d7dcf2c4b3584f6334b91352dc31dcb"
+    },
+    "B1b": {
+      "PR": 9513,
+      "head": "df3eff1ce9768c1d2cab3ed7cdb91471dd30e95f"
+    },
+    "P2_legacy_helpers": {
+      "head": "bf2a6fd567b03e1d25dcb66624e719a0cec109fc",
+      "font_objects_sha256": "aef06369bad659706b1a30ebedfce1b2d8e89eaa4849e98d618bd3cf9ecb1eb1"
+    },
+    "Cam_manypage": {
+      "PR": 9647,
+      "head": "ce505658375f2b2c87ca39f45f328fb2f9107738",
+      "parent": "506d419084a1cd6463c3117ea34d15f805a6ce37",
+      "pdf_rs_blob": "f58b70e654d0a562811cfe1fe498ae9bf22a29ed",
+      "pdf_rs_sha256": "78557b1499620bb94069a0f7dcb67054412a165361656eabdbf2d67b92443d3e",
+      "pdf_tests_blob": "745772f0c08a441dbbdae8ac20b27c0964d90142",
+      "pdf_tests_sha256": "05a100fcad4e40734c6a7ac16e83f7fe24acaa2328f2471c64a24ea91d040473"
+    }
+  },
+  "mixed_baselines": "The cumulative three-path patch uses exact per-file component baselines, not a claim that all files came from one composed Git head. Select and bind an actual integrated base before application/build.",
+  "owned_candidates": [
+    {
+      "path": "crates/io/src/paper/pdf/font_objects.rs",
+      "before_sha256": "aef06369bad659706b1a30ebedfce1b2d8e89eaa4849e98d618bd3cf9ecb1eb1",
+      "candidate_sha256": "0fa3690fe9a3b5846593a9b9dbb624753ce3f172fae0801b664ae752a0353109",
+      "candidate_bytes": 57072
+    },
+    {
+      "path": "crates/io/src/paper/pdf/text_plan.rs",
+      "before_sha256": "b9e94d50d10fd13e163b7ac8cd6dd6867fc0842569a7e9a762ff9d1b4c68f902",
+      "candidate_sha256": "3e6ddbda7c7b5a12d4fb1098bbc441349510d54628468e0e42893625a3a20914",
+      "candidate_bytes": 16318
+    },
+    {
+      "path": "crates/io/src/paper/pdf_tests.rs",
+      "before_sha256": "05a100fcad4e40734c6a7ac16e83f7fe24acaa2328f2471c64a24ea91d040473",
+      "candidate_sha256": "bc4f1d08bde20e200456430fd2e41f3d0d67c4fb16203ca9cc081d6b27c25754",
+      "candidate_bytes": 69534
+    }
+  ],
+  "appendix_order": "Current Refs tests (Cam28 + our8) retained as RAW prefix; append unchanged originalP2six then compatibility13. Width13 are already inline in the existing helper (not duplicated).",
+  "remaining_P2_helper_sources": [
+    {
+      "dest": "crates/io/src/paper/pdf/font_admission.rs",
+      "tests": 0,
+      "prefix": "paper::pdf::font_admission::tests::",
+      "sha256": "a8abc3b4aaef9325694ec404512c228f9973b82006b5718eb304ef57d5c30b23"
+    },
+    {
+      "dest": "crates/io/src/paper/pdf/font_admission_tests.rs",
+      "tests": 6,
+      "prefix": "paper::pdf::font_admission::tests::",
+      "sha256": "b58637cf322658d93a3abb61acf2c3a970c466a7401edf69a3a0594e38c9da7a"
+    },
+    {
+      "dest": "crates/io/src/paper/pdf/font_objects.rs",
+      "tests": 11,
+      "prefix": "paper::pdf::font_objects::tests::",
+      "sha256": "aef06369bad659706b1a30ebedfce1b2d8e89eaa4849e98d618bd3cf9ecb1eb1"
+    },
+    {
+      "dest": "crates/io/src/paper/pdf/glyph_closure.rs",
+      "tests": 12,
+      "prefix": "paper::pdf::glyph_closure::tests::",
+      "sha256": "a8d94c9996a5c718346e66d1983e6d2f2edb224286d3f45e92d731ab0013f1d8"
+    },
+    {
+      "dest": "crates/io/src/paper/pdf/subset_font.rs",
+      "tests": 6,
+      "prefix": "paper::pdf::subset_font::tests::",
+      "sha256": "a9808063f2223fd9e86e208d55092b6b9e9a5ae7ba0eaba2dce5d557a7fd5f26"
+    },
+    {
+      "dest": "crates/io/src/paper/pdf/to_unicode.rs",
+      "tests": 11,
+      "prefix": "paper::pdf::to_unicode::tests::",
+      "sha256": "ba60e39cf6ed9a27475b12258b0979aa8f8659d482b5246e32ee6df3abe50d49"
+    },
+    {
+      "dest": "APPEND_UNCHANGED_TO_crates/io/src/paper/pdf_tests.rs",
+      "tests": 6,
+      "prefix": "paper::pdf::tests::",
+      "sha256": "bd2dbf92283263a548d98455fcfbe6363a11c5cfa2a88f940eee0f87247eed70"
+    }
+  ],
+  "owner_question": {
+    "url": "https://github.com/tangency-labs/solidcraft/pull/7626#issuecomment-6532370208",
+    "state_at_read": "No later third-party answer in the fetched conversation; no duplicate question/comment posted."
+  },
+  "Cam_parent_candidate": "No changed pdf.rs supplied. reference-unchanged/ce505658 is a byte-verified read-only source copy only.",
+  "no_dependency_lock_registration_or_command_changes": true
+}

@@ -1,0 +1,1095 @@
+diff --git a/crates/io/src/paper/pdf/font_objects.rs b/crates/io/src/paper/pdf/font_objects.rs
+--- a/crates/io/src/paper/pdf/font_objects.rs
++++ b/crates/io/src/paper/pdf/font_objects.rs
+@@ -2,6 +2,8 @@
+ //!
+ //! Identity-H explicitly maps two-byte codes to CIDs. A separate stream maps
+ //! CIDs to subset GIDs; logical text remains keyed by code in real ToUnicode.
++//! W widths come from actual B1 original-GID advances, never subset hmtx.
++//! Missing B1 glyph-zero metrics explicitly block the old DW path.
+ //! Descriptor metrics must come from the SAME admitted source font. Numeric
+ //! validation does not prove that provenance, and no metrics are estimated.
+ //!
+@@ -12,6 +14,9 @@
+ 
+ use pdf_writer::types::{CidFontType, FontFlags, SystemInfo};
+ use pdf_writer::{Chunk, Name, Rect, Ref, Str};
++
++use sha2::{Digest, Sha256};
++use solidcraft_geom::paper::text::Font;
+ 
+ use super::subset_font::SubsetFont;
+ use super::to_unicode::write_to_unicode;
+@@ -57,6 +62,34 @@
+     }
+ }
+ 
++/// Reserve the next six font objects from the ACTUAL many-page parent Refs.
++/// This is a private pure seam; it neither writes a Pdf nor invents a parallel
++/// document allocator, subset tag or page-resource entry. The parent retains
++/// its catalog/pages/Info/layers window and calls this after its reservations.
++/// Failed local validation/overflow leaves the parent's cursor unchanged.
++pub(super) fn reserve_font_refs(refs: &mut super::Refs) -> Result<FontObjectRefs> {
++    if refs.0 <= 0 {
++        return Err(invalid("font object allocator must start at a positive object number"));
++    }
++    // Refs has no Clone API at this pinned revision. A local staging cursor of
++    // that SAME real type makes the six-number reservation all-or-nothing.
++    // No fabricated Ref::new arithmetic duplicates the parent's next() policy.
++    let mut staged = super::Refs(refs.0);
++    let reserved = FontObjectRefs {
++        type0: staged.next()?,
++        cid_font: staged.next()?,
++        descriptor: staged.next()?,
++        font_file2: staged.next()?,
++        to_unicode: staged.next()?,
++        cid_to_gid: staged.next()?,
++    };
++    // Reuse this helper's existing distinct/core/range policy, rather than
++    // duplicating its 100000 cap in a second allocator or skipping it.
++    reserved.validate()?;
++    *refs = staged;
++    Ok(reserved)
++}
++
+ /// A caller-assigned two-byte code, interpreted as a CID by Identity-H.
+ /// Neither code nor logical text is inferred from subset_gid.
+ pub(super) struct CodeToGlyph<'a> {
+@@ -107,8 +140,11 @@
+     }
+ }
+ 
+-/// Pure IO parameters, not a fabricated B1 record or global resource allocator.
++/// IO parameters borrowing the actual B1 resource, not a global allocator.
++/// Advances must come from the trusted bundled B1 producer, not JSON assertions;
++/// resource identity alone does not attest its public per-glyph fields.
+ pub(super) struct FontObjectInput<'a> {
++    pub(super) source_font: &'a Font,
+     pub(super) subset: &'a SubsetFont,
+     pub(super) codes: &'a [CodeToGlyph<'a>],
+     pub(super) descriptor: Option<&'a DescriptorMetrics>,
+@@ -121,97 +157,103 @@
+     IoError::Invalid(message.into())
+ }
+ 
+-fn part(bytes: &[u8], at: usize, len: usize) -> Result<&[u8]> {
+-    let end = at.checked_add(len).ok_or_else(|| invalid("font metric offset overflow"))?;
+-    bytes.get(at..end).ok_or_else(|| invalid("truncated font metric data"))
+-}
+-
+-fn word(bytes: &[u8], at: usize) -> Result<u16> {
+-    Ok(u16::from_be_bytes(part(bytes, at, 2)?.try_into().map_err(|_| invalid("invalid font metric word"))?))
+-}
+-
+-fn dword(bytes: &[u8], at: usize) -> Result<usize> {
+-    let raw = u32::from_be_bytes(part(bytes, at, 4)?.try_into().map_err(|_| invalid("invalid font metric offset"))?);
+-    usize::try_from(raw).map_err(|_| invalid("font metric offset exceeds platform"))
+-}
+-
+-/// Small bounded table view over the already validated, immutable SubsetFont.
+-/// This does not repeat admission, glyph closure or composite parsing.
+-fn table<'a>(bytes: &'a [u8], tag: &[u8; 4]) -> Result<&'a [u8]> {
+-    let count = usize::from(word(bytes, 4)?);
+-    if count == 0 || count > 19 {
+-        return Err(invalid("font metric table count exceeds the admitted subset contract"));
+-    }
+-    part(bytes, 0, 12 + count * 16)?; // count <= 19.
+-    for index in 0..count {
+-        let record = 12 + index * 16;
+-        if part(bytes, record, 4)? == tag {
+-            return part(bytes, dword(bytes, record + 8)?, dword(bytes, record + 12)?);
+-        }
+-    }
+-    Err(invalid("subset lacks a required metric table"))
+-}
+-
+-struct MetricView<'a> {
+-    hmtx: &'a [u8],
+-    glyphs: usize,
+-    full_metrics: usize,
+-    units_per_em: u16,
+-}
+-
+-impl<'a> MetricView<'a> {
+-    fn read(subset: &'a SubsetFont) -> Result<Self> {
++/// One identity-bound B1 width provider over an immutable, already validated
++/// subset artifact. No font tables are read here: original FontGlyph advances
++/// are the sole W authority; subset IDs are joined back to ORIGINAL GIDs.
++struct B1Widths<'a> {
++    font: &'a Font,
++    subset: &'a SubsetFont,
++}
++
++// Identity of the exact already admitted regular resource, with face 0 LE
++// appended as B1b does. This is not the different raw-resource SHA256.
++const REVIEWED_B1_ID: [u8; 32] = [
++    0xaf, 0x02, 0xdb, 0xc8, 0x83, 0x9b, 0x7c, 0xad,
++    0xae, 0x15, 0xe5, 0x28, 0xaa, 0x3d, 0x9f, 0xf8,
++    0x5c, 0x54, 0x5b, 0x71, 0x5b, 0x55, 0x1d, 0x21,
++    0x8b, 0xf3, 0x8a, 0x93, 0x7e, 0xe7, 0xe2, 0xb0,
++];
++
++/// Numeric conversion only: no shaping, placed advance, default or font parse.
++/// u16 inputs cannot encode NaN/Infinity. Still check the division and f32
++/// serialization envelope explicitly; the integer product is checked too.
++fn width_1000(advance: u16, units_per_em: u16) -> Result<f32> {
++    if !(16..=16384).contains(&units_per_em) {
++        return Err(invalid("B1 font units per em are outside 16..16384"));
++    }
++    let numerator = u32::from(advance).checked_mul(1000)
++        .ok_or_else(|| invalid("B1 intrinsic width product overflow"))?;
++    let value = f64::from(numerator) / f64::from(units_per_em);
++    let width = value as f32;
++    if !value.is_finite() || !width.is_finite() || width.abs() > MAX_METRIC
++        || (width != 0.0 && width.abs() < f32::MIN_POSITIVE)
++    {
++        return Err(invalid("PDF B1 glyph width is not finite and bounded"));
++    }
++    Ok(width)
++}
++
++impl<'a> B1Widths<'a> {
++    fn read(font: &'a Font, subset: &'a SubsetFont) -> Result<Self> {
++        // Public B1 fields are bounded before digest, table walks or allocation.
++        // The actual subset factory admits just these source bytes/face and
++        // validates its returned program. Its private fields cannot be forged
++        // here. This identity check binds B1 to that same fixed-source policy;
++        // it does not cryptographically attest caller-modified advance records.
++        if font.bytes.len() != MAX_FONT_BYTES {
++            return Err(invalid("B1 font byte envelope differs from the reviewed resource"));
++        }
++        if font.bundled != 0 || font.face != 0 || font.postscript_name.as_bytes() != POSTSCRIPT_NAME
++            || font.num_glyphs != 2620 || font.units_per_em != 2048
++            || font.glyphs.len() > usize::from(font.num_glyphs)
++            || font.glyphs.keys().any(|gid| *gid >= font.num_glyphs)
++        {
++            return Err(invalid("B1 font metadata differs from the reviewed regular face"));
++        }
++        let identity: [u8; 32] = Sha256::new().chain_update(font.bytes.as_ref())
++            .chain_update(font.face.to_le_bytes()).finalize().into();
++        if font.id != identity || identity != REVIEWED_B1_ID {
++            return Err(invalid("B1 font bytes/face/id do not identify the reviewed resource"));
++        }
+         let glyphs = subset.mapping().len();
+-        if glyphs == 0 || glyphs > MAX_GLYPHS || subset.bytes().len() > MAX_FONT_BYTES {
++        if glyphs == 0 || glyphs > MAX_GLYPHS || subset.bytes().is_empty()
++            || subset.bytes().len() > MAX_FONT_BYTES
++        {
+             return Err(invalid("font subset exceeds the admitted fixed-resource contract"));
+         }
++        // Preserve the old non-parser mapping guards. The immutable factory's
++        // check_subset_program still validates maxp/head/hhea/hmtx structure.
+         let mut previous = None;
+         for (expected, &(old, new)) in subset.mapping().iter().enumerate() {
+-            if previous.is_some_and(|prior| old <= prior) || usize::from(new) != expected {
+-                return Err(invalid("font subset mapping is not ordered and dense"));
+-            }
+-            if expected == 0 && old != 0 {
+-                return Err(invalid("font subset lacks original glyph zero"));
++            if previous.is_some_and(|prior| old <= prior) || usize::from(new) != expected
++                || old >= font.num_glyphs || (expected == 0 && old != 0)
++            {
++                return Err(invalid("font subset mapping is not original-zero ordered and dense"));
+             }
+             previous = Some(old);
+         }
+-        let bytes = subset.bytes();
+-        let head = table(bytes, b"head")?;
+-        let hhea = table(bytes, b"hhea")?;
+-        let hmtx = table(bytes, b"hmtx")?;
+-        let maxp = table(bytes, b"maxp")?;
+-        if usize::from(word(maxp, 4)?) != glyphs {
+-            return Err(invalid("font subset glyph count differs from its mapping"));
+-        }
+-        let units_per_em = word(head, 18)?;
+-        if units_per_em != 2048 {
+-            return Err(invalid("font subset units per em differ from the one admitted font"));
+-        }
+-        let full_metrics = usize::from(word(hhea, 34)?);
+-        if full_metrics == 0 || full_metrics > glyphs {
+-            return Err(invalid("subset has invalid numberOfHMetrics"));
+-        }
+-        let expected = full_metrics.checked_mul(4)
+-            .and_then(|full| (glyphs - full_metrics).checked_mul(2).and_then(|tail| full.checked_add(tail)))
+-            .ok_or_else(|| invalid("subset metric length overflow"))?;
+-        if hmtx.len() != expected {
+-            return Err(invalid("subset hmtx length does not match its glyph metrics"));
+-        }
+-        Ok(Self { hmtx, glyphs, full_metrics, units_per_em })
+-    }
+-
+-    fn advance(&self, gid: u16) -> Result<f32> {
+-        let gid = usize::from(gid);
+-        if gid >= self.glyphs {
+-            return Err(invalid("PDF code maps outside the subset glyph range"));
+-        }
+-        let index = gid.min(self.full_metrics - 1); // full_metrics checked > 0.
+-        let advance = word(self.hmtx, index.checked_mul(4).ok_or_else(|| invalid("font advance offset overflow"))?)?;
+-        let width = (f64::from(advance) * 1000.0 / f64::from(self.units_per_em)) as f32;
+-        if !width.is_finite() || width.abs() > MAX_METRIC {
+-            return Err(invalid("PDF glyph width is not finite and bounded"));
+-        }
+-        Ok(width)
++        Ok(Self { font, subset })
++    }
++
++    fn advance(&self, subset_gid: u16) -> Result<f32> {
++        let &(original_gid, mapped) = self.subset.mapping().get(usize::from(subset_gid))
++            .ok_or_else(|| invalid("PDF code maps outside the subset glyph range"))?;
++        if mapped != subset_gid {
++            return Err(invalid("PDF subset glyph does not match its original-GID mapping"));
++        }
++        let glyph = self.font.glyphs.get(&original_gid)
++            .ok_or_else(|| invalid("B1 font lacks an intrinsic width for an emitted original glyph"))?;
++        width_1000(glyph.advance, self.font.units_per_em)
++    }
++
++    fn default_width(&self) -> Result<f32> {
++        // No extra .notdef record is invented and no width is parsed from the
++        // subset. Preserve the old explicit DW path ONLY if actual B1 owns GID0.
++        // Most exactly-used B1 tables omit it: those callers refuse until an
++        // owner-agreed DW/full-emitted-CID-coverage policy is implemented.
++        let glyph = self.font.glyphs.get(&0)
++            .ok_or_else(|| invalid("B1 glyph zero is absent; PDF default-width policy is unresolved"))?;
++        width_1000(glyph.advance, self.font.units_per_em)
+     }
+ }
+ 
+@@ -260,7 +302,8 @@
+     if input.codes.len() > MAX_CODES {
+         return Err(invalid("PDF font code count exceeds 65536"));
+     }
+-    let metrics = MetricView::read(input.subset)?;
++    let metrics = B1Widths::read(input.source_font, input.subset)?;
++    let default_width = metrics.default_width()?;
+     let limit = input.max_chunk_bytes.min(MAX_CHUNK_BYTES).min(MAX_DRAWING_BYTES);
+     let max_cid = input.codes.last().map_or(0, |row| usize::from(row.code));
+     let map_len = max_cid.checked_add(1).and_then(|n| n.checked_mul(2))
+@@ -312,7 +355,7 @@
+     }
+     Ok(Prepared {
+         font: input.subset.bytes(), unicode, cid_map, widths,
+-        default_width: metrics.advance(0)?, name, descriptor, flags, limit, bound,
++        default_width, name, descriptor, flags, limit, bound,
+     })
+ }
+ 
+@@ -382,6 +425,102 @@
+     use super::*;
+     use super::super::subset_font::subset_font;
+ 
++    // Unchanged legacy metric reader retained as a test-only independent
++    // subset/width oracle. Production resource emission has no SFNT reader.
++    fn part(bytes: &[u8], at: usize, len: usize) -> Result<&[u8]> {
++        let end = at.checked_add(len).ok_or_else(|| invalid("font metric offset overflow"))?;
++        bytes.get(at..end).ok_or_else(|| invalid("truncated font metric data"))
++    }
++
++    fn word(bytes: &[u8], at: usize) -> Result<u16> {
++        Ok(u16::from_be_bytes(part(bytes, at, 2)?.try_into().map_err(|_| invalid("invalid font metric word"))?))
++    }
++
++    fn dword(bytes: &[u8], at: usize) -> Result<usize> {
++        let raw = u32::from_be_bytes(part(bytes, at, 4)?.try_into().map_err(|_| invalid("invalid font metric offset"))?);
++        usize::try_from(raw).map_err(|_| invalid("font metric offset exceeds platform"))
++    }
++
++    /// Small bounded table view over the already validated, immutable SubsetFont.
++    /// This does not repeat admission, glyph closure or composite parsing.
++    fn table<'a>(bytes: &'a [u8], tag: &[u8; 4]) -> Result<&'a [u8]> {
++        let count = usize::from(word(bytes, 4)?);
++        if count == 0 || count > 19 {
++            return Err(invalid("font metric table count exceeds the admitted subset contract"));
++        }
++        part(bytes, 0, 12 + count * 16)?; // count <= 19.
++        for index in 0..count {
++            let record = 12 + index * 16;
++            if part(bytes, record, 4)? == tag {
++                return part(bytes, dword(bytes, record + 8)?, dword(bytes, record + 12)?);
++            }
++        }
++        Err(invalid("subset lacks a required metric table"))
++    }
++
++    struct MetricView<'a> {
++        hmtx: &'a [u8],
++        glyphs: usize,
++        full_metrics: usize,
++        units_per_em: u16,
++    }
++
++    impl<'a> MetricView<'a> {
++        fn read(subset: &'a SubsetFont) -> Result<Self> {
++            let glyphs = subset.mapping().len();
++            if glyphs == 0 || glyphs > MAX_GLYPHS || subset.bytes().len() > MAX_FONT_BYTES {
++                return Err(invalid("font subset exceeds the admitted fixed-resource contract"));
++            }
++            let mut previous = None;
++            for (expected, &(old, new)) in subset.mapping().iter().enumerate() {
++                if previous.is_some_and(|prior| old <= prior) || usize::from(new) != expected {
++                    return Err(invalid("font subset mapping is not ordered and dense"));
++                }
++                if expected == 0 && old != 0 {
++                    return Err(invalid("font subset lacks original glyph zero"));
++                }
++                previous = Some(old);
++            }
++            let bytes = subset.bytes();
++            let head = table(bytes, b"head")?;
++            let hhea = table(bytes, b"hhea")?;
++            let hmtx = table(bytes, b"hmtx")?;
++            let maxp = table(bytes, b"maxp")?;
++            if usize::from(word(maxp, 4)?) != glyphs {
++                return Err(invalid("font subset glyph count differs from its mapping"));
++            }
++            let units_per_em = word(head, 18)?;
++            if units_per_em != 2048 {
++                return Err(invalid("font subset units per em differ from the one admitted font"));
++            }
++            let full_metrics = usize::from(word(hhea, 34)?);
++            if full_metrics == 0 || full_metrics > glyphs {
++                return Err(invalid("subset has invalid numberOfHMetrics"));
++            }
++            let expected = full_metrics.checked_mul(4)
++                .and_then(|full| (glyphs - full_metrics).checked_mul(2).and_then(|tail| full.checked_add(tail)))
++                .ok_or_else(|| invalid("subset metric length overflow"))?;
++            if hmtx.len() != expected {
++                return Err(invalid("subset hmtx length does not match its glyph metrics"));
++            }
++            Ok(Self { hmtx, glyphs, full_metrics, units_per_em })
++        }
++
++        fn advance(&self, gid: u16) -> Result<f32> {
++            let gid = usize::from(gid);
++            if gid >= self.glyphs {
++                return Err(invalid("PDF code maps outside the subset glyph range"));
++            }
++            let index = gid.min(self.full_metrics - 1); // full_metrics checked > 0.
++            let advance = word(self.hmtx, index.checked_mul(4).ok_or_else(|| invalid("font advance offset overflow"))?)?;
++            let width = (f64::from(advance) * 1000.0 / f64::from(self.units_per_em)) as f32;
++            if !width.is_finite() || width.abs() > MAX_METRIC {
++                return Err(invalid("PDF glyph width is not finite and bounded"));
++            }
++            Ok(width)
++        }
++    }
++
+     const BUNDLED: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/fonts/liberation-sans/LiberationSans-Regular.ttf"));
+ 
+     // SYNTHETIC descriptor for serialization/refusal tests. These are NOT
+@@ -409,9 +548,28 @@
+         }
+     }
+ 
++    // Synthetic B1 resource record for the existing serialization/refusal
++    // tests only: not a valid exactly-used Scene or a shaper/layout assertion.
++    fn source_font() -> &'static Font {
++        static FONT: std::sync::OnceLock<Font> = std::sync::OnceLock::new();
++        FONT.get_or_init(|| {
++            use solidcraft_geom::paper::text::{FontFlags as B1Flags, FontGlyph, FontMetrics};
++            Font {
++                bundled: 0, id: REVIEWED_B1_ID, bytes: std::sync::Arc::from(BUNDLED), face: 0,
++                postscript_name: "LiberationSans".into(), num_glyphs: 2620, units_per_em: 2048,
++                metrics: FontMetrics {
++                    ascent: 1854, descent: -434, cap_height: 1409, bbox: [-1114, -621, 2666, 2007],
++                    italic_angle: 0.0, flags: B1Flags::default(), stem_v: 180,
++                },
++                glyphs: [(0, 1536), (2, 569), (3, 569)].into_iter()
++                    .map(|(gid, advance)| (gid, FontGlyph { advance, outline: vec![] })).collect(),
++            }
++        })
++    }
++
+     fn input<'a>(subset: &'a SubsetFont, codes: &'a [CodeToGlyph<'a>], descriptor: &'a DescriptorMetrics) -> FontObjectInput<'a> {
+         FontObjectInput {
+-            subset, codes, descriptor: Some(descriptor),
++            source_font: source_font(), subset, codes, descriptor: Some(descriptor),
+             postscript_name: POSTSCRIPT_NAME, subset_tag: *b"ABCDEF",
+             max_chunk_bytes: MAX_CHUNK_BYTES,
+         }
+@@ -817,6 +975,217 @@
+         // This only checks the derived offsets with synthetic descriptors.
+         // The actual P3 allocator/page resource integration is NOT exercised.
+     }
+-}
+-
+-
++    // New ORIGINAL B1 width-provider acceptance. These are synthetic record
++    // contracts over the real resource, not an exactly-used Scene or shaping
++    // claim. Real producer + page-content acceptance remains separate.
++    fn b1_width_font(ids: &[(u16, u16)]) -> Font {
++        use solidcraft_geom::paper::text::FontGlyph;
++        let mut font = source_font().clone();
++        font.glyphs = ids.iter().map(|&(gid, advance)| (gid, FontGlyph { advance, outline: vec![] })).collect();
++        font
++    }
++
++    fn input_from_b1<'a>(subset: &'a SubsetFont, codes: &'a [CodeToGlyph<'a>], descriptor: &'a DescriptorMetrics, font: &'a Font) -> FontObjectInput<'a> {
++        let mut result = input(subset, codes, descriptor);
++        result.source_font = font;
++        result
++    }
++
++    #[test]
++    fn b1_widths_use_original_gid_join_and_cid_index_with_distinct_real_advances() {
++        let subset = subset_font(BUNDLED, 0, &[36, 3], MAX_FONT_BYTES).unwrap();
++        assert_eq!(subset.mapping(), [(0, 0), (3, 1), (36, 2)]);
++        // Original hmtx metadata: space3=569, A36=1366, .notdef0=1536.
++        // A wrong font.glyphs[subset_gid] join lacks 1/2 and cannot pass.
++        let font = b1_width_font(&[(0, 1536), (3, 569), (36, 1366)]);
++        let descriptor = synthetic_descriptor();
++        let codes = [
++            CodeToGlyph { code: 42, subset_gid: 2, logical: "A" },
++            CodeToGlyph { code: 300, subset_gid: 1, logical: " " },
++        ];
++        let prepared = prepare(input_from_b1(&subset, &codes, &descriptor, &font)).unwrap();
++        assert_eq!(prepared.widths, [(42, (666.992_187_5_f64 as f32)), (300, (277.832_031_25_f64 as f32))]);
++        assert_eq!(prepared.default_width, 750.0);
++        let chunk = font_objects(refs(16), input_from_b1(&subset, &codes, &descriptor, &font)).unwrap();
++        let parsed = objects(chunk.as_bytes());
++        assert_eq!(object(&parsed, 19).stream.unwrap(), subset.bytes());
++        let field = object(&parsed, 17).dict;
++        let field = field.get(field.find("/W ").unwrap()..).unwrap().strip_suffix(">>").unwrap().trim_end();
++        assert_eq!(parse_two_width_rows(field).unwrap(), [(42, [(666.992_187_5_f64 as f32)]), (300, [(277.832_031_25_f64 as f32)])]);
++        let cmap = std::str::from_utf8(object(&parsed, 20).stream.unwrap()).unwrap();
++        assert!(cmap.contains("<002A> <0041>") && cmap.contains("<012C> <0020>"));
++    }
++
++    #[test]
++    fn b1_widths_keep_real_zero_advance_and_exact_intrinsic_units() {
++        let subset = subset_font(BUNDLED, 0, &[1], MAX_FONT_BYTES).unwrap();
++        let font = b1_width_font(&[(0, 1536), (1, 0)]); // original glyph1=(0,0).
++        let provider = B1Widths::read(&font, &subset).unwrap();
++        assert_eq!(provider.advance(1).unwrap(), 0.0);
++        let descriptor = synthetic_descriptor();
++        let codes = [CodeToGlyph { code: 9, subset_gid: 1, logical: "zero" }];
++        let result = prepare(input_from_b1(&subset, &codes, &descriptor, &font)).unwrap();
++        assert_eq!(result.widths, [(9, 0.0)]);
++        assert_eq!(result.default_width, 750.0);
++    }
++
++    #[test]
++    fn b1_widths_arithmetic_has_literal_zero_fraction_and_u16_envelope_oracles() {
++        assert_eq!(width_1000(0, 2048).unwrap(), 0.0);
++        assert_eq!(width_1000(569, 2048).unwrap(), (277.832_031_25_f64 as f32));
++        assert_eq!(width_1000(1366, 2048).unwrap(), (666.992_187_5_f64 as f32));
++        assert_eq!(width_1000(1536, 2048).unwrap(), 750.0);
++        assert_eq!(width_1000(u16::MAX, 16384).unwrap(), (65_535_000.0_f64 / 16384.0) as f32);
++        // Every valid u16 product fits u32; the checked multiply remains a guard
++        // against future widening. No overflow input is representable today.
++        assert_eq!(u32::from(u16::MAX).checked_mul(1000), Some(65_535_000));
++    }
++
++    #[test]
++    fn b1_widths_arithmetic_refuses_zero_and_out_of_contract_units_without_dividing() {
++        for units in [0, 1, 15, 16385, u16::MAX] {
++            assert!(width_1000(1, units).is_err(), "units={units}");
++            assert!(width_1000(0, units).is_err(), "zero advance does not excuse units={units}");
++        }
++    }
++
++    #[test]
++    fn b1_widths_arithmetic_preserves_inclusive_serialized_metric_bound() {
++        assert_eq!(width_1000(16000, 16).unwrap(), 1_000_000.0);
++        assert!(width_1000(16001, 16).is_err());
++        assert!(width_1000(u16::MAX, 16).is_err());
++        // B1 fields are u16, so NaN/Infinity cannot enter this arithmetic.
++        // The original descriptor hostile-float cases remain unchanged.
++    }
++
++    #[test]
++    fn b1_widths_missing_original_advance_refuses_without_subset_metric_fallback() {
++        let subset = subset_font(BUNDLED, 0, &[36], MAX_FONT_BYTES).unwrap();
++        let font = b1_width_font(&[(0, 1536)]);
++        let provider = B1Widths::read(&font, &subset).unwrap();
++        let e = provider.advance(1).unwrap_err().to_string();
++        assert!(e.contains("lacks an intrinsic width for an emitted original glyph"), "{e}");
++        let descriptor = synthetic_descriptor();
++        let codes = [CodeToGlyph { code: 5, subset_gid: 1, logical: "A" }];
++        assert!(font_objects(refs(6), input_from_b1(&subset, &codes, &descriptor, &font)).is_err());
++    }
++
++    #[test]
++    fn b1_widths_unemitted_closure_glyphs_do_not_require_invented_b1_entries() {
++        let subset = subset_font(BUNDLED, 0, &[3, 36], MAX_FONT_BYTES).unwrap();
++        // Original36 is embedded but no code emits it. No width lookup for it.
++        let font = b1_width_font(&[(0, 1536), (3, 569)]);
++        let descriptor = synthetic_descriptor();
++        let codes = [CodeToGlyph { code: 5, subset_gid: 1, logical: " " }];
++        let prepared = prepare(input_from_b1(&subset, &codes, &descriptor, &font)).unwrap();
++        assert_eq!(prepared.widths, [(5, (277.832_031_25_f64 as f32))]);
++        assert_eq!(prepared.font, subset.bytes());
++    }
++
++    #[test]
++    fn b1_widths_omitted_notdef_still_plans_used_width_but_blocks_default_policy() {
++        let subset = subset_font(BUNDLED, 0, &[36], MAX_FONT_BYTES).unwrap();
++        let font = b1_width_font(&[(36, 1366)]);
++        let provider = B1Widths::read(&font, &subset).unwrap();
++        assert_eq!(provider.advance(1).unwrap(), (666.992_187_5_f64 as f32));
++        let e = provider.default_width().unwrap_err().to_string();
++        assert!(e.contains("glyph zero is absent; PDF default-width policy is unresolved"), "{e}");
++        let descriptor = synthetic_descriptor();
++        let codes = [CodeToGlyph { code: 1, subset_gid: 1, logical: "A" }];
++        let e = match font_objects(refs(6), input_from_b1(&subset, &codes, &descriptor, &font)) {
++            Ok(_) => panic!("emitted font objects without an agreed default-width source"),
++            Err(e) => e.to_string(),
++        };
++        assert!(e.contains("default-width policy is unresolved"), "{e}");
++        // A caller cannot bypass the unresolved policy by emitting no codes.
++        assert!(font_objects(refs(6), input_from_b1(&subset, &[], &descriptor, &font)).is_err());
++        assert!(!font.glyphs.contains_key(&0));
++    }
++
++    #[test]
++    fn b1_widths_raw_digest_cannot_replace_b1_bytes_plus_face_identity() {
++        let subset = admitted_subset();
++        let mut font = source_font().clone();
++        let raw: [u8; 32] = Sha256::digest(BUNDLED).into();
++        assert_ne!(raw, font.id);
++        font.id = raw;
++        assert!(B1Widths::read(&font, &subset).is_err());
++        font = source_font().clone();
++        font.id[0] ^= 1;
++        assert!(B1Widths::read(&font, &subset).is_err());
++        let mut changed = BUNDLED.to_vec();
++        changed[4096] ^= 1;
++        font.bytes = std::sync::Arc::from(changed);
++        font.id = Sha256::new().chain_update(font.bytes.as_ref()).chain_update(0u32.to_le_bytes()).finalize().into();
++        assert!(B1Widths::read(&font, &subset).is_err(), "internally matching id is not resource admission");
++    }
++
++    #[test]
++    fn b1_widths_byte_envelope_refuses_before_identity_work() {
++        let subset = admitted_subset();
++        for length in [0, 410819, 410821] {
++            let mut font = source_font().clone();
++            font.bytes = std::sync::Arc::from(vec![0u8; length]);
++            font.id = [0; 32];
++            let e = match B1Widths::read(&font, &subset) {
++                Ok(_) => panic!("accepted length {length}"),
++                Err(e) => e.to_string(),
++            };
++            assert!(e.contains("byte envelope differs"), "{length}: {e}");
++        }
++        // This checks the observable refusal reason and source order, not a
++        // runtime timing guarantee or a digest-call counter.
++    }
++
++    #[test]
++    fn b1_widths_fixed_face_upem_glyph_count_and_used_id_caps_stay_closed() {
++        let subset = admitted_subset();
++        for case in 0..7 {
++            let mut font = source_font().clone();
++            match case {
++                0 => font.face = 1,
++                1 => font.bundled = 1,
++                2 => font.units_per_em = 0,
++                3 => font.units_per_em = 1024,
++                4 => font.num_glyphs = 0,
++                5 => font.postscript_name = "other".into(),
++                _ => { font.glyphs.insert(2620, solidcraft_geom::paper::text::FontGlyph { advance: 1, outline: vec![] }); }
++            }
++            assert!(B1Widths::read(&font, &subset).is_err(), "case={case}");
++        }
++    }
++
++    #[test]
++    fn b1_widths_missing_subset_ids_refuse_even_when_b1_has_other_widths() {
++        let subset = admitted_subset();
++        let provider = B1Widths::read(source_font(), &subset).unwrap();
++        for gid in [3, u16::MAX] {
++            assert!(provider.advance(gid).is_err(), "subset GID {gid}");
++        }
++    }
++
++    #[test]
++    fn b1_widths_binding_and_emission_leave_source_records_program_and_mapping_unchanged() {
++        let subset = admitted_subset();
++        let font = source_font().clone();
++        let before_font = font.clone();
++        let before_bytes = subset.bytes().to_vec();
++        let before_mapping = subset.mapping().to_vec();
++        let descriptor = synthetic_descriptor();
++        let codes = [
++            CodeToGlyph { code: 42, subset_gid: 2, logical: "alias1" },
++            CodeToGlyph { code: 300, subset_gid: 2, logical: "alias2" },
++        ];
++        let a = font_objects(refs(6), input_from_b1(&subset, &codes, &descriptor, &font)).unwrap();
++        let b = font_objects(refs(6), input_from_b1(&subset, &codes, &descriptor, &font)).unwrap();
++        assert_eq!(a.as_bytes(), b.as_bytes());
++        assert_eq!(font, before_font);
++        assert_eq!(subset.bytes(), before_bytes);
++        assert_eq!(subset.mapping(), before_mapping);
++        let prepared = prepare(input_from_b1(&subset, &codes, &descriptor, &font)).unwrap();
++        assert_eq!(prepared.widths, [(42, (277.832_031_25_f64 as f32)), (300, (277.832_031_25_f64 as f32))]);
++    }
++
++}
++
++
+diff --git a/crates/io/src/paper/pdf/text_plan.rs b/crates/io/src/paper/pdf/text_plan.rs
+--- a/crates/io/src/paper/pdf/text_plan.rs
++++ b/crates/io/src/paper/pdf/text_plan.rs
+@@ -78,6 +78,7 @@
+     /// globally unique subset tag, page resources and a cumulative output budget.
+     pub(super) fn font_input(&self, subset_tag: [u8; 6], max_chunk_bytes: usize) -> FontObjectInput<'_> {
+         FontObjectInput {
++            source_font: self.font,
+             subset: &self.subset,
+             codes: &self.codes,
+             descriptor: Some(&self.descriptor),
+diff --git a/crates/io/src/paper/pdf_tests.rs b/crates/io/src/paper/pdf_tests.rs
+--- a/crates/io/src/paper/pdf_tests.rs
++++ b/crates/io/src/paper/pdf_tests.rs
+@@ -909,3 +909,450 @@
+     let e = paper_pdf_pages(&[sheet.prepare().unwrap(), tiny.prepare().unwrap()], &PdfOptions::default()).unwrap_err();
+     assert!(e.to_string().contains("at least 3 pt"), "{e}");
+ }
++
++// P2's six font refs through the real #9647 Refs: source-only original acceptance.
++// No parent document/content/font registration is provided by this suffix.
++fn p2_reserved_font_ids(r: &super::font_objects::FontObjectRefs) -> [i32; 6] {
++    [r.type0.get(), r.cid_font.get(), r.descriptor.get(), r.font_file2.get(), r.to_unicode.get(), r.cid_to_gid.get()]
++}
++
++fn p2_after_core_reservations(pages: usize) -> Refs {
++    let mut refs = Refs(1);
++    assert_eq!(refs.next().unwrap().get(), 1); // catalog
++    assert_eq!(refs.next().unwrap().get(), 2); // page tree
++    for page in 0..pages {
++        assert_eq!(refs.next().unwrap().get(), 3 + 2 * page as i32);
++        assert_eq!(refs.next().unwrap().get(), 4 + 2 * page as i32);
++    }
++    assert_eq!(refs.next().unwrap().get(), 3 + 2 * pages as i32); // Info
++    refs
++}
++
++#[test]
++fn p2_font_refs_follow_actual_one_page_core_without_fixed_number_allocation() {
++    let mut refs = p2_after_core_reservations(1);
++    let empty: &[GridGroup] = &[];
++    assert!(collect_layers(empty, &mut refs).unwrap().is_empty());
++    let font = super::font_objects::reserve_font_refs(&mut refs).unwrap();
++    assert_eq!(p2_reserved_font_ids(&font), [6, 7, 8, 9, 10, 11]);
++    assert_eq!(refs.next().unwrap().get(), 12);
++}
++
++#[test]
++fn p2_font_refs_follow_real_three_page_info_and_shared_layer_counter() {
++    let sheet = sheet_of(p(420.0, 297.0), &[ObjectKind::DrawingBorder, ObjectKind::TitleBlock, ObjectKind::DrawingBorder]);
++    let prepared = sheet.prepare().unwrap();
++    let grid = prepared.on_grid(Grid::TEN_NANOMETRES).unwrap();
++    let mut refs = p2_after_core_reservations(3);
++    let layers = collect_layers(&grid.groups, &mut refs).unwrap();
++    assert_eq!(layers.iter().map(|l| l.reference.get()).collect::<Vec<_>>(), [10, 11]);
++    let font = super::font_objects::reserve_font_refs(&mut refs).unwrap();
++    assert_eq!(p2_reserved_font_ids(&font), [12, 13, 14, 15, 16, 17]);
++    assert_eq!(refs.next().unwrap().get(), 18);
++}
++
++#[test]
++fn p2_font_refs_multiple_fonts_consume_disjoint_six_object_windows() {
++    let mut refs = p2_after_core_reservations(2);
++    let first = super::font_objects::reserve_font_refs(&mut refs).unwrap();
++    let second = super::font_objects::reserve_font_refs(&mut refs).unwrap();
++    assert_eq!(p2_reserved_font_ids(&first), [8, 9, 10, 11, 12, 13]);
++    assert_eq!(p2_reserved_font_ids(&second), [14, 15, 16, 17, 18, 19]);
++    assert_eq!(refs.0, 20);
++}
++
++#[test]
++fn p2_font_refs_refuse_core_ids_and_leave_parent_cursor_unchanged() {
++    for first in 1..=5 {
++        let mut refs = Refs(first);
++        assert!(super::font_objects::reserve_font_refs(&mut refs).is_err());
++        assert_eq!(refs.0, first);
++    }
++}
++
++#[test]
++fn p2_font_refs_keep_existing_inclusive_resource_ref_limit() {
++    let mut refs = Refs(99_995);
++    let font = super::font_objects::reserve_font_refs(&mut refs).unwrap();
++    assert_eq!(p2_reserved_font_ids(&font), [99_995, 99_996, 99_997, 99_998, 99_999, 100_000]);
++    assert_eq!(refs.0, 100_001);
++    assert!(super::font_objects::reserve_font_refs(&mut refs).is_err());
++    assert_eq!(refs.0, 100_001);
++}
++
++#[test]
++fn p2_font_refs_range_and_partial_overflow_refusals_do_not_consume_any_refs() {
++    for first in [99_996, 100_000, 100_001, i32::MAX - 3, i32::MAX] {
++        let mut refs = Refs(first);
++        assert!(super::font_objects::reserve_font_refs(&mut refs).is_err(), "first={first}");
++        assert_eq!(refs.0, first);
++    }
++}
++
++#[test]
++fn p2_font_refs_nonpositive_cursor_refuses_before_pdf_writer_ref_construction() {
++    for first in [i32::MIN, -1, 0] {
++        let mut refs = Refs(first);
++        assert!(super::font_objects::reserve_font_refs(&mut refs).is_err());
++        assert_eq!(refs.0, first);
++    }
++}
++
++#[test]
++fn p2_font_refs_identical_parent_contexts_produce_identical_refs_and_next_cursor() {
++    let mut a = p2_after_core_reservations(1000);
++    let mut b = p2_after_core_reservations(1000);
++    let left = super::font_objects::reserve_font_refs(&mut a).unwrap();
++    let right = super::font_objects::reserve_font_refs(&mut b).unwrap();
++    assert_eq!(p2_reserved_font_ids(&left), [2004, 2005, 2006, 2007, 2008, 2009]);
++    assert_eq!(p2_reserved_font_ids(&left), p2_reserved_font_ids(&right));
++    assert_eq!((a.0, b.0), (2010, 2010));
++}
++
++// Independent acceptance of the coordinated PRIVATE ToUnicode helper proposal.
++// Pending module hook; no font/CID/GID assignment or PDF extraction claim.
++// Byte layout/name below is a proposed project contract, not a universal PDF layout.
++const P2_ORACLE_PREFIX: &str = concat!(
++    "/CIDInit /ProcSet findresource begin\n",
++    "12 dict begin\nbegincmap\n",
++    "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n",
++    "/CMapName /SolidCraft-ToUnicode16 def\n/CMapType 2 def\n",
++    "1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n",
++);
++const P2_ORACLE_SUFFIX: &str = "endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n";
++
++// Constructs only expected fixture text from literal grammar/data. Never calls
++// the writer, its constants, hex16, encode_utf16 or a serializer under test.
++fn p2_oracle_cmap(body: &str) -> Vec<u8> {
++    [P2_ORACLE_PREFIX.as_bytes(), body.as_bytes(), P2_ORACLE_SUFFIX.as_bytes()].concat()
++}
++
++#[test]
++fn p2_tounicode_literal_utf16be_covers_ascii_bmp_supplementary_and_clusters() {
++    let entries = [
++        (0x0000, "\0"),
++        (0x0001, "A"),
++        (0x00ff, "\u{00c5}"),
++        (0x0100, "\u{4e2d}"),
++        (0x1234, "\u{1f600}"),
++        (0x7ffe, "e\u{301}\u{327}"),
++        (0x8000, "ffi"),
++        (0x8001, "\u{feff}\0"),
++        (0xffff, "\u{10ffff}"),
++    ];
++    let before = entries;
++    // U+1F600 - 0x10000 = 0xF600 -> high0x3D/low0x200 -> D83D DE00.
++    // Combining sequence remains 0065 0301 0327: no NFC or mark reordering.
++    let expected = p2_oracle_cmap(concat!(
++        "9 beginbfchar\n",
++        "<0000> <0000>\n<0001> <0041>\n<00FF> <00C5>\n<0100> <4E2D>\n",
++        "<1234> <D83DDE00>\n<7FFE> <006503010327>\n<8000> <006600660069>\n",
++        "<8001> <FEFF0000>\n<FFFF> <DBFFDFFF>\nendbfchar\n",
++    ));
++    let actual = super::to_unicode::write_to_unicode(&entries, expected.len()).unwrap();
++    assert_eq!(actual, expected);
++    assert!(actual.is_ascii());
++    assert_eq!(entries, before);
++    assert_eq!(super::to_unicode::write_to_unicode(&entries, expected.len()).unwrap(), expected);
++}
++
++#[test]
++fn p2_tounicode_one_hundred_and_one_mapping_blocks_have_exact_independent_bytes() {
++    for count in [100_u16, 101_u16] {
++        let entries: Vec<_> = (0..count).map(|code| (code, "A")).collect();
++        let before = entries.clone();
++        let mut body = String::from("100 beginbfchar\n");
++        // These integer labels are the source data, not a Unicode encoding oracle.
++        for code in 0..100_u16 {
++            body.push_str(&format!("<{code:04X}> <0041>\n"));
++        }
++        body.push_str("endbfchar\n");
++        if count == 101 {
++            body.push_str("1 beginbfchar\n<0064> <0041>\nendbfchar\n");
++        }
++        let expected = p2_oracle_cmap(&body);
++        assert_eq!(super::to_unicode::write_to_unicode(&entries, expected.len()).unwrap(), expected);
++        assert!(super::to_unicode::write_to_unicode(&entries, expected.len() - 1).is_err());
++        assert_eq!(entries, before);
++    }
++}
++
++#[test]
++fn p2_tounicode_destination_boundary_is_512_decoded_bytes_not_utf8_or_hex_length() {
++    for (cluster, literal_hex) in [
++        ("A".repeat(256), "0041".repeat(256)),
++        ("\u{0800}".repeat(256), "0800".repeat(256)),
++        ("\u{1f600}".repeat(128), "D83DDE00".repeat(128)),
++    ] {
++        // Every expected destination has1024 hex characters, representing512 bytes.
++        // UTF-8 input lengths are256,768,512 respectively, not the encoded limit.
++        assert_eq!(literal_hex.len(), 1024);
++        let body = format!("1 beginbfchar\n<0042> <{literal_hex}>\nendbfchar\n");
++        let expected = p2_oracle_cmap(&body);
++        assert_eq!(
++            super::to_unicode::write_to_unicode(&[(0x42, cluster.as_str())], expected.len()).unwrap(),
++            expected,
++        );
++    }
++    //257 BMP units ->514 bytes;129 supplementary scalars ->516 bytes.
++    // Both inputs fit the separate768-byte UTF-8 per-cluster ceiling.
++    for cluster in ["A".repeat(257), "\u{1f600}".repeat(129)] {
++        assert!(super::to_unicode::write_to_unicode(&[(0x42, cluster.as_str())], 4096).is_err());
++    }
++}
++
++#[test]
++fn p2_tounicode_u16_extremes_repeated_destinations_and_strict_source_order() {
++    let entries = [(0x0000, "A"), (0x00ff, "A"), (0x0100, "A"), (0xffff, "A")];
++    let expected = p2_oracle_cmap(concat!(
++        "4 beginbfchar\n<0000> <0041>\n<00FF> <0041>\n",
++        "<0100> <0041>\n<FFFF> <0041>\nendbfchar\n",
++    ));
++    assert_eq!(super::to_unicode::write_to_unicode(&entries, expected.len()).unwrap(), expected);
++    for invalid in [
++        vec![(1, "A"), (1, "A")],
++        vec![(1, "A"), (1, "B")],
++        vec![(2, "A"), (1, "B")],
++        vec![(0xffff, "A"), (0x0000, "B")],
++        vec![(0x0000, "")],
++        vec![(0x0000, "A"), (0x0001, "")],
++    ] {
++        let before = invalid.clone();
++        assert!(super::to_unicode::write_to_unicode(&invalid, 4096).is_err());
++        assert_eq!(invalid, before);
++    }
++}
++
++#[test]
++fn p2_tounicode_cumulative_output_budget_is_based_on_literal_bytes_including_tail() {
++    let entries = [(0x42, "A"), (0x43, "\u{1f600}")];
++    let expected = p2_oracle_cmap("2 beginbfchar\n<0042> <0041>\n<0043> <D83DDE00>\nendbfchar\n");
++    let complete_length = expected.len();
++    assert_eq!(super::to_unicode::write_to_unicode(&entries, complete_length).unwrap(), expected);
++    assert_eq!(super::to_unicode::write_to_unicode(&entries, complete_length + 1).unwrap(), expected);
++    for allowance in [0, 1, P2_ORACLE_PREFIX.len(), complete_length - P2_ORACLE_SUFFIX.len(), complete_length - 1] {
++        assert!(super::to_unicode::write_to_unicode(&entries, allowance).is_err(), "budget{allowance}");
++    }
++    // A legal U+0000 is payload, not a C-string terminator or an empty cluster.
++    let null_expected = p2_oracle_cmap("1 beginbfchar\n<0042> <0000>\nendbfchar\n");
++    assert_eq!(super::to_unicode::write_to_unicode(&[(0x42, "\0")], null_expected.len()).unwrap(), null_expected);
++}
++
++#[test]
++fn p2_tounicode_empty_table_has_complete_codespace_and_no_zero_mapping_block() {
++    let expected = p2_oracle_cmap("");
++    assert_eq!(super::to_unicode::write_to_unicode(&[], expected.len()).unwrap(), expected);
++    assert!(super::to_unicode::write_to_unicode(&[], expected.len() - 1).is_err());
++    assert!(super::to_unicode::write_to_unicode(&[], 0).is_err());
++}
++
++// P2 B1 text-plan acceptance: original records, not a replacement layout engine.
++// Font constants are literal fields of the pinned original Liberation resource;
++// synthetic logical aliases below test the record contract, not real shaping.
++fn b1_plan_font(ids: &[(u16, u16)]) -> solidcraft_geom::paper::text::Font {
++    use sha2::{Digest, Sha256};
++    use solidcraft_geom::paper::text::{Font, FontFlags, FontGlyph, FontMetrics};
++    let bytes: std::sync::Arc<[u8]> = std::sync::Arc::from(&include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/fonts/liberation-sans/LiberationSans-Regular.ttf"))[..]);
++    let id = Sha256::new().chain_update(bytes.as_ref()).chain_update(0u32.to_le_bytes()).finalize().into();
++    Font {
++        bundled: 0, id, bytes, face: 0, postscript_name: "LiberationSans".into(), num_glyphs: 2620, units_per_em: 2048,
++        metrics: FontMetrics {
++            ascent: 1854, descent: -434, cap_height: 1409, bbox: [-1114, -621, 2666, 2007],
++            italic_angle: 0.0, flags: FontFlags::default(), stem_v: 180,
++        },
++        glyphs: ids.iter().map(|&(id, advance)| (id, FontGlyph { advance, outline: vec![] })).collect(),
++    }
++}
++
++fn b1_plan_run(text: &str, ids: &[u16]) -> solidcraft_geom::paper::text::TextRun {
++    use solidcraft_geom::paper::text::{Cluster, PlacedGlyph, TextRun};
++    assert_eq!(text.chars().count(), ids.len());
++    let chars: Vec<_> = text.char_indices().map(|(i, _)| i).chain(std::iter::once(text.len())).collect();
++    TextRun {
++        font: 0, scale: 1.0 / 2048.0, origin: solidcraft_geom::Vec2::new(0.0, 0.0), angle: 0.0, slant: 0.0, rtl: false,
++        glyphs: ids.iter().enumerate().map(|(i, &id)| PlacedGlyph { id, x: i as f64 * 0.375, rise: 0.0, advance: 0.5 }).collect(),
++        text: text.into(),
++        clusters: ids.iter().enumerate().map(|(i, _)| Cluster { glyphs: i as u32..i as u32 + 1, text: chars[i] as u32..chars[i + 1] as u32 }).collect(),
++    }
++}
++
++#[test]
++fn b1_text_plan_keeps_intrinsic_width_separate_from_placed_advance() {
++    let font = b1_plan_font(&[(36, 1366), (57, 1366)]);
++    let run = b1_plan_run("AV", &[36, 57]);
++    let plan = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).unwrap();
++    assert_eq!(plan.runs()[0].font_size_mm, 1.0);
++    assert_eq!(plan.runs()[0].text, "AV");
++    assert_eq!(plan.runs()[0].glyphs, 0..2);
++    let g = &plan.glyphs()[1];
++    assert_eq!((g.original_gid, g.intrinsic_advance_fu, g.placed_advance_mm), (57, 1366, 0.5));
++    assert_eq!(g.matrix_mm, [1.0, 0.0, 0.0, 1.0, 0.375, 0.0]);
++    let input = plan.font_input(*b"ABCDEF", 1 << 20);
++    assert_eq!(input.postscript_name, b"LiberationSans");
++    assert_eq!(input.descriptor.unwrap().ascent_1000, 905.2734375);
++}
++
++#[test]
++fn b1_text_plan_same_gid_with_distinct_logical_text_has_distinct_codes() {
++    let font = b1_plan_font(&[(36, 1366)]);
++    let first = b1_plan_run("A", &[36]);
++    let second = b1_plan_run("B", &[36]);
++    let plan = super::text_plan::plan_text(&font, &[&second, &first, &first], 1 << 20, 410_820).unwrap();
++    assert_eq!(plan.glyphs().iter().map(|g| (g.code, g.logical)).collect::<Vec<_>>(), [(2, "B"), (1, "A"), (1, "A")]);
++    let input = plan.font_input(*b"ABCDEF", 1 << 20);
++    assert_eq!(input.codes.len(), 2);
++    assert_eq!(input.codes[0].subset_gid, input.codes[1].subset_gid);
++    assert_eq!((input.codes[0].logical, input.codes[1].logical), ("A", "B"));
++}
++
++#[test]
++fn b1_text_plan_preserves_quarter_turn_slant_and_mark_rise_once() {
++    let font = b1_plan_font(&[(36, 1366)]);
++    let mut run = b1_plan_run("A", &[36]);
++    run.origin = solidcraft_geom::Vec2::new(100.0, 50.0);
++    run.angle = std::f64::consts::FRAC_PI_2;
++    run.slant = 0.25;
++    run.glyphs[0].x = 3.0;
++    run.glyphs[0].rise = 2.0;
++    let plan = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).unwrap();
++    for (actual, expected) in plan.glyphs()[0].matrix_mm.into_iter().zip([0.0, 1.0, -1.0, 0.25, 98.0, 53.0]) {
++        assert!((actual - expected).abs() < 1e-12, "fixed quarter-turn f64 trig allowance: {actual} != {expected}");
++    }
++    assert_eq!(run.origin, solidcraft_geom::Vec2::new(100.0, 50.0));
++    assert_eq!((run.glyphs[0].x, run.glyphs[0].rise), (3.0, 2.0));
++}
++
++#[test]
++fn b1_text_plan_single_glyph_literal_cluster_is_not_split_or_normalized() {
++    let font = b1_plan_font(&[(36, 1366)]);
++    let mut run = b1_plan_run("A", &[36]);
++    run.text = "fi\u{301}".into();
++    run.clusters[0].text = 0..4;
++    let plan = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).unwrap();
++    assert_eq!(plan.glyphs()[0].logical, "fi\u{301}");
++    assert_eq!(plan.font_input(*b"ABCDEF", 1 << 20).codes[0].logical, "fi\u{301}");
++}
++
++#[test]
++fn b1_text_plan_rtl_keeps_positions_but_uses_logical_cluster_order() {
++    let font = b1_plan_font(&[(36, 1366), (37, 1366)]);
++    let mut run = b1_plan_run("AB", &[37, 36]);
++    run.rtl = true;
++    run.clusters[0].text = 1..2;
++    run.clusters[1].text = 0..1;
++    let plan = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).unwrap();
++    assert!(plan.runs()[0].rtl);
++    assert_eq!(plan.glyphs().iter().map(|g| g.logical).collect::<String>(), "AB");
++    assert_eq!(plan.glyphs().iter().map(|g| g.source_glyph_index).collect::<Vec<_>>(), [1, 0]);
++    assert_eq!((plan.glyphs()[0].matrix_mm[4], plan.glyphs()[1].matrix_mm[4]), (0.375, 0.0));
++}
++
++#[test]
++fn b1_text_plan_multi_glyph_cluster_refuses_instead_of_duplicating_text() {
++    let font = b1_plan_font(&[(36, 1366), (37, 1366)]);
++    let mut run = b1_plan_run("AB", &[36, 37]);
++    run.text = "A".into();
++    run.clusters.truncate(1);
++    run.clusters[0].glyphs = 0..2;
++    run.clusters[0].text = 0..1;
++    let error = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).err().unwrap().to_string();
++    assert!(error.contains("multi-glyph cluster extraction is not supported"), "{error}");
++}
++
++#[test]
++fn b1_text_plan_tounicode_destination_limit_is_inclusive_and_never_split() {
++    let font = b1_plan_font(&[(36, 1366)]);
++    let mut run = b1_plan_run("A", &[36]);
++    run.text = "A".repeat(256);
++    run.clusters[0].text = 0..256;
++    let plan = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).unwrap();
++    assert_eq!(plan.glyphs()[0].logical.len(), 256);
++    drop(plan);
++    run.text.push('A');
++    run.clusters[0].text.end += 1;
++    let error = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).err().unwrap().to_string();
++    assert!(error.contains("512-byte destination"), "{error}");
++}
++
++#[test]
++fn b1_text_plan_space_keeps_advance_and_text_despite_empty_outline() {
++    let font = b1_plan_font(&[(3, 569)]);
++    let run = b1_plan_run(" ", &[3]);
++    let plan = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).unwrap();
++    assert_eq!((plan.glyphs()[0].original_gid, plan.glyphs()[0].intrinsic_advance_fu, plan.glyphs()[0].logical), (3, 569, " "));
++}
++
++#[test]
++fn b1_text_plan_refuses_wrong_identity_descriptor_face_and_intrinsic_width() {
++    let font = b1_plan_font(&[(36, 1366)]);
++    let run = b1_plan_run("A", &[36]);
++    for kind in 0..5 {
++        let mut wrong = font.clone();
++        match kind {
++            0 => wrong.id[0] ^= 1,
++            1 => wrong.face = 1,
++            2 => wrong.metrics.stem_v = 181,
++            3 => wrong.metrics.flags.italic = true,
++            _ => wrong.glyphs.get_mut(&36).unwrap().advance = 1024,
++        }
++        assert!(super::text_plan::plan_text(&wrong, &[&run], 1 << 20, 410_820).is_err());
++    }
++}
++
++#[test]
++fn b1_text_plan_refuses_invalid_partitions_unmatched_font_and_nonfinite_positions() {
++    let font = b1_plan_font(&[(36, 1366)]);
++    let run = b1_plan_run("A", &[36]);
++    for kind in 0..6 {
++        let mut wrong = run.clone();
++        match kind {
++            0 => wrong.clusters[0].glyphs.end = 2,
++            1 => wrong.clusters[0].text.end = 2,
++            2 => wrong.clusters.clear(),
++            3 => wrong.font = 1,
++            4 => wrong.glyphs[0].x = f64::NAN,
++            _ => { wrong.text = "\u{e9}".into(); wrong.clusters[0].text = 0..1; }
++        }
++        assert!(super::text_plan::plan_text(&font, &[&wrong], 1 << 20, 410_820).is_err());
++    }
++}
++
++#[test]
++fn b1_text_plan_bounds_storage_subsets_run_count_and_exact_used_font_table() {
++    let font = b1_plan_font(&[(36, 1366)]);
++    let run = b1_plan_run("A", &[36]);
++    for (plan_bytes, subset_bytes) in [(0, 410_820), (1, 410_820), (1 << 20, 0), (1 << 20, 1)] {
++        assert!(super::text_plan::plan_text(&font, &[&run], plan_bytes, subset_bytes).is_err());
++    }
++    assert!(super::text_plan::plan_text(&font, &vec![&run; 1025], 1 << 20, 410_820).is_err());
++    let extra = b1_plan_font(&[(36, 1366), (37, 1366)]);
++    assert!(super::text_plan::plan_text(&extra, &[&run], 1 << 20, 410_820).is_err());
++}
++
++#[test]
++fn b1_text_plan_repeats_real_subset_mapping_and_resource_inputs() {
++    let font = b1_plan_font(&[(36, 1366), (57, 1366)]);
++    let run = b1_plan_run("AV", &[36, 57]);
++    let first = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).unwrap();
++    let second = super::text_plan::plan_text(&font, &[&run], 1 << 20, 410_820).unwrap();
++    let a = first.font_input(*b"ABCDEF", 1 << 20);
++    let b = second.font_input(*b"ABCDEF", 1 << 20);
++    assert_eq!(a.subset.bytes(), b.subset.bytes());
++    assert_eq!(a.subset.mapping(), [(0, 0), (36, 1), (57, 2)]);
++    assert_eq!(a.subset.mapping(), b.subset.mapping());
++    assert_eq!(a.codes.iter().map(|g| (g.code, g.subset_gid, g.logical)).collect::<Vec<_>>(), [(1, 1, "A"), (2, 2, "V")]);
++    assert_eq!(a.descriptor.unwrap().flags, pdf_writer::types::FontFlags::NON_SYMBOLIC.bits());
++}
++
++#[test]
++fn b1_text_plan_font_byte_envelope_refuses_before_identity_or_table_work() {
++    let font = b1_plan_font(&[(36, 1366)]);
++    let run = b1_plan_run("A", &[36]);
++    for len in [0, 410_819, 410_821] {
++        let mut wrong = font.clone();
++        // Identity is deliberately stale too: byte-envelope refusal has priority.
++        wrong.bytes = std::sync::Arc::from(vec![0; len]);
++        let error = super::text_plan::plan_text(&wrong, &[&run], 1, 410_820).err().unwrap().to_string();
++        assert!(error.contains("font byte length is outside the reviewed resource envelope"), "{error}");
++    }
++}

@@ -1,0 +1,1346 @@
+--- /dev/null
++++ b/assets/locales/pending/cpu-optical-certification.json
+@@ -0,0 +1,29 @@
++{
++  "en": {
++    "render.cpu_optics_certification": "CPU Check and Start validate captured identity, opaque body and face appearances, and the requested sheet or axis-aligned box certificate. Choosing a boundary does not certify geometry. Start rechecks the capture; passing Check does not guarantee later admission."
++  },
++  "es": {
++    "render.cpu_optics_certification": "Comprobar e Iniciar en CPU validan la identidad capturada, los aspectos opacos del cuerpo y sus caras, y el certificado de lámina o caja alineada con los ejes solicitado. Elegir una frontera no certifica la geometría. Iniciar comprueba de nuevo la captura; superar Comprobar no garantiza una admisión posterior."
++  },
++  "de": {
++    "render.cpu_optics_certification": "Prüfen und Starten auf der CPU validieren die erfasste Identität, opake Körper- und Flächenerscheinungen sowie das angeforderte Zertifikat für Scheiben oder achsenparallele Quader. Die Wahl einer Grenze zertifiziert keine Geometrie. Starten prüft die Erfassung erneut; erfolgreiches Prüfen garantiert keine spätere Zulassung."
++  },
++  "ko": {
++    "render.cpu_optics_certification": "CPU의 확인과 시작은 캡처한 식별 정보, 불투명한 바디와 면 외관, 요청한 판 또는 축 정렬 상자의 인증을 검증합니다. 경계를 선택하는 것만으로 형상이 인증되지는 않습니다. 시작 시 캡처를 다시 확인하며, 확인에 성공해도 이후 승인이 보장되지는 않습니다."
++  },
++  "ar": {
++    "render.cpu_optics_certification": "يتحقق الفحص والبدء على CPU من الهوية الملتقطة ومظاهر الجسم والأوجه المعتمة وشهادة الصفيحة أو الصندوق المحاذي للمحاور المطلوبة. اختيار حد لا يثبت صلاحية الهندسة. يعيد البدء فحص اللقطة؛ نجاح الفحص لا يضمن القبول لاحقًا."
++  },
++  "he": {
++    "render.cpu_optics_certification": "בדיקה והתחלה ב-CPU מאמתות את הזהות שנלכדה, מראה אטום של הגוף והפאות ואת האישור המבוקש ליריעה או לתיבה מיושרת לצירים. בחירת גבול אינה מאשרת את הגאומטריה. התחלה בודקת שוב את הלכידה; הצלחה בבדיקה אינה מבטיחה אישור מאוחר יותר."
++  },
++  "ja": {
++    "render.cpu_optics_certification": "CPU の確認と開始では、取得した識別情報、不透明なボディと面の外観、要求された薄板または軸に平行なボックスの認証を検証します。境界の選択だけでは形状は認証されません。開始時に取得内容を再確認するため、確認の成功は後の受け入れを保証しません。"
++  },
++  "vi": {
++    "render.cpu_optics_certification": "Kiểm tra và Bắt đầu trên CPU xác thực danh tính đã chụp, diện mạo thân và mặt đục, cùng chứng nhận tấm hoặc hộp song song các trục được yêu cầu. Chọn biên không chứng nhận hình học. Bắt đầu kiểm tra lại bản chụp; vượt qua Kiểm tra không bảo đảm được chấp nhận về sau."
++  },
++  "zh": {
++    "render.cpu_optics_certification": "CPU 的检查和开始会验证捕获的身份、不透明的实体和面外观，以及请求的薄片或轴对齐盒体认证。选择边界本身并不能认证几何体。开始时会重新检查捕获内容；通过检查并不保证之后仍能获准执行。"
++  }
++}
+--- /dev/null
++++ b/assets/locales/pending/cpu-optical-materials.json
+@@ -0,0 +1,110 @@
++{
++  "en": {
++    "render.cpu_optics_boundary": "CPU requires an explicit Thin sheet or Box boundary. The captured geometry must pass certification.",
++    "render.cpu_optics_conflict": "CPU optical assignments cannot replace existing dielectric overrides.",
++    "render.cpu_optics_enable": "Use these optics on CPU",
++    "render.cpu_optics_explicit": "Review this assignment and explicitly enable its CPU optical route.",
++    "render.cpu_optics_fixed": "The installed CPU transport cannot admit this optical sampling request.",
++    "render.cpu_optics_help": "Temporary CPU optics: fixed or progressive sampling, opaque body and face appearances, certified sheets or axis-aligned boxes. Transmitted shadows, subsurface, coats and maps are unsupported. Box nesting needs explicit opt-in and certification. Accumulation retains the finite-depth transport limits.",
++    "render.cpu_optics_limit": "CPU supports at most eight optical body assignments.",
++    "render.cpu_optics_request": "CPU optics require the typed CPU image request and its existing options.",
++    "render.cpu_optics_saved": "Saved GPU optics cannot be mixed with temporary CPU optical assignments.",
++    "render.cpu_optics_unsupported": "This CPU route supports glass without transmitted shadows, subsurface, coats or maps. Review the authored options; they have been preserved."
++  },
++  "es": {
++    "render.cpu_optics_boundary": "CPU requiere elegir explícitamente Lámina fina o Caja. La geometría capturada debe superar la certificación.",
++    "render.cpu_optics_conflict": "Las asignaciones ópticas CPU no pueden sustituir las modificaciones dieléctricas existentes.",
++    "render.cpu_optics_enable": "Usar esta óptica en CPU",
++    "render.cpu_optics_explicit": "Revisa esta asignación y activa explícitamente su ruta óptica CPU.",
++    "render.cpu_optics_fixed": "El transporte CPU instalado no puede admitir esta solicitud de muestreo óptico.",
++    "render.cpu_optics_help": "Óptica CPU temporal: muestreo fijo o progresivo, aspectos opacos de cuerpo y caras, láminas o cajas alineadas con los ejes certificadas. No admite sombras transmitidas, dispersión subsuperficial, capas ni mapas. Las cajas anidadas requieren activación explícita y certificación. La acumulación conserva los límites de profundidad del transporte.",
++    "render.cpu_optics_limit": "CPU admite como máximo ocho asignaciones ópticas de cuerpo.",
++    "render.cpu_optics_request": "La óptica CPU requiere la solicitud de imagen CPU tipada y sus opciones existentes.",
++    "render.cpu_optics_saved": "La óptica GPU guardada no se puede mezclar con asignaciones ópticas CPU temporales.",
++    "render.cpu_optics_unsupported": "Esta ruta CPU admite vidrio sin sombras transmitidas, dispersión subsuperficial, capas ni mapas. Revisa las opciones definidas; se han conservado."
++  },
++  "de": {
++    "render.cpu_optics_boundary": "CPU erfordert die ausdrückliche Wahl von Dünner Scheibe oder Quader. Die erfasste Geometrie muss zertifiziert werden.",
++    "render.cpu_optics_conflict": "Optische CPU-Zuweisungen können vorhandene dielektrische Überschreibungen nicht ersetzen.",
++    "render.cpu_optics_enable": "Diese Optik auf der CPU verwenden",
++    "render.cpu_optics_explicit": "Prüfen Sie diese Zuweisung und aktivieren Sie ihren optischen CPU-Pfad ausdrücklich.",
++    "render.cpu_optics_fixed": "Der installierte CPU-Transport kann diese optische Abtastanforderung nicht zulassen.",
++    "render.cpu_optics_help": "Temporäre CPU-Optik: feste oder progressive Abtastung, opake Körper- und Flächenerscheinungen, zertifizierte Scheiben oder achsenparallele Quader. Durchgelassene Schatten, Subsurface-Streuung, Beschichtungen und Maps werden nicht unterstützt. Verschachtelte Quader erfordern ausdrückliche Aktivierung und Zertifizierung. Die Akkumulation behält die endliche Transporttiefe bei.",
++    "render.cpu_optics_limit": "CPU unterstützt höchstens acht optische Körperzuweisungen.",
++    "render.cpu_optics_request": "CPU-Optik erfordert die typisierte CPU-Bildanforderung und deren vorhandene Optionen.",
++    "render.cpu_optics_saved": "Gespeicherte GPU-Optik kann nicht mit temporären optischen CPU-Zuweisungen kombiniert werden.",
++    "render.cpu_optics_unsupported": "Dieser CPU-Pfad unterstützt Glas ohne durchgelassene Schatten, Subsurface-Streuung, Beschichtungen oder Maps. Prüfen Sie die unverändert erhaltenen Optionen."
++  },
++  "ko": {
++    "render.cpu_optics_boundary": "CPU에서는 얇은 판 또는 상자 경계를 명시적으로 선택해야 합니다. 캡처한 형상은 인증을 통과해야 합니다.",
++    "render.cpu_optics_conflict": "CPU 광학 할당은 기존 유전체 재정의를 대체할 수 없습니다.",
++    "render.cpu_optics_enable": "이 광학 설정을 CPU에서 사용",
++    "render.cpu_optics_explicit": "이 할당을 검토하고 CPU 광학 경로를 명시적으로 활성화하세요.",
++    "render.cpu_optics_fixed": "설치된 CPU 전송 모델은 이 광학 샘플링 요청을 허용할 수 없습니다.",
++    "render.cpu_optics_help": "임시 CPU 광학: 고정 또는 점진적 샘플링, 불투명한 바디와 면 외관, 인증된 판 또는 축 정렬 상자. 투과 그림자, 표면하 산란, 코팅 및 맵은 지원하지 않습니다. 중첩 상자는 명시적 활성화와 인증이 필요합니다. 누적해도 전송의 유한 깊이 제한은 유지됩니다.",
++    "render.cpu_optics_limit": "CPU는 최대 8개의 광학 바디 할당을 지원합니다.",
++    "render.cpu_optics_request": "CPU 광학에는 형식화된 CPU 이미지 요청과 기존 옵션이 필요합니다.",
++    "render.cpu_optics_saved": "저장된 GPU 광학을 임시 CPU 광학 할당과 혼합할 수 없습니다.",
++    "render.cpu_optics_unsupported": "이 CPU 경로는 투과 그림자, 표면하 산란, 코팅 및 맵이 없는 유리를 지원합니다. 작성된 옵션을 검토하세요. 옵션은 그대로 보존되었습니다."
++  },
++  "ar": {
++    "render.cpu_optics_boundary": "يتطلب CPU اختيار حد صفيحة رقيقة أو صندوق صراحةً. يجب أن تجتاز الهندسة الملتقطة التحقق.",
++    "render.cpu_optics_conflict": "لا يمكن لتعيينات البصريات على CPU استبدال تجاوزات العوازل الموجودة.",
++    "render.cpu_optics_enable": "استخدام هذه البصريات على CPU",
++    "render.cpu_optics_explicit": "راجع هذا التعيين وفعّل مساره البصري على CPU صراحةً.",
++    "render.cpu_optics_fixed": "لا يمكن لنموذج النقل المثبت على CPU قبول طلب أخذ العينات البصري هذا.",
++    "render.cpu_optics_help": "بصريات CPU مؤقتة: أخذ عينات ثابت أو تدريجي، ومظاهر معتمة للجسم والأوجه، وصفائح أو صناديق محاذية للمحاور اجتازت التحقق. الظلال النافذة والتشتت تحت السطحي والطلاءات والخرائط غير مدعومة. تتطلب الصناديق المتداخلة تفعيلًا صريحًا والتحقق. يبقى عمق النقل محدودًا حتى مع التراكم.",
++    "render.cpu_optics_limit": "يدعم CPU ثمانية تعيينات بصرية للأجسام كحد أقصى.",
++    "render.cpu_optics_request": "تتطلب بصريات CPU طلب صورة CPU محدد النوع وخياراته الموجودة.",
++    "render.cpu_optics_saved": "لا يمكن خلط بصريات GPU المحفوظة مع تعيينات بصريات CPU المؤقتة.",
++    "render.cpu_optics_unsupported": "يدعم مسار CPU هذا الزجاج دون ظلال نافذة أو تشتت تحت سطحي أو طلاءات أو خرائط. راجع الخيارات المحددة؛ فقد تم الاحتفاظ بها."
++  },
++  "he": {
++    "render.cpu_optics_boundary": "CPU דורש בחירה מפורשת בגבול יריעה דקה או תיבה. הגאומטריה שנלכדה חייבת לעבור אימות.",
++    "render.cpu_optics_conflict": "הקצאות אופטיות של CPU אינן יכולות להחליף דריסות דיאלקטריות קיימות.",
++    "render.cpu_optics_enable": "שימוש באופטיקה זו ב-CPU",
++    "render.cpu_optics_explicit": "יש לבדוק הקצאה זו ולהפעיל במפורש את הנתיב האופטי שלה ב-CPU.",
++    "render.cpu_optics_fixed": "מודל התעבורה המותקן ב-CPU אינו יכול לאשר בקשת דגימה אופטית זו.",
++    "render.cpu_optics_help": "אופטיקה זמנית ב-CPU: דגימה קבועה או הדרגתית, מראה אטום של הגוף והפאות, יריעות או תיבות מיושרות לצירים שעברו אימות. צללים מועברים, פיזור תת-משטחי, ציפויים ומפות אינם נתמכים. תיבות מקוננות דורשות הפעלה מפורשת ואימות. הצבירה שומרת על מגבלת עומק התעבורה הסופית.",
++    "render.cpu_optics_limit": "CPU תומך בעד שמונה הקצאות אופטיות לגופים.",
++    "render.cpu_optics_request": "אופטיקת CPU דורשת בקשת תמונת CPU מטיפוס מוגדר ואת האפשרויות הקיימות שלה.",
++    "render.cpu_optics_saved": "לא ניתן לערבב אופטיקת GPU שמורה עם הקצאות אופטיות זמניות של CPU.",
++    "render.cpu_optics_unsupported": "נתיב CPU זה תומך בזכוכית ללא צללים מועברים, פיזור תת-משטחי, ציפויים או מפות. יש לבדוק את האפשרויות שנקבעו; הן נשמרו ללא שינוי."
++  },
++  "ja": {
++    "render.cpu_optics_boundary": "CPU では薄板またはボックス境界を明示的に選択する必要があります。取得した形状は認証に合格する必要があります。",
++    "render.cpu_optics_conflict": "CPU の光学割り当てで既存の誘電体オーバーライドを置き換えることはできません。",
++    "render.cpu_optics_enable": "この光学設定を CPU で使用",
++    "render.cpu_optics_explicit": "この割り当てを確認し、CPU 光学経路を明示的に有効にしてください。",
++    "render.cpu_optics_fixed": "インストール済みの CPU 光輸送では、この光学サンプリング要求を受け付けられません。",
++    "render.cpu_optics_help": "一時的な CPU 光学設定：固定またはプログレッシブサンプリング、不透明なボディと面の外観、認証済みの薄板または軸に平行なボックス。透過シャドウ、表面下散乱、コート、マップは非対応です。入れ子のボックスには明示的な有効化と認証が必要です。累積しても光輸送の有限深度制限は残ります。",
++    "render.cpu_optics_limit": "CPU はボディへの光学割り当てを最大 8 個までサポートします。",
++    "render.cpu_optics_request": "CPU 光学設定には型付きの CPU 画像リクエストと既存のオプションが必要です。",
++    "render.cpu_optics_saved": "保存済み GPU 光学設定と一時的な CPU 光学割り当ては混在できません。",
++    "render.cpu_optics_unsupported": "この CPU 経路は透過シャドウ、表面下散乱、コート、マップのないガラスに対応します。設定したオプションを確認してください。内容は保持されています。"
++  },
++  "vi": {
++    "render.cpu_optics_boundary": "CPU yêu cầu chọn rõ ràng biên Tấm mỏng hoặc Hộp. Hình học đã chụp phải vượt qua kiểm chứng.",
++    "render.cpu_optics_conflict": "Các gán quang học CPU không thể thay thế các ghi đè điện môi hiện có.",
++    "render.cpu_optics_enable": "Dùng quang học này trên CPU",
++    "render.cpu_optics_explicit": "Hãy xem lại phép gán này và bật rõ ràng tuyến quang học CPU của nó.",
++    "render.cpu_optics_fixed": "Mô hình truyền ánh sáng CPU đã cài không thể chấp nhận yêu cầu lấy mẫu quang học này.",
++    "render.cpu_optics_help": "Quang học CPU tạm thời: lấy mẫu cố định hoặc lũy tiến, diện mạo thân và mặt đục, tấm hoặc hộp song song các trục đã được kiểm chứng. Không hỗ trợ bóng truyền qua, tán xạ dưới bề mặt, lớp phủ và bản đồ. Hộp lồng nhau cần được bật rõ ràng và kiểm chứng. Tích lũy vẫn giữ giới hạn độ sâu hữu hạn của truyền ánh sáng.",
++    "render.cpu_optics_limit": "CPU hỗ trợ tối đa tám phép gán quang học cho thân.",
++    "render.cpu_optics_request": "Quang học CPU yêu cầu yêu cầu ảnh CPU có kiểu cùng các tùy chọn hiện có.",
++    "render.cpu_optics_saved": "Không thể trộn quang học GPU đã lưu với các gán quang học CPU tạm thời.",
++    "render.cpu_optics_unsupported": "Tuyến CPU này hỗ trợ kính không có bóng truyền qua, tán xạ dưới bề mặt, lớp phủ hoặc bản đồ. Hãy xem lại các tùy chọn đã soạn; chúng đã được giữ nguyên."
++  },
++  "zh": {
++    "render.cpu_optics_boundary": "CPU 要求明确选择薄片或盒体边界。捕获的几何体必须通过认证。",
++    "render.cpu_optics_conflict": "CPU 光学分配不能替换现有的电介质覆盖设置。",
++    "render.cpu_optics_enable": "在 CPU 上使用此光学设置",
++    "render.cpu_optics_explicit": "请检查此分配并明确启用其 CPU 光学路径。",
++    "render.cpu_optics_fixed": "已安装的 CPU 光传输无法接受此光学采样请求。",
++    "render.cpu_optics_help": "临时 CPU 光学设置：固定或渐进采样、不透明的实体和面外观、通过认证的薄片或轴对齐盒体。不支持透射阴影、次表面散射、涂层或贴图。嵌套盒体需要明确启用并通过认证。累积仍保留光传输的有限深度限制。",
++    "render.cpu_optics_limit": "CPU 最多支持八个实体光学分配。",
++    "render.cpu_optics_request": "CPU 光学设置要求类型化的 CPU 图像请求及其现有选项。",
++    "render.cpu_optics_saved": "已保存的 GPU 光学设置不能与临时 CPU 光学分配混用。",
++    "render.cpu_optics_unsupported": "此 CPU 路径支持不含透射阴影、次表面散射、涂层或贴图的玻璃。请检查所编写的选项；这些选项已保留。"
++  }
++}
+--- a/crates/engine/src/cmd/render.rs
++++ b/crates/engine/src/cmd/render.rs
+@@ -124,7 +124,7 @@
+ CommandSpec::new("render.settings.capture_hdr", "Save Render Settings with HDR", resources::capture_settings).icon("settings").doc_only()
+     .params("name, set: typed CPU/GPU setup patch with hdr/environment unset; path: scoped HDR; expected_sha256?: digest returned by render.hdr.inspect (changed sources refuse); rotation_rad?:0, intensity?:1; samples?:1/4/16/64 for CPU only (default16); assume_linear_srgb?:false for GPU only. Captures immutable bytes and saves resource plus setup atomically in one undo, without a host; returns name/setup/resource metadata, never source bytes"),
+ CommandSpec::new("render.preflight", "Check Render Request", jobs::preflight).icon("inspect").noundo().doc_only()
+-    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace and transient studio_weights may accompany it. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy and dielectrics require fixed sampling. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; dielectric progressive and Interactive requests still refuse. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
++    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace, transient studio_weights and progressive_feedback may accompany it. progressive_feedback?: false; transient protected display updates during CPU progressive rendering only; true refuses raster, GPU and fixed CPU requests. Omission preserves legacy admission/submission. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy requires fixed sampling; certified smooth thin-sheet/box dielectrics support fixed or progressive sampling under the same certificates and bounded optical transport. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed or progressive CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; progressive/Interactive optics retain primary_samples:1 and selected reflections.samples:1 limits and never drop unsupported intent. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
+ CommandSpec::new("render.start", "Render Image", jobs::start).key("R").noundo().doc_only().at("RENDER", "IMAGE").icon("render_image")
+     .params("Same request as render.preflight. Captures an immutable product scene and queues a bounded image job. Returns its session-scoped job identity, captured scene_generation and progress. Does not change the design. See docs/render-jobs.md"),
+ CommandSpec::new("render.status", "Render Progress", jobs::status).icon("list").noundo().doc_only()
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -11,6 +11,7 @@
+ #[derive(Default, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ struct Start {
++    progressive_feedback: bool,
+     nested_media: bool,
+     studio_weights: Option<[f64; 3]>,
+     progressive: bool,
+@@ -48,6 +49,7 @@
+ #[derive(Default, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ struct ProgressiveStart {
++    progressive_feedback: bool,
+     studio_weights: Option<[f64; 3]>,
+     aging: solidcraft_doc::render_aging::SavedAgingStack,
+     #[serde(default)]
+@@ -76,6 +78,7 @@
+ }
+ 
+ struct Prepared {
++    progressive_feedback: bool,
+     replace: bool,
+     scene: solidcraft_render::ProductScene,
+     request: ImageRequest,
+@@ -386,34 +389,25 @@
+     fn nested_command_fixture() -> (Session, Value) {
+         let mut s = Session::default();
+         for (name, length, width, height) in [("Outer", 20, 20, 4), ("Inner", 10, 10, 2)] {
+-            s.execute(
+-                "solid.box",
+-                &json!({
+-                    "length":length,"width":width,"height":height,"center":[0,0,2],
+-                    "operation":"new","body_name":name,
+-                }),
+-            )
+-            .unwrap();
++            s.execute("solid.box", &json!({
++                "length":length,"width":width,"height":height,"center":[0,0,2],
++                "operation":"new","body_name":name,
++            })).unwrap();
+         }
+         s.execute("render.scene", &json!({})).unwrap();
+         let scene = crate::product_scene::extract(&s).unwrap();
+         assert_eq!(scene.meshes.len(), 2);
+-        let dielectrics: Vec<_> = scene
+-            .meshes
+-            .iter()
+-            .enumerate()
+-            .map(|(index, body)| {
+-                assert!(matches!(body.name.as_str(), "Outer" | "Inner"));
+-                json!({
+-                    "body_index":index,"body_name":body.name,"boundary":"closed_box","ior":1.0,
+-                    "absorption_per_mm":if body.name == "Outer" { [0.1,0.2,0.0] } else { [0.3,0.4,0.0] },
+-                    "thickness_mm":0.0,
+-                })
++        let dielectrics: Vec<_> = scene.meshes.iter().enumerate().map(|(index, body)| {
++            assert!(matches!(body.name.as_str(), "Outer" | "Inner"));
++            json!({
++                "body_index":index,"body_name":body.name,"boundary":"closed_box","ior":1.0,
++                "absorption_per_mm":if body.name == "Outer" { [0.1,0.2,0.0] } else { [0.3,0.4,0.0] },
++                "thickness_mm":0.0,
+             })
+-            .collect();
+-        let mut camera = solidcraft_render::Camera { distance: 50.0, fov: 0.0, ..Default::default() };
++        }).collect();
++        let mut camera = solidcraft_render::Camera { distance:50.0, fov:0.0, ..Default::default() };
+         camera.set_view(solidcraft_render::StandardView::Top);
+-        camera.target = solidcraft_geom::Vec3::new(0.0, 0.0, 2.0);
++        camera.target = solidcraft_geom::Vec3::new(0.0,0.0,2.0);
+         let host = solidcraft_render::job::CpuHost::for_platform().unwrap();
+         assert_eq!(host.kind(), solidcraft_render::job::HostKind::NativeWorker);
+         assert!(host.is_available(), "this native test requires an available real CPU worker");
+@@ -454,24 +448,27 @@
+         let handle = s.render_job_handle(id).unwrap();
+         let status = handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap();
+         assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
+-        assert_eq!(status.options, solidcraft_render::job::JobOptions { nested_media: true, ..Default::default() });
++        assert_eq!(status.options, solidcraft_render::job::JobOptions { nested_media:true, ..Default::default() });
+         let retained = s.execute("render.status", &json!({"job":id})).unwrap();
+         assert_eq!(retained["options"]["nested_media"], true);
+         let frame = handle.frame().unwrap().unwrap();
+         let image = image::load_from_memory(frame.png()).unwrap().to_rgba8();
+         // Independent Beer oracle: outer2mm + inner2mm, replacing the parent
+         // interval, yields exp(-.8), exp(-1.2),1 -> Reinhard+sRGB [151,132,188].
+-        assert_eq!(image.get_pixel(0, 0).0, [151, 132, 188, 255]);
++        assert_eq!(image.get_pixel(0,0).0, [151,132,188,255]);
+         assert!(std::sync::Arc::ptr_eq(&document, &s.doc));
+         assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty()));
+     }
+ 
+     #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
+     #[test]
+-    fn command_nesting_keeps_default_false_and_rejects_other_gpu_controls_and_progressive_glass() {
++    fn command_nesting_keeps_default_false_rejects_gpu_controls_and_captures_progressive_glass() {
+         use solidcraft_render::job::{JobId, JobOptions, Phase};
+         let (mut s, wire) = nested_command_fixture();
+-        for (key, value) in [("samples", json!(2)), ("max_depth", json!(2)), ("seed", json!(7)), ("denoise", json!(true)), ("lens", json!({}))] {
++        for (key, value) in [
++            ("samples", json!(2)), ("max_depth", json!(2)), ("seed", json!(7)),
++            ("denoise", json!(true)), ("lens", json!({})),
++        ] {
+             let mut invalid = wire.clone();
+             invalid[key] = value;
+             for command in ["render.preflight", "render.start"] {
+@@ -480,12 +477,43 @@
+         }
+         let mut progressive = wire.clone();
+         progressive["raytrace"]["progressive"] = json!({"samples_per_pixel":2,"seed":0});
+-        let refusal =
+-            "InvalidRequest: CPU progressive currently supports isotropic opaque surfaces; use fixed sampling for dielectric or anisotropic inputs";
+-        for command in ["render.preflight", "render.start"] {
+-            assert_eq!(s.execute(command, &progressive).unwrap_err().to_string(), refusal);
+-        }
+-        assert_eq!(interactive_params(&wire).unwrap_err().to_string(), refusal);
++        // Original narrow perspective fixture: every possible pixel jitter ray
++        // enters both boxes, rather than allowing primary misses/background.
++        progressive["settings"]["camera"]["fov"] = json!(1.0e-6);
++        // This previously blanket-negative branch is now an actual supported
++        // progressive transport/capture case. GPU-only control refusals above
++        // and the default nesting assertions below are unchanged.
++        let checked = s.execute("render.preflight", &progressive).unwrap();
++        assert_eq!(checked["resolved"]["executor"], "cpu-raytrace");
++        assert_eq!(checked["request"]["raytrace"]["dielectrics"], wire["raytrace"]["dielectrics"]);
++        assert_eq!(checked["request"]["raytrace"]["progressive"], progressive["raytrace"]["progressive"]);
++        let started = s.execute("render.start", &progressive).unwrap();
++        let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++        let handle = s.render_job_handle(id).unwrap();
++        let status = handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap();
++        assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
++        assert!(status.options.nested_media);
++        let captured = status.request.raytrace.as_ref().unwrap();
++        assert_eq!(captured.progressive.unwrap().samples_per_pixel, 2);
++        assert_eq!(captured.progressive.unwrap().seed, 0);
++        assert_eq!(serde_json::to_value(&captured.dielectrics).unwrap(), wire["raytrace"]["dielectrics"]);
++        let frame = handle.frame().unwrap().unwrap();
++        let image = image::load_from_memory(frame.png()).unwrap().to_rgba8();
++        assert_eq!(image.dimensions(), (1,1));
++        // Camera is exterior at z52. At every box face its full jitter cone
++        // lies within52*tan(1e-6) < 0.000053mm of the axis, far inside the
++        // inner +/-5mm face. Even using twice the actual half-angle bounds,
++        // cos(theta)>1-2e-12. Parent-only and child lengths are each2/cos mm.
++        // IOR1 removes Fresnel/refraction; scalar Beer is exp(-.8/cos),
++        // exp(-1.2/cos),1. Their bounded variation is far below the nearest
++        // integer thresholds of existing Reinhard/sRGB: [151,132,188].
++        // Actual primary-background pixels would be255 and fail this oracle.
++        // This remains a command-route smoke, not a Fresnel/TIR quality case.
++        assert_eq!(image.get_pixel(0,0).0, [151,132,188,255]);
++        let interactive = interactive_params(&wire).unwrap();
++        assert_eq!(interactive["raytrace"]["dielectrics"], wire["raytrace"]["dielectrics"]);
++        assert_eq!(interactive["nested_media"], true);
++        assert!(interactive["raytrace"]["progressive"].is_object());
+ 
+         // Ordinary CPU requests retain the exact default JobOptions; omission is
+         // not silently promoted to nesting by adding this explicit opt-in.
+@@ -501,6 +529,7 @@
+         let retained = s.execute("render.status", &json!({"job":id})).unwrap();
+         assert_eq!(retained["options"]["nested_media"], false);
+     }
++
+ }
+ 
+ /// Resolve portable intent before choosing an executor. Legacy requests are left intact;
+@@ -539,7 +568,7 @@
+     } else {
+         return Ok(None);
+     };
+-    if let Some(key) = object.keys().find(|key| !matches!(key.as_str(), "setup" | "settings" | "replace" | "studio_weights")) {
++    if let Some(key) = object.keys().find(|key| !matches!(key.as_str(), "setup" | "settings" | "replace" | "studio_weights" | "progressive_feedback")) {
+         return Err(bad(
+             command,
+             format!(
+@@ -583,6 +612,9 @@
+     }
+     if let Some(replace) = object.get("replace") {
+         lowered["replace"] = replace.clone();
++    }
++    if let Some(feedback) = object.get("progressive_feedback") {
++        lowered["progressive_feedback"] = feedback.clone();
+     }
+     Ok(Some(Normalized { params: lowered, hdr, surfaces, optics }))
+ }
+@@ -620,6 +652,10 @@
+         ));
+     }
+     let mut input: Start = serde_json::from_value(params.clone()).map_err(|e| bad(command, e.to_string()))?;
++    if input.progressive_feedback && (input.integrator != Integrator::Raytrace
++        || input.raytrace.as_ref().and_then(|options| options.progressive).is_none()) {
++        return Err(bad(command, "progressive_feedback requires CPU progressive raytracing"));
++    }
+     validate_studio_weights(input.studio_weights, command)?;
+     if input.integrator == Integrator::Raytrace && input.studio_weights.is_some() {
+         return Err(bad(command, "studio_weights apply to raster or the implicit GPU studio; use explicit CPU light intensities"));
+@@ -798,28 +834,34 @@
+         transparent_background: input.transparent_background,
+     };
+     let options = solidcraft_render::job::JobOptions { nested_media: input.nested_media, ..Default::default() };
+-    let mut admission = host.admit(&scene, &request, options).map_err(job_error)?;
+-    let environment_bytes = environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| bad(command, e.to_string()))?;
++    let mut admission = if input.progressive_feedback {
++        host.admit_cpu_protected_partial_with_environment_and_options(&scene, &request, options, environment.as_ref()).map_err(job_error)?
++    } else {
++        host.admit(&scene, &request, options).map_err(job_error)?
++    };
+     let retained_lights = request.raytrace.as_ref().map_or(Ok(0), |o| o.retained_bytes()).map_err(job_error)?;
+     let retained_environment =
+         if environment_info.is_some() { std::mem::size_of::<solidcraft_render::lighting::environment_input::EnvironmentInfo>() as u64 } else { 0 };
+     let retained_request_bytes = retained_lights.checked_add(retained_environment).ok_or_else(|| bad(command, "request metadata overflow"))?;
+ 
+-    admission.estimated_total_bytes = admission
+-        .estimated_total_bytes
+-        .checked_add(environment_bytes)
+-        .and_then(|v| v.checked_add(retained_request_bytes))
+-        .filter(|v| *v <= budget.limits().max_job_bytes)
+-        .ok_or_else(|| bad(command, "environment job exceeds per-job memory limit"))?;
+-    admission.preparation_bytes =
+-        admission.preparation_bytes.checked_add(environment_bytes).ok_or_else(|| bad(command, "environment admission overflow"))?;
++    if !input.progressive_feedback {
++        let environment_bytes = environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| bad(command, e.to_string()))?;
++        admission.estimated_total_bytes = admission
++            .estimated_total_bytes
++            .checked_add(environment_bytes)
++            .and_then(|v| v.checked_add(retained_request_bytes))
++            .filter(|v| *v <= budget.limits().max_job_bytes)
++            .ok_or_else(|| bad(command, "environment job exceeds per-job memory limit"))?;
++        admission.preparation_bytes =
++            admission.preparation_bytes.checked_add(environment_bytes).ok_or_else(|| bad(command, "environment admission overflow"))?;
++    }
+     let transparency = match input.integrator {
+         Integrator::Raster => "sorted_alpha_approximation",
+         Integrator::Raytrace if refraction => "physical_transmission",
+         Integrator::Raytrace => "opaque_only",
+     };
+     let reply = json!({"ignored_controls":ignored,"stage_panels":settings.stage.len(),"stage_transport":"CPU direct/specular only; no diffuse interreflection", "cpu_budget":budget,"cpu_limits":budget.limits(),"environment":environment_info,"retained_request_bytes":retained_request_bytes,"resolved":resolved,"admission":admission,"request":request,"scene_generation":s.revision,"host":host.kind(),"transparency":transparency,"refraction":refraction,"dielectric_boundaries":if refraction {vec!["thin_sheet","closed_box"]} else {Vec::<&str>::new()}});
+-    Ok(Prepared { replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options })
++    Ok(Prepared { progressive_feedback: input.progressive_feedback, replace: input.replace, scene, request, reply, environment, executor: resolved.executor, options })
+ }
+ 
+ fn prepare_progressive(
+@@ -844,6 +886,9 @@
+         return Err(bad(command, "progressive rendering does not accept CPU raytrace, environment or LED options"));
+     }
+     let mut input: ProgressiveStart = serde_json::from_value(params.clone()).map_err(|e| bad(command, e.to_string()))?;
++    if input.progressive_feedback {
++        return Err(bad(command, "progressive_feedback requires CPU progressive raytracing, not GPU progressive rendering"));
++    }
+     validate_studio_weights(input.studio_weights, command)?;
+     if input.studio_weights.is_some() && (input.lighting.is_some() || input.environment.is_some() || saved_hdr.is_some()) {
+         return Err(bad(command, "studio_weights require the implicit GPU studio without environment lighting"));
+@@ -1023,7 +1068,7 @@
+             "raw_linear_accumulator_preserved":true, "output_stage":"linear_before_tone_map"
+         });
+     }
+-    Ok(Prepared { replace: input.replace, scene, request, reply, executor: resolved.executor, options, environment: None })
++    Ok(Prepared { progressive_feedback: false, replace: input.replace, scene, request, reply, executor: resolved.executor, options, environment: None })
+ }
+ 
+ /// The setup's controls the raster image executor doesn't apply: those not at their neutral value.
+@@ -1047,16 +1092,12 @@
+ 
+ pub(super) fn start(s: &mut Session, params: &Value) -> Result<Value> {
+     let p = prepare(s, params, "render.start")?;
+-    let status = s
+-        .render_jobs
+-        .start_with_environment(
+-            s.revision,
+-            p.scene,
+-            p.request,
+-            p.replace,
+-            crate::render_jobs::Execution { executor: p.executor, options: p.options, environment: p.environment },
+-        )
+-        .map_err(job_error)?;
++    let execution = crate::render_jobs::Execution { executor: p.executor, options: p.options, environment: p.environment };
++    let status = if p.progressive_feedback {
++        s.render_jobs.start_with_environment_and_feedback(s.revision, p.scene, p.request, p.replace, execution, true)
++    } else {
++        s.render_jobs.start_with_environment(s.revision, p.scene, p.request, p.replace, execution)
++    }.map_err(job_error)?;
+     let mut status = json!(status);
+     if let (Some(out), Some(ignored)) = (status.as_object_mut(), p.reply.get("ignored_controls")) {
+         out.insert("ignored_controls".into(), ignored.clone());
+--- a/crates/engine/src/render_jobs.rs
++++ b/crates/engine/src/render_jobs.rs
+@@ -183,6 +183,22 @@
+         replace: bool,
+         execution: Execution,
+     ) -> Result<JobStatus, JobError> {
++        self.start_with_environment_and_feedback(revision, scene, request, replace, execution, false)
++    }
++
++    pub(crate) fn start_with_environment_and_feedback(
++        &mut self,
++        revision: u64,
++        scene: solidcraft_render::ProductScene,
++        request: solidcraft_render::job::ImageRequest,
++        replace: bool,
++        execution: Execution,
++        progressive_feedback: bool,
++    ) -> Result<JobStatus, JobError> {
++        if progressive_feedback && (request.integrator != Integrator::Raytrace
++            || request.raytrace.as_ref().and_then(|options| options.progressive).is_none()) {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "progressive_feedback requires CPU progressive raytracing"));
++        }
+         let Execution { executor, options, environment } = execution;
+         self.collect()?;
+         let host = self.host_for(&executor).ok_or_else(|| JobError::new(ErrorCode::HostUnavailable, "resolved image host is not installed"))?.clone();
+@@ -210,14 +226,12 @@
+         let serial = self.serial.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "render job identity exhausted"))?;
+         let generation = self.generation.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "render generation exhausted"))?;
+         self.suspend_interactive()?;
+-        let handle = host.submit_with_environment_and_options(
+-            JobId { session: self.owner, serial, generation },
+-            revision,
+-            scene,
+-            request,
+-            options,
+-            environment,
+-        )?;
++        let id = JobId { session: self.owner, serial, generation };
++        let handle = if progressive_feedback {
++            host.submit_cpu_protected_partial_with_environment_and_options(id, revision, scene, request, options, environment)?
++        } else {
++            host.submit_with_environment_and_options(id, revision, scene, request, options, environment)?
++        };
+         let status = handle.status()?;
+         self.serial = serial;
+         self.generation = generation;
+@@ -687,4 +701,135 @@
+         assert!(world.body("Source").unwrap().cached_mesh().is_none());
+         assert_eq!(host.admitted_bytes(), 0);
+     }
+-}
++    #[test]
++    fn final_cpu_feedback_preserves_full_request_owner_and_exact_final_pixels() {
++        let (mut session, host) = native().unwrap();
++        assert_eq!(host.kind(), HostKind::NativeWorker);
++        let before = session.doc.to_json();
++        let history = (session.revision, session.undo.len(), session.redo.len());
++        let request = json!({
++            "integrator":"raytrace", "settings":{"width":13,"height":7,"background":[17,89,203]},
++            "raytrace":{"lights":[],"shadows":false,"primary_samples":1,"progressive":{"samples_per_pixel":9,"seed":83}}
++        });
++        let mut baseline: Option<Vec<u8>> = None;
++        for feedback in [false, true] {
++            let mut params = request.clone();
++            params["progressive_feedback"] = json!(feedback);
++            let checked = session.execute("render.preflight", &params).unwrap();
++            if feedback {
++                let captured: solidcraft_render::job::ImageRequest = serde_json::from_value(checked["request"].clone()).unwrap();
++                let scene = solidcraft_render::ProductScene { meshes:Vec::new(),bounds:solidcraft_geom::Aabb3::EMPTY };
++                let admitted = host.admit_cpu_protected_partial_with_environment_and_options(
++                    &scene,&captured,solidcraft_render::job::JobOptions::default(),None,
++                ).unwrap();
++                assert_eq!(checked["admission"],serde_json::to_value(admitted).unwrap(), "Check uses the same authoritative protected admission");
++            }
++            let started = session.execute("render.start", &params).unwrap();
++            let job: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++            assert_eq!(job.session, session.render_jobs.owner);
++            let handle = session.render_job_handle(job).unwrap();
++            assert_eq!(serde_json::to_value(handle.status().unwrap().request).unwrap(), checked["request"]);
++            assert_eq!(terminal(&handle).unwrap(), Phase::Completed);
++            let status = handle.status().unwrap();
++            assert_eq!((status.request.width,status.request.height), (13,7));
++            let options = status.request.raytrace.as_ref().unwrap().progressive.unwrap();
++            assert_eq!((options.samples_per_pixel,options.seed), (9,83));
++            let frame = handle.frame().unwrap().unwrap();
++            let image = image::load_from_memory(frame.png()).unwrap().to_rgba8();
++            assert_eq!(image.dimensions(), (13,7));
++            assert!(image.pixels().all(|pixel| pixel.0 == [17,89,203,255]), "independent constant-background miss oracle");
++            if let Some(bytes) = &baseline { assert_eq!(frame.png(), bytes.as_slice()); }
++            else { baseline = Some(frame.png().to_vec()); }
++            let report = handle.protected_preview_report().unwrap();
++            assert_eq!(report.is_some(), feedback);
++            if let Some(report) = report {
++                assert_eq!(report.quota_limit,64);
++                assert!(report.ordinary_used <= report.ordinary_limit);
++                assert!(report.presentation_used <= report.presentation_limit);
++                assert_eq!(report.quota_exhausted, report.accepted_snapshots == report.quota_limit);
++            }
++            assert!(!handle.request_partial_preview().unwrap(), "terminal demand cannot restart work");
++            let foreign = JobId { session: job.session + 1, ..job };
++            assert!(session.render_job_handle(foreign).is_err());
++            assert!(session.execute("render.result.pin",&json!({"job":foreign})).is_err());
++            session.execute("render.result.pin",&json!({"job":job})).unwrap();
++        }
++        assert_eq!(before,session.doc.to_json());
++        assert_eq!(history,(session.revision,session.undo.len(),session.redo.len()));
++    }
++
++    #[test]
++    fn final_cpu_feedback_saved_normalization_and_legacy_omission_are_explicit() {
++        let (mut session, _) = native().unwrap();
++        let typed = json!({"settings":{"width":13,"height":7,"background":[17,89,203],
++            "job":{"method":"cpu_raytrace","options":{"primary_samples":1,"lights":[],"shadows":false,
++                "progressive":{"samples_per_pixel":9,"seed":83}}}}});
++        for feedback in [None,Some(false),Some(true)] {
++            let mut params = typed.clone();
++            if let Some(feedback) = feedback { params["progressive_feedback"] = json!(feedback); }
++            let checked = session.execute("render.preflight",&params).unwrap();
++            let started = session.execute("render.start",&params).unwrap();
++            let job: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++            let handle = session.render_job_handle(job).unwrap();
++            assert_eq!(terminal(&handle).unwrap(),Phase::Completed);
++            assert_eq!(serde_json::to_value(handle.status().unwrap().request).unwrap(),checked["request"]);
++            assert_eq!(handle.protected_preview_report().unwrap().is_some(),feedback == Some(true));
++        }
++        for mut invalid in [
++            json!({"settings":{"width":13,"height":7}}),
++            wire([17,89,203]),
++            json!({"progressive":true,"settings":{"width":13,"height":7}}),
++        ] {
++            invalid["progressive_feedback"] = json!(true);
++            for command in ["render.preflight","render.start"] {
++                let error = session.execute(command,&invalid).unwrap_err().to_string();
++                assert!(error.contains("progressive_feedback"),"{error}");
++            }
++        }
++        let mut malformed = typed;
++        malformed["progressive_feedback"] = json!("true");
++        assert!(session.execute("render.preflight",&malformed).is_err());
++    }
++
++    #[test]
++    fn final_cpu_protected_admission_accounts_captured_hdr_once_and_runs_real_host() {
++        use solidcraft_render::job::{ImageRequest, JobOptions, RaytraceOptions, CpuProgressiveOptions};
++        let (session, host) = native().unwrap();
++        let request = ImageRequest {
++            integrator: Integrator::Raytrace, width:13, height:7, background:[17,89,203],
++            raytrace: Some(RaytraceOptions {
++                lights:Some(Vec::new()), shadows:false, primary_samples:1,
++                progressive:Some(CpuProgressiveOptions {samples_per_pixel:9,seed:83}), ..Default::default()
++            }), studio_weights:None, environment:None, textures:None,
++            camera:Default::default(), transparent_background:false,
++        };
++        let scene = solidcraft_render::ProductScene { meshes:Vec::new(),bounds:solidcraft_geom::Aabb3::EMPTY };
++        // Original equirectangular 2x1 RGBE source: two distinct texels, eight payload bytes.
++        let mut bytes = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\nPRIMARIES=0.64 0.33 0.30 0.60 0.15 0.06 0.3127 0.3290\n\n-Y 1 +X 2\n".to_vec();
++        bytes.extend_from_slice(&[96,64,32,129, 32,64,96,129]);
++        let encoded_capacity = bytes.capacity() as u64;
++        // Independent allocation contract: 2 RGB f32 texels = 24 bytes, one
++        // 2-pixel RGBE scanline = 8 bytes, plus the fixed 8192-byte task envelope.
++        let expected_hdr_bytes = encoded_capacity + 24 + 8 + 8192;
++        let source = solidcraft_render::lighting::HdrSource::new(bytes).unwrap();
++        assert_eq!((source.info().width, source.info().height), (2,1));
++        assert_eq!(source.retained_encoded_bytes(),encoded_capacity);
++        assert_eq!(source.info().decoded_rgb_bytes,24);
++        let environment = solidcraft_render::lighting::environment_input::EnvironmentInput::new(source,0.25,0.5,1).unwrap();
++        let plain = host.admit_cpu_protected_partial_with_environment_and_options(&scene,&request,JobOptions::default(),None).unwrap();
++        let lit = host.admit_cpu_protected_partial_with_environment_and_options(&scene,&request,JobOptions::default(),Some(&environment)).unwrap();
++        assert_eq!(environment.required_bytes().unwrap(),expected_hdr_bytes);
++        assert_eq!(lit.preparation_bytes-plain.preparation_bytes,expected_hdr_bytes);
++        assert_eq!(lit.estimated_total_bytes-plain.estimated_total_bytes,
++            expected_hdr_bytes + std::mem::size_of::<solidcraft_render::lighting::environment_input::EnvironmentInfo>() as u64);
++        let job = host.submit_cpu_protected_partial_with_environment_and_options(
++            JobId {session:session.render_jobs.owner,serial:1,generation:1},session.revision,scene,request,
++            JobOptions::default(),Some(environment),
++        ).unwrap();
++        assert_eq!(terminal(&job).unwrap(),Phase::Completed);
++        assert!(job.status().unwrap().environment.is_some());
++        assert!(job.protected_preview_report().unwrap().is_some());
++        assert_eq!(job.frame().unwrap().unwrap().info.width,13);
++    }
++
++}
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -112,10 +112,7 @@
+         if !Arc::ptr_eq(&self.budget, &donor.budget) {
+             return Err(JobError::new(ErrorCode::WrongOwner, "cannot merge different image admission pools"));
+         }
+-        let bytes = self
+-            .bytes
+-            .checked_add(donor.bytes)
+-            .filter(|v| *v <= self.budget.limit)
++        let bytes = self.bytes.checked_add(donor.bytes).filter(|v| *v <= self.budget.limit)
+             .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "image reservation merge overflow"))?;
+         self.bytes = bytes;
+         donor.bytes = 0;
+@@ -441,9 +438,7 @@
+         })
+     }
+     pub fn cancel(&self) -> Result<JobStatus> {
+-        if let Some(credits) = &self.0.partial {
+-            credits.close();
+-        }
++        if let Some(credits) = &self.0.partial { credits.close(); }
+         let mut released_partial = None;
+         {
+             let mut data = self.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render status lock poisoned"))?;
+@@ -501,10 +496,7 @@
+ }
+ impl CpuPreviewPolicy {
+     fn preview_plan(self) -> super::PartialPreviewPlan {
+-        match self {
+-            Self::Shared(plan) => plan,
+-            Self::Protected(plan) => plan.preview_plan(),
+-        }
++        match self { Self::Shared(plan) => plan, Self::Protected(plan) => plan.preview_plan() }
+     }
+ }
+ struct Submission {
+@@ -628,12 +620,7 @@
+ 
+ enum WorkPoll {
+     #[cfg(feature = "raytrace-cpu")]
+-    Partial {
+-        png: Vec<u8>,
+-        covered: Vec<u16>,
+-        completed_passes: u32,
+-        updated_prefix: u64,
+-    },
++    Partial { png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64 },
+     Existing(TaskPoll),
+     #[cfg(feature = "raytrace-cpu")]
+     Preview {
+@@ -676,9 +663,7 @@
+             Self::Raytrace(task) => Ok(match task.get_mut()?.step_with_partial_previews(units)? {
+                 crate::raytrace::image::PartialImagePoll::Pending(progress) => WorkPoll::Existing(TaskPoll::Pending(progress)),
+                 crate::raytrace::image::PartialImagePoll::Complete(png) => WorkPoll::Existing(TaskPoll::Complete(png)),
+-                crate::raytrace::image::PartialImagePoll::Preview { png, covered, completed_passes, updated_prefix } => {
+-                    WorkPoll::Partial { png, covered, completed_passes, updated_prefix }
+-                }
++                crate::raytrace::image::PartialImagePoll::Preview { png, covered, completed_passes, updated_prefix } => WorkPoll::Partial { png, covered, completed_passes, updated_prefix },
+             }),
+             _ => Err(JobError::new(ErrorCode::InvalidRequest, "partial presentation requires the builtin CPU task")),
+         }
+@@ -728,34 +713,9 @@
+                 {
+                     let options = request.raytrace.clone().unwrap_or_default();
+                     let task = match partial {
+-                        Some(CpuPreviewPolicy::Shared(plan)) => crate::raytrace::image::ImageTask::new_with_environment_and_nested_and_partial(
+-                            scene,
+-                            request,
+-                            cancel,
+-                            options,
+-                            environment,
+-                            job_options.nested_media,
+-                            plan,
+-                        ),
+-                        Some(CpuPreviewPolicy::Protected(plan)) => {
+-                            crate::raytrace::image::ImageTask::new_with_environment_and_nested_and_protected_partial(
+-                                scene,
+-                                request,
+-                                cancel,
+-                                options,
+-                                environment,
+-                                job_options.nested_media,
+-                                plan,
+-                            )
+-                        }
+-                        None => crate::raytrace::image::ImageTask::new_with_environment_and_nested(
+-                            scene,
+-                            request,
+-                            cancel,
+-                            options,
+-                            environment,
+-                            job_options.nested_media,
+-                        ),
++                        Some(CpuPreviewPolicy::Shared(plan)) => crate::raytrace::image::ImageTask::new_with_environment_and_nested_and_partial(scene, request, cancel, options, environment, job_options.nested_media, plan),
++                        Some(CpuPreviewPolicy::Protected(plan)) => crate::raytrace::image::ImageTask::new_with_environment_and_nested_and_protected_partial(scene, request, cancel, options, environment, job_options.nested_media, plan),
++                        None => crate::raytrace::image::ImageTask::new_with_environment_and_nested(scene, request, cancel, options, environment, job_options.nested_media),
+                     };
+                     Self::raytrace_with_slot(task?, report_sink, TaskSlot::new)
+                 }
+@@ -783,9 +743,7 @@
+ }
+ 
+ fn terminal(handle: &JobHandle, error: JobError) {
+-    if let Some(credits) = &handle.0.partial {
+-        credits.close();
+-    }
++    if let Some(credits) = &handle.0.partial { credits.close(); }
+     let mut released_partial = None;
+     if let Ok(mut data) = handle.0.data.lock() {
+         if data.progress.phase == Phase::Completed {
+@@ -813,7 +771,10 @@
+ 
+     // The private factory keeps post-construction setup fallible without losing
+     // the real ledger. It runs only after report capture and outside every lock.
+-    fn begin_with_partial_factory(work: Work, make_partial: impl FnOnce(Arc<PartialCredits>) -> Result<TaskSlot<PartialRunning>>) -> Option<Self> {
++    fn begin_with_partial_factory(
++        work: Work,
++        make_partial: impl FnOnce(Arc<PartialCredits>) -> Result<TaskSlot<PartialRunning>>,
++    ) -> Option<Self> {
+         if work.handle.0.cancel.is_cancelled() {
+             terminal(&work.handle, JobError::new(ErrorCode::Cancelled, "render cancelled"));
+             return None;
+@@ -878,20 +839,18 @@
+             let partial = partial.get_mut()?;
+             if partial.lease.is_none() && partial.credits.requested.load(Ordering::Acquire) && !partial.credits.exhausted.load(Ordering::Acquire) {
+                 let task = self.task.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial CPU task"))?;
+-                if task.partial_ready(partial.credits.plan)?
+-                    && let Some(lease) = partial.credits.acquire()?
+-                {
+-                    // Keep the lease past any producer error until task buffers drop.
+-                    partial.lease = Some(lease);
+-                    let begin = task.begin_partial(partial.credits.plan);
+-                    partial.credits.store_report(task.protected_report())?;
+-                    if !begin? {
+-                        if partial.credits.protected.is_some() && !partial.credits.exhausted.load(Ordering::Acquire) {
+-                            return Err(JobError::new(ErrorCode::Internal, "protected feedback refused without real quota exhaustion"));
++                if task.partial_ready(partial.credits.plan)? && let Some(lease) = partial.credits.acquire()? {
++                        // Keep the lease past any producer error until task buffers drop.
++                        partial.lease = Some(lease);
++                        let begin = task.begin_partial(partial.credits.plan);
++                        partial.credits.store_report(task.protected_report())?;
++                        if !begin? {
++                            if partial.credits.protected.is_some() && !partial.credits.exhausted.load(Ordering::Acquire) {
++                                return Err(JobError::new(ErrorCode::Internal, "protected feedback refused without real quota exhaustion"));
++                            }
++                            partial.credits.exhaust();
++                            drop(partial.lease.take());
+                         }
+-                        partial.credits.exhaust();
+-                        drop(partial.lease.take());
+-                    }
+                 }
+             }
+         }
+@@ -910,9 +869,7 @@
+             data.preview = None;
+             let released = data.partial_preview.take();
+             drop(data);
+-            if let Some(credits) = &self.handle.0.partial {
+-                credits.close();
+-            }
++            if let Some(credits) = &self.handle.0.partial { credits.close(); }
+             drop(released);
+             self.handle.0.notify();
+             return Ok(false);
+@@ -1063,9 +1020,7 @@
+         let released = data.partial_preview.take();
+         data.progress = Progress { phase: Phase::Completed, done: 1, total: 1 };
+         drop(data);
+-        if let Some(credits) = &self.handle.0.partial {
+-            credits.close();
+-        }
++        if let Some(credits) = &self.handle.0.partial { credits.close(); }
+         drop(released);
+         self.handle.0.notify();
+         Ok(false)
+@@ -1074,6 +1029,7 @@
+     fn guarded_step(&mut self, units: usize) -> bool {
+         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.advance(units)));
+         match result {
++
+             Ok(Ok(more)) => more,
+             Ok(Err(e)) => {
+                 terminal(&self.handle, e);
+@@ -1260,32 +1216,77 @@
+     pub fn admit(&self, scene: &ProductScene, request: &ImageRequest, options: JobOptions) -> Result<Admission> {
+         self.admit_with_policy(scene, request, options, None)
+     }
+-    fn admit_with_policy(
+-        &self,
+-        scene: &ProductScene,
+-        request: &ImageRequest,
+-        options: JobOptions,
++    /// Same canonical policy and complete retained/HDR accounting as protected submit.
++    /// Non-reserving estimate: submission still admits against the live pool.
++    pub fn admit_cpu_protected_partial_with_environment_and_options(
++        &self, scene: &ProductScene, request: &ImageRequest, options: JobOptions,
++        environment: Option<&crate::lighting::environment_input::EnvironmentInput>,
++    ) -> Result<Admission> {
++        self.validate_submission_environment(scene, request, environment)?;
++        let policy = Self::protected_preview_policy(request)?;
++        let (mut admission, request_bytes) = self.admit_submission(scene, request, options, environment, Some(policy))?;
++        admission.estimated_total_bytes = admission.estimated_total_bytes.checked_add(request_bytes)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "retained request admission overflow"))?;
++        Ok(admission)
++    }
++
++    fn protected_preview_policy(request: &ImageRequest) -> Result<CpuPreviewPolicy> {
++        let samples = request.raytrace.as_ref().and_then(|v| v.progressive)
++            .ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "protected previews require CPU progressive intent"))?.samples_per_pixel;
++        let plan = super::ProtectedPreviewPlan::new(request.width, request.height, samples, request.cpu_budget())?;
++        Ok(CpuPreviewPolicy::Protected(plan))
++    }
++
++    fn validate_submission_environment(
++        &self, scene: &ProductScene, request: &ImageRequest,
++        environment: Option<&crate::lighting::environment_input::EnvironmentInput>,
++    ) -> Result<()> {
++        if self.0.executor.is_some() && environment.is_some() {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "registered image executors do not accept CPU environments"));
++        }
++        if environment.is_some() && request.integrator != Integrator::Raytrace {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "environment lighting requires CPU raytrace"));
++        }
++        self.validate_integrator(request.integrator)?;
++        if environment.is_some() {
++            request.raytrace.as_ref().unwrap_or(&super::RaytraceOptions::default()).validate_environment_reflections(scene)?;
++        }
++        Ok(())
++    }
++
++    fn admit_submission(
++        &self, scene: &ProductScene, request: &ImageRequest, options: JobOptions,
++        environment: Option<&crate::lighting::environment_input::EnvironmentInput>,
+         partial: Option<CpuPreviewPolicy>,
+-    ) -> Result<Admission> {
++    ) -> Result<(Admission, u64)> {
++        let metadata_bytes = (if environment.is_some() {
++            std::mem::size_of::<crate::lighting::environment_input::EnvironmentInfo>() as u64
++        } else { 0 }) + request.retained_resource_metadata_bytes();
++        let request_bytes = retained_request_bytes(request)?.checked_add(metadata_bytes)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "environment metadata overflow"))?;
++        let mut admission = self.admit_with_policy(scene, request, options, partial)?;
++        let environment_bytes = environment.map_or(Ok(0), |value| value.required_bytes())
++            .map_err(|error| JobError::new(ErrorCode::InvalidRequest, error.to_string()))?;
++        admission.estimated_total_bytes = admission.estimated_total_bytes.checked_add(environment_bytes)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "environment admission overflow"))?;
++        admission.preparation_bytes = admission.preparation_bytes.checked_add(environment_bytes)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "environment admission overflow"))?;
++        self.check_request_sum(admission.estimated_total_bytes, request_bytes, request.cpu_budget())?;
++        Ok((admission, request_bytes))
++    }
++
++    fn admit_with_policy(&self, scene: &ProductScene, request: &ImageRequest, options: JobOptions, partial: Option<CpuPreviewPolicy>) -> Result<Admission> {
+         if let Some(policy) = partial {
+             let plan = policy.preview_plan();
+-            if self.0.executor.is_some()
+-                || request.integrator != Integrator::Raytrace
+-                || request.transparent_background
+-                || request.environment.is_some()
+-                || request.textures.is_some()
++            if self.0.executor.is_some() || request.integrator != Integrator::Raytrace || request.transparent_background
++                || request.environment.is_some() || request.textures.is_some()
+                 || request.raytrace.as_ref().and_then(|v| v.progressive).is_none()
+-                || plan != super::PartialPreviewPlan::new(request.width, request.height)?
+-            {
++                || plan != super::PartialPreviewPlan::new(request.width, request.height)? {
+                 return Err(JobError::new(ErrorCode::InvalidRequest, "partial previews require the canonical builtin CPU progressive request"));
+             }
+             if let CpuPreviewPolicy::Protected(protected) = policy {
+-                let samples = request
+-                    .raytrace
+-                    .as_ref()
+-                    .and_then(|v| v.progressive)
+-                    .ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "protected previews require a progressive sample target"))?
+-                    .samples_per_pixel;
++                let samples = request.raytrace.as_ref().and_then(|v| v.progressive)
++                    .ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "protected previews require a progressive sample target"))?.samples_per_pixel;
+                 protected.validate()?;
+                 if protected != super::ProtectedPreviewPlan::new(request.width, request.height, samples, request.cpu_budget())? {
+                     return Err(JobError::new(ErrorCode::InvalidRequest, "protected feedback plan does not match its admitted request"));
+@@ -1347,17 +1348,10 @@
+             if let Some(policy) = partial {
+                 #[cfg(feature = "raytrace-cpu")]
+                 {
+-                    let raytrace = request
+-                        .raytrace
+-                        .as_ref()
+-                        .ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "partial previews require CPU progressive options"))?;
++                    let raytrace = request.raytrace.as_ref().ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "partial previews require CPU progressive options"))?;
+                     return match policy {
+-                        CpuPreviewPolicy::Shared(plan) => {
+-                            crate::raytrace::image::admit_with_partial_preview(scene, request, raytrace, options.nested_media, plan)
+-                        }
+-                        CpuPreviewPolicy::Protected(plan) => {
+-                            crate::raytrace::image::admit_with_protected_partial_preview(scene, request, raytrace, options.nested_media, plan)
+-                        }
++                        CpuPreviewPolicy::Shared(plan) => crate::raytrace::image::admit_with_partial_preview(scene, request, raytrace, options.nested_media, plan),
++                        CpuPreviewPolicy::Protected(plan) => crate::raytrace::image::admit_with_protected_partial_preview(scene, request, raytrace, options.nested_media, plan),
+                     };
+                 }
+                 #[cfg(not(feature = "raytrace-cpu"))]
+@@ -1508,24 +1502,14 @@
+     }
+ 
+     pub fn submit_with_environment_and_options(
+-        &self,
+-        id: JobId,
+-        scene_generation: u64,
+-        scene: ProductScene,
+-        request: ImageRequest,
+-        options: JobOptions,
++        &self, id: JobId, scene_generation: u64, scene: ProductScene, request: ImageRequest, options: JobOptions,
+         environment: Option<crate::lighting::environment_input::EnvironmentInput>,
+     ) -> Result<JobHandle> {
+         self.submit_with_policy(Submission { id, scene_generation, scene, request, options, environment }, None)
+     }
+     /// Transient CPU presentation policy. Final request and legacy observers are unchanged.
+     pub fn submit_cpu_partial_with_environment_and_options(
+-        &self,
+-        id: JobId,
+-        scene_generation: u64,
+-        scene: ProductScene,
+-        request: ImageRequest,
+-        options: JobOptions,
++        &self, id: JobId, scene_generation: u64, scene: ProductScene, request: ImageRequest, options: JobOptions,
+         environment: Option<crate::lighting::environment_input::EnvironmentInput>,
+     ) -> Result<JobHandle> {
+         let plan = super::PartialPreviewPlan::new(request.width, request.height)?;
+@@ -1533,35 +1517,15 @@
+     }
+     /// Opt-in protected feedback preserves ordinary work while admitting a finite extra quota.
+     pub fn submit_cpu_protected_partial_with_environment_and_options(
+-        &self,
+-        id: JobId,
+-        scene_generation: u64,
+-        scene: ProductScene,
+-        request: ImageRequest,
+-        options: JobOptions,
++        &self, id: JobId, scene_generation: u64, scene: ProductScene, request: ImageRequest, options: JobOptions,
+         environment: Option<crate::lighting::environment_input::EnvironmentInput>,
+     ) -> Result<JobHandle> {
+-        let samples = request
+-            .raytrace
+-            .as_ref()
+-            .and_then(|v| v.progressive)
+-            .ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "protected previews require CPU progressive intent"))?
+-            .samples_per_pixel;
+-        let plan = super::ProtectedPreviewPlan::new(request.width, request.height, samples, request.cpu_budget())?;
+-        self.submit_with_policy(Submission { id, scene_generation, scene, request, options, environment }, Some(CpuPreviewPolicy::Protected(plan)))
++        let policy = Self::protected_preview_policy(&request)?;
++        self.submit_with_policy(Submission { id, scene_generation, scene, request, options, environment }, Some(policy))
+     }
+     fn submit_with_policy(&self, input: Submission, partial_plan: Option<CpuPreviewPolicy>) -> Result<JobHandle> {
+         let Submission { id, scene_generation, scene, request, options, environment } = input;
+-        if self.0.executor.is_some() && environment.is_some() {
+-            return Err(JobError::new(ErrorCode::InvalidRequest, "registered image executors do not accept CPU environments"));
+-        }
+-        if environment.is_some() && request.integrator != Integrator::Raytrace {
+-            return Err(JobError::new(ErrorCode::InvalidRequest, "environment lighting requires CPU raytrace"));
+-        }
+-        self.validate_integrator(request.integrator)?;
+-        if environment.is_some() {
+-            request.raytrace.as_ref().unwrap_or(&super::RaytraceOptions::default()).validate_environment_reflections(&scene)?;
+-        }
++        self.validate_submission_environment(&scene, &request, environment.as_ref())?;
+         if id.session == 0 || id.serial == 0 || id.generation == 0 {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "invalid render job identity"));
+         }
+@@ -1570,12 +1534,6 @@
+             .map(|e| JobEnvironmentInfo::Cpu(e.metadata()))
+             .or_else(|| request.environment.as_ref().map(|source| JobEnvironmentInfo::Gpu(source.info().clone())));
+         let textures = request.textures.as_ref().map(|source| source.summary());
+-        let metadata_bytes =
+-            if environment.is_some() { std::mem::size_of::<crate::lighting::environment_input::EnvironmentInfo>() as u64 } else { 0 }
+-                + request.retained_resource_metadata_bytes();
+-        let request_bytes = retained_request_bytes(&request)?
+-            .checked_add(metadata_bytes)
+-            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "environment metadata overflow"))?;
+         let mut features = scene.required_features();
+         if environment.is_some() || request.environment.is_some() {
+             features.push(crate::RenderFeature::Hdri);
+@@ -1586,13 +1544,8 @@
+         {
+             features.push(crate::RenderFeature::Refraction);
+         }
+-        let Admission { estimated_total_bytes, .. } = self.admit_with_policy(&scene, &request, options, partial_plan)?;
+-        let environment_bytes =
+-            environment.as_ref().map_or(Ok(0), |e| e.required_bytes()).map_err(|e| JobError::new(ErrorCode::InvalidRequest, e.to_string()))?;
+-        let estimated_total_bytes = estimated_total_bytes
+-            .checked_add(environment_bytes)
+-            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "environment admission overflow"))?;
+-        self.check_request_sum(estimated_total_bytes, request_bytes, request.cpu_budget())?;
++        let (Admission { estimated_total_bytes, .. }, request_bytes) =
++            self.admit_submission(&scene, &request, options, environment.as_ref(), partial_plan)?;
+         let mut backend = crate::builtin_backend();
+         let descriptor = self.descriptor_for_request(&request)?;
+         let expected_executor = descriptor.id.clone();
+@@ -1625,12 +1578,10 @@
+         self.check_request_sum(estimated_total_bytes, request_bytes, request.cpu_budget())?;
+         let mut reservation = self.0.shared.budget.reserve(estimated_total_bytes)?;
+         let request_reservation = if request_bytes == 0 { None } else { Some(self.0.shared.budget.reserve(request_bytes)?) };
+-        let partial_credits = partial_plan
+-            .map(|policy| match policy {
+-                CpuPreviewPolicy::Shared(plan) => PartialCredits::new(plan, &mut reservation),
+-                CpuPreviewPolicy::Protected(plan) => PartialCredits::new_protected(plan, &mut reservation),
+-            })
+-            .transpose()?;
++        let partial_credits = partial_plan.map(|policy| match policy {
++            CpuPreviewPolicy::Shared(plan) => PartialCredits::new(plan, &mut reservation),
++            CpuPreviewPolicy::Protected(plan) => PartialCredits::new_protected(plan, &mut reservation),
++        }).transpose()?;
+         // Preserve the original CPU option capacities in the retained request and its lease.
+         // Registered executors instead move resource Arcs into work and keep a small public copy.
+         let (public_request, work_request) = if self.0.executor.is_some() {
+@@ -2158,9 +2109,7 @@
+ /// Provisional source-film observation, separate from complete-pass previews.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+ #[serde(rename_all = "snake_case")]
+-pub enum PartialPreviewProjection {
+-    TopLeftRepresentativeV1,
+-}
++pub enum PartialPreviewProjection { TopLeftRepresentativeV1 }
+ #[derive(Clone, Debug, Serialize)]
+ pub struct PartialPreviewInfo {
+     pub frame: FrameInfo,
+@@ -2180,12 +2129,8 @@
+ }
+ const _: [(); 1] = [(); (std::mem::size_of::<RenderPartialPreview>() + 2 * crate::MAX_RENDER_ID_BYTES + 256 <= 2048) as usize];
+ impl RenderPartialPreview {
+-    pub fn png(&self) -> &[u8] {
+-        &self.png
+-    }
+-    pub fn covered(&self) -> &[u16] {
+-        &self.covered
+-    }
++    pub fn png(&self) -> &[u8] { &self.png }
++    pub fn covered(&self) -> &[u16] { &self.covered }
+ }
+ struct PartialCreditState {
+     report: Option<super::ProtectedPreviewReport>,
+@@ -2201,9 +2146,7 @@
+     exhausted: AtomicBool,
+     _metadata: Reservation,
+ }
+-const _: [(); 1] =
+-    [(); (std::mem::size_of::<PartialCredits>() + std::mem::size_of::<PartialRunning>() + std::mem::size_of::<TaskSlot<PartialRunning>>() + 128
+-        <= 1024) as usize];
++const _: [(); 1] = [(); (std::mem::size_of::<PartialCredits>() + std::mem::size_of::<PartialRunning>() + std::mem::size_of::<TaskSlot<PartialRunning>>() + 128 <= 1024) as usize];
+ impl PartialCredits {
+     fn new(plan: super::PartialPreviewPlan, reservation: &mut Reservation) -> Result<Arc<Self>> {
+         Self::new_with_protection(plan, None, reservation)
+@@ -2212,18 +2155,13 @@
+         plan.validate()?;
+         Self::new_with_protection(plan.preview_plan(), Some(plan), reservation)
+     }
+-    fn new_with_protection(
+-        plan: super::PartialPreviewPlan,
+-        protected: Option<super::ProtectedPreviewPlan>,
+-        reservation: &mut Reservation,
+-    ) -> Result<Arc<Self>> {
++    fn new_with_protection(plan: super::PartialPreviewPlan, protected: Option<super::ProtectedPreviewPlan>, reservation: &mut Reservation) -> Result<Arc<Self>> {
+         plan.validate()?;
+         let metadata = reservation.split(1024)?;
+         let bytes = plan.slot_bytes()?.checked_mul(2).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial credit overflow"))?;
+         let free = reservation.split(bytes)?;
+         Ok(Arc::new(Self {
+-            plan,
+-            protected,
++            plan, protected,
+             state: Mutex::new(PartialCreditState { report: None, free, in_flight: false, closed: false }),
+             requested: AtomicBool::new(false),
+             exhausted: AtomicBool::new(false),
+@@ -2232,23 +2170,15 @@
+     }
+     fn request(&self) -> Result<bool> {
+         let state = self.state.lock().map_err(|_| JobError::new(ErrorCode::Internal, "partial credit lock poisoned"))?;
+-        if state.closed || self.exhausted.load(Ordering::Acquire) {
+-            return Ok(false);
+-        }
++        if state.closed || self.exhausted.load(Ordering::Acquire) { return Ok(false); }
+         self.requested.store(true, Ordering::Release);
+         Ok(true)
+     }
+     fn acquire(self: &Arc<Self>) -> Result<Option<ReturnReservation>> {
+         let mut state = self.state.lock().map_err(|_| JobError::new(ErrorCode::Internal, "partial credit lock poisoned"))?;
+         let bytes = self.plan.slot_bytes()?;
+-        if state.closed
+-            || state.in_flight
+-            || self.exhausted.load(Ordering::Acquire)
+-            || !self.requested.load(Ordering::Acquire)
+-            || state.free.bytes < bytes
+-        {
+-            return Ok(None);
+-        }
++        if state.closed || state.in_flight || self.exhausted.load(Ordering::Acquire)
++            || !self.requested.load(Ordering::Acquire) || state.free.bytes < bytes { return Ok(None); }
+         let reservation = state.free.split(bytes)?;
+         state.in_flight = true;
+         self.requested.store(false, Ordering::Release);
+@@ -2259,10 +2189,7 @@
+         self.requested.store(false, Ordering::Release);
+     }
+     fn close(&self) {
+-        let mut state = match self.state.lock() {
+-            Ok(state) => state,
+-            Err(error) => error.into_inner(),
+-        };
++        let mut state = match self.state.lock() { Ok(state) => state, Err(error) => error.into_inner() };
+         state.closed = true;
+         state.in_flight = false;
+         self.requested.store(false, Ordering::Release);
+@@ -2299,20 +2226,12 @@
+                 state
+             }
+         };
+-        if self.in_flight {
+-            state.in_flight = false;
+-        }
++        if self.in_flight { state.in_flight = false; }
+         if !state.closed {
+             let limit = self.credits.plan.slot_bytes().ok().and_then(|v| v.checked_mul(2));
+             if state.free.bytes.checked_add(reservation.bytes).zip(limit).is_some_and(|(total, limit)| total <= limit) {
+-                if state.free.merge_from(&mut reservation).is_err() {
+-                    state.closed = true;
+-                    let _ = state.free.shrink(0);
+-                }
+-            } else {
+-                state.closed = true;
+-                let _ = state.free.shrink(0);
+-            }
++                if state.free.merge_from(&mut reservation).is_err() { state.closed = true; let _ = state.free.shrink(0); }
++            } else { state.closed = true; let _ = state.free.shrink(0); }
+         }
+         drop(state);
+         // A closed sink releases this uniquely held reservation globally.
+@@ -2336,9 +2255,7 @@
+     next_sequence: u64,
+ }
+ impl PartialRunning {
+-    fn new(credits: Arc<PartialCredits>) -> Self {
+-        Self { pending: None, lease: None, credits, next_sequence: 1 }
+-    }
++    fn new(credits: Arc<PartialCredits>) -> Self { Self { pending: None, lease: None, credits, next_sequence: 1 } }
+ }
+ impl JobHandle {
+     /// Real producer usage, unavailable until a protected task was actually constructed.
+@@ -2351,9 +2268,7 @@
+     /// Request presentation only; this is not a visual-authority certificate.
+     pub fn request_partial_preview(&self) -> Result<bool> {
+         let terminal = self.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render status lock poisoned"))?.progress.phase.terminal();
+-        if terminal {
+-            return Ok(false);
+-        }
++        if terminal { return Ok(false); }
+         self.0.partial.as_ref().map_or(Ok(false), |credits| credits.request())
+     }
+     pub fn partial_preview_exhausted(&self) -> Result<bool> {
+@@ -2375,33 +2290,20 @@
+         let partial = self.partial.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "partial output without its policy"))?.get_mut()?;
+         let plan = partial.credits.plan;
+         let source_pixels = u64::from(plan.source_width()) * u64::from(plan.source_height());
+-        let target = self
+-            .handle
+-            .0
+-            .request
+-            .raytrace
+-            .as_ref()
+-            .and_then(|v| v.progressive)
+-            .ok_or_else(|| JobError::new(ErrorCode::Internal, "partial output without progressive intent"))?
+-            .samples_per_pixel;
++        let target = self.handle.0.request.raytrace.as_ref().and_then(|v| v.progressive)
++            .ok_or_else(|| JobError::new(ErrorCode::Internal, "partial output without progressive intent"))?.samples_per_pixel;
+         let covered_limit = plan.covered_bytes()?;
+-        if partial.lease.is_none()
+-            || partial.pending.is_some()
+-            || completed_passes >= target
+-            || updated_prefix >= source_pixels
+-            || (completed_passes == 0 && updated_prefix == 0)
+-            || covered.len() as u64 != plan.pixels()
++        if partial.lease.is_none() || partial.pending.is_some() || completed_passes >= target || updated_prefix >= source_pixels
++            || (completed_passes == 0 && updated_prefix == 0) || covered.len() as u64 != plan.pixels()
+             || (covered.capacity() as u64).checked_mul(2).is_none_or(|v| v > covered_limit)
+-            || png.capacity() as u64 > plan.encoded_limit()?
+-        {
++            || png.capacity() as u64 > plan.encoded_limit()? {
+             return Err(JobError::new(ErrorCode::LimitExceeded, "partial payload exceeds its admitted frontier or capacities"));
+         }
+         // This sole sidecar verification scan was included in the producer's precharge.
+         for (index, count) in covered.iter().enumerate() {
+             self.handle.0.cancel.check()?;
+             let source = plan.source_index(index)? as u64;
+-            let samples = completed_passes
+-                .checked_add(u32::from(source < updated_prefix))
++            let samples = completed_passes.checked_add(u32::from(source < updated_prefix))
+                 .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial sample count overflow"))?;
+             if u32::from(*count) > samples {
+                 return Err(JobError::new(ErrorCode::Internal, "partial coverage exceeds committed source samples"));
+@@ -2421,39 +2323,21 @@
+         let next = sequence.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial preview sequence exhausted"))?;
+         let plan = partial.credits.plan;
+         let info = FrameInfo {
+-            job: self.handle.0.id,
+-            scene_generation: self.handle.0.scene_generation,
+-            backend: self.handle.0.resolved.backend.clone(),
+-            executor: self.handle.0.resolved.executor.clone(),
+-            width: plan.width(),
+-            height: plan.height(),
+-            encoding: ColourEncoding::Srgb,
+-            alpha: AlphaConvention::Straight,
+-            png_bytes: publication.png.len() as u64,
+-            png_sha256: format!("{:x}", digest.finalize()),
++            job: self.handle.0.id, scene_generation: self.handle.0.scene_generation,
++            backend: self.handle.0.resolved.backend.clone(), executor: self.handle.0.resolved.executor.clone(),
++            width: plan.width(), height: plan.height(), encoding: ColourEncoding::Srgb, alpha: AlphaConvention::Straight,
++            png_bytes: publication.png.len() as u64, png_sha256: format!("{:x}", digest.finalize()),
+         };
+-        let metadata = std::mem::size_of::<RenderPartialPreview>()
+-            .checked_add(64 + 2 * crate::MAX_RENDER_ID_BYTES)
++        let metadata = std::mem::size_of::<RenderPartialPreview>().checked_add(64 + 2 * crate::MAX_RENDER_ID_BYTES)
+             .and_then(|v| v.checked_add(info.png_sha256.capacity()));
+-        if metadata.is_none_or(|v| v > 2048) {
+-            return Err(JobError::new(ErrorCode::LimitExceeded, "partial payload metadata exceeds its slot"));
+-        }
++        if metadata.is_none_or(|v| v > 2048) { return Err(JobError::new(ErrorCode::LimitExceeded, "partial payload metadata exceeds its slot")); }
+         // No Data lock while touching the credit coordinator.
+         publication.lease.published()?;
+         let PartialPublication { png, pending, lease } = publication;
+         let preview = Arc::new(RenderPartialPreview {
+-            info: PartialPreviewInfo {
+-                frame: info,
+-                sequence,
+-                source_width: plan.source_width(),
+-                source_height: plan.source_height(),
+-                completed_passes: pending.completed_passes,
+-                updated_prefix: pending.updated_prefix,
+-                projection: PartialPreviewProjection::TopLeftRepresentativeV1,
+-            },
+-            png,
+-            covered: pending.covered,
+-            _lease: lease,
++            info: PartialPreviewInfo { frame: info, sequence, source_width: plan.source_width(), source_height: plan.source_height(),
++                completed_passes: pending.completed_passes, updated_prefix: pending.updated_prefix, projection: PartialPreviewProjection::TopLeftRepresentativeV1 },
++            png, covered: pending.covered, _lease: lease,
+         });
+         let mut data = self.handle.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render partial publication lock poisoned"))?;
+         if self.handle.0.cancel.is_cancelled() || data.progress.phase.terminal() {
+@@ -2485,36 +2369,25 @@
+         let aggregate = plan.aggregate_limit()?;
+         let expected_v = plan.snapshot_work()?.checked_mul(u64::from(report.accepted_snapshots));
+         let used = report.ordinary_used.checked_add(report.presentation_used);
+-        if report.policy_version != 1
+-            || report.ordinary_limit != plan.ordinary_limit()
+-            || report.presentation_limit != presentation
+-            || report.aggregate_limit != aggregate
+-            || report.quota_limit != plan.quota_limit()
+-            || report.ordinary_used > report.ordinary_limit
+-            || report.presentation_used > presentation
+-            || used.is_none_or(|v| v > aggregate)
+-            || expected_v != Some(report.presentation_used)
+-            || report.accepted_snapshots > report.next_milestone_index
++        if report.policy_version != 1 || report.ordinary_limit != plan.ordinary_limit()
++            || report.presentation_limit != presentation || report.aggregate_limit != aggregate
++            || report.quota_limit != plan.quota_limit() || report.ordinary_used > report.ordinary_limit
++            || report.presentation_used > presentation || used.is_none_or(|v| v > aggregate)
++            || expected_v != Some(report.presentation_used) || report.accepted_snapshots > report.next_milestone_index
+             || report.next_milestone_index > report.quota_limit
+             || report.quota_exhausted != (report.accepted_snapshots == report.quota_limit)
+-            || report.milestones_complete != (report.next_milestone_index == report.quota_limit)
+-        {
++            || report.milestones_complete != (report.next_milestone_index == report.quota_limit) {
+             return Err(JobError::new(ErrorCode::Internal, "protected work report violates its actual admission"));
+         }
+         let mut state = self.state.lock().map_err(|_| JobError::new(ErrorCode::Internal, "protected report lock poisoned"))?;
+-        if state.report.is_some_and(|previous| {
+-            previous.ordinary_used > report.ordinary_used
+-                || previous.presentation_used > report.presentation_used
+-                || previous.accepted_snapshots > report.accepted_snapshots
+-                || previous.next_milestone_index > report.next_milestone_index
+-        }) {
++        if state.report.is_some_and(|previous| previous.ordinary_used > report.ordinary_used
++            || previous.presentation_used > report.presentation_used || previous.accepted_snapshots > report.accepted_snapshots
++            || previous.next_milestone_index > report.next_milestone_index) {
+             drop(state);
+             return Err(JobError::new(ErrorCode::Internal, "protected work report counters moved backwards"));
+         }
+         state.report = Some(report);
+-        if report.quota_exhausted {
+-            self.exhaust();
+-        }
++        if report.quota_exhausted { self.exhaust(); }
+         Ok(())
+     }
+ }
+@@ -2527,9 +2400,7 @@
+         make_slot: impl FnOnce(crate::raytrace::image::ImageTask) -> Result<TaskSlot<crate::raytrace::image::ImageTask>>,
+     ) -> Result<Self> {
+         // ImageTask is already real, even if its host wrapper cannot be allocated.
+-        if let Some(credits) = report_sink {
+-            credits.store_report(task.protected_preview_report())?;
+-        }
++        if let Some(credits) = report_sink { credits.store_report(task.protected_preview_report())?; }
+         make_slot(task).map(Self::Raytrace)
+     }
+ }
+--- a/crates/render/src/job/image.rs
++++ b/crates/render/src/job/image.rs
+@@ -771,10 +771,14 @@
+         let radiance = crate::studio::shade_weighted(surface, n, view, studio_weights.unwrap_or([1.0; 3])).map_err(|e| invalid(&e.to_string()))?;
+         let mapped = crate::studio::tone_map(radiance).map_err(|e| invalid(&e.to_string()))?;
+         [mapped.x, mapped.y, mapped.z]
+-    } else if let Some(weights) = studio_weights {
++    } else if let Some(light_weights) = studio_weights {
+         let [r, g, b] = t.colour;
+         let surface = crate::surface::OpaqueSurface::new(Vec3::new(r, g, b), 0.0, 1.0, 1.5).map_err(|e| invalid(&e.to_string()))?;
+-        let radiance = crate::studio::shade_weighted(surface, n, back, weights).map_err(|e| invalid(&e.to_string()))?;
++        let view = eye.map_or(back, |eye| {
++            let world = t.world.iter().zip(weights).fold(Vec3::ZERO, |p, (v, w)| p + *v * (w / sum));
++            eye - world
++        });
++        let radiance = crate::studio::shade_weighted(surface, n, view, light_weights).map_err(|e| invalid(&e.to_string()))?;
+         let mapped = crate::studio::tone_map(radiance).map_err(|e| invalid(&e.to_string()))?;
+         [mapped.x, mapped.y, mapped.z]
+     } else {

@@ -1,0 +1,456 @@
+{
+  "schema": 1,
+  "status": "ACTUALLY_ADOPTED_SOURCE_CHECKPOINT_UNFORMATTED_UNCOMPILED_UNRUN",
+  "source_paths": 19,
+  "production_draft": 8938,
+  "production_head": "a077906234972dbbf11e80c54893f85ece97c8b7",
+  "base": {
+    "description": "Exact actual C14 post-format protected27 source, not production HEAD alone and not an arbitrary main.",
+    "post_format_manifest_sha256": "78a09f83c809f11e919c5d6957438389f442d42b05694aebcd39fcdb1786010d",
+    "public_foundation": "../protected-combined-source/README.md",
+    "public_formatter_delta": "../next-render-source/c14-postformat-delta.patch",
+    "foundation_archive_commit": "0175e0c5e618a6308d92818e911e8be1e43fe0c8",
+    "composition_policy": "Cumulative ALTERNATIVE to all overlapping next-render-source increments and older manual/W2/material/Photographic/Raster packets. Reconstruct the exact C14 post-format base, then apply this cumulative patch once. Never add it on top of its own increments."
+  },
+  "authorship": "SolidCraft Render team under 0xlillith: Worker #1 manual-final/engine/UI tests, Worker #2 optical producer/rebind/original numerical cases, Worker #3 material routing/locales and directional core, Designer Photographic corrections, Engineer exact composition and compatibility; independent source/math reviewers retained.",
+  "original_composition_sha256": "605292e1edb0ffaa2e1830cc3d277f006e6fc218f8ec6fe0dc2bc27b321ffe69",
+  "adoption_receipt_sha256": "17ad50ebea48bb245ec807b916aded3d716464764b497f4240139019f9fcbfbb",
+  "adopted_source_manifest_sha256": "5ec1e34bfc91f4e0dc5970191bc34199ad856d2cd998a96f605e01662bf439f8",
+  "adopted_source_members_checked_by_ROOT": 3571,
+  "independent_final_source_review_sha256": "68f7e54b47202c5d6bb09ec0d698f9cf81b3071f0497c64713bc77576b8bef73",
+  "source_review_verdict": "No remaining actionable source blocker found in exact V2. Source closure only; not type, layout, runtime, native or readiness qualification.",
+  "layer_names_and_hashes": [
+    {
+      "label": "manual-final V1+V2 current rebind and ROOT engine compatibility V2",
+      "manifest_sha256": "d7daad500ebe8b26c2aa365bbea15dc7d7c833490843d11cb319ab619e120a1c"
+    },
+    {
+      "label": "progressive optics + index-matched shells + camera TIR current rebind",
+      "manifest_sha256": "e1b807f437cc2cbc0c715448ced0e7b5c69752e1369dfd7b5d70ad7e8d9d047e"
+    },
+    {
+      "label": "CPU material routing V2 actual postformat224 to247",
+      "manifest_sha256": "21f2122f40e8d1d8d984bb8e5cb32d7588baba28fce50e3ee48829174be67c09"
+    },
+    {
+      "label": "progressive UI bridge",
+      "manifest_sha256": "c966c69eba46862feb5e9b09631b05bc14a89249943aa90d84fae500edc9fcfe"
+    },
+    {
+      "label": "method-specific certification note",
+      "manifest_sha256": "7e48cf80e3a565a4b81f0237dd66d5e74336bb74645ffed9631e6e8747bbcde1"
+    },
+    {
+      "label": "five manual-final/UI optics tests247to252",
+      "manifest_sha256": "535019a69e5601034a518e4d76d7ee4ad6605f3748b7dc3487212c9b01a3a5a2"
+    },
+    {
+      "label": "actual-source Raster perspective correction",
+      "manifest_sha256": "143f709294d383e372fa4871990e288a3db4dc1068218946780656c908366c72"
+    },
+    {
+      "label": "Photographic test contract",
+      "manifest_sha256": "5d0d064e7d936df9e55e3aabd64e646a5314647e57cb6c51a82e6400b8b18415"
+    },
+    {
+      "label": "Photographic cancellation cursor commit",
+      "manifest_sha256": "e2c069db6665aefc2c66b655b2c7982bfea288e478c9b8808d8eed440d1f569a"
+    },
+    {
+      "label": "Raster directional core without consumer",
+      "manifest_sha256": "0fc8fe682940a86a68dfb4befda0a2ff7697c747078290a0358ef6414a1b99d9"
+    },
+    {
+      "label": "Explicit new supported-feature UI adaptation, no original unrelated guard removed",
+      "manifest_sha256": "aaf2baa59b9ce804d650fecc965ef167e744bf72572ee2d646e7580426c4f72d"
+    },
+    {
+      "label": "UI DTO-stage correction V2: Fixed remainsNone before motor, actual snapshots stay16/0",
+      "manifest_sha256": "7619dbfeb649aa8c186a7ccb51630550022cdddcc46e53085be7164a7caff62b"
+    }
+  ],
+  "source_files": [
+    {
+      "path": "assets/locales/pending/cpu-optical-certification.json",
+      "before_sha256": null,
+      "candidate_sha256": "8eb71a90f0ac0d497c9bffc922e99871d802942c8c85d4213a66a61ceb79a764",
+      "before_bytes": 0,
+      "candidate_bytes": 3542,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 0
+      },
+      "candidate_newlines": {
+        "CRLF": 0,
+        "LF": 29
+      }
+    },
+    {
+      "path": "assets/locales/pending/cpu-optical-materials.json",
+      "before_sha256": null,
+      "candidate_sha256": "5e8a44d004fd2f7d865f244c91a9fb1cf55b4bcea32810f7b9f9eff90c778067",
+      "before_bytes": 0,
+      "candidate_bytes": 14577,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 0
+      },
+      "candidate_newlines": {
+        "CRLF": 0,
+        "LF": 110
+      }
+    },
+    {
+      "path": "crates/engine/src/cmd/render.rs",
+      "before_sha256": "3c9d5ff6a12618d51e8842c509a314f8e6f4bb56026d77c7c77eb350f3e8d87a",
+      "candidate_sha256": "c8e029139a5a01efa9196dd45c419fec4a6191f752a86e3b023e2bb0e0fc3ba4",
+      "before_bytes": 41055,
+      "candidate_bytes": 41491,
+      "before_newlines": {
+        "CRLF": 424,
+        "LF": 424
+      },
+      "candidate_newlines": {
+        "CRLF": 424,
+        "LF": 424
+      },
+      "test_declarations_before": 4,
+      "test_declarations_candidate": 4
+    },
+    {
+      "path": "crates/engine/src/cmd/render/jobs.rs",
+      "before_sha256": "1e38222a2b825264e3cab0308fc73141b2fb4546c06600fe370e7da4dddffbb3",
+      "candidate_sha256": "ff82cad9aae9f57c81c0da40bd4a7ebbfc390cbbc7fe70ef498eb21a5eb07eea",
+      "before_bytes": 60448,
+      "candidate_bytes": 63778,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 1188
+      },
+      "candidate_newlines": {
+        "CRLF": 0,
+        "LF": 1229
+      },
+      "test_declarations_before": 8,
+      "test_declarations_candidate": 8
+    },
+    {
+      "path": "crates/engine/src/render_jobs.rs",
+      "before_sha256": "b11fd62f42692c5701a08f391c2876de060fde766bf3b3639b3b3eabb2558bd2",
+      "candidate_sha256": "5655d5f5ae2c80560f9e067ca24424c0561cc5969260ff0343660e4d198909aa",
+      "before_bytes": 32996,
+      "candidate_bytes": 42740,
+      "before_newlines": {
+        "CRLF": 690,
+        "LF": 690
+      },
+      "candidate_newlines": {
+        "CRLF": 835,
+        "LF": 835
+      },
+      "test_declarations_before": 10,
+      "test_declarations_candidate": 13
+    },
+    {
+      "path": "crates/render/src/job/host.rs",
+      "before_sha256": "617532ab0cbe34a2a6faed82675ca45cf0324aecec3f3c5a8a77c1b69fefef21",
+      "candidate_sha256": "577295a655ab5a8f6204da2b9d2a6a18d3d2bfeb877993a0dfffdc58462a2551",
+      "before_bytes": 113761,
+      "candidate_bytes": 115822,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 2535
+      },
+      "candidate_newlines": {
+        "CRLF": 2406,
+        "LF": 2406
+      },
+      "test_declarations_before": 8,
+      "test_declarations_candidate": 8
+    },
+    {
+      "path": "crates/render/src/job/image.rs",
+      "before_sha256": "c8c30589c1f25c034115badf3833f7a44f20b03513957ac6f735a3c776a4c2d9",
+      "candidate_sha256": "0e6fa062eba9d5c0f4899fc92d7e7e667bbad295b35ff6bc8addbc9db7fd6285",
+      "before_bytes": 34328,
+      "candidate_bytes": 34526,
+      "before_newlines": {
+        "CRLF": 809,
+        "LF": 809
+      },
+      "candidate_newlines": {
+        "CRLF": 813,
+        "LF": 813
+      },
+      "test_declarations_before": 0,
+      "test_declarations_candidate": 0
+    },
+    {
+      "path": "crates/render/src/job/image_tests.rs",
+      "before_sha256": "4630dd681b2655fabbc8d4eb1f5e28b9d668f137ba7f8ba76c5cdfcaa22a37a0",
+      "candidate_sha256": "4878271823870137cddb4f7f96c61b7e7e17bbfe46488858fcaedd9448c505dd",
+      "before_bytes": 9587,
+      "candidate_bytes": 19561,
+      "before_newlines": {
+        "CRLF": 204,
+        "LF": 204
+      },
+      "candidate_newlines": {
+        "CRLF": 402,
+        "LF": 402
+      },
+      "test_declarations_before": 9,
+      "test_declarations_candidate": 13
+    },
+    {
+      "path": "crates/render/src/job/mod.rs",
+      "before_sha256": "282667b026f548dbf3167a2a6e06d3526e71065a0826f9a2ee787c726e032b26",
+      "candidate_sha256": "601391ecc07447e6c65cb3b790c7fe83b839374fa600fc7f79a2668cdf7b3eb0",
+      "before_bytes": 61840,
+      "candidate_bytes": 62159,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 1472
+      },
+      "candidate_newlines": {
+        "CRLF": 0,
+        "LF": 1477
+      },
+      "test_declarations_before": 4,
+      "test_declarations_candidate": 4
+    },
+    {
+      "path": "crates/render/src/job/photographic.rs",
+      "before_sha256": "4baeb099d56c6310c85bd0931276e41a8aba5f5fbd223956dabe2c0b2c00c061",
+      "candidate_sha256": "74756050d449a3333130e54d54b72aed9de2d54ca535d5b50803c30a9ec35c4b",
+      "before_bytes": 24993,
+      "candidate_bytes": 28171,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 540
+      },
+      "candidate_newlines": {
+        "CRLF": 0,
+        "LF": 596
+      },
+      "test_declarations_before": 5,
+      "test_declarations_candidate": 7
+    },
+    {
+      "path": "crates/render/src/raytrace/dielectric_tests.rs",
+      "before_sha256": "376e5382471300aef16a8b09ec0de756ee597197ab94f5b69ad7a020fad49b70",
+      "candidate_sha256": "cd6654b63e310fa8c06972060e00c65d056fa691d52c081f2c01fbf41fd2c5cd",
+      "before_bytes": 33599,
+      "candidate_bytes": 34054,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 730
+      },
+      "candidate_newlines": {
+        "CRLF": 0,
+        "LF": 735
+      },
+      "test_declarations_before": 33,
+      "test_declarations_candidate": 33
+    },
+    {
+      "path": "crates/render/src/raytrace/image.rs",
+      "before_sha256": "b12ef2844d8fa08e5bf99f58d09402d420a05321e62bfe38fb7abbdcc970ab82",
+      "candidate_sha256": "3210cbd9115bd26a5f9bfb7a4e121e79afe2070e17cf02dc8da7feed110ae731",
+      "before_bytes": 108376,
+      "candidate_bytes": 112115,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 2236
+      },
+      "candidate_newlines": {
+        "CRLF": 0,
+        "LF": 2298
+      },
+      "test_declarations_before": 0,
+      "test_declarations_candidate": 0
+    },
+    {
+      "path": "crates/render/src/raytrace/image_tests.rs",
+      "before_sha256": "b3a7ce98e799cdaca59674e029c93845ebb28728df3e742694e16a9b3ca63d41",
+      "candidate_sha256": "08bbf206da1436f39c225a14529135b47f7381fc3c278ed2c1dd9564c5c5747c",
+      "before_bytes": 75303,
+      "candidate_bytes": 114405,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 1672
+      },
+      "candidate_newlines": {
+        "CRLF": 0,
+        "LF": 2414
+      },
+      "test_declarations_before": 42,
+      "test_declarations_candidate": 60
+    },
+    {
+      "path": "crates/render/src/raytrace/primary_aa_tests.rs",
+      "before_sha256": "4e74a020643d5b5e7dede2e3a2ced39023ac3f40044a207e19a66c11c921b526",
+      "candidate_sha256": "37ac1993d703bb524d038ec061d621fe0facb44dbdd6d11861d830ae6123d916",
+      "before_bytes": 78499,
+      "candidate_bytes": 89108,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 1581
+      },
+      "candidate_newlines": {
+        "CRLF": 0,
+        "LF": 1762
+      },
+      "test_declarations_before": 41,
+      "test_declarations_candidate": 46
+    },
+    {
+      "path": "crates/render/src/studio.rs",
+      "before_sha256": "c4d24087a01421c528af3debb6eabd7db02f4d799704d967f5df01564ae60b72",
+      "candidate_sha256": "cf06738ea3c14638eb43ce5c05516a6a95d69ac1658464932bd13e54fb4fedf5",
+      "before_bytes": 3437,
+      "candidate_bytes": 11331,
+      "before_newlines": {
+        "CRLF": 68,
+        "LF": 68
+      },
+      "candidate_newlines": {
+        "CRLF": 218,
+        "LF": 218
+      },
+      "test_declarations_before": 2,
+      "test_declarations_candidate": 8
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace.rs",
+      "before_sha256": "a2ddd1f7c61c973d638162c115e58d20cab1060568727b13bea0d1506186a950",
+      "candidate_sha256": "dd3dc088fdc1080a493eb52f87978fbe8bd36abdfe844f7bbf47b56a986aa7ed",
+      "before_bytes": 100730,
+      "candidate_bytes": 109538,
+      "before_newlines": {
+        "CRLF": 2242,
+        "LF": 2242
+      },
+      "candidate_newlines": {
+        "CRLF": 2395,
+        "LF": 2395
+      },
+      "test_declarations_before": 0,
+      "test_declarations_candidate": 0
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_cpu.rs",
+      "before_sha256": "a1534b73a972fffbfad50b831a00e3166c3d668ae7fb978b1286a3f390f4ade8",
+      "candidate_sha256": "aa110b13e97c6887f64f449c170c3cdcdf7ba11ec0399372bd0c6134152f158b",
+      "before_bytes": 27471,
+      "candidate_bytes": 27938,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 616
+      },
+      "candidate_newlines": {
+        "CRLF": 0,
+        "LF": 623
+      },
+      "test_declarations_before": 0,
+      "test_declarations_candidate": 0
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_materials.rs",
+      "before_sha256": "fec97d2e2ae25068b8024e432457fa6496d659e22a1beb3b312f25eacea5c138",
+      "candidate_sha256": "e290b9e2404d68524a6a6cb4355b3f11f8bb989e370c869b2a262b1faafa8519",
+      "before_bytes": 42669,
+      "candidate_bytes": 49558,
+      "before_newlines": {
+        "CRLF": 929,
+        "LF": 929
+      },
+      "candidate_newlines": {
+        "CRLF": 1045,
+        "LF": 1045
+      },
+      "test_declarations_before": 0,
+      "test_declarations_candidate": 0
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before_sha256": "06e0e59b561b84f358a12961d51eda2cab7f70fe4930fea0959d91c11b589cac",
+      "candidate_sha256": "edc06b2999b190b85495db5496d68801f77f370a7c8e2763c25d7610841a085b",
+      "before_bytes": 478983,
+      "candidate_bytes": 543384,
+      "before_newlines": {
+        "CRLF": 0,
+        "LF": 8870
+      },
+      "candidate_newlines": {
+        "CRLF": 0,
+        "LF": 9939
+      },
+      "test_declarations_before": 224,
+      "test_declarations_candidate": 252
+    }
+  ],
+  "patch_sha256": "946351c9a15cf1d42329d9abfed6f6ac8a39a7ff11427337a0ca933d1df259b8",
+  "patch_bytes": 279580,
+  "patch_parts": [
+    {
+      "path": "candidate-01.patch",
+      "bytes": 97508,
+      "sha256": "00fe3f8074c94a0551215b88482e84a1c08d2cc54e11b8ef97b877bece8f2019"
+    },
+    {
+      "path": "candidate-02.patch",
+      "bytes": 85753,
+      "sha256": "8777b829d69ea48605d1ea63f68a050038d192d5138ef73e6bf6a00e92046dd7"
+    },
+    {
+      "path": "candidate-03.patch",
+      "bytes": 96319,
+      "sha256": "e27e66f25f6eba103c085f8148b5b3e376cc9a00720ed8f1fc78b82d68c7e373"
+    }
+  ],
+  "patch_end_of_line_policy": {
+    "hunks": "LF-normalized unified text; no universal RAW patch replay claim.",
+    "reconstruction": "Verify before RAW hashes, normalize only CRLF to LF for textual patch replay, reconstruct candidate endpoint line endings as listed, then verify exact candidate RAW bytes and SHA256. Eight endpoints require CRLF restoration. The actual adoption copied verified RAW candidates; it did not git-apply/fuzzy-apply this patch.",
+    "CRLF_candidate_endpoints": [
+      "crates/engine/src/cmd/render.rs",
+      "crates/engine/src/render_jobs.rs",
+      "crates/render/src/job/host.rs",
+      "crates/render/src/job/image.rs",
+      "crates/render/src/job/image_tests.rs",
+      "crates/render/src/studio.rs",
+      "crates/ui-egui/src/render_workspace.rs",
+      "crates/ui-egui/src/render_workspace_materials.rs"
+    ],
+    "normalized_hunks_reconstructed_and_RAW_endpoint_hash_verified": 105
+  },
+  "new_test_declarations": 66,
+  "UI_declarations": 252,
+  "UI_original224_RAW_prefix_exact_bytes": 478983,
+  "planned_development_selection": {
+    "cases": 242,
+    "expected_positive_CPU_markers": 49,
+    "status": "PLANNED_NOT_RUN_NOT_YET_A_FROZEN_RECIPE_CONTRACT"
+  },
+  "tests_executed_on_this_source": 0,
+  "formatter_build_runtime_or_validation_grant_from_this_checkpoint": false,
+  "historical_C14_outcome_on_its_own_source": {
+    "passed": 36,
+    "failed": 1,
+    "unrun": 108,
+    "original_Pause_regression": "PASS with both required positive CPU markers",
+    "transferred_to_this_source": false
+  },
+  "excluded_private_successors": [
+    "Preference-compliant auto-Result behavior",
+    "Additional strict camera-TIR acceptance",
+    "Actual Raster directional consumer/wiring"
+  ],
+  "pending": [
+    "Actual formatter/check and fresh post-format freeze",
+    "Sole-builder own current source-bound build/artifact/inventory and applicable tests",
+    "Clippy/default wasm/repository/full gates",
+    "Native mouse/keyboard final accumulation/cadence/export/cancellation/input acceptance",
+    "Detailed-scene convergence and output-envelope/CPU-Raster-GPU parity"
+  ]
+}

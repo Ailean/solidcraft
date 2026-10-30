@@ -83,7 +83,7 @@ The original 516-case core result remains bound to its exact unchanged core sour
 <!-- render-progress-evidence-20261030T1813 -->
 ## Progress by consolidated issue
 
-[Evidence-milestone chart for U01-U17](progress/README.md): 17 open items, partial code in12 and earlier partial native improvements in8; no item fully resolved end to end. These are milestones, not percentages of effort or an ETA. Current C16 stopped at RAM admission before any build/tests.
+[Current U01-U17 evidence-milestone chart after C17](progress-c17/README.md): 17 open items, partial code in13 and earlier partial native improvements in8; none fully resolved end to end. C17 ran69 cases:68 passed,1 failed,184 remain unrun; no full current gate or desktop/GPU acceptance. These are milestones, not effort percentages or an ETA. [Earlier pre-C17 snapshot](progress/README.md) is preserved as history.
 
 <!-- next-render-source-units-20261030 -->
 ## Separate reviewed source units

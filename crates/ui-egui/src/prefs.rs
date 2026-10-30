@@ -633,10 +633,6 @@ preference_settings! {
     /// Up/Down and the wheel over a focused value field step its plain number (`value_step`,
     /// #2320). Off by default: the keys move the text cursor and the wheel scrolls, as before.
     step_values: bool = false, PAGE_DESIGN => check_id("ui.step_values");
-    /// New symmetric surface extrudes go their distance each way, as before they matched solid
-    /// extrudes; off by default: the distance is the total, split evenly around the start plane.
-    /// Saved designs keep the reading they stored either way.
-    surface_extrude_symmetric_per_side: bool = false, PAGE_DESIGN => check_id("prefs.surface_extrude_symmetric_per_side");
     /// When SMLib's full check runs while features are computed (`diagnostics.validation`):
     /// `each_feature` (the default) checks the bodies each feature keeps once; `each_step`, as
     /// before, checks after every sweep, boolean and blend; `off` (experimental) never does.
@@ -1126,8 +1122,6 @@ fn defaults(app: &mut SolveApp, page: usize) {
 /// the interface scale.
 pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
     apply_network(&app.preferences);
-    // Surface Extrude reads its symmetric reading from the session.
-    app.session.surface_extrude_symmetric_per_side = app.preferences.surface_extrude_symmetric_per_side;
     // The features computed from now on are checked as the preference says.
     app.session.set_validation(app.preferences.validation);
     // The profiler records while the preference is on (switched when it changes; at start-up only
@@ -2460,39 +2454,13 @@ mod tests {
     #[test]
     fn saved_preferences_with_a_removed_setting_still_load() {
         use serde_json::json;
-        let saved = json!({"length_decimals": 4, "metric_tap_drill_major_less_pitch": true});
-        let p = serde_json::from_value::<super::Prefs>(saved.clone()).unwrap();
-        assert_eq!(p.length_decimals, 4);
-        assert_eq!(super::lenient(&saved).length_decimals, 4);
-        assert!(serde_json::to_value(&p).unwrap().get("metric_tap_drill_major_less_pitch").is_none(), "not written back");
-    }
-
-    /// New symmetric surface extrudes read their distance as the total, as solid extrudes do; the
-    /// preference brings back the distance on each side they took before. It reaches the command
-    /// whether set through the control channel or the Preferences page, and survives a new design.
-    #[test]
-    fn the_surface_extrude_preference_keeps_the_distance_on_each_side() {
-        use serde_json::json;
-        let height = |h: &mut crate::scenario::Harness, name: &str| {
-            h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
-            h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[10,10]})).unwrap();
-            h.app.run("sketch.finish", json!({})).unwrap();
-            h.app.run("surface.extrude", json!({"distance":"10 mm","direction":"symmetric","body_name":name})).unwrap();
-            let st = h.app.session.world_state().unwrap();
-            let b = st.body(name).unwrap().mesh().bounds();
-            b.max.z - b.min.z
-        };
-        let mut h = crate::scenario::Harness::new();
-        h.frames(1);
-        assert!(!h.app.preferences.surface_extrude_symmetric_per_side, "off by default");
-        assert!((height(&mut h, "Total") - 10.0).abs() < 1e-7);
-        let mut h = crate::scenario::Harness::new();
-        h.call("ui.prefs", json!({"surface_extrude_symmetric_per_side": true}));
-        h.frames(2);
-        assert!(h.app.session.surface_extrude_symmetric_per_side);
-        assert!((height(&mut h, "Each") - 20.0).abs() < 1e-7);
-        h.app.run("file.new", json!({})).unwrap();
-        assert!(h.app.session.surface_extrude_symmetric_per_side);
+        for removed in ["metric_tap_drill_major_less_pitch", "surface_extrude_symmetric_per_side"] {
+            let saved = json!({"length_decimals": 4, removed: true});
+            let p = serde_json::from_value::<super::Prefs>(saved.clone()).unwrap();
+            assert_eq!(p.length_decimals, 4, "{removed}");
+            assert_eq!(super::lenient(&saved).length_decimals, 4, "{removed}");
+            assert!(serde_json::to_value(&p).unwrap().get(removed).is_none(), "{removed} is not written back");
+        }
     }
 
     #[test]

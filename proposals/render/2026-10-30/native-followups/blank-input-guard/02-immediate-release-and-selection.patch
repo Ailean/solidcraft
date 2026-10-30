@@ -1,0 +1,109 @@
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -8057,3 +8057,106 @@
+     assert!(!h.app.render_workspace.interactive.pending(), "neither observation dispatches Snapshot");
+     h.app.run("render.interactive", json!({"action":"off"})).unwrap();
+ }
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_accepted_image_drag_setting_edit_and_immediate_release_never_applies_hidden_target() {
++    let Some((mut h, mut time, at)) =
++        interactive_canvas_input_fixture("interactive_accepted_image_drag_setting_edit_and_immediate_release_never_applies_hidden_target")
++    else {
++        return;
++    };
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    let job = interactive_recovery_require_success(&mut h, time + 0.3, time + 0.4);
++    time += 0.4;
++    interactive_canvas_input_frame(&mut h, &mut time, vec![egui::Event::PointerMoved(at)]);
++    let (accepted, samples, complete, texture) = interactive::test_cache(&h.app).unwrap();
++    assert_eq!(accepted.job, job);
++    assert_eq!((samples, complete), (16, true));
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    assert!(!h.app.render_workspace.interactive.pending());
++
++    let document = h.app.session.doc.clone();
++    let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
++    let selection = h.app.session.selection.clone();
++    assign::tile(&mut h.app, json!({"appearance":"ABS - Blue"}), true).unwrap();
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE }],
++    );
++    assert!(assign::preview(&h.app).is_some(), "the real drag must start over the accepted CPU image");
++    assert!(assign::hover(&h.app).is_some());
++    let (pressed, pressed_samples, pressed_complete, pressed_texture) = interactive::test_cache(&h.app).unwrap();
++    assert_eq!((pressed.job, &pressed.png_sha256), (job, &accepted.png_sha256));
++    assert_eq!((pressed_samples, pressed_complete, pressed_texture), (samples, complete, texture));
++    assert!(!interactive::awaiting_current_frame(&h.app));
++
++    let visual = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    h.app.render_workspace.view.raytrace.shadows = !h.app.render_workspace.view.raytrace.shadows;
++    // No tick, show, refresh, move or other UI frame between this edit and release.
++    // The old image/drag are still present, so only same-frame observation can reject the drop.
++    let (before_release, _, _, before_release_texture) = interactive::test_cache(&h.app).unwrap();
++    assert_eq!((before_release.job, &before_release.png_sha256, before_release_texture), (job, &accepted.png_sha256, texture));
++    assert!(assign::preview(&h.app).is_some());
++    interactive_canvas_input_frame(
++        &mut h,
++        &mut time,
++        vec![egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE }],
++    );
++    assert!(interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap() > visual);
++    assert!(interactive::awaiting_current_frame(&h.app));
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(assign::preview(&h.app).is_none());
++    assert!(assign::hover(&h.app).is_none());
++    assert!(h.app.viewport.hover.is_none());
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()), history);
++    assert_eq!(h.app.session.selection, selection);
++    assert!(!h.app.render_workspace.interactive.pending(), "show must not dispatch Snapshot to consume this release");
++    assert!(interactive::test_current(&h.app).unwrap().is_none(), "show must not attach a replacement CPU job");
++    assert!(active(&h.app));
++    assert!(!h.app.render_workspace.view.assign.painting && !h.app.render_workspace.view.assign.sampling);
++    assert!(!assign::cancel(&mut h.app), "the release must consume the drag; nothing may remain for Escape to cancel");
++
++    interactive_canvas_input_frame(&mut h, &mut time, vec![]);
++    assert!(assign::preview(&h.app).is_none() && assign::hover(&h.app).is_none());
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()), history);
++    assert!(!h.app.render_workspace.interactive.pending());
++    assert!(interactive::test_current(&h.app).unwrap().is_none());
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_blank_canvas_clicks_preserve_selection_created_on_the_accepted_image() {
++    let Some((mut h, mut time, at)) = interactive_canvas_input_fixture("interactive_blank_canvas_clicks_preserve_selection_created_on_the_accepted_image")
++    else {
++        return;
++    };
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_recovery_require_success(&mut h, time + 0.3, time + 0.4);
++    time += 0.4;
++    interactive_canvas_input_click(&mut h, &mut time, at, egui::PointerButton::Primary, egui::Modifiers::NONE);
++    assert!(h.app.session.selection.contains(&solidcraft_engine::Sel::Body { name: "Subject".into() }));
++    assert!(!interactive::awaiting_current_frame(&h.app));
++    let selection = h.app.session.selection.clone();
++    let document = h.app.session.doc.clone();
++    let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
++
++    h.app.render_workspace.view.raytrace.shadows = !h.app.render_workspace.view.raytrace.shadows;
++    interactive_canvas_input_frame(&mut h, &mut time, vec![]);
++    assert!(interactive::awaiting_current_frame(&h.app));
++    assert!(interactive::test_cache(&h.app).is_none());
++    for mods in [egui::Modifiers::NONE, egui::Modifiers::SHIFT, egui::Modifiers::CTRL] {
++        interactive_canvas_input_click(&mut h, &mut time, at, egui::PointerButton::Primary, mods);
++        assert_eq!(h.app.session.selection, selection, "blank-canvas clicks cannot clear, add to or toggle the existing selection");
++        assert!(h.app.viewport.hover.is_none());
++        assert!(interactive::awaiting_current_frame(&h.app));
++    }
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()), history);
++    assert!(!h.app.render_workspace.interactive.pending());
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}

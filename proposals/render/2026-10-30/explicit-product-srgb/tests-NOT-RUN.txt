@@ -1,6 +1,6 @@
 SOURCE ONLY - one new native GPU test declaration; NOT RUN.
 
-crates/gpu/src/view.rs :: view::tests::explicit_product_dark_channels_follow_one_srgb_transfer_in_both_targets
+crates/gpu/src/view.rs :: view::glass_tests::explicit_product_dark_channels_follow_one_srgb_transfer_in_both_targets
 
 96 proposed 64 x 64 renders inside that single declaration, not 96 process cases or
 96 PASS results. Two RGBA8 formats x 2 SSAA x 2 material controls x 2 source kinds

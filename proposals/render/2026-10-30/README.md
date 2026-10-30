@@ -143,3 +143,7 @@ Strict TIR and U17 proposal archives do not substitute for this exact receiver.
 [Standalone candidate and delta](raster-local-studio-v2/README.md) preserve the
 source-closed helper with 18 new numeric cases, all unrun. It has no consumer
 and is not part of C20 or its development selection.
+
+## U17 test-module label correction
+
+[Source wrapper correction](explicit-product-srgb/test-module-label-correction.md) fixes `view::tests` to the actual `view::glass_tests` registration. No source, case selection or runtime result changes; the real GPU case remains unrun and excluded from C20 native development acceptance.

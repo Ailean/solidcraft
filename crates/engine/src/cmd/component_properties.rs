@@ -1,6 +1,8 @@
 //! Physical properties of an assembly placement, with original body material assignments.
+use std::collections::HashSet;
+
 use serde_json::{Value, json};
-use solidcraft_doc::{Document, Mat};
+use solidcraft_doc::{BomType, Document, Mat};
 use solidcraft_geom::{Aabb3, Vec3};
 
 use crate::params::bad;
@@ -27,25 +29,7 @@ fn placed_doc(s: &Session) -> Document {
 /// A property total must cover the entire assembly. The display traversal intentionally
 /// truncates hostile designs, so use an explicit error instead of accepting its prefix.
 pub(in crate::cmd) fn placements(doc: &Document, cmd: &str) -> Result<Vec<(u64, Vec<u64>, Mat)>> {
-    let mut out = vec![(0, Vec::new(), solidcraft_doc::IDENTITY)];
-    let mut stack = vec![(0, Vec::<u64>::new(), solidcraft_doc::IDENTITY)];
-    let mut children: std::collections::BTreeMap<u64, Vec<_>> = std::collections::BTreeMap::new();
-    for occurrence in &doc.occurrences {
-        children.entry(occurrence.parent).or_default().push(occurrence);
-    }
-    while let Some((component, path, transform)) = stack.pop() {
-        for occurrence in children.get(&component).into_iter().flatten() {
-            if path.len() >= 64 || out.len() >= 100_000 {
-                return Err(bad(cmd, "assembly exceeds physical-properties traversal limits (64 levels or 100000 placements)"));
-            }
-            let mut child_path = path.clone();
-            child_path.push(occurrence.id);
-            let world = solidcraft_doc::mat_mul(&transform, &occurrence.transform);
-            out.push((occurrence.component, child_path.clone(), world));
-            stack.push((occurrence.component, child_path, world));
-        }
-    }
-    Ok(out)
+    doc.placements_below(0, &[], solidcraft_doc::IDENTITY).map_err(|e| bad(cmd, e.to_string()))
 }
 
 pub(super) fn component(s: &mut Session, p: &Value) -> Result<Value> {
@@ -97,31 +81,31 @@ fn properties(s: &Session, doc: &Document, selected: &[u64], descendants: bool, 
         if descendants { placements(doc, cmd)? } else { vec![(0, Vec::new(), solidcraft_doc::IDENTITY)] }
     } else {
         let placement = s.occurrence_placement(selected).map_err(|e| bad(cmd, e.to_string()))?;
-        let mut out = vec![(placement.component, selected.to_vec(), placement.world)];
-        let mut stack = if descendants { out.clone() } else { Vec::new() };
-        while let Some((component, path, transform)) = stack.pop() {
-            for occurrence in doc.occurrences.iter().filter(|o| o.parent == component) {
-                if path.len() >= 64 || out.len() >= 100_000 {
-                    return Err(bad(cmd, "assembly exceeds physical-properties traversal limits (64 levels or 100000 placements)"));
-                }
-                let mut child = path.clone();
-                child.push(occurrence.id);
-                let world = solidcraft_doc::mat_mul(&transform, &occurrence.transform);
-                out.push((occurrence.component, child.clone(), world));
-                stack.push((occurrence.component, child, world));
-            }
+        if descendants {
+            doc.placements_below(placement.component, selected, placement.world).map_err(|e| bad(cmd, e.to_string()))?
+        } else {
+            vec![(placement.component, selected.to_vec(), placement.world)]
         }
-        out
     };
+    // As in the bill of materials, a placement that counts as a reference adds nothing, nor does
+    // anything inside it; the one measured counts whatever its type.
+    let reference: HashSet<u64> =
+        doc.occurrences.iter().zip(doc.occurrence_bom_types()).filter(|(_, t)| *t == BomType::Reference).map(|(o, _)| o.id).collect();
     for (component, path, transform) in selected_placements {
+        if path.iter().skip(selected.len()).any(|id| reference.contains(id)) {
+            continue;
+        }
         placement_count += 1;
         for body in state.bodies.iter().filter(|b| doc.model_body_component(b) == component) {
             let transform: Mat = doc.model_body_offset(body).map(|offset| solidcraft_doc::mat_mul(&transform, offset)).unwrap_or(transform);
             let placed = solidcraft_kernel::transform_matrix(&body.body, transform)?;
             let measured = solidcraft_kernel::measure(&placed)?;
+            // The volume the bill of materials weighs too, measured once for the model; the area,
+            // the centre, the box and the counts are the placed body's.
+            let body_volume = body.volume().map_or(measured.volume, |v| v * solidcraft_doc::mat_volume_scale(&transform));
             let density = doc.density(&body.name);
-            let body_mass = measured.volume * density / 1000.0;
-            volume += measured.volume;
+            let body_mass = body_volume * density / 1000.0;
+            volume += body_volume;
             area += measured.area;
             mass += body_mass;
             moment += measured.centroid * body_mass;
@@ -131,7 +115,7 @@ fn properties(s: &Session, doc: &Document, selected: &[u64], descendants: bool, 
             vertices += measured.merged.vertices;
             bodies.push(json!({"name": body.name, "component": component, "path": path,
                 "material": doc.materials.get(&body.name).map(String::as_str).unwrap_or("Default"),
-                "density_g_cm3": density, "mass_g": body_mass, "volume_mm3": measured.volume,
+                "density_g_cm3": density, "mass_g": body_mass, "volume_mm3": body_volume,
                 "area_mm2": measured.area, "center_of_mass": measured.centroid,
                 "bbox": {"min": measured.bbox.min, "max": measured.bbox.max}}));
         }

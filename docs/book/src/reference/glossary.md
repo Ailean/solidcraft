@@ -74,8 +74,12 @@ There are five:
 - *inseparable*, something made as one piece (welded, glued, riveted and so on): one row; of
   what it holds, only the purchased components are listed, and only in a list of every part.
 
+One occurrence can have a type of its own, which replaces its component's for that occurrence
+only.
+
 - **In SolidCraft:** the `bom_type` part property, which `component.metadata.set` changes and
-  `component.metadata` reads; the `bom_type` of each `assembly.bom` row.
+  `component.metadata` reads; `occurrence.bom_type` and an occurrence's `bom_type` design-file
+  key; the `bom_type` of each `assembly.bom` row.
 - **Don't use:** BOM structure, item type, kind; made (for *normal*: it reads as "already
   made").
 - **Elsewhere:** BOM structure, BOM type.
@@ -246,6 +250,22 @@ features are computed.
 - **Elsewhere:** folder, group.
 - **For translators:** not a rigid group (a joint) and not a fixed browser *folder*.
 
+### item number
+
+The number that names a row of a bill of materials, the one a parts list and a balloon show.
+
+Until a bill of materials view is numbered, it is the row's place in the list and can change.
+Once the view is numbered it is saved with the row, kept when the row's part number changes, and
+a new row takes the next number at its level. A row listed under another reads as both numbers
+(2.1).
+
+- **In SolidCraft:** each `assembly.bom` row's `item`, with `provisional`, `locked` and
+  `duplicate`; `assembly.bom.renumber` and `assembly.bom.item.set`; the design file's
+  `assembly.item_numbers`.
+- **Don't use:** position, balloon number, find number; index.
+- **Elsewhere:** item number, item, find number, balloon number.
+- **For translators:** a label, not a quantity or a count; not a part number.
+
 ### material
 
 The physical substance of a body, which sets its density and mechanical properties.
@@ -267,7 +287,8 @@ A component can have several occurrences. Moving an occurrence moves only that c
 component changes every copy. The browser names occurrences with a number, such as `Bolt M20:3`.
 
 - **In SolidCraft:** `occurrence.copy`, `occurrence.move`, `occurrence.ground`,
-  `occurrence.properties`; the `occurrences` design-file key; the `path` of occurrence ids.
+  `occurrence.properties`, `occurrence.bom_type`; the `occurrences` design-file key; the `path` of
+  occurrence ids.
 - **Don't use:** instance, placement.
 - **Elsewhere:** occurrence, instance, component instance.
 - **For translators:** not a *pattern instance*.

@@ -1,0 +1,150 @@
+{
+  "status": "C20_ADOPTED_WORKING_SOURCE_ONLY_UNFORMATTED_UNCOMPILED_UNRUN",
+  "base_before_source_manifest_sha256": "1bbda5d67a58d1732abd8998ca70eda7486de3b82b2dc7c0c501fb3ae023f480",
+  "composition_manifest_sha256": "eb19e1fb3002b610f8d103137af13e998b941ee82ba1e3cb9ea92ee342961894",
+  "adopted_working_source_manifest_sha256": "eb6ec43c4fe6862dcf27d9832e8724abf05b3edcdc945f6a8c3e17f35b76d116",
+  "adopted_source_members": 3580,
+  "final_source_review_sha256": "57b2ec67e923db22be13acc7a28b2abd1334d3c77b99a0872c6c94d782dac7a0",
+  "RAW_replay_audit_sha256": "31a85aac6e71efe0cf0e012bd4daa69691f6311fc945be67ffd260cce2bb546f",
+  "combined_patch_sha256": "9d9ef330887da1ade04e4047df67814696905e1316f1548a0851b7f6859cc507",
+  "files": [
+    {
+      "path": "assets/locales/pending/cpu-dielectric-transport.json",
+      "before_sha256": null,
+      "candidate_sha256": "0f85f08b1a4e041c87b86c849ee5e519ef0dd06903ebc8caae35d20c70c1a6c6",
+      "before_bytes": 0,
+      "candidate_bytes": 4694,
+      "new_file": true
+    },
+    {
+      "path": "assets/shaders/viewport.wgsl",
+      "before_sha256": "ef1073ade9cef7c69157eed6f4a5146852df004511dad5007274123586deb134",
+      "candidate_sha256": "a4faec5492b81299bff8f88233962288130e82c05576af2d163379f37a4e83cd",
+      "before_bytes": 32637,
+      "candidate_bytes": 32685,
+      "new_file": false
+    },
+    {
+      "path": "crates/doc/src/format/pending/cpu-dielectric-transport.rs",
+      "before_sha256": null,
+      "candidate_sha256": "ee897a13782f4a4db2158e2c3d06cd186eb01a5d378ef36cee0dfc80af163221",
+      "before_bytes": 0,
+      "candidate_bytes": 495,
+      "new_file": true
+    },
+    {
+      "path": "crates/doc/src/render_job.rs",
+      "before_sha256": "8c3e0670d9d5df947cd29999b7d4e1a89c12ea4e5a8679a12dec2b0b182f0d5b",
+      "candidate_sha256": "cb102321f3ff97b2530257d82170dd0c7a8187e1becfec0e6b3e03d43e6cb164",
+      "before_bytes": 15299,
+      "candidate_bytes": 17762,
+      "new_file": false
+    },
+    {
+      "path": "crates/doc/src/render_settings.rs",
+      "before_sha256": "3df240dc96ee50d58c62c983674387344f1067a319139c80b6abb55436f3269e",
+      "candidate_sha256": "6703c7637f73e7e568dd4d48dc300af5cf9c91a1ff066fe7bd41081a7b9cfe9a",
+      "before_bytes": 47675,
+      "candidate_bytes": 47724,
+      "new_file": false
+    },
+    {
+      "path": "crates/gpu/src/view.rs",
+      "before_sha256": "26d30e46a5fb86e562af5a1009a839250ebf1fffbdee708fdb53d4ea21a5f794",
+      "candidate_sha256": "73f06629958a04bb34210ece8d425034a60600efac79d7059590cb6656900c70",
+      "before_bytes": 266139,
+      "candidate_bytes": 270632,
+      "new_file": false
+    },
+    {
+      "path": "crates/render/src/job/mod.rs",
+      "before_sha256": "4bd3269aa3ab7f12500de300e1a004403b3efa2cdcb5bb119551aa23f7de5b9f",
+      "candidate_sha256": "7642c9eeb9877a695a2a2a332e941cd1ffcdf598f5aa5f77fcbcb17a663c553f",
+      "before_bytes": 67651,
+      "candidate_bytes": 70575,
+      "new_file": false
+    },
+    {
+      "path": "crates/render/src/raytrace/image.rs",
+      "before_sha256": "3210cbd9115bd26a5f9bfb7a4e121e79afe2070e17cf02dc8da7feed110ae731",
+      "candidate_sha256": "928115ae0c8cb460438da47a1b73c94f37e4a8dbf2c48c301957a40eadfb4ccf",
+      "before_bytes": 112115,
+      "candidate_bytes": 115405,
+      "new_file": false
+    },
+    {
+      "path": "crates/render/src/raytrace/image_tests.rs",
+      "before_sha256": "39db249923ebf799ff72548e50f3d7ff67a6ff8e65b70b9cd5617436fdb876f7",
+      "candidate_sha256": "713bad32b3d3b6cbabfb2354fa5285b41ff36fb004392b39e25cf502a0d142bb",
+      "before_bytes": 119436,
+      "candidate_bytes": 141981,
+      "new_file": false
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_cpu.rs",
+      "before_sha256": "aa110b13e97c6887f64f449c170c3cdcdf7ba11ec0399372bd0c6134152f158b",
+      "candidate_sha256": "728e43ebcafc7f638b24beec3f02c7af180e2f021067e6717090dce0f2478360",
+      "before_bytes": 27938,
+      "candidate_bytes": 41333,
+      "new_file": false
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_setups.rs",
+      "before_sha256": "925f8494df6157675dda8a0f85f6c40144b9b6fb08c17c2942d83910e6fcc608",
+      "candidate_sha256": "5013b8b3f4302f4102c7803c5410639b1dd158e0b6ccd26201c7caf6787fa116",
+      "before_bytes": 15513,
+      "candidate_bytes": 15655,
+      "new_file": false
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before_sha256": "48d7b10fd23ec6fcd663df1949ff677a968d8388134cebd38643af44a7e5cfed",
+      "candidate_sha256": "8f2d6589162ad3d14b0aceb5a80fe0543738d7205ce2498ac0debc89b688ffd2",
+      "before_bytes": 592734,
+      "candidate_bytes": 592713,
+      "new_file": false
+    },
+    {
+      "path": "docs/render-interactive.md",
+      "before_sha256": "14cf4b47d453c6de0f0c835eac63a98b6f8445fdeb7b5c65d3de538b091577a2",
+      "candidate_sha256": "f98decbcdb5d91568e103c794a0b785b31d127d6dc439eb8911270534b13be82",
+      "before_bytes": 4349,
+      "candidate_bytes": 8333,
+      "new_file": false
+    },
+    {
+      "path": "docs/render-raytrace-image.md",
+      "before_sha256": "24ae57d817c66b341b802fbdd0b343607cf0e3c042b68bdcc92a3a2eb52bf3a3",
+      "candidate_sha256": "c2a63a404f4eab31bc390f889260e91f790ee497186b4b2f3a566a2827f07b6c",
+      "before_bytes": 13509,
+      "candidate_bytes": 14832,
+      "new_file": false
+    },
+    {
+      "path": "docs/render-settings.md",
+      "before_sha256": "79f92ecb52878652cb0bbc0c427be4c0fce3de6616b918d449f5f55a84910751",
+      "candidate_sha256": "fee45ded12b0b4f62765b06e05ff4d2cdbe9a28b1cd2588f3f18165797c3c1d0",
+      "before_bytes": 20793,
+      "candidate_bytes": 21700,
+      "new_file": false
+    },
+    {
+      "path": "docs/render-shot-scene.md",
+      "before_sha256": "d5df48d1f256a2c878812e619a7d3bc07b6fd76c090d7fcc2e44ae9955ae83aa",
+      "candidate_sha256": "3258f084d6d4f3b1b87771693018505e2405848ac99063d06bb840d2016c1188",
+      "before_bytes": 3126,
+      "candidate_bytes": 4931,
+      "new_file": false
+    }
+  ],
+  "new_paths": 2,
+  "new_Rust_test_declarations": 19,
+  "native_development_cases_proposed_only": 349,
+  "required_TRUE_proposed_only": 60,
+  "compiled_inventory_derived": false,
+  "U17_one_real_GPU_test_excluded_from_development_proposal": true,
+  "compiled": false,
+  "tests_run": 0,
+  "full_CI_or_native_GPU_GUI_readiness": false,
+  "archive_is_not_an_adoption_or_execution_action": true
+}

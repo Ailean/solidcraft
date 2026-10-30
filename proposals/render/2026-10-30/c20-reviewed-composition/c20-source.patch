@@ -1,0 +1,1392 @@
+--- /dev/null
++++ b/assets/locales/pending/cpu-dielectric-transport.json
+@@ -0,0 +1,56 @@
++{
++  "en": {
++    "render.cpu_glass_continue": "Continue reflections",
++    "render.cpu_glass_help": "Standard uses bounded paths and may darken reflective glass. Continue reflections stops with an error if a supported optical limit is reached. Selected opaque reflections and unsupported glass shapes remain unavailable.",
++    "render.cpu_glass_label": "Glass rendering",
++    "render.cpu_glass_standard": "Standard"
++  },
++  "ar": {
++    "render.cpu_glass_continue": "متابعة الانعكاسات",
++    "render.cpu_glass_help": "يستخدم الوضع القياسي مسارات ضوء محدودة، وقد يجعل الزجاج العاكس أغمق. يوقف خيار «متابعة الانعكاسات» التصيير مع ظهور خطأ عند بلوغ أحد الحدود البصرية المدعومة. تظل الانعكاسات المحددة على الأجسام المعتمة وأشكال الزجاج غير المدعومة غير متاحة.",
++    "render.cpu_glass_label": "تصيير الزجاج",
++    "render.cpu_glass_standard": "قياسي"
++  },
++  "de": {
++    "render.cpu_glass_continue": "Reflexionen fortsetzen",
++    "render.cpu_glass_help": "Standard begrenzt die Lichtwege und kann reflektierendes Glas abdunkeln. Reflexionen fortsetzen stoppt das Rendering mit einem Fehler, wenn eine unterstützte optische Grenze erreicht wird. Ausgewählte opake Reflexionen und nicht unterstützte Glasformen bleiben nicht verfügbar.",
++    "render.cpu_glass_label": "Glasdarstellung",
++    "render.cpu_glass_standard": "Standard"
++  },
++  "es": {
++    "render.cpu_glass_continue": "Continuar reflejos",
++    "render.cpu_glass_help": "Estándar limita los recorridos y puede oscurecer el vidrio reflectante. Continuar reflejos detiene el render con un error si alcanza un límite óptico admitido. Los reflejos opacos seleccionados y las formas de vidrio no compatibles siguen sin estar disponibles.",
++    "render.cpu_glass_label": "Render de vidrio",
++    "render.cpu_glass_standard": "Estándar"
++  },
++  "he": {
++    "render.cpu_glass_continue": "המשך השתקפויות",
++    "render.cpu_glass_help": "המצב הרגיל מגביל את מסלולי האור ועלול להכהות זכוכית מחזירת אור. האפשרות «המשך השתקפויות» עוצרת את הרינדור עם שגיאה כאשר מגיעים לאחת המגבלות האופטיות הנתמכות. השתקפויות נבחרות על גופים אטומים וצורות זכוכית שאינן נתמכות נשארות לא זמינות.",
++    "render.cpu_glass_label": "רינדור זכוכית",
++    "render.cpu_glass_standard": "רגיל"
++  },
++  "ja": {
++    "render.cpu_glass_continue": "反射を継続",
++    "render.cpu_glass_help": "標準では光路を制限するため、反射するガラスが暗くなる場合があります。反射を継続する設定では、対応する光学的な上限に達するとエラーでレンダリングを停止します。選択された不透明面の反射や未対応のガラス形状は引き続き使用できません。",
++    "render.cpu_glass_label": "ガラスの描画",
++    "render.cpu_glass_standard": "標準"
++  },
++  "ko": {
++    "render.cpu_glass_continue": "반사 계속",
++    "render.cpu_glass_help": "표준은 광선 경로를 제한하므로 반사 유리가 어둡게 보일 수 있습니다. 반사 계속은 지원되는 광학 한계에 도달하면 오류와 함께 렌더링을 중지합니다. 선택한 불투명 표면 반사와 지원되지 않는 유리 형상은 계속 사용할 수 없습니다.",
++    "render.cpu_glass_label": "유리 렌더링",
++    "render.cpu_glass_standard": "표준"
++  },
++  "vi": {
++    "render.cpu_glass_continue": "Tiếp tục phản xạ",
++    "render.cpu_glass_help": "Chế độ tiêu chuẩn giới hạn đường truyền ánh sáng và có thể làm kính phản xạ trông tối hơn. Tùy chọn Tiếp tục phản xạ dừng kết xuất kèm lỗi khi đạt một giới hạn quang học được hỗ trợ. Các phản xạ đã chọn trên vật thể đục và các hình dạng kính không được hỗ trợ vẫn không khả dụng.",
++    "render.cpu_glass_label": "Kết xuất kính",
++    "render.cpu_glass_standard": "Tiêu chuẩn"
++  },
++  "zh": {
++    "render.cpu_glass_continue": "继续反射",
++    "render.cpu_glass_help": "标准模式限制光线路径，可能使反射玻璃变暗。继续反射模式在达到支持的光学限制时会报错并停止渲染。所选不透明表面反射和不支持的玻璃形状仍不可用。",
++    "render.cpu_glass_label": "玻璃渲染",
++    "render.cpu_glass_standard": "标准"
++  }
++}
+--- a/assets/shaders/viewport.wgsl
++++ b/assets/shaders/viewport.wgsl
+@@ -480,8 +480,9 @@
+     return radiance * exp2(u.product_lights_meta.z);
+ }
+ 
+-// Convert the current legacy display response, after its lighting, to linear
+-// light for exposure. This does not replace its albedo decoder or lighting model.
++// Exact product sRGB decode: explicit-light albedo, and the legacy display
++// response before exposure on Unorm targets. Design keeps its historical
++// to_linear transfer; the implicit-light exposure route remains unchanged.
+ fn product_exposure_decode(c: vec3<f32>) -> vec3<f32> {
+     return select(c / 12.92, pow((c + vec3<f32>(0.055)) / vec3<f32>(1.055), vec3<f32>(2.4)), c > vec3<f32>(0.04045));
+ }
+@@ -537,14 +538,14 @@
+     if u.product_lights_meta.x>0.0 {
+         var radiance=vec3<f32>(0.0);
+         for (var k=0u;k<min(u32(u.product_lights_meta.y),21u);k+=1u) {
+-            if u.product_lights[k*4u].w == 4.0 {radiance+=to_linear(base.rgb)*u.product_lights[k*4u+1u].xyz/3.141592653589793;continue;}
++            if u.product_lights[k*4u].w == 4.0 {radiance+=product_exposure_decode(base.rgb)*u.product_lights[k*4u+1u].xyz/3.141592653589793;continue;}
+             let sample=product_light_sample(k,i.wp);
+-            radiance+=to_linear(base.rgb)*sample[1]*(max(dot(n,sample[0]),0.0)/3.141592653589793);
++            radiance+=product_exposure_decode(base.rgb)*sample[1]*(max(dot(n,sample[0]),0.0)/3.141592653589793);
+         }
+         if (u.product_lights_meta.z != 0.0) { radiance = product_exposed_radiance(radiance); }
+         let mapped=radiance/(vec3<f32>(1.0)+radiance);
+-        let encoded=select(mapped*12.92,1.055*pow(mapped,vec3<f32>(1.0/2.4))-vec3<f32>(0.055),mapped>vec3<f32>(0.0031308));
+-        return out_color(vec4<f32>(encoded,base.a));
++        if (u.back.w > 0.5) { return vec4<f32>(mapped,base.a); }
++        return vec4<f32>(product_exposure_encode(mapped),base.a);
+     }
+     let key = normalize(v * 0.8 + vec3<f32>(-0.3, 0.2, 0.6));
+     let diff = max(dot(n, key), 0.0);
+--- /dev/null
++++ b/crates/doc/src/format/pending/cpu-dielectric-transport.rs
+@@ -0,0 +1,6 @@
++//! CPU render setups save their explicit dielectric transport choice. Missing or
++//! older values retain LegacyBounded; its default is omitted. StrictTir preserves
++//! deterministic internal reflection and refuses unresolved positive optical tails;
++//! it does not make captured body bindings portable or add unsupported geometry.
++//! No existing value needs migration or clamping. The last release refuses the
++//! newer design format and asks for an update instead of losing the saved choice.
+--- a/crates/doc/src/render_job.rs
++++ b/crates/doc/src/render_job.rs
+@@ -6,7 +6,7 @@
+ use solidcraft_render::{
+     Camera,
+     job::{
+-        CpuBudget, CpuProgressiveOptions, DirectionalLightOptions, JobOptions, LightingPreset, PunctualLightOptions, RaytraceEnvironmentOptions,
++        CpuBudget, CpuDielectricTransport, CpuProgressiveOptions, DirectionalLightOptions, JobOptions, LightingPreset, PunctualLightOptions, RaytraceEnvironmentOptions,
+         RaytraceOptions, RectangleLightOptions, StudioLighting, ThinLens, ToneMap,
+     },
+     lighting::environment::SkyGradient,
+@@ -74,6 +74,8 @@
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ pub struct CpuJob {
++    #[serde(skip_serializing_if = "CpuDielectricTransport::is_legacy")]
++    pub dielectric_transport: CpuDielectricTransport,
+     #[serde(skip_serializing_if = "CpuBudget::is_compact")]
+     pub budget: CpuBudget,
+     #[serde(skip_serializing_if = "Option::is_none")]
+@@ -101,6 +103,7 @@
+ impl Default for CpuJob {
+     fn default() -> Self {
+         Self {
++            dielectric_transport: CpuDielectricTransport::LegacyBounded,
+             budget: CpuBudget::Compact,
+             progressive: None,
+             primary_samples: 1,
+@@ -136,6 +139,7 @@
+         // a light family that is explicitly absent. This does not rewrite the file.
+         let active_area = self.area_lights.as_ref().is_some_and(|lights| !lights.is_empty());
+         let options = RaytraceOptions {
++            dielectric_transport: self.dielectric_transport,
+             budget: self.budget,
+             progressive: self.progressive,
+             primary_samples: self.primary_samples,
+@@ -353,3 +357,42 @@
+ fn area_lights<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<Vec<RectangleLightOptions>>, D::Error> {
+     optional_lights::<D, RectangleLightOptions, 4>(d)
+ }
++
++
++#[cfg(test)]
++#[test]
++fn cpu_dielectric_transport_saved_field_has_legacy_default_and_explicit_runtime_forward() {
++    let legacy: CpuJob = serde_json::from_str("{}").unwrap();
++    assert_eq!(legacy.dielectric_transport, CpuDielectricTransport::LegacyBounded);
++    assert!(serde_json::to_value(&legacy).unwrap().get("dielectric_transport").is_none());
++    for policy in [CpuDielectricTransport::LegacyBounded, CpuDielectricTransport::StrictTir] {
++        let saved = CpuJob { dielectric_transport: policy, ..Default::default() };
++        let reopened: CpuJob = serde_json::from_value(serde_json::to_value(&saved).unwrap()).unwrap();
++        assert_eq!(reopened, saved);
++        let runtime = reopened.to_runtime(0.0).unwrap();
++        assert_eq!(runtime.dielectric_transport, policy);
++        assert_eq!(runtime.exposure_ev, 0.0);
++        assert_eq!(runtime.budget, CpuBudget::Compact);
++    }
++    for value in [serde_json::json!(null), serde_json::json!(true), serde_json::json!(17), serde_json::json!("unlimited")] {
++        assert!(serde_json::from_value::<CpuJob>(serde_json::json!({"dielectric_transport":value})).is_err());
++    }
++}
++
++#[cfg(test)]
++#[test]
++fn cpu_dielectric_transport_document_roundtrip_keeps_choice_without_captured_bindings() {
++    for policy in [CpuDielectricTransport::LegacyBounded, CpuDielectricTransport::StrictTir] {
++        let setup = crate::render_settings::RenderSetup {
++            job: Some(RenderJob::CpuRaytrace { options: CpuJob { dielectric_transport: policy, ..Default::default() } }),
++            ..Default::default()
++        };
++        let mut document = crate::Document::default();
++        std::sync::Arc::make_mut(&mut document.render).setups.insert("Policy".into(), setup.clone());
++        let reopened = crate::Document::from_json(&document.to_json()).unwrap();
++        assert_eq!(document, reopened);
++        assert_eq!(reopened.render.setups["Policy"], setup);
++        let Some(RenderJob::CpuRaytrace { options }) = &reopened.render.setups["Policy"].job else { panic!("saved CPU method changed") };
++        assert_eq!(options.to_runtime(0.0).unwrap().dielectric_transport, policy);
++    }
++}
+--- a/crates/doc/src/render_settings.rs
++++ b/crates/doc/src/render_settings.rs
+@@ -815,7 +815,9 @@
+ #[cfg(test)]
+ mod cpu_budget_tests {
+     use super::*;
++    use crate::Document;
+     use solidcraft_render::job::{CpuBudget, CpuProgressiveOptions};
++    use std::sync::Arc;
+ 
+     #[test]
+     fn inactive_area_tuning_roundtrips_without_leaking_into_runtime_options() {
+--- a/crates/gpu/src/view.rs
++++ b/crates/gpu/src/view.rs
+@@ -5380,4 +5380,69 @@
+         }
+         eprintln!("PRODUCT_EXPOSURE_GPU supported=true formats=2 materials=2 lights=2");
+     }
+-}
++
++    /// Original Lambert oracle: one unit-cosine source of PI radiance cancels
++    /// diffuse / PI. Decode the authored byte, expose in linear light, Reinhard,
++    /// then encode once. Never derive expected pixels from the viewport shader.
++    #[cfg(not(target_arch = "wasm32"))]
++    #[test]
++    fn explicit_product_dark_channels_follow_one_srgb_transfer_in_both_targets() {
++        let (_, device, queue) = match crate::open_headless() {
++            Ok(device) => device,
++            Err(error) if std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none() => {
++                eprintln!("U17_PRODUCT_SRGB supported=false reason={error}");
++                return;
++            }
++            Err(error) => panic!("required GPU adapter unavailable: {error}"),
++        };
++        for format in [wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::Rgba8UnormSrgb] {
++            for ssaa in [1.0, 2.0] {
++                for pbr in [false, true] {
++                    for ambient in [false, true] {
++                        for rgb in [[0u8, 1, 10], [11, 128, 255]] {
++                            let mut scene = GpuScene::default();
++                            let color = scene.color([rgb[0], rgb[1], rgb[2], 255]);
++                            let linear = rgb.map(solidcraft_geom::srgb::decode8);
++                            // Index matched, nonmetallic: the PBR directional
++                            // control is Lambert too, with no Fresnel/specular.
++                            let surface = solidcraft_render::surface::OpaqueSurface::new(
++                                solidcraft_geom::Vec3::new(linear[0], linear[1], linear[2]),
++                                0.0, 0.6, 1.0,
++                            ).unwrap();
++                            for p in [[-5.0, -5.0, 0.0], [5.0, -5.0, 0.0], [5.0, 5.0, 0.0], [-5.0, -5.0, 0.0], [5.0, 5.0, 0.0], [-5.0, 5.0, 0.0]] {
++                                if pbr { scene.pbr_tri(p, [0.0, 0.0, 1.0], surface); }
++                                else { scene.tri(p, [0.0, 0.0, 1.0], color); }
++                            }
++                            let depth = crate::depth_format(&device, true);
++                            let mut renderer = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false }, None);
++                            let mut frame = test_frame(scene, ssaa);
++                            frame.product = true;
++                            let pi = std::f32::consts::PI;
++                            frame.product_lights = Some(vec![
++                                [0.0, 0.0, 1.0, if ambient { 4.0 } else { 0.0 }, pi, pi, pi, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
++                            ]);
++                            for ev in [-8.0, 0.0, 1.0] {
++                                frame.product_exposure_ev = ProductExposureEv::from_ev(ev).unwrap();
++                                let image = render_frame_format(&mut renderer, &device, &queue, &frame, true, format);
++                                assert_eq!(image.len(), 64 * 64 * 4);
++                                if ssaa == 2.0 { assert!(renderer.ss_ready, "exercise cached supersampling"); }
++                                // Away from every edge and the diagonal, with
++                                // constant radiance over all supersample taps.
++                                let at = (30 * 64 + 32) * 4;
++                                for channel in 0..3 {
++                                    let radiance = linear[channel] * f64::from(pi) / std::f64::consts::PI * f64::from(ev).exp2();
++                                    let expected = solidcraft_geom::srgb::encode8(radiance / (1.0 + radiance));
++                                    assert!(image[at + channel].abs_diff(expected) <= 1,
++                                        "{format:?} ssaa={ssaa} pbr={pbr} ambient={ambient} rgb={rgb:?} ev={ev} channel={channel}: got={} expected={expected}", image[at + channel]);
++                                }
++                                assert_eq!(image[at + 3], 255, "transfer never grades coverage");
++                                assert_eq!(&image[..4], &[255; 4], "white backplate is unchanged");
++                            }
++                        }
++                    }
++                }
++            }
++        }
++        eprintln!("U17_PRODUCT_SRGB supported=true formats=2 ssaa=2 materials=2 sources=2 palettes=2 exposures=3");
++    }
++}
+--- a/crates/render/src/job/mod.rs
++++ b/crates/render/src/job/mod.rs
+@@ -665,9 +665,28 @@
+     }
+ }
+ 
++/// Runtime CPU dielectric transport policy, independent of resource and preview budgets.
++/// StrictTir preserves deterministic TIR and refuses positive dielectric-depth tails.
++/// It does not promise convergence or general physical glass support.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum CpuDielectricTransport {
++    #[default]
++    LegacyBounded,
++    StrictTir,
++}
++
++impl CpuDielectricTransport {
++    pub fn is_legacy(&self) -> bool {
++        *self == Self::LegacyBounded
++    }
++}
++
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ pub struct RaytraceOptions {
++    #[serde(skip_serializing_if = "CpuDielectricTransport::is_legacy")]
++    pub dielectric_transport: CpuDielectricTransport,
+     #[serde(skip_serializing_if = "CpuBudget::is_compact")]
+     pub budget: CpuBudget,
+     #[serde(skip_serializing_if = "Option::is_none")]
+@@ -703,6 +722,7 @@
+ impl Default for RaytraceOptions {
+     fn default() -> Self {
+         Self {
++            dielectric_transport: CpuDielectricTransport::LegacyBounded,
+             budget: CpuBudget::Compact,
+             progressive: None,
+             punctual_lights: None,
+@@ -886,6 +906,13 @@
+         Ok(())
+     }
+     pub fn validate(&self) -> Result<()> {
++        // Opaque reflection has a separate bounded continuation policy. Do not
++        // advertise strict dielectric tails across that unqualified consumer.
++        if self.dielectric_transport == CpuDielectricTransport::StrictTir
++            && self.reflections.as_ref().is_some_and(|r| !r.bodies.is_empty())
++        {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "strict CPU dielectric transport does not support selected opaque reflections yet"));
++        }
+         if let Some(progressive) = self.progressive {
+             self.budget.validate_samples(progressive.samples_per_pixel)?;
+             if self.primary_samples != 1 || self.reflections.as_ref().is_some_and(|r| !r.bodies.is_empty() && r.samples != 1) {
+@@ -1230,6 +1257,35 @@
+     }
+ 
+     use super::*;
++
++    #[test]
++    fn dielectric_transport_wire_policy_preserves_legacy_and_rejects_hostile_values() {
++        let legacy: RaytraceOptions = serde_json::from_value(serde_json::json!({})).unwrap();
++        assert_eq!(legacy.dielectric_transport, CpuDielectricTransport::LegacyBounded);
++        assert!(serde_json::to_value(&legacy).unwrap().get("dielectric_transport").is_none());
++        let strict: RaytraceOptions = serde_json::from_value(serde_json::json!({"dielectric_transport":"strict_tir"})).unwrap();
++        strict.validate().unwrap();
++        assert_eq!(serde_json::to_value(&strict).unwrap()["dielectric_transport"], "strict_tir");
++        for value in [serde_json::json!(null), serde_json::json!(true), serde_json::json!(7), serde_json::json!("unlimited"), serde_json::json!({})] {
++            assert!(serde_json::from_value::<RaytraceOptions>(serde_json::json!({"dielectric_transport":value})).is_err());
++        }
++    }
++
++    #[test]
++    fn strict_dielectric_policy_refuses_unqualified_opaque_continuations_without_mutation() {
++        let options = RaytraceOptions {
++            dielectric_transport: CpuDielectricTransport::StrictTir,
++            reflections: Some(ReflectionOptions {
++                bodies: vec![ReflectionBody { body: "Body".into(), mode: ReflectionMode::Mirror }],
++                ..Default::default()
++            }),
++            ..Default::default()
++        };
++        let before = options.clone();
++        assert_eq!(options.validate().unwrap_err().code, ErrorCode::InvalidRequest);
++        assert_eq!(options, before);
++        RaytraceOptions { dielectric_transport: CpuDielectricTransport::LegacyBounded, ..options }.validate().unwrap();
++    }
+     #[test]
+     fn default_preset_and_empty_lights_requests_roundtrip_without_invalid_null_sequence() {
+         for options in [
+--- a/crates/render/src/raytrace/image.rs
++++ b/crates/render/src/raytrace/image.rs
+@@ -480,6 +480,10 @@
+ struct OpticalTask {
+     /// None retains the original eight-event branching model unchanged.
+     straight_limit: Option<u8>,
++    /// Captured runtime dielectric policy; fixed and progressive use the same transport.
++    deterministic_tir: bool,
++    /// Actual deterministic continuations CREATED, not completed rays or paths.
++    tir_continuations: u64,
+     certificates: [Option<Certificate>; MAX_OVERRIDES],
+     parents: [Option<usize>; MAX_OVERRIDES],
+     nested: bool,
+@@ -661,6 +665,23 @@
+         Self::new_with_policy(scene, request, cancel, options, input, nested, PreviewPolicy::Legacy)
+     }
+ 
++    /// Compatibility helper for the original five regression sources. Activate
++    /// the real serialized production policy before ordinary admission/construction.
++    #[cfg(test)]
++    fn new_with_deterministic_tir(
++        scene: ProductScene,
++        request: ImageRequest,
++        cancel: CancelToken,
++        options: RaytraceOptions,
++        nested: bool,
++    ) -> job::Result<Self> {
++        let mut options = options;
++        options.dielectric_transport = job::CpuDielectricTransport::StrictTir;
++        let mut request = request;
++        request.raytrace = Some(options.clone());
++        Self::new_with_environment_and_nested(scene, request, cancel, options, None, nested)
++    }
++
+     pub(crate) fn new_with_environment_and_nested_and_partial(
+         scene: ProductScene,
+         request: ImageRequest,
+@@ -705,7 +726,15 @@
+             if optical.capacity() != 1 {
+                 return Err(error(TraceError::MemoryLimit));
+             }
+-            optical.push(OpticalTask { straight_limit, certificates, parents, nested, pending: None });
++            optical.push(OpticalTask {
++                straight_limit,
++                deterministic_tir: options.dielectric_transport == job::CpuDielectricTransport::StrictTir,
++                tir_continuations: 0,
++                certificates,
++                parents,
++                nested,
++                pending: None,
++            });
+         }
+         if input.is_some() {
+             options.validate_environment_reflections(&scene)?;
+@@ -1558,9 +1587,9 @@
+                 return Err(invalid("certified straight optical crossing bound exceeded"));
+             }
+         } else {
+-            if state.path.boundaries == MAX_BOUNDARIES {
+-                // Original bounded reflecting/refracting model: its positive
+-                // residual remains a quality limitation, not convergence proof.
++            if state.path.boundaries == MAX_BOUNDARIES && !optical.deterministic_tir {
++                // Unchanged legacy policy; strict mode must first
++                // distinguish a deterministic TIR from another real split.
+                 let radiance = pending.radiance;
+                 return self.finish_transport_path(radiance);
+             }
+@@ -1568,7 +1597,6 @@
+                 return Err(invalid("invalid dielectric boundary depth"));
+             }
+         }
+-        let next_depth = state.path.boundaries + 1;
+         let normal = shared.oriented_geometric_normal();
+         let direction = state.path.ray.direction();
+         let certificate = optical.certificates.get(index).copied().flatten().ok_or_else(|| invalid("missing dielectric certificate"))?;
+@@ -1616,6 +1644,42 @@
+             Some(face) => face.spawn(direction, reflected).map_err(error),
+             None => shared.spawn(direction).map_err(error),
+         };
++        if optical.deterministic_tir && state.path.throughput == Vec3::ZERO {
++            // Exact zero after real Beer attenuation owes no outgoing ray or
++            // positive residual; retain all previously accumulated branches.
++            let radiance = pending.radiance;
++            return self.finish_transport_path(radiance);
++        }
++        if optical.deterministic_tir && optics.transmitted.is_none() {
++            if optical.straight_limit.is_some() || optics.reflectance != 1.0 || reflected_weight != Vec3::new(1.0, 1.0, 1.0) {
++                return Err(invalid("strict deterministic TIR disagrees with its interface"));
++            }
++            // REAL ray, normal-aware spawn and next traversal, with the same
++            // already-paid interface tick. Do not push/pop a one-child tree,
++            // consume branch depth/paths511, clear the shared radiance sum or
++            // reset ordinary work. The waiting Fresnel branches remain intact.
++            let path = OpticalPath {
++                ray: spawn(optics.reflected, true)?,
++                throughput: dielectric::multiply(state.path.throughput, reflected_weight),
++                medium: state.path.medium,
++                segment_start: shared.position,
++                boundaries: state.path.boundaries,
++                bounce: pending.bounce,
++            };
++            optical.tir_continuations = optical.tir_continuations.checked_add(1).ok_or_else(|| error(TraceError::WorkLimit))?;
++            state.path = path;
++            state.selector = 0;
++            state.selected = None;
++            state.ready = false;
++            // This creates the real new TraceCursor; its following steps pay
++            // every original BVH/triangle operation and check cancellation.
++            resume_optical_path(pending, path);
++            return Ok(());
++        }
++        if optical.deterministic_tir && optical.straight_limit.is_none() && state.path.boundaries == MAX_BOUNDARIES {
++            return Err(JobError::new(ErrorCode::LimitExceeded, "strict optical non-TIR branch-depth budget exhausted with positive continuation"));
++        }
++        let next_depth = state.path.boundaries + 1;
+         state.push(OpticalPath {
+             ray: spawn(optics.reflected, true)?,
+             throughput: dielectric::multiply(state.path.throughput, reflected_weight),
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -2524,3 +2524,449 @@
+         }
+     }
+ }
++
++
++// Experimental strict core successor. Original public-camera fixtures; no
++// injected ray, direction, medium, hit or stack creates the TIR sequences.
++fn long_tir_source(width:f64,absorber:bool,progressive:bool,sigma:[f64;3]) -> (ProductScene,ImageRequest,RaytraceOptions) {
++    let mut body=dielectric::tests::box_body(2.0);
++    for p in &mut std::sync::Arc::make_mut(&mut body.mesh).positions {p.x=if p.x<0.0 {0.0} else {width};}
++    let mut scene=dielectric::tests::scene(body);
++    if absorber {
++        assert_eq!(width,0.05);
++        let xb=0.875-4.0/21.0_f64.sqrt();
++        let xr=xb-0.001*0.4/0.84_f64.sqrt();
++        assert!(xr>0.0001 && xr+0.0001<width);
++        scene.meshes.push(crate::ProductMesh {
++            transmission:None,name:"Original return absorber".into(),
++            mesh:std::sync::Arc::new(solidcraft_geom::Mesh {
++                positions:vec![Vec3::new(xr-0.0001,-0.5,0.001),Vec3::new(xr+0.0001,-0.5,0.001),
++                    Vec3::new(xr+0.0001,1.5,0.001),Vec3::new(xr-0.0001,1.5,0.001)],
++                normals:vec![Vec3::Z;4],triangles:vec![[0,1,2],[0,2,3]],..Default::default()
++            }),color:[0;3],opacity:1.0,
++            surface:Some(OpaqueSurface::new(Vec3::ZERO,0.0,1.0,1.5).unwrap()),faces:Vec::new(),
++        });
++    }
++    scene.bounds=scene.meshes.iter().fold(Aabb3::EMPTY,|a,m|a.union(&m.mesh.bounds()));
++    let mut medium=dielectric::tests::input(job::DielectricBoundary::ClosedBox);
++    medium.absorption_per_mm=sigma;
++    let options=RaytraceOptions {
++        dielectrics:vec![medium],lights:Some(Vec::new()),shadows:false,
++        environment:Some(job::RaytraceEnvironmentOptions {color:[1.0;3],intensity:1.0}),
++        progressive:progressive.then_some(job::CpuProgressiveOptions {samples_per_pixel:3,seed:71}),
++        ..Default::default()
++    };
++    let mut request=dielectric::tests::request(options.clone());
++    request.camera=crate::Camera {target:Vec3::new(width*0.5,0.37,2.0),yaw:std::f64::consts::FRAC_PI_2,
++        pitch:0.8_f64.asin(),roll:0.0,distance:10.0,fov:1e-9,..Default::default()};
++    (scene,request,options)
++}
++
++fn long_tir_expected(ray:Ray,sigma:[f64;3],strict:bool) -> [f64;3] {
++    let c=-ray.direction().z;
++    assert!((c-0.8).abs()<2e-9);
++    let ct=(1.0-(1.0-c*c)/2.25).sqrt();
++    let rs=((c-1.5*ct)/(c+1.5*ct)).powi(2);
++    let rp=((1.5*c-ct)/(1.5*c+ct)).powi(2);
++    let f=(rs+rp)*0.5;
++    if strict {sigma.map(|s|f+(1.0-f).powi(2)*(-s*2.0/ct).exp())} else {[f;3]}
++}
++
++fn complete_long_tir(mut task:ImageTask,sigma:[f64;3],strict:bool) -> Vec<u8> {
++    let count=task.options.progressive.map_or(1,|p|p.samples_per_pixel) as usize;
++    let progressive=task.options.progressive.is_some();
++    let mut oracle=vec![None;count];
++    let mut previous_tir=0;
++    let mut previous_direction=vec![None;count];
++    let mut actual_tir_rays=0;
++    let mut escaped=vec![false;count];
++    let mut absorbed=vec![false;count];
++    let mut maximum=0;
++    let mut linear=None;
++    for _ in 0..2_000_000 {
++        if let Some(p)=&task.progressive && p.film.ready() && p.film.samples() as usize==count {
++            let (rgb,covered,samples)=p.film.pixel(0).unwrap();
++            assert_eq!((covered as usize,samples as usize),(count,count));linear=Some(rgb);
++        }
++        let poll=task.step_with_previews(1).unwrap();
++        if let Some(optical)=task.optical.first() && let Some(state)=&optical.pending {
++            let ordinal=state.camera_sample.map_or(0,|identity|identity.1 as usize);
++            maximum=maximum.max(state.path.boundaries);
++            if oracle[ordinal].is_none() {
++                assert_eq!(state.path.boundaries,0);
++                oracle[ordinal]=Some(long_tir_expected(state.path.ray,sigma,strict));
++            }
++            if state.path.boundaries==1 && state.path.medium==Some(0) && previous_direction[ordinal].is_none() {
++                previous_direction[ordinal]=Some(state.path.ray.direction());
++            }
++            if optical.tir_continuations>previous_tir {
++                assert!(strict);
++                assert_eq!(optical.tir_continuations,previous_tir+1);
++                assert_eq!(state.path.boundaries,1,"TIR is not another split");
++                assert_eq!(state.paths,3,"initial path and two first-interface children only");
++                assert_eq!(state.stack_len,1,"waiting primary reflection is preserved");
++                let before=previous_direction[ordinal].unwrap();
++                let after=state.path.ray.direction();
++                assert!((after-Vec3::new(-before.x,before.y,before.z)).len()<1e-12);
++                assert!(task.pending.as_ref().unwrap().hit.is_none(),"real new TraceCursor has no borrowed old hit");
++                previous_direction[ordinal]=Some(after);
++                previous_tir=optical.tir_continuations;actual_tir_rays+=1;
++            }
++            if strict && state.path.boundaries==2 && state.path.medium.is_none() && state.path.segment_start.z.abs()<1e-12 {
++                assert_eq!(actual_tir_rays,17*(ordinal+1));escaped[ordinal]=true;
++            }
++            if strict && let Some(hit)=task.pending.as_ref().and_then(|p|p.hit)
++                && task.looks[hit.primitive_index].body_index==1
++            {
++                assert!(escaped[ordinal]);absorbed[ordinal]=true;
++            }
++        }
++        if let ImagePoll::Complete(png)=poll {
++            let mut expected=[0.0;3];
++            for value in oracle {for (sum,v) in expected.iter_mut().zip(value.unwrap()) {*sum+=v/count as f64;}}
++            if progressive {for (actual,expected) in linear.unwrap().into_iter().zip(expected) {assert!((actual-expected).abs()<1e-10);}}
++            assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0,0).0,straight_expected_pixel(expected));
++            if strict {
++                assert!(escaped.into_iter().all(|v|v) && absorbed.into_iter().all(|v|v));
++                assert_eq!(actual_tir_rays,17*count);
++                assert_eq!(maximum,2);
++            } else {
++                assert!(escaped.into_iter().all(|v|!v));
++                assert_eq!(maximum,8,"pre-fix witness: entry and seven TIRs exhaust legacy events");
++                assert_eq!(actual_tir_rays,0,"legacy policy never enters the new core branch");
++            }
++            return png;
++        }
++    }
++    panic!("long TIR original fixture did not complete");
++}
++
++#[test]
++fn legacy_long_tir_counterexample_loses_the_first_real_transmitted_exit() {
++    // This explicitly witnesses the retained C15 limitation, not a new physical
++    // success oracle. Its derived F-only result is contrasted with the strict
++    // terminating fixture below. No old L8 assertion is edited.
++    let (scene,request,options)=long_tir_source(0.05,true,true,[0.0;3]);
++    let task=ImageTask::new(scene,request,CancelToken::default(),options).unwrap();
++    assert!(!task.optical.first().unwrap().deterministic_tir);
++    let _=complete_long_tir(task,[0.0;3],false);
++}
++
++#[test]
++fn strict_core_long_tir_fixed_and_progressive_reach_real_exit_and_real_absorber() {
++    for progressive in [false,true] {
++        let (scene,request,options)=long_tir_source(0.05,true,progressive,[0.0;3]);
++        let task=ImageTask::new_with_deterministic_tir(scene,request,CancelToken::default(),options,false).unwrap();
++        let _=complete_long_tir(task,[0.0;3],true);
++    }
++}
++
++#[test]
++fn strict_core_long_tir_keeps_beer_on_all_real_reflected_segments() {
++    for progressive in [false,true] {
++        let sigma=[0.1,0.2,0.0];
++        let (scene,request,options)=long_tir_source(0.05,true,progressive,sigma);
++        let task=ImageTask::new_with_deterministic_tir(scene,request,CancelToken::default(),options,false).unwrap();
++        let _=complete_long_tir(task,sigma,true);
++    }
++}
++
++#[test]
++fn strict_core_tir_more_than511_real_continuations_still_use_bvh_work_and_cancellation() {
++    for cancel in [false,true] {
++        let (scene,request,options)=long_tir_source(0.0005,false,true,[0.0;3]);
++        let mut task=ImageTask::new_with_deterministic_tir(scene,request,CancelToken::default(),options,false).unwrap();
++        let mut observed=false;
++        for _ in 0..2_000_000 {
++            let before=task.work.used();
++            assert!(matches!(task.step_with_previews(1).unwrap(),ImagePoll::Pending(_)));
++            assert!(task.work.used()-before<=1);
++            if task.optical.first().unwrap().tir_continuations==512 {
++                let state=task.optical.first().unwrap().pending.as_ref().unwrap();
++                assert_eq!((state.path.boundaries,state.paths,state.stack_len),(1,3,1));
++                assert!(task.work.used()>1024,"all previous traversals AND interfaces were real work");
++                let start=task.work.used();
++                assert!(matches!(task.step_with_previews(1).unwrap(),ImagePoll::Pending(_)));
++                assert_eq!(task.work.used(),start+1,"newest real cursor also starts traversal before the stop");
++                assert_eq!(task.optical.first().unwrap().tir_continuations,512);
++                let frontier=task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++                if cancel {task.cancel.cancel();} else {task.work.limit=task.work.used();}
++                assert_eq!(task.step_with_previews(1).err().unwrap().code,if cancel {ErrorCode::Cancelled} else {ErrorCode::LimitExceeded});
++                assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(),frontier);
++                assert_eq!(frontier.completed_passes,0);
++                assert!(!task.done);observed=true;break;
++            }
++        }
++        assert!(observed,"511 branch-state allowance must not truncate a deterministic ray sequence");
++    }
++}
++
++#[test]
++fn strict_core_positive_non_tir_depth_limit_is_explicit_instead_of_black_completion() {
++    let (scene,request,options)=long_tir_source(0.05,false,true,[0.0;3]);
++    let mut task=ImageTask::new_with_deterministic_tir(scene,request,CancelToken::default(),options,false).unwrap();
++    for _ in 0..2_000_000 {
++        match task.step_with_previews(1) {
++            Err(error)=>{
++                assert_eq!(error.code,ErrorCode::LimitExceeded);
++                assert!(error.message.contains("non-TIR branch-depth budget exhausted"));
++                let optical=task.optical.first().unwrap();
++                assert!(optical.tir_continuations>=17);
++                assert!(optical.pending.as_ref().unwrap().paths<=511);
++                assert_eq!(task.progressive.as_ref().unwrap().film.samples(),0);
++                assert!(!task.done);return;
++            },
++            Ok(ImagePoll::Pending(_))=>{},
++            Ok(_)=>panic!("positive unresolved split cannot be published as a successful black tail"),
++        }
++    }
++    panic!("strict unresolved split was not reported");
++}
++
++
++// ORIGINAL UNAPPLIED PROPOSAL for the existing raytrace/image_tests.rs module.
++// SOURCE ONLY: UNFORMATTED / UNCOMPILED / UNRUN. No new production policy API.
++// This witnesses LEGACY bias; it is NOT a strict-quality success expectation.
++
++fn rational_depth_source(progressive: bool) -> (ProductScene, ImageRequest, RaytraceOptions) {
++    let scene = dielectric::tests::scene(dielectric::tests::box_body(2.0));
++    let mut medium = dielectric::tests::input(job::DielectricBoundary::ClosedBox);
++    medium.ior = 3.0;
++    medium.absorption_per_mm = [0.0; 3];
++    let options = RaytraceOptions {
++        dielectrics: vec![medium],
++        lights: Some(Vec::new()),
++        shadows: false,
++        environment: Some(job::RaytraceEnvironmentOptions { color: [1.0; 3], intensity: 1.0 }),
++        progressive: progressive.then_some(job::CpuProgressiveOptions { samples_per_pixel: 3, seed: 71 }),
++        ..Default::default()
++    };
++    let mut request = dielectric::tests::request(options.clone());
++    request.camera.target = Vec3::new(0.23, 0.37, 1.0);
++    request.camera.distance = 10.0;
++    request.camera.fov = 0.0;
++    (scene, request, options)
++}
++
++fn rational_depth_real_cut(task: &ImageTask) -> bool {
++    let Some(optical) = task.optical.first() else { return false };
++    let Some(state) = &optical.pending else { return false };
++    if state.path.boundaries == 0 {
++        assert!((state.path.ray.direction() + Vec3::Z).len() < 1e-14);
++    }
++    if state.path.boundaries != 8 || state.path.medium != Some(0)
++        || task.pending.as_ref().and_then(|p| p.hit).is_none()
++    {
++        return false;
++    }
++    // All observed states came from the actual public camera/consumer.
++    // Entry plus seven true Fresnel splits, with the primary reflection waiting.
++    assert_eq!(state.paths, 17);
++    assert_eq!(state.stack_len, 1);
++    let expected = 1.0 / 196_608.0;
++    for value in [state.path.throughput.x, state.path.throughput.y, state.path.throughput.z] {
++        assert!(value > 0.0 && (value - expected).abs() < 1e-14);
++    }
++    true
++}
++
++#[test]
++fn legacy_public_normal_ior_three_has_a_positive_rational_depth_tail_hidden_by_png() {
++    const LEGACY_LINEAR: f64 = 65_533.0 / 65_536.0;
++    const OMITTED: f64 = 3.0 / 65_536.0;
++    assert_eq!(1.0 - LEGACY_LINEAR, OMITTED);
++    assert!(OMITTED > 1e-10);
++    for progressive in [false, true] {
++        let (scene, request, options) = rational_depth_source(progressive);
++        let mut task = ImageTask::new(scene, request, CancelToken::default(), options).unwrap();
++        let mut cut_observed = false;
++        let mut linear = None;
++        let mut completed = false;
++        for _ in 0..200_000 {
++            cut_observed |= rational_depth_real_cut(&task);
++            if let Some(p) = &task.progressive && p.film.ready() && p.film.samples() == 3 {
++                let (rgb, covered, samples) = p.film.pixel(0).unwrap();
++                assert_eq!((covered, samples), (3, 3));
++                linear = Some(rgb);
++            }
++            let before_work = task.work.used();
++            let poll = if progressive {
++                task.step_with_previews(1).unwrap()
++            } else {
++                match task.step(1).unwrap() {
++                    TaskPoll::Pending(p) => ImagePoll::Pending(p),
++                    TaskPoll::Complete(png) => ImagePoll::Complete(png),
++                }
++            };
++            assert!(task.work.used() >= before_work, "no ordinary-work reset across paths/passes");
++            match poll {
++                ImagePoll::Pending(_) => {},
++                ImagePoll::Preview { .. } => {
++                    assert!(progressive);
++                    assert!(task.optical.first().unwrap().pending.is_none());
++                },
++                ImagePoll::Complete(png) => {
++                    assert!(cut_observed);
++                    if progressive {
++                        for value in linear.unwrap() {
++                            assert!((value - LEGACY_LINEAR).abs() < 1e-10);
++                            assert!((value - 1.0).abs() > OMITTED * 0.5);
++                        }
++                    }
++                    // Both physical1 and legacy65533/65536 round to188 under
++                    // the documented Reinhard/IEC transfer: NOT a quality proof.
++                    assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0, 0).0, [188, 188, 188, 255]);
++                    completed = true;
++                    break;
++                },
++            }
++        }
++        assert!(completed, "bounded legacy witness did not complete");
++    }
++}
++
++#[test]
++fn public_normal_ior_three_real_positive_tail_still_obeys_cancel_and_work_limit() {
++    for cancel in [false, true] {
++        let (scene, request, options) = rational_depth_source(true);
++        let token = CancelToken::default();
++        let mut task = ImageTask::new(scene, request, token.clone(), options).unwrap();
++        let mut reached = false;
++        for _ in 0..200_000 {
++            if rational_depth_real_cut(&task) {
++                reached = true;
++                break;
++            }
++            assert!(matches!(task.step_with_previews(1).unwrap(), ImagePoll::Pending(_)));
++        }
++        assert!(reached, "real camera traversal must reach the unresolved positive tail");
++        let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++        assert_eq!(frontier.completed_passes, 0);
++        let used = task.work.used();
++        assert!(used > 0);
++        if cancel {
++            token.cancel(); // Actual caller-held public cancellation token.
++        } else {
++            // Existing unit-test control, not a new public budget API and not
++            // an injected ray, medium, hit or optical path.
++            task.work.limit = used;
++        }
++        let error = task.step_with_previews(1).err().unwrap();
++        assert_eq!(error.code, if cancel { ErrorCode::Cancelled } else { ErrorCode::LimitExceeded });
++        assert_eq!(task.work.used(), used, "failed/cancelled debit cannot advance or refund work");
++        assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(), frontier);
++        assert!(!task.done);
++    }
++}
++
++
++// ORIGINAL UNAPPLIED acceptance for Worker2 policy index ee17a4bb.
++// Intended for the EXISTING raytrace/image_tests.rs, after the original
++// rational_depth_source / rational_depth_real_cut helpers from index1685daca.
++// UNFORMATTED / UNCOMPILED / UNRUN. No cfg(test)-only policy selector is used.
++
++fn rational_public_strict_source(progressive: bool) -> (ProductScene, ImageRequest, RaytraceOptions) {
++    let (scene, mut request, mut options) = rational_depth_source(progressive);
++    options.dielectric_transport = job::CpuDielectricTransport::StrictTir;
++    request.raytrace = Some(options.clone());
++    (scene, request, options)
++}
++
++#[test]
++fn public_strict_ior_three_positive_non_tir_tail_is_a_real_error_before_final_or_sample() {
++    for progressive in [false, true] {
++        let (scene, request, options) = rational_public_strict_source(progressive);
++        let mut task = ImageTask::new(scene, request, CancelToken::default(), options).unwrap();
++        let mut failed = false;
++        for _ in 0..200_000 {
++            let before = task.work.used();
++            let poll = if progressive {
++                task.step_with_previews(1)
++            } else {
++                task.step(1).map(|poll| match poll {
++                    TaskPoll::Pending(p) => ImagePoll::Pending(p),
++                    TaskPoll::Complete(png) => ImagePoll::Complete(png),
++                })
++            };
++            match poll {
++                Ok(ImagePoll::Pending(_)) => assert!(task.work.used() >= before),
++                Ok(_) => panic!("strict positive rational tail cannot become preview/final quality"),
++                Err(error) => {
++                    assert_eq!(error.code, ErrorCode::LimitExceeded);
++                    assert!(error.message.contains("strict optical non-TIR branch-depth budget exhausted"));
++                    assert!(rational_depth_real_cut(&task), "actual depth8/paths17/positive internal state must exist");
++                    assert_eq!(task.work.used(), before + 1, "the real failing interface consumes its original tick");
++                    if progressive {
++                        assert_eq!(task.progressive.as_ref().unwrap().film.samples(), 0);
++                        assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap().completed_passes, 0);
++                    }
++                    assert!(!task.done);
++                    failed = true;
++                    break;
++                },
++            }
++        }
++        assert!(failed, "the actual selected strict policy must report its optical limit");
++    }
++}
++
++#[test]
++fn public_strict_rational_tail_preserves_real_cancel_and_ordinary_work_accounting() {
++    for cancel in [false, true] {
++        let (scene, request, options) = rational_public_strict_source(true);
++        let token = CancelToken::default();
++        let mut task = ImageTask::new(scene, request, token.clone(), options).unwrap();
++        let mut reached = false;
++        for _ in 0..200_000 {
++            if rational_depth_real_cut(&task) {
++                reached = true;
++                break;
++            }
++            assert!(matches!(task.step_with_previews(1).unwrap(), ImagePoll::Pending(_)));
++        }
++        assert!(reached);
++        let before = task.work.used();
++        let frontier = task.progressive.as_ref().unwrap().film.partial_frontier().unwrap();
++        assert_eq!(frontier.completed_passes, 0);
++        if cancel {
++            token.cancel();
++        } else {
++            // Explicit established unit-test stop control, not a public option
++            // or a manufactured ray/hit/medium/branch.
++            task.work.limit = before;
++        }
++        let error = task.step_with_previews(1).err().unwrap();
++        assert_eq!(error.code, if cancel { ErrorCode::Cancelled } else { ErrorCode::LimitExceeded });
++        assert_eq!(task.work.used(), before);
++        assert_eq!(task.progressive.as_ref().unwrap().film.partial_frontier().unwrap(), frontier);
++        assert!(!task.done);
++    }
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn native_public_final_strict_rational_tail_fails_without_a_frame_or_policy_fallback() {
++    use std::time::Duration;
++    let host = job::CpuHost::for_platform().unwrap();
++    assert_eq!(host.kind(), job::HostKind::NativeWorker);
++    host.validate_integrator(job::Integrator::Raytrace).unwrap();
++    // Exactly ONE required native branch marker; an unsupported configuration
++    // must fail rather than return early or switch to cooperative Raster.
++    eprintln!("STRICT_RATIONAL_BRANCH cpu_supported=true");
++    for (index, progressive) in [false, true].into_iter().enumerate() {
++        let (scene, request, options) = rational_public_strict_source(progressive);
++        host.admit(&scene, &request, job::JobOptions::default()).unwrap();
++        let id = job::JobId { session: 17361, serial: index as u64 + 1, generation: 1 };
++        let handle = host.submit(id, 1, scene, request).unwrap();
++        let status = handle.wait_timeout(Duration::from_secs(60)).unwrap();
++        assert_eq!(status.progress.phase, job::Phase::Failed);
++        assert_eq!(status.request.raytrace.as_ref(), Some(&options));
++        let error = status.error.as_ref().unwrap();
++        assert_eq!(error.code, ErrorCode::LimitExceeded);
++        assert!(error.message.contains("strict optical non-TIR branch-depth budget exhausted"));
++        assert!(handle.frame().unwrap().is_none());
++        assert!(handle.preview().unwrap().is_none());
++    }
++    // No immediate zero-pool claim: native terminal publication alone does not
++    // prove concurrent task/lease destruction has finished.
++}
+--- a/crates/ui-egui/src/render_workspace_cpu.rs
++++ b/crates/ui-egui/src/render_workspace_cpu.rs
+@@ -1,6 +1,6 @@
+ //! Transient CPU image controls; engine commands own file capture and admission.
+ use serde_json::{Value, json};
+-use solidcraft_engine::render::job::{CpuBudget, RaytraceEnvironmentOptions, ReflectionBody, ReflectionMode};
++use solidcraft_engine::render::job::{CpuBudget, CpuDielectricTransport, RaytraceEnvironmentOptions, ReflectionBody, ReflectionMode};
+ 
+ use super::hdr;
+ use crate::{SolveApp, ui_kit};
+@@ -85,8 +85,33 @@
+     app.render_workspace.view.dirty = true;
+ }
+ 
++/// The saved CPU choice is independent of sampling, profiles and material bindings.
++fn set_dielectric_transport(app: &mut SolveApp, policy: CpuDielectricTransport) -> bool {
++    let view = &mut app.render_workspace.view;
++    if view.raytrace.dielectric_transport == policy {
++        return false;
++    }
++    view.raytrace.dielectric_transport = policy;
++    view.dirty = true;
++    true
++}
++
++fn dielectric_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
++    let mut selected = usize::from(app.render_workspace.view.raytrace.dielectric_transport == CpuDielectricTransport::StrictTir);
++    let labels = [app.tr("render.cpu_glass_standard").to_string(), app.tr("render.cpu_glass_continue").to_string()];
++    let label = app.tr("render.cpu_glass_label").to_string();
++    if ui_kit::row(ui, &label, |ui| {
++        ui_kit::segmented(ui, &mut selected, &labels.iter().map(String::as_str).collect::<Vec<_>>(),
++            ui_kit::Segments { compact: true, targets: &["render:cpu-glass-standard", "render:cpu-glass-continue"], ..Default::default() })
++    }) {
++        set_dielectric_transport(app, if selected == 1 { CpuDielectricTransport::StrictTir } else { CpuDielectricTransport::LegacyBounded });
++    }
++    ui_kit::text(ui, app.tr("render.cpu_glass_help"), ui_kit::Text::Note("render.cpu_glass_help"));
++}
++
+ pub(super) fn progressive_controls(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
+     budget_controls(app, ui);
++    dielectric_controls(app, ui);
+     let mut selected = usize::from(app.render_workspace.view.raytrace.progressive.is_some());
+     let labels = [app.tr("render.children.single_image").to_string(), app.tr("render.cpu_progressive").to_string()];
+     let response = ui.scope(|ui| {
+@@ -621,3 +646,180 @@
+         ui_kit::section(ui, "cpu_captured_hdr", &title, false, |ui| metadata(app, ui, &status["environment"]));
+     }
+ }
++
++
++#[cfg(test)]
++fn dielectric_policy_harness() -> crate::scenario::Harness {
++    let mut h = crate::scenario::Harness::new();
++    h.app.ui.tab = "RENDER".into();
++    h.app.render_workspace.view.method = super::ImageMethod::CpuRaytrace;
++    h.app.render_workspace.view.result = false;
++    h.app.render_workspace.view.name = "Policy".into();
++    h.app.render_workspace.view.draft.width = 1;
++    h.app.render_workspace.view.draft.height = 1;
++    h.app.render_workspace.view.draft.exposure_ev = 0.0;
++    h.app.render_workspace.view.raytrace = Default::default();
++    h.app.render_workspace.view.cpu = View::default();
++    h
++}
++
++#[cfg(test)]
++#[test]
++fn cpu_glass_policy_no_binding_ui_snapshot_save_reopen_load_preserves_portable_choice() {
++    use solidcraft_engine::doc::render_settings::RenderJob;
++    let mut h = dielectric_policy_harness();
++    assert!(!set_dielectric_transport(&mut h.app, CpuDielectricTransport::LegacyBounded));
++    assert!(set_dielectric_transport(&mut h.app, CpuDielectricTransport::StrictTir));
++    assert!(h.app.render_workspace.view.dirty);
++    assert!(!super::setups::has_runtime_inputs(&h.app), "the choice itself is portable");
++    let saved = super::setups::snapshot(&h.app).unwrap();
++    let Some(RenderJob::CpuRaytrace { options }) = &saved.job else { panic!("CPU draft changed method") };
++    assert_eq!(options.dielectric_transport, CpuDielectricTransport::StrictTir);
++    let wire = super::image_request(&h.app).unwrap();
++    assert_eq!(wire["settings"]["job"]["options"]["dielectric_transport"], "strict_tir");
++    super::setups::save(&mut h.app).unwrap();
++    let document = solidcraft_engine::doc::Document::from_json(&h.app.session.doc.to_json()).unwrap();
++    h.app.session = solidcraft_engine::Session::new(document);
++    h.app.render_workspace.view.raytrace.dielectric_transport = CpuDielectricTransport::LegacyBounded;
++    super::setups::load(&mut h.app);
++    assert_eq!(h.app.render_workspace.view.raytrace.dielectric_transport, CpuDielectricTransport::StrictTir);
++    assert_eq!(super::setups::snapshot(&h.app).unwrap(), saved);
++    assert_eq!(super::image_request(&h.app).unwrap()["settings"]["job"]["options"]["dielectric_transport"], "strict_tir");
++    assert!(set_dielectric_transport(&mut h.app, CpuDielectricTransport::LegacyBounded));
++    assert!(serde_json::to_value(super::setups::snapshot(&h.app).unwrap()).unwrap()["job"]["options"].get("dielectric_transport").is_none());
++}
++
++#[cfg(test)]
++#[test]
++fn cpu_glass_policy_numeric_lowering_and_active_light_filter_preserve_the_exact_choice() {
++    use solidcraft_engine::render::job::DirectionalLightOptions;
++    let mut h = dielectric_policy_harness();
++    h.app.render_workspace.view.raytrace.lights = Some(vec![DirectionalLightOptions { direction:[0.0,0.0,1.0],color:[1.0;3],intensity:2.0 }]);
++    h.app.render_workspace.view.lights.visibility.muted.insert("directional:0".into());
++    for policy in [CpuDielectricTransport::LegacyBounded, CpuDielectricTransport::StrictTir] {
++        set_dielectric_transport(&mut h.app, policy);
++        let source = h.app.render_workspace.view.raytrace.clone();
++        for interactive in [false,true] {
++            let mut wire = json!({"settings":{"job":null}});
++            if interactive { params_interactive(&h.app,&mut wire).unwrap(); } else { params(&h.app,&mut wire).unwrap(); }
++            super::materials::params(&h.app,&mut wire).unwrap();
++            let wire = super::light::filter_request(&h.app,wire).unwrap();
++            let options: solidcraft_engine::render::job::RaytraceOptions = serde_json::from_value(wire["raytrace"].clone()).unwrap();
++            assert_eq!(options.dielectric_transport,policy);
++            assert_eq!(options.lights.as_ref().unwrap()[0].intensity,0.0);
++            assert_eq!(h.app.render_workspace.view.raytrace,source,"transient visibility must not rewrite authored input");
++        }
++        let portable = super::image_request(&h.app).unwrap();
++        let options: solidcraft_engine::doc::render_settings::CpuJob = serde_json::from_value(portable["settings"]["job"]["options"].clone()).unwrap();
++        assert_eq!(options.dielectric_transport,policy);
++    }
++}
++
++#[cfg(test)]
++#[test]
++fn cpu_glass_policy_selection_preserves_unsupported_opaque_reflection_and_advanced_intent() {
++    use solidcraft_engine::render::job::{SurfaceEmission,EmissionSides};
++    let mut h = dielectric_policy_harness();
++    h.app.session.execute("solid.box",&json!({"length":20,"width":20,"height":10})).unwrap();
++    h.app.session.execute("render.scene",&json!({})).unwrap();
++    let target = super::materials::read_targets(&mut h.app).unwrap().remove(0);
++    set_reflection(&mut h.app,&target.name,Some(ReflectionMode::Mirror)).unwrap();
++    let authored = h.app.render_workspace.view.raytrace.clone();
++    set_dielectric_transport(&mut h.app,CpuDielectricTransport::StrictTir);
++    assert_eq!(h.app.render_workspace.view.raytrace.reflections,authored.reflections);
++    assert!(super::image_request(&h.app).is_err());
++    assert!(super::interactive_request(&h.app).is_err());
++    assert_eq!(h.app.render_workspace.view.raytrace.reflections,authored.reflections);
++    assert_eq!(h.app.render_workspace.view.raytrace.dielectric_transport,CpuDielectricTransport::StrictTir);
++    h.app.render_workspace.view.raytrace.reflections=None;
++    h.app.render_workspace.view.raytrace.emissions=Some(vec![SurfaceEmission {body_index:target.ordinal,body:target.name,color:[1.0,0.5,0.25],strength:1.0,sides:EmissionSides::Front}]);
++    let authored = h.app.render_workspace.view.raytrace.clone();
++    assert!(super::image_request(&h.app).is_err());
++    assert!(super::interactive_request(&h.app).is_err());
++    assert_eq!(h.app.render_workspace.view.raytrace,authored);
++}
++
++#[cfg(all(test,not(target_arch="wasm32")))]
++#[test]
++fn native_cpu_glass_policy_public_ui_check_start_and_interactive_preserve_real_material_and_visibility() {
++    use std::time::Duration;
++    use solidcraft_engine::render::job::{CpuHost,HostKind,Integrator,JobId,Phase,CpuProgressiveOptions,DirectionalLightOptions};
++    use solidcraft_engine::render::job::interactive::VisualRevision;
++    use solidcraft_engine::schema::render_ui::Action;
++    let host=CpuHost::for_platform().unwrap();
++    assert_eq!(host.kind(),HostKind::NativeWorker);
++    host.validate_integrator(Integrator::Raytrace).unwrap();
++    eprintln!("CPU_GLASS_POLICY_UI_BRANCH cpu_supported=true");
++    for policy in [CpuDielectricTransport::LegacyBounded,CpuDielectricTransport::StrictTir] {
++        let mut h=dielectric_policy_harness();
++        h.app.session.set_render_job_host(Some(host.clone())).unwrap();
++        h.app.session.execute("solid.box",&json!({"length":20,"width":20,"height":10})).unwrap();
++        h.app.session.execute("render.scene",&json!({})).unwrap();
++        set_dielectric_transport(&mut h.app,policy);
++        h.app.render_workspace.view.raytrace.lights=Some(vec![DirectionalLightOptions {direction:[0.0,0.0,1.0],color:[1.0;3],intensity:2.0}]);
++        h.app.render_workspace.view.lights.visibility.muted.insert("directional:0".into());
++        let target=super::materials::read_targets(&mut h.app).unwrap().remove(0);
++        let mut binding=super::materials::Binding::new(target,&h.app);
++        binding.glass_enabled=true;binding.cpu_optics=true;
++        // Explicit index-matched certified box: this is capture/consumer
++        // acceptance, not a new oracle for general reflective glass quality.
++        binding.glass.ior=1.0;binding.glass.boundary=super::materials::Boundary::Box;binding.glass.thickness=0.0;
++        h.app.render_workspace.view.materials.enabled=true;
++        h.app.render_workspace.view.materials.bindings.push(binding);
++        assert!(super::setups::snapshot(&h.app).is_err(),"captured body bindings remain runtime-only");
++        for progressive in [false,true] {
++            h.app.render_workspace.view.raytrace.progressive=progressive.then_some(CpuProgressiveOptions {samples_per_pixel:3,seed:411});
++            let wire=super::image_request(&h.app).unwrap();
++            assert_eq!(wire["raytrace"]["dielectrics"].as_array().unwrap().len(),1);
++            let checked=h.app.session.execute("render.preflight",&wire).unwrap();
++            record_checked(&mut h.app,&wire,&checked);
++            let revision=h.app.session.revision;
++            let other=if policy==CpuDielectricTransport::StrictTir {CpuDielectricTransport::LegacyBounded} else {CpuDielectricTransport::StrictTir};
++            set_dielectric_transport(&mut h.app,other);
++            assert_ne!(Some(&super::image_request(&h.app).unwrap()),h.app.render_workspace.view.cpu.checked.as_ref().map(|c|&c.request));
++            assert_eq!(h.app.session.revision,revision);
++            set_dielectric_transport(&mut h.app,policy);
++            let started=h.app.session.execute("render.start",&wire).unwrap();
++            let id:JobId=serde_json::from_value(started["job"].clone()).unwrap();
++            let final_handle=h.app.session.render_job_handle(id).unwrap();
++            let final_status=final_handle.wait_timeout(Duration::from_secs(60)).unwrap();
++            assert_eq!(final_status.progress.phase,Phase::Completed,"{:?}",final_status.error);
++            assert_eq!(json!(final_status.request),checked["request"]);
++            assert_eq!(final_status.request.raytrace.as_ref().unwrap().dielectric_transport,policy);
++            assert!(final_handle.frame().unwrap().is_some());
++            let preview_wire=super::interactive_request(&h.app).unwrap();
++            let context=h.app.session.interactive_render().unwrap();
++            context.enable(VisualRevision {scene_generation:revision,visual_revision:1},Duration::ZERO).unwrap();
++            let ticket=context.capture(Duration::from_millis(201)).unwrap().unwrap();
++            assert!(context.snapshot(&h.app.session,ticket,&preview_wire).unwrap().run().unwrap());
++            let preview_handle=context.current().unwrap().unwrap();
++            let status=preview_handle.wait_timeout(Duration::from_secs(60)).unwrap();
++            assert_eq!(status.progress.phase,Phase::Completed,"{:?}",status.error);
++            let captured=status.request.raytrace.as_ref().unwrap();
++            assert_eq!(captured.dielectric_transport,policy);
++            assert_eq!(captured.dielectrics,final_status.request.raytrace.as_ref().unwrap().dielectrics);
++            assert_eq!(captured.lights.as_ref().unwrap()[0].intensity,0.0);
++            assert_ne!(status.job,final_status.job);
++            assert!(final_handle.frame().unwrap().is_some(),"Interactive cannot replace the final source");
++            context.disable().unwrap();
++        }
++        // Exercise actual UI intent observation while paused, without a fake
++        // receiver or a second capture worker. No timer result is asserted.
++        super::interactive::apply_command(&mut h.app,Action::On).unwrap();
++        let before=super::interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++        super::interactive::apply_command(&mut h.app,Action::Pause).unwrap();
++        let revision=h.app.session.revision;
++        set_dielectric_transport(&mut h.app,if policy==CpuDielectricTransport::StrictTir {CpuDielectricTransport::LegacyBounded} else {CpuDielectricTransport::StrictTir});
++        super::interactive::apply_command(&mut h.app,Action::Resume).unwrap();
++        assert!(super::interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap()>before);
++        assert_eq!(h.app.session.revision,revision);
++        super::interactive::apply_command(&mut h.app,Action::Off).unwrap();
++        h.app.render_workspace.view.materials.bindings[0].glass.shadows=true;
++        assert!(super::image_request(&h.app).is_err());
++        assert!(h.app.render_workspace.view.materials.bindings[0].glass.shadows);
++        h.app.render_workspace.view.materials.bindings[0].glass.shadows=false;
++        h.app.render_workspace.view.materials.bindings[0].maps_enabled=true;
++        assert!(super::interactive_request(&h.app).is_err());
++        assert!(h.app.render_workspace.view.materials.bindings[0].maps_enabled);
++    }
++}
+--- a/crates/ui-egui/src/render_workspace_setups.rs
++++ b/crates/ui-egui/src/render_workspace_setups.rs
+@@ -66,6 +66,7 @@
+             let options = &view.raytrace;
+             RenderJob::CpuRaytrace {
+                 options: CpuJob {
++                    dielectric_transport: options.dielectric_transport,
+                     budget: options.budget,
+                     primary_samples: options.primary_samples,
+                     progressive: options.progressive,
+@@ -173,6 +174,7 @@
+         Some(RenderJob::CpuRaytrace { options }) => {
+             view.method = ImageMethod::CpuRaytrace;
+             view.raytrace = RaytraceOptions {
++                dielectric_transport: options.dielectric_transport,
+                 budget: options.budget,
+                 primary_samples: options.primary_samples,
+                 progressive: options.progressive,
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -10658,7 +10658,6 @@
+         assert_eq!(interactive::test_cache(&h.app).unwrap().0.job, job);
+         h.app.run("render.interactive", json!({"action":"resume"})).unwrap();
+         let new_job = interactive_recovery_require_success(&mut h, time + 0.3, time + 0.4);
+-        time += 0.4;
+         assert_ne!(new_job, job);
+         assert!(!interactive::blocks_geometry_input(&h.app), "only the new accepted capture can establish the moved scene");
+         h.app.run("render.interactive", json!({"action":"off"})).unwrap();
+--- a/docs/render-interactive.md
++++ b/docs/render-interactive.md
+@@ -1,9 +1,50 @@
+-# CPU Interactive core
++# CPU Interactive preview
+ 
+-First slice of #8936 under #6201. `job::interactive` prepares bounded CPU
+-progressive requests and coordinates their lifetime. **It is not yet connected
+-to the workspace UI.** Entering Render does not start a job. No default,
+-document format, final export, panel or gizmo is changed by this slice.
++The workspace adapter connects `job::interactive` to the Render canvas and the
++Interactive card. Select **CPU ray tracing** in Output and use **On** to enable
++the provisional native CPU preview. Entering Render or changing stages does not
++enable it or start a final image. The registered `render.interactive` command
++uses explicit on, pause, resume and off actions.
++
++Interactive requires an available native worker host supporting CPU ray tracing;
++it is not the web/cooperative Raster path or a GPU path-tracing preview. An
++unsupported method, host or request reports a reason rather than changing
++methods or discarding settings. The final renderer's settings, document format
++and export registry remain separate.
++
++## Workspace behavior
++
++After On, committed camera, appearance, visibility, lighting and request edits
++invalidate the current preview automatically. Capture groups edits after 200 ms
++without a newer change; this is a scheduling rule, not a promised display
++latency. The card exposes Updating, Refining preview, Sample target reached,
++Pause/Resume and Off. A completed Interactive image is still labelled
++Provisional preview; reaching its target does not make it a final result.
++
++Pause cancels owned preview work and may retain accepted pixels as a reference.
++Edits mark that reference Out of date. Resume uses the latest input identity.
++An appearance or lighting edit alone does not prohibit repeated aligned
++selection/material editing. Geometry targets require the accepted image's
++camera, authored aspect, visibility, evaluated world and placement metadata to
++match the current view. A changed camera, hidden body or changed geometry must
++not authorize picking or Paint from stale pixels, including after a navigation
++button is released. Unknown source pixels also cannot claim geometry targets.
++A missing alignment certificate fails closed; painting a retained image does
++not certify its geometry.
++
++The image is fitted without stretching; painting and geometry input share its
++actual pixel rectangle. Empty letterbox space is not a geometry target.
++Navigation and release/Escape handling remain available when geometry input is
++blocked. While an enabled preview awaits its current image, the canvas reserves
++that route rather than painting the fast Model preview as current CPU pixels.
++
++Off, leaving Render or changing documents disables/cancels the owned preview
++context. A manual final temporarily suspends preview capture; it does not
++export an Interactive image or cancel the final job. Result has canvas priority.
++A failed capture waits for a relevant edit or explicit Resume instead of
++starting an unbounded retry loop.
++
++## Preview envelope
+ 
+ `cpu_request` clones an immutable final request. It preserves the camera,
+ background, shadows, exposure, lighting, resources and transport. Only preview
+@@ -16,7 +57,30 @@
+ The existing profile and host still enforce geometry, traversal and memory limits.
+ Rectangle/LED direct-light inputs, their emitter-sample count and area-pattern
+ seed survive preview lowering unchanged. Only camera/reflection sampling uses
+-the preview envelope; dielectric and anisotropic overrides still fail explicitly.
++the preview envelope; dielectric intent is retained for capture and transport
++certification, while unsupported progressive combinations, including anisotropy,
++still fail explicitly. This is not a promise of general glass support.
++See [CPU progressive sampling](render-cpu-progressive.md) and
++[CPU resource profiles](render-cpu-resource-profiles.md) for the separate final
++request and admission contracts.
++
++## Exposure and image ownership
++
++The saved setup's common exposure is finite and bounded to -32..32 EV.
++With Interactive Off, Model uses that exposure in its fast product preview for
++all final-method choices: CPU ray tracing, GPU path tracing and Raster. Editing
++it does not require Start or enable the selected final executor. This Model
++path still requires its viewport device and retains its current environment
++restriction (rotation 0, intensity 1); it is not a promise of Model/final pixel
++parity or of every final effect being represented.
++
++Interactive receives exposure through its captured CPU request. Retained Result
++and Interactive PNGs return through their own image-display routes before the
++live Model exposure is applied. Editing the current draft must not grade those
++captured pixels a second time. An explicit Effects/regrade action is a separate
++operation. Design's viewport does not inherit product exposure. See
++[Scene and Shot editors](render-shot-scene.md) for active versus selected setup
++semantics and the saved Exposure control.
+ 
+ ## Adapter contract
+ 
+@@ -56,7 +120,11 @@
+   final finishes; an enabled, unpaused controller then groups the latest edits
+   again. No method here cancels a final job or exports an image.
+ 
+-The UI adapter, registered activation/pause commands, current-request identity
+-capture, retained paused texture and visual acceptance remain a following slice
+-coordinated with #8000/#7375. This is not a claim that those integration gates or
+-the installed application's shadow defect are fixed.
++## Validation scope
++
++These routes describe the current source contract, including the connected UI;
++they are not a statement that native visual acceptance or GPU qualification has
++passed on this revision. Core/headless regression coverage does not replace a
++supported native build and admitted runtime checks. Pending integration gates,
++Model/final numeric parity and the installed application's reported shadow
++defect are not declared resolved by this document.
+--- a/docs/render-raytrace-image.md
++++ b/docs/render-raytrace-image.md
+@@ -206,3 +206,25 @@
+ progressive transport and explicit glass/medium semantics remain separate work.
+ Community feedback is welcome on bounded latency,
+ normal handling, energy loss in the preview BRDF and reproducible acceptance scenes.
++
++## Explicit CPU glass policy
++
++`raytrace.dielectric_transport` selects `legacy_bounded` (default, omitted when
++serialized) or `strict_tir`. The CPU Glass rendering control makes this choice
++explicit and independent of resource profile, exposure and progressive feedback.
++Standard retains the existing bounded optical response. Continue reflections
++continues real deterministic total internal reflections and reports an optical
++limit error rather than completing an unresolved positive non-TIR tail as black.
++
++This mode retains the existing certified ThinSheet/ClosedBox and nesting rules.
++It does not add general glass geometry, polarization, global illumination or a
++convergence guarantee. Selected opaque reflections are refused in strict mode;
++authored bindings and effects are never cleared to make the request fit. Finite
++work/cancellation and branching limits still apply. Increasing SPP does not
++resolve a missing optical path.
++
++Fixed and progressive final rendering and CPU Interactive preserve the same
++captured policy. Failed strict transport cannot publish an exportable final;
++provisional previews remain provisional and the prior successful final keeps
++its own request identity. The choice alone can be saved in a CPU setup; captured
++body/material bindings remain subject to their existing runtime-only guard.
+--- a/docs/render-settings.md
++++ b/docs/render-settings.md
+@@ -295,3 +295,18 @@
+ 
+ No new third-party dependency or asset is introduced. `doc` depends on the existing
+ pure `render` crate for its shared camera and R1 identifiers, within the L2 → L1 rule.
++
++### Saved CPU dielectric policy
++
++CPU `job.options.dielectric_transport` accepts `legacy_bounded` or `strict_tir`.
++Missing/default values retain Legacy and are omitted on serialization. The UI
++edits that CPU field and preserves it on Save, reopen, load and request capture;
++there is no common RenderSetup policy field or implicit renderer/profile change.
++The format records this new meaning through its own pending change. It does not
++make captured body identities or temporary optical/material bindings portable.
++
++Strict transport continues deterministic internal glass reflections and errors
++on an unresolved positive non-TIR depth tail. Unsupported selected opaque
++reflections, effects and geometry remain explicit refusals, with authored intent
++preserved. The ordinary command/host validation still applies to each captured
++request; Check is not a promise of successful tracing or a memory reservation.
+--- a/docs/render-shot-scene.md
++++ b/docs/render-shot-scene.md
+@@ -3,7 +3,9 @@
+ The Scene overview replaces the old Scene page. Entering Render with no selection,
+ clearing the selection, or selecting nothing opens Scene. Selecting a saved shot
+ opens its Shot editor; the other editors retain their existing adapters during the
+-selection-based Inspector migration.
++selection-based Inspector migration. Browser selection alone does not activate
++that setup. Clicking its thumbnail in the Shots strip switches the active setup;
++the active highlight identifies the draft used by Model and the next render.
+ 
+ Scene follows E1: Stages (Look, Light, Frame, Output), Ready to render, Reminders.
+ Each stage row summarises current state and navigates through the view commands.
+@@ -25,11 +27,31 @@
+ 
+ Lens values are saved to the selected shot's GPU job while retaining its other
+ options. Depth of field needs GPU path tracing and perspective; aperture and focus
+-distance remain visible when disabled. Raster exposure and orthographic FOV stay
+-faded with reasons. Changing to orthographic while saved depth of field is enabled
++distance remain visible when disabled. Orthographic FOV stays faded with its
++reason. Changing to orthographic while saved depth of field is enabled
+ is rejected by the existing settings validation; disable depth of field first.
+-Frame retains aspect presets and transient composition guides. Size is read-only;
+-Edit in Output selects Output, the home of image dimensions.
++Exposure is enabled for Raster, CPU and GPU setups and edits the selected saved
++shot's common finite -32..32 EV value. A slider drag commits on release as one
++undoable settings command. Editing the active shot also updates its live exposure
++draft; editing an inactive selected shot leaves the active setup's draft and
++camera unchanged. Selecting a different final method does not reset exposure.
++With Interactive Off, the fast Model preview uses common exposure for all three
++methods, without starting a render. Interactive applies it through its captured
++CPU request; retained Interactive and Result pixels are not graded again when
++the live draft changes. Model and final renderers need not produce identical
++pixels. Design's viewport remains independent. See
++[CPU Interactive preview](render-interactive.md) for ownership, support and
++paused-input rules.
++
++Frame retains aspect presets and transient composition guides. A preset changes
++the selected shot's saved dimensions, not just a crop: for example, 16:9 authors
++1920 × 1080 and 4:5 authors 864 × 1080. Current method/profile validation can
++refuse a preset; it does not silently lower dimensions or samples. Custom follows
++the saved dimensions. The aspect selector/guides are transient view state, so
++undoing a saved size edit and selecting Custom are distinct operations. The
++preview fits its painted frame without stretching and uses those same pixel
++bounds for geometry input. Size is read-only in Shot; Edit in Output selects
++Output, the home of image dimensions.
+ 
+ These two editors use the shared workspace header without the old setup form,
+ page switcher or pinned job footer. Explicit native-studio resource reviews remain
+@@ -43,5 +65,8 @@
+ regression coverage checks every editor widget at 350 and 320 points of content
+ width, including disabled controls, equal Target cells and untruncated labels.
+ 
+-Validation uses headless egui harnesses and focused render tests. No running-app
+-visual review or GPU-device verification is claimed by this change.
++The source includes headless egui and focused render regression cases for these
++contracts. Their presence does not claim a completed native visual review,
++GPU-device verification or Model/final pixel parity on the revision being
++reviewed. The connected Interactive/common-exposure behavior still requires
++qualification against the exact supported native build.

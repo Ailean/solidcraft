@@ -130,3 +130,16 @@ preserve default/omitted Legacy behavior and explicit bounded Strict intent.
 This pre-format C19 delta requires a separate post-format receiver rebind; the
 current C19 build does not include or qualify it. Only the combined patch is
 archived, with no adoption, runtime, energy-convergence or GPU-parity claim.
+
+## C20 reviewed working-source composition
+
+[Exact C20 delta, portable bindings and 19 unrun declarations](c20-reviewed-composition/README.md)
+record the reviewed 16-path composition adopted as working source only. No
+compiled inventory, runtime, full-CI or readiness result is implied. Earlier
+Strict TIR and U17 proposal archives do not substitute for this exact receiver.
+
+## Raster local studio v2: separate future unit
+
+[Standalone candidate and delta](raster-local-studio-v2/README.md) preserve the
+source-closed helper with 18 new numeric cases, all unrun. It has no consumer
+and is not part of C20 or its development selection.

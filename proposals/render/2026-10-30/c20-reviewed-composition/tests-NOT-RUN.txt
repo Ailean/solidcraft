@@ -1,0 +1,29 @@
+SOURCE ONLY - 19 new original Rust declarations. UNCOMPILED / UNRUN for C20.
+
+These names are not compiled IDs, runtime results or a derived 349-case selection.
+
+crates/render/src/job/mod.rs :: dielectric_transport_wire_policy_preserves_legacy_and_rejects_hostile_values
+crates/render/src/job/mod.rs :: strict_dielectric_policy_refuses_unqualified_opaque_continuations_without_mutation
+crates/render/src/raytrace/image_tests.rs :: legacy_long_tir_counterexample_loses_the_first_real_transmitted_exit
+crates/render/src/raytrace/image_tests.rs :: strict_core_long_tir_fixed_and_progressive_reach_real_exit_and_real_absorber
+crates/render/src/raytrace/image_tests.rs :: strict_core_long_tir_keeps_beer_on_all_real_reflected_segments
+crates/render/src/raytrace/image_tests.rs :: strict_core_tir_more_than511_real_continuations_still_use_bvh_work_and_cancellation
+crates/render/src/raytrace/image_tests.rs :: strict_core_positive_non_tir_depth_limit_is_explicit_instead_of_black_completion
+crates/render/src/raytrace/image_tests.rs :: legacy_public_normal_ior_three_has_a_positive_rational_depth_tail_hidden_by_png
+crates/render/src/raytrace/image_tests.rs :: public_normal_ior_three_real_positive_tail_still_obeys_cancel_and_work_limit
+crates/render/src/raytrace/image_tests.rs :: public_strict_ior_three_positive_non_tir_tail_is_a_real_error_before_final_or_sample
+crates/render/src/raytrace/image_tests.rs :: public_strict_rational_tail_preserves_real_cancel_and_ordinary_work_accounting
+crates/render/src/raytrace/image_tests.rs :: native_public_final_strict_rational_tail_fails_without_a_frame_or_policy_fallback
+crates/ui-egui/src/render_workspace_cpu.rs :: cpu_glass_policy_no_binding_ui_snapshot_save_reopen_load_preserves_portable_choice
+crates/ui-egui/src/render_workspace_cpu.rs :: cpu_glass_policy_numeric_lowering_and_active_light_filter_preserve_the_exact_choice
+crates/ui-egui/src/render_workspace_cpu.rs :: cpu_glass_policy_selection_preserves_unsupported_opaque_reflection_and_advanced_intent
+crates/ui-egui/src/render_workspace_cpu.rs :: native_cpu_glass_policy_public_ui_check_start_and_interactive_preserve_real_material_and_visibility
+crates/doc/src/render_job.rs :: cpu_dielectric_transport_saved_field_has_legacy_default_and_explicit_runtime_forward
+crates/doc/src/render_job.rs :: cpu_dielectric_transport_document_roundtrip_keeps_choice_without_captured_bindings
+crates/gpu/src/view.rs :: explicit_product_dark_channels_follow_one_srgb_transfer_in_both_targets
+
+TIR: 18 new declarations; two new native-required TRUE branch sources remain.
+U17: one actual GPU test, 96 proposed renders inside it; excluded from the
+native development proposal and still separately unrun.
+349 native cases / 60 required TRUE branches are proposals, not observed counts.
+A source marker, optional no-adapter return or old C19 result is not acceptance.

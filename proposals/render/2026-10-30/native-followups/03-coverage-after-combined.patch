@@ -1,0 +1,48 @@
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -7774,3 +7774,45 @@
+     assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
+ }
+ 
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_waiting_canvas_rejects_live_foreign_session_without_resetting_context() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_waiting_canvas_rejects_live_foreign_session_without_resetting_context") {
++        return;
++    }
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    assert!(interactive::awaiting_current_frame(&h.app));
++    let before = interactive::inspect(&h.app);
++    assert_eq!(before["enabled"], true);
++    assert_eq!(before["phase"], "Updating");
++    assert_eq!(before["paused"], false);
++    assert!(before["error"].is_null());
++    assert!(!h.app.render_workspace.view.result);
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(!h.app.render_workspace.interactive.pending());
++
++    let uid = h.app.session.uid;
++    let document = h.app.session.doc.clone();
++    let mut foreign = Session::new((*document).clone());
++    assert_ne!(foreign.uid, uid);
++    // Use real engine Sessions and the same ownership swap as documents::swap_in.
++    // Deliberately omit the UI reset: it would otherwise mask is_current's guard.
++    // Retain the original Session so its registry/controller lifetime stays live.
++    std::mem::swap(&mut h.app.session, &mut foreign);
++    assert_ne!(h.app.session.uid, uid);
++    assert_eq!(h.app.session.doc, document, "equal design contents do not confer session ownership");
++    assert_eq!(interactive::inspect(&h.app), before, "the context is still enabled, not reset or refreshed");
++    assert!(active(&h.app));
++    assert_eq!(h.app.render_workspace.view.method, ImageMethod::CpuRaytrace);
++    assert!(!h.app.render_workspace.view.result);
++    assert!(!interactive::awaiting_current_frame(&h.app), "a live context owned by another Session cannot reserve the canvas");
++    assert_eq!(interactive::inspect(&h.app), before, "the predicate must remain read-only");
++
++    std::mem::swap(&mut h.app.session, &mut foreign);
++    assert_eq!(h.app.session.uid, uid);
++    assert_eq!(interactive::inspect(&h.app), before);
++    assert!(interactive::awaiting_current_frame(&h.app), "restoring the real owner proves the same context remained live");
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++    assert!(!h.app.render_workspace.interactive.pending());
++}

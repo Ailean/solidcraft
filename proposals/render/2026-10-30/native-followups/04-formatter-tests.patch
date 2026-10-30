@@ -1,0 +1,43 @@
+--- before-LF/crates/ui-egui/src/render_workspace_tests.rs
++++ after-LF/crates/ui-egui/src/render_workspace_tests.rs
+@@ -7467,14 +7467,8 @@
+         let centre = (left.right() + right.left()) / 2.0;
+         let navigation = egui::Rect::from_center_size(egui::pos2(centre, content.bottom() - 28.0), egui::vec2(120.0, 40.0));
+         let axis = egui::Rect::from_min_size(egui::pos2(right.left() - 110.0, content.top()), egui::vec2(110.0, 110.0));
+-        h.app.viewport.layout = Some(crate::viewport_layout::Layout {
+-            viewport,
+-            drawable: content,
+-            content,
+-            axis_view: axis,
+-            navigation,
+-            confirm: egui::Rect::NOTHING,
+-        });
++        h.app.viewport.layout =
++            Some(crate::viewport_layout::Layout { viewport, drawable: content, content, axis_view: axis, navigation, confirm: egui::Rect::NOTHING });
+         // A new measured selection replaces the old one in this very frame.
+         // Both positions cut across the old top-centre status/action region.
+         for y in [content.top() + 90.0, content.top() + 180.0] {
+@@ -7657,10 +7651,7 @@
+ #[test]
+ fn interactive_waiting_canvas_after_supported_edit_drops_old_pixels_and_new_capture_still_publishes() {
+     let mut h = interactive_ui_fixture();
+-    if !interactive_test_cpu_branch(
+-        &mut h,
+-        "interactive_waiting_canvas_after_supported_edit_drops_old_pixels_and_new_capture_still_publishes",
+-    ) {
++    if !interactive_test_cpu_branch(&mut h, "interactive_waiting_canvas_after_supported_edit_drops_old_pixels_and_new_capture_still_publishes") {
+         return;
+     }
+     let epoch = interactive::test_clock(&h.app).as_secs_f64();
+@@ -7696,10 +7687,7 @@
+ #[test]
+ fn interactive_waiting_canvas_preserves_paused_out_of_date_pixels_and_resume_waits_without_fallback() {
+     let mut h = interactive_ui_fixture();
+-    if !interactive_test_cpu_branch(
+-        &mut h,
+-        "interactive_waiting_canvas_preserves_paused_out_of_date_pixels_and_resume_waits_without_fallback",
+-    ) {
++    if !interactive_test_cpu_branch(&mut h, "interactive_waiting_canvas_preserves_paused_out_of_date_pixels_and_resume_waits_without_fallback") {
+         return;
+     }
+     let epoch = interactive::test_clock(&h.app).as_secs_f64();

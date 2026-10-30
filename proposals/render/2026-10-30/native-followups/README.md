@@ -1,17 +1,26 @@
-# Native Interactive preview follow-ups, 30 October 2026
+# Native Interactive follow-ups, 30 October 2026
 
-These are separate proposed patches against the frozen local M2/M3 candidate based on production draft head a077906234972dbbf11e80c54893f85ece97c8b7. They are archived for review and continuity, not applied to production or qualified by the earlier candidate's tests. Both are unformatted, uncompiled and unrun.
+Work-in-progress archive for #6201 / draft #8938. Production draft head remains a077906234972dbbf11e80c54893f85ece97c8b7. These follow-ups are applied locally but have **not been compiled or tested**.
 
-## Placement
+## Patch sequence
 
-Native mouse-and-keyboard testing found the provisional preview status/actions overlapping the selected-body toolbar. placement.patch moves only our card into measured current-frame free space. A minimal composition-order hook draws the existing selection bar before measuring it; its implementation, controls and gizmos remain unchanged. Two original tests cover wide/narrow placement and real selection/Pause/Off hit targets. Extremely obstructed canvases and the shared helper's 16-obstacle bound remain explicit limitations. Coordination with the panel owner and native after-validation remain required.
+1. `placement.patch`: move our preview card into current-frame measured free space, with the minimal earlier selection-bar composition call. Preserve the author's toolbar implementation and controls. Two original tests.
+2. `02-waiting-after-placement.patch`: suppress Model Preview fallback while current CPU Interactive awaits pixels. Four original tests. `waiting-canvas.patch` is the preserved standalone alternative against the old base; do not apply both alternatives.
+3. `03-coverage-after-combined.patch`: one additional original test isolates rejection of a live foreign Session while preserving the original context.
+4. `04-formatter-tests.patch`: the actual authorized formatter delta, limited to three formatting hunks in the newly appended tests.
 
-## Waiting canvas
+All seven new test declarations remain unrun. Together with nineteen existing Interactive regressions, the proposed affected selection is26 exact UI cases and24 positive CPU-supported markers. Static reviews found no blocker in this scope; they do not establish a passing build or runtime result.
 
-During supported edits the current candidate drops the invalidated ray-traced image, displays Model Preview with different lighting, then replaces it with the new provisional image. waiting-canvas.patch preserves all image identity/invalidation guards and suppresses that fallback only while an active current CPU Interactive context awaits its pixels. It does not claim an image was painted and does not reuse stale pixels. The tradeoff is a temporarily empty model canvas during updating; continuous edits may prolong that wait. Four original tests cover actual show routing, accepted edits/new captures, paused out-of-date pixels, and camera/document/late-callback isolation.
+Git converted line endings during local patch application: the initial raw-prefix assertion failed and is preserved. The original test prefix and all reviewed candidates matched exactly after LF normalization; no original expectation was changed. The later formatter delta is separately preserved above.
 
-## Integration and validation
+## Current validation state
 
-Apply placement first, then re-pin and transplant the waiting hunks and append its tests. Do not overwrite whole files or apply the overlapping test append blindly. Preserve both individual patches and all original assertions. An independent review and a combined private candidate are pending. The shared checkout remains frozen during native acceptance. One builder will validate the combined exact source after the app closes and its runtime is drained; native before/after checks, the repository gate and publication readiness are still pending. No physical GPU acceptance or full CI result is claimed.
+C10 ran the formatter and formatter check successfully, then stopped at the unchanged7GiB admission gate **before Clippy**:7,493,988,352 bytes available versus7,516,192,768 required, a22,204,416-byte deficit. No Clippy, wasm check, compile, inventories or test bodies ran. All owned jobs drained and leases were released after independent verification. This is a resource stop, not a product failure or a validation pass. No automatic retry is authorized.
 
-Related: #6201 and draft #8938.
+## Presentation tradeoff and pending follow-up
+
+The waiting proposal keeps strict identity/invalidation guards and never reuses stale pixels as current, but temporarily leaves the model canvas empty. Source review found that picking/appearance input currently occurs before this presentation branch, so invisible geometry could still receive actions. A separate private follow-up will prevent geometry actions during that hidden wait while retaining camera navigation and visible controls. It is not yet applied or runtime-reproduced; do not present the current waiting patch as fully accepted UX.
+
+The layout helper retains its existing16-obstacle cap and may omit the card in an insufficiently small/obstructed canvas. Native wide/narrow after-validation remains pending. Coordination is in the existing Nathan thread on #8000, comment6507877408. No changes to his toolbar implementation, panels, retained results/compare or lighting/environment gizmos are claimed.
+
+See [the first native round](native-round-one.md) for the actual mouse-and-keyboard observations. Full repository CI and a rebuilt application's native after-acceptance remain pending. Old C7 results and the old application do not qualify these changed bytes.

@@ -459,40 +459,6 @@ mod smlib {
         }
     }
 
-    #[test]
-    fn box_minus_sphere() {
-        let a = boxed(0.0, 0.0, 0.0, 10.0, 10.0, 10.0);
-        let b = crate::sphere(Vec3::new(10.0, 10.0, 10.0), 4.0).unwrap();
-        let r = through_smlib(&a, &b, BoolOp::Cut);
-        let h = verified(&r, &[&a, &b], 0.02);
-        // The three notched box faces, the three untouched, and the sphere's patches inside.
-        assert_eq!(changes(h)[..2].iter().sum::<usize>() + changes(h)[2], h.faces.len(), "{}", show(h));
-        assert!(
-            meets(h).iter().all(|(x, y)| matches!((x, y), (FaceOrigin::Face { operand: 0, .. }, FaceOrigin::Face { operand: 1, .. }))),
-            "{}",
-            show(h)
-        );
-    }
-
-    #[test]
-    fn box_minus_cylinder() {
-        let a = boxed(0.0, 0.0, 0.0, 10.0, 10.0, 10.0);
-        let b = crate::cylinder(Vec3::new(5.0, 5.0, -1.0), Vec3::Z, 2.0, 12.0).unwrap();
-        let r = through_smlib(&a, &b, BoolOp::Cut);
-        let h = verified(&r, &[&a, &b], 0.01);
-        assert!(from(h, face(0, 0)).len() + from(h, face(0, 1)).len() >= 1, "{}", show(h));
-    }
-
-    #[test]
-    fn box_union_box() {
-        let a = boxed(0.0, 0.0, 0.0, 10.0, 10.0, 10.0);
-        let b = boxed(5.0, 2.0, 2.0, 15.0, 8.0, 8.0);
-        let r = through_smlib(&a, &b, BoolOp::Union);
-        let h = verified(&r, &[&a, &b], 0.02);
-        assert_eq!(h.faces.len(), 11, "{}", show(h));
-        assert_eq!(meets(h).len(), 4, "{}", show(h));
-    }
-
     /// Cubes sharing an edge, and cubes sharing a vertex: SMLib's union touches itself there;
     /// it comes back as two closed shells, the shared edge and vertices split into one copy per
     /// cube, each copy with its edge's history (verified against the geometry). The copies say

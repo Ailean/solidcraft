@@ -164,3 +164,7 @@ explicit. Source review and replay are not compilation, full CI or GPU parity.
 ## 2026-10-31: Raster local runtime consumer — source only
 
 [Bounded Raster local-light consumer](../2026-10-31/raster-local-runtime/README.md) preserves exact before/candidate source for 34 existing paths, a single combined delta and portable bindings. It connects transient point/spot/rectangle schematic lights through request admission and execution, with bounded resource accounting and corrected weighted-work progress. Four receivers retain the current formatting and two test-compilation repairs. The 37 new cases remain unrun; the actual GPU Model case is excluded from native-only validation. This proposal is outside C21 and supplies no saved-light authoring, shadows, physical/material parity, CI or installed-app acceptance.
+
+## 2026-10-31: CPU direct-visibility owner — source-only successor
+
+[Captured owner and incremental cursor](../2026-10-31/cpu-direct-visibility-owner/README.md) follows the earlier direct-visibility foundation: an opaque inline owner keeps its scene/options by value and cannot resume a certified cursor against a different caller-supplied capture. The existing borrowed API and 45 original test bodies remain; seven new continuity, terminal and cumulative-work cases are unrun. This two-file successor has no image consumer and is outside C21; it is not standalone on the current checkout or proof of colored shadows, layout, lint, borrow-checking or native quality.

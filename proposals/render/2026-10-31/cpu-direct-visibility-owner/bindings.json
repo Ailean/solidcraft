@@ -1,0 +1,42 @@
+{
+  "status": "SOURCE_ONLY_UNRUN_SUCCESSOR_REQUIRES_EXACT_FOUNDATION_BASE",
+  "product_paths": 2,
+  "tests": {
+    "preserved": 45,
+    "added": 7,
+    "total": 52,
+    "executed": 0
+  },
+  "members": [
+    {
+      "path": "before/crates/render/src/raytrace/dielectric.rs",
+      "bytes": 30682,
+      "sha256": "9f54aea0947a3e20dfc0aa398fd9372c3d924b1219eeff1f2ba5bb05162a6f85"
+    },
+    {
+      "path": "before/crates/render/src/raytrace/dielectric_tests.rs",
+      "bytes": 47987,
+      "sha256": "15e4280b5783fc564c4f08ccded30152815fdd0f69981efab78e2f67d9d9e1ec"
+    },
+    {
+      "path": "candidate/crates/render/src/raytrace/dielectric.rs",
+      "bytes": 33664,
+      "sha256": "f98b0b157222fc09f807e2e51ea75649ceccbeb759f8206212a4682efcca5c61"
+    },
+    {
+      "path": "candidate/crates/render/src/raytrace/dielectric_tests.rs",
+      "bytes": 55581,
+      "sha256": "3d99e8301bf103ed6805b705500c0389acf25d567b88003a55da4085feb67b54"
+    },
+    {
+      "path": "delta.patch",
+      "bytes": 22904,
+      "sha256": "7b6ea8ecf6182ba726fdd34579f523440d7f46a4ec2e243d574b665c421ef3c2"
+    },
+    {
+      "path": "README.md",
+      "bytes": 1928,
+      "sha256": "d6d6beb5b14dff04eae850485ee878a3dc34abcbf0802c60202044887ef971b1"
+    }
+  ]
+}

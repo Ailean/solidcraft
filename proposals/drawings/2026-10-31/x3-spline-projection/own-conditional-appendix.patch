@@ -1,0 +1,209 @@
+diff --git a/crates/io/src/dxf.rs b/crates/io/src/dxf.rs
+--- a/crates/io/src/dxf.rs
++++ b/crates/io/src/dxf.rs
+@@ -3229,4 +3229,205 @@
+             "budget precedes allocation and producer admission"
+         );
+     }
++    // Conditional seam acceptance, not the production read_dxf projection.
++    // This stays inside the existing cfg(test) module: actual9356 supplies
++    // Geom2::bspline/Nurbs and the public evaluator when the source is composed.
++    // Raw flags/provenance are admitted by read_dxf_file before these positive
++    // fixtures reach this geometry-only adapter; a DxfShape alone proves none.
++    fn project_layered_spline_for_legacy(shape: DxfShape) -> Result<Geom2> {
++        let DxfShape::Spline { degree, knots, ctrl, weights } = shape else {
++            return Err(IoError::Invalid("not supported yet: partial legacy projection accepts only SPLINE".into()));
++        };
++        // Move the arrays into the delivered constructor. No clamping, fitting,
++        // resampling, extra unit factor or fallback to an even control spline.
++        Geom2::bspline(degree, ctrl, knots, weights)
++            .ok_or_else(|| IoError::Invalid("layered SPLINE refused by the delivered legacy B-spline constructor".into()))
++    }
++
++    fn spline_projection_fixture(units: i32, flags: i32, degree: u8, ctrl: &[(f64, f64)], knots: &[f64], weights: &[f64]) -> String {
++        let mut text = format!(
++            "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n{units}\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
++             0\nSPLINE\n70\n{flags}\n71\n{degree}\n72\n{}\n73\n{}\n74\n0\n",
++            knots.len(), ctrl.len(),
++        );
++        for k in knots {
++            text.push_str(&format!("40\n{k}\n"));
++        }
++        for w in weights {
++            text.push_str(&format!("41\n{w}\n"));
++        }
++        for (x, y) in ctrl {
++            text.push_str(&format!("10\n{x}\n20\n{y}\n"));
++        }
++        text.push_str("0\nENDSEC\n0\nEOF\n");
++        text
++    }
++
++    #[test]
++    fn layered_spline_projection_nonuniform_knots_keep_two_analytic_quadratic_spans() {
++        let text = spline_projection_fixture(
++            4, 8, 2,
++            &[(0.0, 0.0), (2.0, 3.0), (5.0, -1.0), (7.0, 2.0)],
++            &[0.0, 0.0, 0.0, 1.0, 3.0, 3.0, 3.0], &[],
++        );
++        let file = read_dxf_file(&text).unwrap();
++        assert_eq!(file.entities().len(), 1);
++        let projected = project_layered_spline_for_legacy(file.entities()[0].geometry().clone()).unwrap();
++        let Geom2::Nurbs { degree, ref knots, ref ctrl, ref weights } = projected else {
++            panic!("uneven knots must not become the sketch's even-knot control spline")
++        };
++        assert_eq!(degree, 2);
++        assert_eq!(knots.as_slice(), &[0.0, 0.0, 0.0, 1.0, 3.0, 3.0, 3.0]);
++        assert_eq!(ctrl.as_slice(), &[Vec2::new(0.0, 0.0), Vec2::new(2.0, 3.0), Vec2::new(5.0, -1.0), Vec2::new(7.0, 2.0)]);
++        assert!(weights.is_none());
++        let pieces = solidcraft_doc::sketch::nurbs_beziers(ctrl, weights.as_deref(), knots, usize::from(degree)).unwrap();
++        assert_eq!(pieces.len(), 2);
++        // Analytic quadratic spans: [P0,P1,(2P1+P2)/3] and
++        // [(2P1+P2)/3,P2,P3]. The literals below are independent
++        // points on those two polynomials, not recorded exporter output.
++        for (index, t, expected) in [
++            (0, 0.0, Vec2::new(0.0, 0.0)),
++            (0, 0.5, Vec2::new(7.0 / 4.0, 23.0 / 12.0)),
++            (0, 1.0, Vec2::new(3.0, 5.0 / 3.0)),
++            (1, 0.0, Vec2::new(3.0, 5.0 / 3.0)),
++            (1, 0.5, Vec2::new(5.0, 5.0 / 12.0)),
++            (1, 1.0, Vec2::new(7.0, 2.0)),
++        ] {
++            let actual = pieces[index].point(t);
++            assert!(actual.dist(expected) < 1e-11, "piece={index}, t={t}: {actual:?} != {expected:?}");
++        }
++    }
++
++    #[test]
++    fn layered_spline_projection_even_knots_keep_editable_control_spline() {
++        for (flags, weights) in [(8, vec![]), (12, vec![2.0; 4])] {
++            let text = spline_projection_fixture(
++                4, flags, 2,
++                &[(0.0, 0.0), (2.0, 3.0), (5.0, -1.0), (7.0, 2.0)],
++                &[0.0, 0.0, 0.0, 1.5, 3.0, 3.0, 3.0], &weights,
++            );
++            let file = read_dxf_file(&text).unwrap();
++            let projected = project_layered_spline_for_legacy(file.entities()[0].geometry().clone()).unwrap();
++            let Geom2::Spline { pts, control, degree } = projected else {
++                panic!("the delivered factory's even/equal-weight path must remain editable")
++            };
++            assert!(control);
++            assert_eq!(degree, 2);
++            assert_eq!(pts, vec![Vec2::new(0.0, 0.0), Vec2::new(2.0, 3.0), Vec2::new(5.0, -1.0), Vec2::new(7.0, 2.0)]);
++        }
++    }
++
++    #[test]
++    fn layered_spline_projection_rational_quarter_circle_scales_once_and_keeps_weights() {
++        let w = std::f64::consts::FRAC_1_SQRT_2;
++        let text = spline_projection_fixture(
++            1, 12, 2, &[(1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
++            &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0], &[1.0, w, 1.0],
++        );
++        let file = read_dxf_file(&text).unwrap();
++        let DxfShape::Spline { knots: original_knots, ctrl: original_ctrl, weights: original_weights, .. } = file.entities()[0].geometry() else {
++            panic!("the actual layered reader must produce a SPLINE")
++        };
++        assert_eq!(original_ctrl.as_slice(), &[Vec2::new(25.4, 0.0), Vec2::new(25.4, 25.4), Vec2::new(0.0, 25.4)]);
++        assert_eq!(original_knots.as_slice(), &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
++        assert_eq!(original_weights.as_deref(), Some(&[1.0, w, 1.0][..]));
++        let center = Vec2::new(10.0, -7.0);
++        let copied = file.translated_scaled(center, 2.0).unwrap();
++        let projected = project_layered_spline_for_legacy(copied.entities()[0].geometry().clone()).unwrap();
++        let Geom2::Nurbs { degree, ref knots, ref ctrl, ref weights } = projected else {
++            panic!("the rational quarter circle must keep its weights")
++        };
++        assert_eq!(degree, 2);
++        assert_eq!(knots, original_knots);
++        assert_eq!(weights, original_weights);
++        let pieces = solidcraft_doc::sketch::nurbs_beziers(ctrl, weights.as_deref(), knots, usize::from(degree)).unwrap();
++        assert_eq!(pieces.len(), 1);
++        for t in [0.0, 0.125, 0.5, 0.875, 1.0] {
++            assert!(((pieces[0].point(t) - center).len() - 50.8).abs() < 1e-10, "t={t}");
++        }
++        for (t, expected) in [
++            (0.0, center + Vec2::new(50.8, 0.0)),
++            (0.5, center + Vec2::new(50.8 * w, 50.8 * w)),
++            (1.0, center + Vec2::new(0.0, 50.8)),
++        ] {
++            assert!(pieces[0].point(t).dist(expected) < 1e-10, "t={t}: {expected:?}");
++        }
++        // Model copying/projecting leaves original source records untouched.
++        assert_eq!(file.entities()[0].geometry(), &DxfShape::Spline {
++            degree: 2, knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
++            ctrl: vec![Vec2::new(25.4, 0.0), Vec2::new(25.4, 25.4), Vec2::new(0.0, 25.4)],
++            weights: Some(vec![1.0, w, 1.0]),
++        });
++    }
++
++    #[test]
++    fn layered_spline_projection_closed_periodic_and_fit_flags_refuse_before_projection() {
++        let ctrl = [(1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
++        let knots = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
++        for flags in [1, 2, 3, 9, 10, 16, 24] {
++            let text = spline_projection_fixture(4, flags, 2, &ctrl, &knots, &[]);
++            assert!(read_dxf_file(&text).is_err(), "unsupported flags={flags} must refuse before conversion");
++        }
++        let text = spline_projection_fixture(4, 8, 2, &ctrl, &knots, &[]);
++        assert!(text.contains("74\n0\n"));
++        assert!(read_dxf_file(&text.replace("74\n0\n", "74\n1\n")).is_err());
++        for flags in [0, 8] {
++            let file = read_dxf_file(&spline_projection_fixture(4, flags, 2, &ctrl, &knots, &[])).unwrap();
++            assert!(matches!(project_layered_spline_for_legacy(file.entities()[0].geometry().clone()).unwrap(), Geom2::Spline { control: true, degree: 2, .. }));
++        }
++        let w = std::f64::consts::FRAC_1_SQRT_2;
++        for flags in [4, 12] {
++            let file = read_dxf_file(&spline_projection_fixture(4, flags, 2, &ctrl, &knots, &[1.0, w, 1.0])).unwrap();
++            assert!(matches!(project_layered_spline_for_legacy(file.entities()[0].geometry().clone()).unwrap(), Geom2::Nurbs { degree: 2, .. }));
++        }
++    }
++
++    #[test]
++    fn layered_spline_projection_unclamped_or_invalid_controls_do_not_fall_back() {
++        let ctrl = [(0.0, 0.0), (2.0, 3.0), (5.0, -1.0), (7.0, 2.0)];
++        let knots = [0.0, 0.0, 0.0, 1.0, 3.0, 3.0, 3.0];
++        let text = spline_projection_fixture(4, 8, 2, &ctrl, &knots, &[]);
++        assert!(text.contains("73\n4\n"));
++        let malformed = [
++            spline_projection_fixture(4, 8, 2, &ctrl, &[-2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0], &[]),
++            spline_projection_fixture(4, 8, 2, &[(0.0, 0.0), (f64::NAN, 3.0), (5.0, -1.0), (7.0, 2.0)], &knots, &[]),
++            text.replace("73\n4\n", "73\n3\n"),
++        ];
++        for input in malformed {
++            assert!(read_dxf_file(&input).is_err(), "typed admission must not fall back to the permissive legacy reader");
++        }
++    }
++
++    #[test]
++    fn layered_spline_projection_constructor_none_is_explicit_for_invalid_typed_data() {
++        for case in 0..10 {
++            let mut shape = DxfShape::Spline {
++                degree: 2, knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
++                ctrl: vec![Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0)], weights: None,
++            };
++            if let DxfShape::Spline { degree, knots, ctrl, weights } = &mut shape {
++                match case {
++                    0 => *degree = 0,
++                    1 => *degree = 10,
++                    2 => { ctrl.pop(); }
++                    3 => ctrl[1].x = f64::NAN,
++                    4 => { knots.pop(); }
++                    5 => knots[3] = -1.0,
++                    6 => knots.fill(0.0),
++                    7 => *weights = Some(vec![1.0, 0.0, 1.0]),
++                    8 => *weights = Some(vec![1.0, -1.0, 1.0]),
++                    _ => *weights = Some(vec![1.0, 1.0]),
++                }
++            }
++            let error = project_layered_spline_for_legacy(shape).unwrap_err().to_string();
++            assert!(error.contains("refused by the delivered legacy B-spline constructor"), "case={case}: {error}");
++        }
++    }
++
++    #[test]
++    fn layered_spline_projection_non_spline_is_an_explicit_unsupported_case() {
++        let error = project_layered_spline_for_legacy(DxfShape::Line(Vec2::ZERO, Vec2::X)).unwrap_err().to_string();
++        assert!(error.contains("only SPLINE"), "{error}");
++    }
++
+ }

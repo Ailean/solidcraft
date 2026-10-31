@@ -1,0 +1,61 @@
+{
+  "status": "ALLOWLISTED_SOURCE_ONLY_PUBLICATION_PACKET",
+  "suggested_destination": "proposals/drawings/2026-10-31/x3-spline-projection/",
+  "publication_by": "ROOT",
+  "allowlist": [
+    "README.md",
+    "source-bindings.json",
+    "before/crates/io/src/dxf.rs",
+    "candidate/crates/io/src/dxf.rs",
+    "own-conditional-appendix.patch"
+  ],
+  "member_count": 5,
+  "members": [
+    {
+      "path": "before/crates/io/src/dxf.rs",
+      "bytes": 165014,
+      "sha256": "409bb336acc4594314a566f40196f66294c45e5afaa546ba96a377de804b8d72"
+    },
+    {
+      "path": "candidate/crates/io/src/dxf.rs",
+      "bytes": 175531,
+      "sha256": "e89ab2b1a4a4717ab806da8bddf228a315591be41d780b439002686e99394cd7"
+    },
+    {
+      "path": "own-conditional-appendix.patch",
+      "bytes": 10940,
+      "sha256": "337eb943d7d49b279555cfca73d532568fc0d8aa5df1c74aeac1352af7a140d0"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3952,
+      "sha256": "d4c3d74c5bc64f6549d2824f354a4a6683d548910afe86d27f92131b2cb1726b"
+    },
+    {
+      "path": "source-bindings.json",
+      "bytes": 4727,
+      "sha256": "785e41031435eb63890e6fa1dc46534aa9e7adcfbb95edae9cffbf11611dcccd"
+    }
+  ],
+  "privacy_checks": {
+    "exact_allowlist": true,
+    "private_local_paths_absent": true,
+    "private_chat_ids_absent": true,
+    "credential_shaped_markers_absent": true,
+    "scripts_logs_receipts_toolstate_source_captures_absent": true
+  },
+  "raw_identity_checks": {
+    "before_unchanged": true,
+    "candidate_unchanged": true,
+    "owned_patch_unchanged": true,
+    "forward_reconstruction": true,
+    "owner_hunks_unedited": 4,
+    "original_tests_preserved": 84,
+    "new_tests_unrun": 7
+  },
+  "full_alternative_omitted": "Redundant: complete before RAW plus owned RAW delta reconstructs candidate.",
+  "compiled": false,
+  "tests_run": false,
+  "runtime_qualified": false,
+  "owner_integration_complete": false
+}

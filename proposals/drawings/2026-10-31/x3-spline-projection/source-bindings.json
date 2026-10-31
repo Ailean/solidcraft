@@ -1,0 +1,110 @@
+{
+  "status": "PINNED_SOURCE_IDENTITIES_NOT_EXECUTION_RESULTS",
+  "receiver_PR": 8515,
+  "receiver_head": "d8e7a8690a30e44a58255e5dd345881ef092a93a",
+  "owner_PR": 9356,
+  "owner_author": "rmorgans",
+  "owner_head": "2edca81fef00da8e8cd43fbc77ad1dfebff350ee",
+  "owner_base": "f9146cdd5887af90b0999c8dbd8f4fb8ae0f7f18",
+  "owner_state_at_capture": "open draft unmerged",
+  "owner_exact_unedited_dxf_hunks": 4,
+  "before_sha256": "409bb336acc4594314a566f40196f66294c45e5afaa546ba96a377de804b8d72",
+  "candidate_sha256": "e89ab2b1a4a4717ab806da8bddf228a315591be41d780b439002686e99394cd7",
+  "owned_patch_sha256": "337eb943d7d49b279555cfca73d532568fc0d8aa5df1c74aeac1352af7a140d0",
+  "source_refs": [
+    {
+      "repository": "0xlillith/solidcraft",
+      "ref": "d8e7a8690a30e44a58255e5dd345881ef092a93a",
+      "path": "crates/io/src/dxf.rs",
+      "github_blob": "278581d5dd5feb514fb13e9aa9f925fc9525be93",
+      "raw_sha256": "0b614a91d0e8e18698238f727cf3a7f193c3813ce89641f503ac3e6f63022d9c",
+      "raw_bytes": 160844
+    },
+    {
+      "repository": "0xlillith/solidcraft",
+      "ref": "d8e7a8690a30e44a58255e5dd345881ef092a93a",
+      "path": "crates/io/src/dxf_out.rs",
+      "github_blob": "4994bb769af39f3514cc6779b640e6e8c64c6540",
+      "raw_sha256": "e451ebb48561349b870886e72d5a9ee50073ed69798619f03217654dc8928304",
+      "raw_bytes": 120393
+    },
+    {
+      "repository": "0xlillith/solidcraft",
+      "ref": "d8e7a8690a30e44a58255e5dd345881ef092a93a",
+      "path": "crates/io/src/dxf_out/file_model.rs",
+      "github_blob": "3804e73b342a5116251698dd9ab326d7875ea22a",
+      "raw_sha256": "b6b44a90168b9f36e9f3086198a53edd30f0d7f81d10f256d639c0f7f784bd55",
+      "raw_bytes": 44667
+    },
+    {
+      "repository": "0xlillith/solidcraft",
+      "ref": "d8e7a8690a30e44a58255e5dd345881ef092a93a",
+      "path": "crates/io/src/dxf_out/file_model/geometry.rs",
+      "github_blob": "a99465aeac84d978f1aaed8777c5dbcf018542e9",
+      "raw_sha256": "e0caa2f7e94c260cfe51fcb67b4473422c9e000cde019e34c0eb11e604138f3c",
+      "raw_bytes": 65706
+    },
+    {
+      "repository": "0xlillith/solidcraft",
+      "ref": "d8e7a8690a30e44a58255e5dd345881ef092a93a",
+      "path": "crates/io/src/sketch2d.rs",
+      "github_blob": "df0e587174ee9d320d27448d5821460056e99dfe",
+      "raw_sha256": "12a4849c596a9c7fdf2cc61f54d814ecb517344eefc00782604b6d81e0d5ab79",
+      "raw_bytes": 2118
+    },
+    {
+      "repository": "grumpydevorg/solidcraft",
+      "ref": "f9146cdd5887af90b0999c8dbd8f4fb8ae0f7f18",
+      "path": "crates/io/src/dxf.rs",
+      "github_blob": "7defb594c9a0243e9f512c0657e39bdc698a4679",
+      "raw_sha256": "b5262f6d8834dd228d6914c045d5ba8a4382646027b1c790e79dc70d25c6f90c",
+      "raw_bytes": 30913
+    },
+    {
+      "repository": "grumpydevorg/solidcraft",
+      "ref": "2edca81fef00da8e8cd43fbc77ad1dfebff350ee",
+      "path": "crates/io/src/dxf.rs",
+      "github_blob": "e83d1c871cf5ce26bedc521dfbefadd352d253b8",
+      "raw_sha256": "2657aeef153d79d6df5ce9b02211cf116c1334eb2f05aca1b7ba6acbe3d8dfa1",
+      "raw_bytes": 35083
+    },
+    {
+      "repository": "grumpydevorg/solidcraft",
+      "ref": "2edca81fef00da8e8cd43fbc77ad1dfebff350ee",
+      "path": "crates/io/src/sketch2d.rs",
+      "github_blob": "57d6fa770a0c70e1c7363b33bf4e9eb716886c51",
+      "raw_sha256": "52bbac5fa0986e6f0edbddaff25e34c7ed0345f1e16c7dac872bf986aa5bd57b",
+      "raw_bytes": 4689
+    },
+    {
+      "repository": "grumpydevorg/solidcraft",
+      "ref": "2edca81fef00da8e8cd43fbc77ad1dfebff350ee",
+      "path": "crates/sketch/src/lib.rs",
+      "github_blob": "f7d084f3d691c27bec87faae09963d650aab452c",
+      "raw_sha256": "0c1359616ff78ea4bc2dcb5ece717425aa98e58335376b8da6a636cedfabf636",
+      "raw_bytes": 4461
+    },
+    {
+      "repository": "grumpydevorg/solidcraft",
+      "ref": "2edca81fef00da8e8cd43fbc77ad1dfebff350ee",
+      "path": "crates/sketch/src/curves.rs",
+      "github_blob": "62038844cf4b0745df74d4ea094145c93b3b3d35",
+      "raw_sha256": "96f5a74716d9f9a9d65c676b7c7b9552b0e7a653b7510ab5073be79e5a75c614",
+      "raw_bytes": 30654
+    },
+    {
+      "repository": "grumpydevorg/solidcraft",
+      "ref": "2edca81fef00da8e8cd43fbc77ad1dfebff350ee",
+      "path": "crates/doc/src/lib.rs",
+      "github_blob": "0a750d01bc7384c7bd27ec98cc944c77f2cb19e6",
+      "raw_sha256": "fe314ef5b1e32691b6f4c4cd2e2cb31423decb14342192b52a5c2cdab40c37c3",
+      "raw_bytes": 4027
+    }
+  ],
+  "product_path": "crates/io/src/dxf.rs",
+  "adapter_scope": "existing inline cfg(test) only",
+  "prior_test_bodies_preserved": 84,
+  "new_test_cases_unrun": 7,
+  "compiled": false,
+  "tests_run": false
+}

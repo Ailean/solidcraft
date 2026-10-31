@@ -63,3 +63,7 @@ real emitted-content coverage, PDF readers and actual validation remain pending.
 ## 2026-10-31: combined X1 source reconciliation
 
 [Eleven-path X1 alternative](2026-10-31/x1-combined-source-reconciliation/README.md) combines nine original prerequisite candidates with the exact already archived two-file parent, preserving foreign source, generic contracts, 53 pins and 117+25 source test declarations. Apply its sole combined delta once to frozen main, never sequentially after the parent. Two absent paths are explicit /dev/null additions. Source-only/uncompiled/unrun; lock resolution and whole-workspace API validation remain pending. No readiness or result transfer.
+
+## Conditional X3 SPLINE acceptance — source only, 31 October
+
+[Exact before/candidate, owned appendix and integration conditions](2026-10-31/x3-spline-projection/README.md). A test-only adapter consumes the real layered SPLINE fields through rmorgans' pending #9356 factory, with explicit Option::None refusal. Four exact owner hunks remain attributed and untouched; the other five owner paths are prerequisites, not co-ported. Seven original analytical tests are UNRUN; all 84 existing inline bodies and production routing/TEXT/INSERT are preserved. This does not complete X3, integrate #9356 or establish compiler/test readiness.

@@ -1,0 +1,125 @@
+{
+  "receiver": {
+    "pr": 8515,
+    "head": "d8e7a8690a30e44a58255e5dd345881ef092a93a",
+    "dxf_out_blob": "4994bb769af39f3514cc6779b640e6e8c64c6540",
+    "DxfFile_export_lib_blob": "58cad001c2c742c7f5dc02162783a0e072358ebf"
+  },
+  "owner_decision": "https://github.com/tangency-labs/solidcraft/issues/5321#issuecomment-6503679437",
+  "boundary": {
+    "default": "Existing free functions -> LengthPolicy::Legacy",
+    "opt_in": "DxfFile<DxfShape>::write_dxf_exact_nano_lengths and write_dxf_exact_nano_lengths_with_text_bounds",
+    "no_lib_rs_change": true,
+    "no_caller_migration": true,
+    "no_wire_field_or_dependency": true,
+    "source_model_unchanged": true
+  },
+  "callsites": [
+    {
+      "site": "Out::block",
+      "fields": "constant insertion point0,0,0",
+      "policy": "Existing point spelling; invariant0.0 under both policies"
+    },
+    {
+      "site": "LTYPE table",
+      "fields": "pattern total40 and signed intervals49",
+      "policy": "length",
+      "preflight": "Fixed finite constants; Out length domain applies"
+    },
+    {
+      "site": "STYLE table",
+      "fields": "fixed height40,last height42",
+      "policy": "length; constants0 and2.5"
+    },
+    {
+      "site": "STYLE table",
+      "fields": "width factor41,oblique angle50",
+      "policy": "existing num12"
+    },
+    {
+      "site": "Point/Line/Polyline",
+      "fields": "positions10/20/30, endpoints11/21/31",
+      "policy": "length; quantized shadow positive/distinct admission and extents"
+    },
+    {
+      "site": "Circle/Arc",
+      "fields": "center10/20/30,radius40",
+      "policy": "length; shadow positive radius and sampled extents"
+    },
+    {
+      "site": "Arc",
+      "fields": "angles50/51",
+      "policy": "existing num12; original and shadow angular-span admission"
+    },
+    {
+      "site": "Ellipse",
+      "fields": "center10/20/30,major vector11/21/31",
+      "policy": "length; shadow axis collapse and sampled extents"
+    },
+    {
+      "site": "Ellipse",
+      "fields": "normal210/220/230,ratio40,parameters41/42",
+      "policy": "existing num12"
+    },
+    {
+      "site": "Spline",
+      "fields": "control positions10/20/30",
+      "policy": "length; shadow adjacency/all-control collapse and control-polygon extents"
+    },
+    {
+      "site": "Spline",
+      "fields": "normal210/220/230,knots40,weights41",
+      "policy": "existing num12; original and shadow knot-span/positive-weight admission"
+    },
+    {
+      "site": "Text/AlignedText",
+      "fields": "anchor10/20/30,alignment11/21/31,height40",
+      "policy": "length; shadow positive height; provider receives shadow only on opt-in"
+    },
+    {
+      "site": "Text/AlignedText",
+      "fields": "rotation50",
+      "policy": "existing num12"
+    },
+    {
+      "site": "BulgedPolyline",
+      "fields": "vertices10/20",
+      "policy": "Legacy precise_num retained; opt-in length; original and shadow arc/adjacent/closing admission"
+    },
+    {
+      "site": "BulgedPolyline",
+      "fields": "bulge42",
+      "policy": "precise_num roundtrip unchanged under both policies; no nano quantization"
+    },
+    {
+      "site": "Header EXTMIN/EXTMAX",
+      "fields": "10/20/30",
+      "policy": "Legacy point/precise_point retained; opt-in length_point over policy-emitted sampled/control bounds"
+    }
+  ],
+  "budget": "Existing raw shape_work charge occurs before shadow scans/copies; each temporary vector capped and fallibly reserved. Existing output/handle limits retained.",
+  "bounds_limit": "Still sampled/control-polygon bounds, not new analytic or certified conservative extents.",
+  "tests": {
+    "old_inline": 47,
+    "new_inline": 10,
+    "reused_helper": 5,
+    "all_new_unrun": true,
+    "original_consumer_pins_untouched": 53,
+    "pin_results_not_reproduced": true,
+    "old_case_bodies_and_existing_prefix_preserved": true,
+    "complete_final_module_RAW_identical": false
+  },
+  "pending": [
+    "Compiler/formatter/targeted/whole-workspace gates on the exact integrated source",
+    "Native/wasm acceptance on the exact integrated source",
+    "Owner coordination about opt-in integration and any future default migration",
+    "Reconcile literal D8 with actual main separately; no X1 overlay is supplied"
+  ],
+  "status": "SOURCE_REVIEWED_OPT_IN_PROPOSAL_NOT_COMPILED_OR_RUN",
+  "namespace_evidence": {
+    "receiver": "solidcraft_io::DxfFile<solidcraft_io::DxfShape>",
+    "kind": "Source visibility only, not compiled method qualification",
+    "d8_lib_blob": "58cad001c2c742c7f5dc02162783a0e072358ebf",
+    "d8_file_model_blob": "3804e73b342a5116251698dd9ab326d7875ea22a"
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "schema": "portable-source-bindings-v1",
+  "status": "SOURCE_ONLY_UNADOPTED_OPT_IN_PROPOSAL_NOT_COMPILED_OR_RUN",
+  "receiver": {
+    "repository": "0xlillith/solidcraft",
+    "pr": 8515,
+    "commit": "d8e7a8690a30e44a58255e5dd345881ef092a93a",
+    "kind": "Literal D8 receiver, not current main"
+  },
+  "product_paths": [
+    {
+      "path": "crates/io/src/dxf_out.rs",
+      "before_state": "present",
+      "before_bytes": 120393,
+      "before_sha256": "e451ebb48561349b870886e72d5a9ee50073ed69798619f03217654dc8928304",
+      "before_git_blob": "4994bb769af39f3514cc6779b640e6e8c64c6540",
+      "candidate": "candidate/crates/io/src/dxf_out.rs",
+      "candidate_bytes": 141581,
+      "candidate_sha256": "68998527b920ad8f763368b6c06f245671c248a7887529c514e753945dd23e42"
+    },
+    {
+      "path": "crates/io/src/dxf_out/length_decimal.rs",
+      "before_state": "absent",
+      "before_bytes": null,
+      "before_sha256": null,
+      "before_git_blob": null,
+      "candidate": "candidate/crates/io/src/dxf_out/length_decimal.rs",
+      "candidate_bytes": 8599,
+      "candidate_sha256": "05671bbed70376f91e522db786bdb6a0ce449d779aeba978605ac374c4c13409"
+    }
+  ],
+  "combined_patch": {
+    "path": "two-path-alternative.patch",
+    "bytes": 40510,
+    "sha256": "36190356bb33b57e45ad2a6a8f765b2fc09d74958b2b04cf1f2149a98768b146",
+    "kind": "Sole combined two-path delta, alternative to copying candidates or the earlier split deltas; do not apply twice"
+  },
+  "helper_lineage": {
+    "repository": "tangency-labs/solidcraft",
+    "commit": "3559964792c1fccd7aff7aa111b8df8f7c197fcf",
+    "path": "proposals/drawings/X4/length_decimal.rs",
+    "git_blob": "dde367e0a674f8135419a1c8ec06c8e3ed072232",
+    "sha256": "05671bbed70376f91e522db786bdb6a0ce449d779aeba978605ac374c4c13409",
+    "RAW_identical": true
+  },
+  "namespace_source_pins": [
+    {
+      "repository": "0xlillith/solidcraft",
+      "ref": "d8e7a8690a30e44a58255e5dd345881ef092a93a",
+      "path": "crates/io/src/lib.rs",
+      "bytes": 64932,
+      "github_blob": "58cad001c2c742c7f5dc02162783a0e072358ebf",
+      "sha256": "01192f461bd5edba3b9e16971bd90148ad1fec800835253aba7993fe07ae2c9a"
+    },
+    {
+      "repository": "0xlillith/solidcraft",
+      "ref": "d8e7a8690a30e44a58255e5dd345881ef092a93a",
+      "path": "crates/io/src/dxf_out/file_model.rs",
+      "bytes": 44667,
+      "github_blob": "3804e73b342a5116251698dd9ab326d7875ea22a",
+      "sha256": "b6b44a90168b9f36e9f3086198a53edd30f0d7f81d10f256d639c0f7f784bd55"
+    }
+  ],
+  "owner_policy_decision": "https://github.com/tangency-labs/solidcraft/issues/5321#issuecomment-6503679437",
+  "source_packet_manifest_sha256": "1735ecf69800212dc89e17170893143723f129fb1859a33f5ea33898cbb27135",
+  "namespace_supplement_manifest_sha256": "bb641e5949cc371316b3db2d35b15655bffd7586831aa33f06488d503db5cef8",
+  "independent_source_review_sha256": "20a0682acb71807ee666d2ed59c596a8363aa263b9024429154d191f8e450d08",
+  "namespace_supplement_review_sha256": "0cb7dc0c1863663e777ffb1383729ee9ea86d26ac36b8335978740131b7b4b54",
+  "compiled": false,
+  "tests_run": false,
+  "default_or_main_migration": false
+}

@@ -67,3 +67,7 @@ real emitted-content coverage, PDF readers and actual validation remain pending.
 ## Conditional X3 SPLINE acceptance — source only, 31 October
 
 [Exact before/candidate, owned appendix and integration conditions](2026-10-31/x3-spline-projection/README.md). A test-only adapter consumes the real layered SPLINE fields through rmorgans' pending #9356 factory, with explicit Option::None refusal. Four exact owner hunks remain attributed and untouched; the other five owner paths are prerequisites, not co-ported. Seven original analytical tests are UNRUN; all 84 existing inline bodies and production routing/TEXT/INSERT are preserved. This does not complete X3, integrate #9356 or establish compiler/test readiness.
+
+## X4 exact-nanometre opt-in writer source proposal (2026-10-31)
+
+[Two-path D8 candidate, combined alternative patch and source bindings](2026-10-31/x4-exact-nano-opt-in/README.md). Legacy defaults and 53 consumer byte pins remain unchanged; 47 original inline cases are preserved and ten writer plus five helper cases remain UNRUN. This archive is a literal-D8 opt-in proposal, not main integration, a default migration, a build/test PASS or readiness.

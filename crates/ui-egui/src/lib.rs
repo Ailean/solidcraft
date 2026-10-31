@@ -1792,6 +1792,10 @@ impl SolveApp {
             design_properties::open_selected(self);
             return;
         }
+        if id == "sketch.edit" {
+            self.start_sketch_edit(opener);
+            return;
+        }
         if id == "sketch.finish" {
             self.finish_sketch();
             return;
@@ -1965,6 +1969,37 @@ impl SolveApp {
     /// Does starting `id` open a tool or a dialog?
     fn interactive(&self, id: &str) -> bool {
         tools::Tool::for_command(id).is_some() || dialogs::Dialog::for_command(self, id).is_some()
+    }
+
+    /// The ribbon has no sketch argument: use one unambiguous sketch pick, otherwise ask.
+    fn start_sketch_edit(&mut self, opener: Option<egui::Rect>) {
+        use solidcraft_engine::{Sel, doc::FeatureKind};
+        let mut sketches: Vec<u64> = self
+            .session
+            .selection
+            .iter()
+            .filter_map(|s| match s {
+                Sel::Feature { id } => Some(*id),
+                Sel::Profile { sketch, .. } | Sel::ExternalSketchCurve { sketch, .. } | Sel::ExternalSketchPoint { sketch, .. } => Some(*sketch),
+                Sel::SketchCurve { sketch, .. } => *sketch,
+                _ => None,
+            })
+            .filter(|id| self.session.doc.feature(*id).is_some_and(|f| matches!(f.kind, FeatureKind::Sketch { .. })))
+            .collect();
+        sketches.sort_unstable();
+        sketches.dedup();
+        let sketch = match sketches.as_slice() {
+            [id] => Some(*id),
+            [] => self.session.active_sketch,
+            _ => None,
+        };
+        if let Some(id) = sketch {
+            self.edit_feature(id);
+        } else {
+            dialogs::cancel(self);
+            self.tool = None;
+            self.open_choice_menu(opener, context_menu::Target::EditSketch);
+        }
     }
 
     /// Edit a feature: sketches open in sketch mode; other features roll the

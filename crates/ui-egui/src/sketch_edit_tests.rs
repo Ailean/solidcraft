@@ -83,6 +83,93 @@ fn toolbar_finish_and_other_feature_edit_leave_the_sketch() {
     assert_eq!(app.session.active_sketch, None);
 }
 
+fn two_finished_sketches() -> (crate::scenario::Harness, Vec<u64>) {
+    use serde_json::json;
+    let mut h = crate::scenario::Harness::new();
+    h.app.home.open = false;
+    let mut ids = Vec::new();
+    for name in ["First", "Second"] {
+        let created = h.app.run("sketch.create", json!({"plane": "XY", "name": name})).unwrap();
+        ids.push(created["sketch"].as_u64().unwrap());
+        h.app.run("sketch.line", json!({"points": [[0, 0], [20, 10]]})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+    }
+    h.settle();
+    (h, ids)
+}
+
+#[test]
+fn ribbon_edit_sketch_opens_the_selected_sketch_and_finish_restores_the_marker() {
+    use serde_json::json;
+    let (mut h, ids) = two_finished_sketches();
+    let marker = h.app.session.doc.marker;
+    h.app.run("select.set", json!({"items": [{"type": "feature", "id": ids[0]}]})).unwrap();
+    h.step(&json!({"start": "sketch.edit"})).unwrap();
+    h.settle();
+    assert_eq!(h.app.session.active_sketch, Some(ids[0]));
+    assert_eq!(h.app.session.doc.marker, Some(1));
+    h.step(&json!({"start": "sketch.finish"})).unwrap();
+    h.settle();
+    assert_eq!(h.app.session.active_sketch, None);
+    assert_eq!(h.app.session.doc.marker, marker);
+}
+
+#[test]
+fn ribbon_edit_sketch_offers_a_choice_without_a_unique_selection() {
+    use serde_json::json;
+    for selected in [false, true] {
+        let (mut h, ids) = two_finished_sketches();
+        if selected {
+            h.app
+                .run(
+                    "select.set",
+                    json!({"items": [
+                        {"type": "feature", "id": ids[0]}, {"type": "feature", "id": ids[1]}
+                    ]}),
+                )
+                .unwrap();
+        }
+        h.step(&json!({"start": "sketch.edit"})).unwrap();
+        h.settle();
+        assert_eq!(h.app.session.active_sketch, None, "do not choose an arbitrary sketch");
+        assert!(h.app.viewport.context_menu.is_some(), "offer the sketches to edit");
+        h.step(&json!({"call": "ui.menuPick", "params": {"item": "Second"}})).unwrap();
+        h.settle();
+        assert_eq!(h.app.session.active_sketch, Some(ids[1]));
+        h.step(&json!({"start": "sketch.finish"})).unwrap();
+        h.settle();
+        assert_eq!(h.app.session.doc.marker, None);
+    }
+}
+
+#[test]
+fn ribbon_edit_sketch_uses_the_owner_of_selected_sketch_geometry() {
+    use serde_json::json;
+    use solidcraft_engine::Sel;
+    let (mut h, ids) = two_finished_sketches();
+    h.app.session.selection =
+        vec![Sel::ExternalSketchCurve { sketch: ids[1], id: "l1".into() }, Sel::ExternalSketchPoint { sketch: ids[1], id: "p1".into() }];
+    h.step(&json!({"start": "sketch.edit"})).unwrap();
+    h.settle();
+    assert_eq!(h.app.session.active_sketch, Some(ids[1]));
+}
+
+#[test]
+fn ribbon_edit_sketch_handles_an_empty_design_without_running_a_command() {
+    use serde_json::json;
+    let mut h = crate::scenario::Harness::new();
+    h.app.home.open = false;
+    h.step(&json!({"start": "sketch.edit"})).unwrap();
+    h.settle();
+    let items = crate::context_menu::items(&h.app, &h.app.menu.target);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "No sketches to edit");
+    assert!(!items[0].enabled);
+    assert_eq!(h.app.session.active_sketch, None);
+    assert!(h.app.session.doc.features.is_empty());
+    assert!(h.app.session.execute("sketch.edit", &json!({})).is_err(), "the programmatic command still requires a sketch");
+}
+
 /// Leaving a sketch any way leaves the camera exactly where it is; entering still faces the plane.
 mod exit_keeps_view {
     use crate::scenario::Harness;

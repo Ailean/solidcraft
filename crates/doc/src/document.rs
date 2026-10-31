@@ -2628,6 +2628,19 @@ pub struct DesignLink {
     /// local overrides and survive a source update. Older links start with no baseline.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inherited: Vec<LinkedBodyProperties>,
+    /// SHA-256 of the design file's bytes as this design last read them ([`Self::file_digest`]):
+    /// opened again, this design tells which linked files changed meanwhile (#9739). Links made
+    /// before it was kept have none and are taken as up to date.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_sha256: Option<String>,
+}
+
+impl DesignLink {
+    /// What [`Self::file_sha256`] keeps for a design file's `bytes`.
+    pub fn file_digest(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(bytes))
+    }
 }
 
 /// The values last inherited by a linked body, not another editable material library.

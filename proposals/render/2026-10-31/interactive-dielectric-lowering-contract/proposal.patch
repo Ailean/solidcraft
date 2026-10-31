@@ -1,0 +1,123 @@
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -324,14 +324,41 @@
+     #[test]
+     fn interactive_refuses_invalid_or_unsupported_effects_before_unopened_hdr() {
+         let base = interactive_final_wire();
++        // Retain numerically valid dielectric intent for capture-time certification.
++        // This fixture still mixes same-body mirror, emission and nonidentity effects;
++        // successful lowering is not scene or job admission.
++        let mut authored = base.clone();
++        authored["raytrace"]["dielectrics"] = json!([{"body_index":0,"body_name":"receiver","ior":1.5,"absorption_per_mm":[0,0,0],
++                "boundary":"closed_box","thickness_mm":0}]);
++        let original = authored.clone();
++        let authored_options: RaytraceOptions = serde_json::from_value(original["raytrace"].clone()).unwrap();
++        let mut expected_options = authored_options.clone();
++        expected_options.primary_samples = 1;
++        expected_options.progressive = Some(solidcraft_render::job::CpuProgressiveOptions { samples_per_pixel: 16, seed: 0 });
++        expected_options.reflections.as_mut().unwrap().samples = 1;
++        let mut expected_settings: RenderSetup = serde_json::from_value(original["settings"].clone()).unwrap();
++        expected_settings.width = 1024;
++        expected_settings.height = 576;
++        let mut expected_wire = original.clone();
++        expected_wire["settings"] = serde_json::to_value(&expected_settings).unwrap();
++        expected_wire["raytrace"] = serde_json::to_value(&expected_options).unwrap();
++
++        let lowered = interactive_params(&authored).unwrap();
++        let lowered_options: RaytraceOptions = serde_json::from_value(lowered["raytrace"].clone()).unwrap();
++        let lowered_settings: RenderSetup = serde_json::from_value(lowered["settings"].clone()).unwrap();
++        assert_eq!(lowered_options.dielectrics, authored_options.dielectrics, "the exact original dielectric selector is retained");
++        assert_eq!(lowered_options.surface_effects, authored_options.surface_effects, "shading intent is not removed");
++        assert_eq!(lowered_options.emissions, authored_options.emissions, "surface emission is not removed");
++        assert_eq!(lowered_options.reflections, expected_options.reflections, "only the selected reflection sample count changes");
++        assert_eq!(lowered_options, expected_options, "only documented Interactive sampling is normalized");
++        assert_eq!(lowered_settings, expected_settings, "camera, stage, background and other settings remain exact");
++        assert_eq!(lowered["environment"], original["environment"], "unopened HDR path and expected digest remain exact");
++        assert_eq!(lowered, expected_wire, "no other request field changes");
++        assert_eq!(authored, original, "the authored final wire remains unchanged");
++
+         for (key, value) in [
+             ("primary_samples", json!(0)),
+             ("exposure_ev", json!(33.0)),
+-            (
+-                "dielectrics",
+-                json!([{"body_index":0,"body_name":"receiver","ior":1.5,"absorption_per_mm":[0,0,0],
+-                "boundary":"closed_box","thickness_mm":0}]),
+-            ),
+             (
+                 "anisotropic_faces",
+                 json!([{"body_index":0,"body_name":"receiver","face":0,"tangent":[1,0,0],
+@@ -342,6 +369,11 @@
+             let mut wire = base.clone();
+             wire["raytrace"][key] = value;
+             assert!(interactive_params(&wire).is_err(), "unsupported {key} must not disappear");
++        }
++        for (key, value) in [("thickness_mm", json!(1.0)), ("ior", json!(0.5))] {
++            let mut wire = authored.clone();
++            wire["raytrace"]["dielectrics"][0][key] = value;
++            assert!(interactive_params(&wire).is_err(), "invalid dielectric {key} must refuse before unopened HDR");
+         }
+         for (key, value) in [("intensity", json!(-1.0)), ("samples", json!(3))] {
+             let mut wire = base.clone();
+--- a/docs/render-cpu-progressive.md
++++ b/docs/render-cpu-progressive.md
+@@ -63,7 +63,7 @@
+ 
+ ## Supported combinations and limits
+ 
+-| Control | Initial CPU progressive contract |
++| Control | CPU progressive contract |
+ | --- | --- |
+ | Dimensions | Each side 1..4096; at most 1,048,576 pixels |
+ | Samples per pixel | 1..64 |
+@@ -74,11 +74,18 @@
+ | Constant / captured HDR environment | Existing CPU contracts; HDR plus rough reflections still requires certified fully metallic selected bodies and effective faces |
+ | Surface emission / isotropic surface effects | Existing CPU appearance contracts; emission is visible radiance |
+ | Area / LED sources | Existing bounded rectangle direct-light transport; continuous LED recipes lower to the same sources |
+-| Dielectric / anisotropic face overrides | Explicitly rejected in this initial progressive mode |
++| Dielectric overrides | Smooth `thin_sheet` / `closed_box` intent retained; capture certifies geometry, identity and supported combinations |
++| Anisotropic face overrides | Explicitly rejected in progressive mode; use fixed sampling |
+ | Output | Opaque PNG with the existing display background |
+ 
+ An incompatible request fails; it does not remove settings or switch methods.
+ The fixed CPU route retains its existing area, dielectric and anisotropy support.
++Numerically valid dielectric selectors also survive progressive and Interactive
++lowering for capture-time certification. Successful lowering is not scene or job
++admission: existing boundary tessellation, captured identity, opacity, camera,
++medium and transport-policy limits still apply. The same dielectric body cannot
++also select opaque reflection, anisotropy, surface emission or nonidentity surface
++effects. Unsupported combinations remain errors; no general glass path is added.
+ Progressive area/LED uses at most four shared rectangle slots, with
+ `area_samples` of 1/4/16/64 (default 16) and the existing combined light caps.
+ Each film pass uses the existing area-power normalization and cumulative work
+--- a/docs/render-raytrace-dielectrics.md
++++ b/docs/render-raytrace-dielectrics.md
+@@ -21,7 +21,11 @@
+ Preview / Image / PNG profile, and CPU requests containing dielectric overrides
+ require that capability during both preflight and host submission. This is the
+ bounded `thin_sheet` / `closed_box` contract below: it does not advertise general
+-closed-mesh transmission, final-quality rendering or progressive CPU images.
++closed-mesh transmission or final-quality rendering. Fixed and CPU progressive
++sampling can retain this smooth-boundary intent; progressive sampling still
++requires one primary and one selected reflection attempt per camera sample.
++Interactive retains the same intent for capture-time certification, not as a
++guarantee that a scene or job will be admitted.
+ Raster and the cooperative CPU host do not advertise this capability. The
+ `render.backends` registry publishes the additional `cpu-raytrace` descriptor only
+ for an installed native CPU worker with the build feature enabled. Raster remains
+@@ -56,6 +60,15 @@
+ face flag select the interface; interpolated shading normals do not bend rays.
+ Parallel slab entry/exit produces the Snell lateral displacement within this
+ certified subset. This does not certify arbitrary CAD tessellations.
++
++Successful request lowering is not a geometry certificate. Existing captured
++identity, body/face opacity, camera, medium, work and selected transport-policy
++checks remain authoritative. A dielectric boundary cannot also select opaque
++reflection, anisotropy, surface emission or nonidentity surface effects on that
++same body. Retaining the original selectors never removes those incompatible
++effects to make admission succeed. The transport details below retain the
++legacy bounded-preview qualifications; explicit transport options keep their
++existing separate validation and limits.
+ 
+ `thin_sheet` accepts one nondegenerate planar triangle or two consistently wound,
+ coplanar triangles sharing one unique edge and lying on opposite sides of it.

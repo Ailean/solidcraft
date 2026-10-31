@@ -180,3 +180,7 @@ explicit. Source review and replay are not compilation, full CI or GPU parity.
 ## 2026-10-31: physical-glass library to existing editor — source proposal
 
 [Explicit physical-recipe staging](../2026-10-31/physical-glass-library-staging/README.md) adds a bounded action from the six typed starter glass entries to the existing whole-body optical editor. It preserves scalar assignment refusals, authored Closed/Thin choices, current target identity and existing permissions; staging is not Applied, CPU opt-in, certification or persistence. Four paths include one new pending-locale file. The 267 existing test bodies remain and ten original source cases are unrun. No new panel, renderer switch, GPU-guard removal, TIR convergence change or native acceptance is claimed. The new locale's absent before-state is explicit, with no fabricated empty before file.
+
+## 2026-10-31: Interactive dielectric lowering contract
+
+[Three-file test-contract alignment](../2026-10-31/interactive-dielectric-lowering-contract/README.md) preserves the exact valid glass payload with full typed local-retention checks, all other original negatives and new invalid-thickness/IOR controls, plus precise capability documentation. Same 8 declarations / 0 new and 1 disclosed oracle change; full fixture remains inadmissible. Source-only/unformatted/uncompiled/unrun, not a product fix or C21 PASS. Sole delta, before/candidate RAW snapshots and portable bindings are included.

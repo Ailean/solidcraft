@@ -1,0 +1,121 @@
+{
+  "scope": "THREE_FILE_TEST_CONTRACT_ALIGNMENT_AND_PRECISE_DOCUMENTATION_ONLY",
+  "base_source_inventory_sha256": "5c336edc8bcda9252a85badcc8baf8ba7934291f76084f677745c63a7163e8de",
+  "files": [
+    {
+      "repository_path": "crates/engine/src/cmd/render/jobs.rs",
+      "before": {
+        "file": "before/crates/engine/src/cmd/render/jobs.rs",
+        "bytes": 66455,
+        "sha256": "9218559ff4fdb3ea1fd1cd1775e264f17bb074bf3870a3e50886b4790495c642"
+      },
+      "candidate": {
+        "file": "candidate/crates/engine/src/cmd/render/jobs.rs",
+        "bytes": 69173,
+        "sha256": "7d2bad6645a3c7d765742a2bfd3f973b077dfdec0879c50c46200b371dfae904"
+      }
+    },
+    {
+      "repository_path": "docs/render-cpu-progressive.md",
+      "before": {
+        "file": "before/docs/render-cpu-progressive.md",
+        "bytes": 9704,
+        "sha256": "0a2bc05d4751234afbab9002de42827807c48bbb71a254823ac31e38cd8fc373"
+      },
+      "candidate": {
+        "file": "candidate/docs/render-cpu-progressive.md",
+        "bytes": 10324,
+        "sha256": "d5eb9a24058ae465529539768a3885cd14e38f2de14597e2eecb64ae5a099821"
+      }
+    },
+    {
+      "repository_path": "docs/render-raytrace-dielectrics.md",
+      "before": {
+        "file": "before/docs/render-raytrace-dielectrics.md",
+        "bytes": 10559,
+        "sha256": "b7cebd4e1472dfff08ebdb06345354dd285e8f39c02f9dac90cf3ecdd4914272"
+      },
+      "candidate": {
+        "file": "candidate/docs/render-raytrace-dielectrics.md",
+        "bytes": 11435,
+        "sha256": "a64ea715a470777ee2fb41c2ff52baccb942cf034b65c261c75389edbaf3acad"
+      }
+    }
+  ],
+  "sole_delta": {
+    "file": "proposal.patch",
+    "bytes": 8187,
+    "sha256": "6e9ae984cf9b6b2c5bde172aa15d856c185aa4127e47cc2079a1d6602b6bd84f",
+    "application": "Apply once to the exact three before files. Snapshots are for inspection/replay; no per-file alternative deltas are bundled. Later source compositions require an explicit rebind and must not be overwritten by this whole-file snapshot."
+  },
+  "one_original_body_oracle_change": {
+    "case_name": "cmd::render::jobs::union_lowering_tests::interactive_refuses_invalid_or_unsupported_effects_before_unopened_hdr",
+    "before_RAW_sha256": "173a4e84e57a31da8ad535d295d1ce59b258a6fc23599e9a36844b60dc43ac9c",
+    "candidate_RAW_sha256": "aa962984670b9f6f9de51abd323c51798c7f4b3d985dbc7581fea4c18b8e2598",
+    "body_hash_definition": "Exact test declaration/body bytes including #[test], indentation and trailing newline; no normalization.",
+    "change": "The exact original valid ClosedBox selector changes from blanket rejection to full typed local-lowering retention, consistent with the requested CPU glass contract. Actual scene/job admission remains separate.",
+    "all_other_negative_inputs_and_assertions_literal": true,
+    "original_valid_selector": {
+      "body_index": 0,
+      "body_name": "receiver",
+      "ior": 1.5,
+      "absorption_per_mm": [
+        0,
+        0,
+        0
+      ],
+      "boundary": "closed_box",
+      "thickness_mm": 0
+    },
+    "new_invalid_controls": [
+      {
+        "field": "thickness_mm",
+        "value": 1.0,
+        "existing_rule": "ClosedBox thickness must be zero"
+      },
+      {
+        "field": "ior",
+        "value": 0.5,
+        "existing_rule": "finite IOR in1..3"
+      }
+    ]
+  },
+  "manual_expected_preview_substitutions": {
+    "primary_samples": 1,
+    "progressive": {
+      "samples_per_pixel": 16,
+      "seed": 0
+    },
+    "selected_reflection_samples": 1,
+    "width": 1024,
+    "height": 576,
+    "expected_from": "Original authored typed input before actual call, never candidate cpu_request output."
+  },
+  "source_counts": {
+    "same_case_name": true,
+    "existing_declarations_before": 8,
+    "existing_declarations_candidate": 8,
+    "new_declarations": 0,
+    "current_body_exceptions": 1,
+    "candidate_tests_executed": 0
+  },
+  "original_C21_failure": {
+    "stdout_sha256": "c0d38cad7a60ae1971920818abe932cb4b0f11eda4144873aa9df8d0b47dbd01",
+    "stderr_sha256": "e18044b692e615053699e57019f0117cf2ced0fe320c049899131513838d698f",
+    "outcome": "Original case FAILED at old jobs.rs344; preserved historical evidence. No raw logs or control receipts are bundled and no candidate PASS is inferred."
+  },
+  "unchanged_contract_references": [
+    {
+      "repository_path": "crates/render/src/job/mod.rs",
+      "sha256": "fc57562478cd46620ee694b1d647d9ec6d7726ecf29b884df63de2738991098b",
+      "lines": "1361-1363: global progressive-dielectric rejection is superseded; capture certification remains required"
+    },
+    {
+      "repository_path": "docs/render-interactive.md",
+      "sha256": "f98decbcdb5d91568e103c794a0b785b31d127d6dc439eb8911270534b13be82",
+      "section": "Preview envelope: dielectric intent retained for capture and transport certification"
+    }
+  ],
+  "status": "SOURCE_REVIEWED_UNFORMATTED_UNCOMPILED_UNRUN_NOT_A_PRODUCT_FIX_OR_C21_PASS",
+  "hash_kind_note": "Inventory/file/body SHA256 values are exact byte identities, not Git commits, binary qualification or execution results."
+}

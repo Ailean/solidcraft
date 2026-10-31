@@ -207,3 +207,11 @@ The complete API consumer connects captured direct visibility and RGB shading to
 ## C24 existing quality-test macro expression (2026-10-31)
 
 [One-file checkpoint, exact two-parentheses delta and source bindings](../2026-10-31/c24-two-parentheses/README.md). Immediate base is C23 post-format source, not the earlier unformatted public candidate. No production change or new tests; C24 resource admission stopped before combined Cargo, with 953 cases and 60 required marker contracts UNRUN. No gate/readiness PASS inferred.
+
+## CPU progressive high-pass film and Interactive controls — 31 October
+
+[Nine source candidates and exact bindings](../2026-10-31/cpu-high-pass-ui-source/README.md)
+preserve the source-reviewed 1,048,576 Workstation ceiling, u32 film resolve and
+explicit Interactive target/seed controls. Thirteen new tests are written and
+UNRUN. **Producer/host per-pass and u32 adapters are still pending; not adoptable
+alone, compiled, installed, ready or merged.** Existing budget limits remain.

@@ -1,0 +1,73 @@
+{
+  "status": "SOURCE_ONLY_UNRUN_NOT_ADOPTABLE_ALONE",
+  "base": "Exact per-file RAW before hashes, not an arbitrary Git head or current main. Preserve all unrelated files.",
+  "files": [
+    {
+      "path": "assets/locales/pending/cpu-progressive-passes.json",
+      "before_sha256": null,
+      "before_bytes": null,
+      "after_sha256": "7d11a688edad617ae6da92e8460f8833e121167ddb1b296001807f585e7b8c12",
+      "after_bytes": 619
+    },
+    {
+      "path": "crates/render/src/film_primary.rs",
+      "before_sha256": "2c8b7cf8b1d6aff1d58f4137b05973467b23072c2caff9467256606058fb8f88",
+      "before_bytes": 8361,
+      "after_sha256": "d65f9fda36674199aac47ef9c393d59fe59d193addbb7423e324f0795211d1c5",
+      "after_bytes": 8123
+    },
+    {
+      "path": "crates/render/src/film_tests.rs",
+      "before_sha256": "3fc4f5251f04f63a2a43a1f141fdccd3f66c50d3d8d42eff77754d21c4bdb2b7",
+      "before_bytes": 20416,
+      "after_sha256": "b56a6e297a2fe9a784034e48d81b3ed446e80945d860cebb9a0288b1a1c15059",
+      "after_bytes": 29773
+    },
+    {
+      "path": "crates/render/src/job/cpu_budget.rs",
+      "before_sha256": "7756fedf76658a1eedd0c0194aa98141d33464c0f7df85fe86f9e255fd8b8ce2",
+      "before_bytes": 7771,
+      "after_sha256": "e02df70cd48a5116a42363431839c0c4d6f25f041e761f7ce01c04dc998a8aca",
+      "after_bytes": 7776
+    },
+    {
+      "path": "crates/render/src/job/interactive.rs",
+      "before_sha256": "5fb7062276adfdc22d1fa651750119feb90870b31d12fb0fc0b852c4b430468d",
+      "before_bytes": 11135,
+      "after_sha256": "8d5d1c9f477303e75a1e3e9713bd2a5f361b464993fae6a21195f45371f6a978",
+      "after_bytes": 14762
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace.rs",
+      "before_sha256": "6262d926d6e3dae4d6ed92fee6f429b413cf1de9f9185da2701cd351e5b20ab1",
+      "before_bytes": 108186,
+      "after_sha256": "6c8680aa0ee9428cc280e8ede8f08d0a5ee18bbc2f444f25b7e1c7d4160c65d3",
+      "after_bytes": 109513
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_cpu.rs",
+      "before_sha256": "3a06929c32104559374f62f4dd5134333c785345e4ba62762445f587a722daf9",
+      "before_bytes": 42638,
+      "after_sha256": "d58af851c0c8d1bcabb9555e9797a83558ece7c2db11e527ee65d4cbb66adef4",
+      "after_bytes": 42691
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_interactive.rs",
+      "before_sha256": "41dfccef77b9079af801bcfa3998dadc4976e20e7b1000f2666e1c75a3cf3332",
+      "before_bytes": 56174,
+      "after_sha256": "8c5ff5d8280ba1519dc36070045f667bad6667412beff66fecde291d37b632fb",
+      "after_bytes": 57318
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before_sha256": "e7ff1b00bc5462db698096712965cb47f4177682bdb39ac0b6850d9c26710535",
+      "before_bytes": 619102,
+      "after_sha256": "ba8935d53a3bbe3b1a44fcb4c95147b53517a0cdd991290607858e3928933c49",
+      "after_bytes": 628497
+    }
+  ],
+  "new_tests_written": 13,
+  "new_tests_run": 0,
+  "dependency": "CPU producer/host per-pass and u32 sidecar adapter is still being implemented and is not part of this source checkpoint.",
+  "full_CI_or_native_acceptance": false
+}

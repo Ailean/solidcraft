@@ -340,7 +340,9 @@ fn one_face(body: &Body, at: &[Vec3], distance: f64, mode: ExtendMode) -> Result
             solidcraft_smlib::Error::Unsupported => KernelError::Invalid(
                 "not supported yet: extending an edge that is not a whole side of its surface's parameter box (a trimmed edge)".into(),
             ),
-            solidcraft_smlib::Error::NotExact => KernelError::Invalid("the extension would run past a pole of its surface or wrap round it".into()),
+            solidcraft_smlib::Error::NotExact => KernelError::Invalid(format!(
+                "the surface cannot be extended exactly {distance} mm there: the extension would run past a pole of its surface, wrap round it, or not reach that length"
+            )),
             solidcraft_smlib::Error::NoMatch { .. } => KernelError::Invalid(format!("no edge at {p:?}")),
             e => failed("extend", e),
         })?;

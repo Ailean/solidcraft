@@ -2125,6 +2125,8 @@
   "prefs.ctrl_cmd": "Ctrl / Cmd",
   "prefs.curved_surfaces": "משטחים מעוקלים",
   "prefs.curves": "משטחים מעוקלים",
+  "prefs.dark_parts_shading": "שמירה על צורת חלקים כהים",
+  "prefs.dark_parts_shading_help": "הצללת התצוגה באור ליניארי עם תאורת שמיים רכה, כך שפאות כהות שומרות על מעבר גוונים במקום להפוך לשחורות",
   "prefs.dead_zone_note": "הפס המקווקו הוא האזור המת: תנועה בתוכו לא נלקחת בחשבון.",
   "prefs.default": "ברירת מחדל",
   "prefs.design": "ברירות מחדל לתכן",

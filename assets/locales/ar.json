@@ -2125,6 +2125,8 @@
   "prefs.ctrl_cmd": "Ctrl / Cmd",
   "prefs.curved_surfaces": "الأسطح المنحنية",
   "prefs.curves": "الأسطح المنحنية",
+  "prefs.dark_parts_shading": "الحفاظ على شكل الأجزاء الداكنة",
+  "prefs.dark_parts_shading_help": "تظليل العرض بإضاءة خطية مع إضاءة سماء ناعمة، لتحتفظ الأوجه الداكنة بتدرج بدل أن تصبح سوداء",
   "prefs.dead_zone_note": "الشريط المخطط هو المنطقة الميتة: تُتجاهل الحركة داخلها.",
   "prefs.default": "افتراضي",
   "prefs.design": "افتراضيات التصميم",

@@ -3,4 +3,3 @@
 # and on a listed case that passes: a fix removes its line in the same pull request.
 # Baseline: develop 5ada4fc8a with SMLib 90aabff (the run on 60b1c6a, aarch64 Linux).
 3604-cut-with-g2-swept-tool-along-projected-edge step 12 (solid.sweep): the path curves are not connected end to end
-3830-split-cup-by-extended-spline-surface step 12 (solid.split_body): the tool does not split the body (the tool point picks one span of the three-face spline surface, and a face tool cuts with that face's surface alone)

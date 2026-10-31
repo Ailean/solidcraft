@@ -1,0 +1,41 @@
+{
+  "status": "SOURCE_ONLY_TWO_FILE_PREREQUISITE_UNRUN",
+  "tests": {
+    "preserved": 8,
+    "added": 7,
+    "total": 15,
+    "executed": 0
+  },
+  "members": [
+    {
+      "path": "before/crates/render/src/raytrace/lighting.rs",
+      "bytes": 6620,
+      "sha256": "d4bc7940af35ced7a727106b371f67b53ec68615cbd3013de6ddcf5d42708486"
+    },
+    {
+      "path": "before/crates/render/src/raytrace/lighting_tests.rs",
+      "bytes": 8201,
+      "sha256": "2f7cdf2b371e7303cdbe91a5b064af0139db79acade2cf58581a30f424e0ca09"
+    },
+    {
+      "path": "candidate/crates/render/src/raytrace/lighting.rs",
+      "bytes": 8678,
+      "sha256": "ab270656a20eedaea08e6858bdf0fd349ca64a5e528c0fc9162207adda541764"
+    },
+    {
+      "path": "candidate/crates/render/src/raytrace/lighting_tests.rs",
+      "bytes": 14927,
+      "sha256": "cfd4194e7e5d6c6996700b0367984e2d91069078ee1a3aa3b6aa5453bd2cfc85"
+    },
+    {
+      "path": "delta.patch",
+      "bytes": 9450,
+      "sha256": "0fba0675909e151a73a8848ecced19d16666f59892ad98f19a85060f9ab60038"
+    },
+    {
+      "path": "README.md",
+      "bytes": 1833,
+      "sha256": "d67c774d8a26c2a58fa996f8120972ba21c3f17862b7a97d6924f3d6fee6b8ca"
+    }
+  ]
+}

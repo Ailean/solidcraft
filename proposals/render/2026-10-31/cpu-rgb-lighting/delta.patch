@@ -1,0 +1,189 @@
+--- a/crates/render/src/raytrace/lighting.rs
++++ b/crates/render/src/raytrace/lighting.rs
+@@ -137,6 +137,44 @@
+         }
+         Ok(sum)
+     }
++    /// Sum direct lighting with independently completed RGB transmittance.
++    /// Ineligible lights never call `transmittance`. Each returned channel must
++    /// be finite in [0, 1]; errors propagate without clipping or a fallback.
++    /// No exposure, tone mapping, display encoding or indirect transport here.
++    pub(super) fn shade_linear_transmitted(
++        &self,
++        surface: OpaqueSurface,
++        normal: Vec3,
++        view: Vec3,
++        mut transmittance: impl FnMut(usize, Vec3) -> Result<Vec3>,
++    ) -> Result<Vec3> {
++        let n = unit_direction(normal).map_err(|_| TraceError::InvalidInput("finite nonzero shading normal required"))?;
++        let v = unit_direction(view).map_err(|_| TraceError::InvalidInput("finite nonzero shading view required"))?;
++        let mut sum = Vec3::ZERO;
++        if n.dot(v) <= 0.0 {
++            return Ok(sum);
++        }
++        for (index, light) in self.lights.iter().enumerate() {
++            let cosine = n.dot(light.direction).max(0.0);
++            if cosine == 0.0 || light.intensity == 0.0 || light.color == Vec3::ZERO {
++                continue;
++            }
++            let transmission = transmittance(index, light.direction)?;
++            if !transmission.is_finite() || !channels(transmission).into_iter().all(|c| (0.0..=1.0).contains(&c)) {
++                return Err(TraceError::InvalidInput("direct transmittance must be finite RGB in [0, 1]"));
++            }
++            if transmission == Vec3::ZERO {
++                continue;
++            }
++            let brdf = surface.brdf(n, v, light.direction).map_err(|_| TraceError::InvalidInput("invalid opaque surface lighting directions"))?;
++            let weight = light.intensity * cosine;
++            let incident = Vec3::new(brdf.x * light.color.x, brdf.y * light.color.y, brdf.z * light.color.z) * weight;
++            sum += Vec3::new(incident.x * transmission.x, incident.y * transmission.y, incident.z * transmission.z);
++            validate_radiance(sum)?;
++        }
++        Ok(sum)
++    }
++
+ }
+ 
+ fn channels(v: Vec3) -> [f64; 3] {
+--- a/crates/render/src/raytrace/lighting_tests.rs
++++ b/crates/render/src/raytrace/lighting_tests.rs
+@@ -150,3 +150,139 @@
+     // Expanding exposure never expands the admitted LINEAR transport bound.
+     assert!(map_to_display(Vec3::new(MAX_LINEAR_RADIANCE * 2.0, 0.0, 0.0), -32.0).is_err());
+ }
++
++#[test]
++fn transmitted_lambert_has_independent_analytic_colour_and_channel_weights() {
++    let light = DirectionalLight::new(Vec3::Z, Vec3::new(1.0, 0.5, 0.25), PI).unwrap();
++    let lighting = Lighting::new(vec![light]).unwrap();
++    let actual = lighting
++        .shade_linear_transmitted(lambert(), Vec3::Z, Vec3::Z, |index, direction| {
++            assert_eq!((index, direction), (0, Vec3::Z));
++            Ok(Vec3::new(0.5, 0.25, 0.75))
++        })
++        .unwrap();
++    // base(.8,.5,.25) * light(1,.5,.25) * PI/PI * T(.5,.25,.75).
++    assert!((actual - Vec3::new(0.4, 0.0625, 0.046875)).len() < 1e-14);
++}
++
++#[test]
++fn transmitted_white_black_and_binary_visibility_preserve_boolean_shading() {
++    let lighting = Lighting::preset(StudioPreset::WarmCool).unwrap();
++    for metallic in [0.0, 0.5, 1.0] {
++        let surface = OpaqueSurface::new(Vec3::new(0.8, 0.3, 0.2), metallic, 0.5, 1.5).unwrap();
++        for selection in 0..3 {
++            let visible = |index: usize| match selection { 0 => false, 1 => true, _ => index % 2 == 0 };
++            let old = lighting.shade_linear(surface, Vec3::Z, Vec3::Z, |i, _| Ok(visible(i))).unwrap();
++            let rgb = lighting
++                .shade_linear_transmitted(surface, Vec3::Z, Vec3::Z, |i, _| {
++                    Ok(if visible(i) { Vec3::new(1.0, 1.0, 1.0) } else { Vec3::ZERO })
++                })
++                .unwrap();
++            assert_eq!(rgb, old);
++        }
++    }
++}
++
++#[test]
++fn transmitted_two_lights_use_independent_indices_and_sum_before_output() {
++    let lighting = Lighting::new(vec![
++        DirectionalLight::new(Vec3::Z, Vec3::new(1.0, 0.5, 0.0), PI).unwrap(),
++        DirectionalLight::new(Vec3::Z, Vec3::new(0.5, 0.0, 1.0), 2.0 * PI).unwrap(),
++    ])
++    .unwrap();
++    let mut visited = Vec::new();
++    let actual = lighting
++        .shade_linear_transmitted(lambert(), Vec3::Z, Vec3::Z, |index, direction| {
++            visited.push((index, direction));
++            match index {
++                0 => Ok(Vec3::new(0.25, 1.0, 0.5)),
++                1 => Ok(Vec3::new(1.0, 0.5, 0.5)),
++                _ => panic!("unexpected light index"),
++            }
++        })
++        .unwrap();
++    assert_eq!(visited, vec![(0, Vec3::Z), (1, Vec3::Z)]);
++    // Light0=(.2,.25,0), light1=(.8,0,.25); no tone mapping or exposure.
++    assert!((actual - Vec3::new(1.0, 0.25, 0.25)).len() < 1e-14);
++}
++
++#[test]
++fn transmitted_ineligible_lights_do_not_request_visibility_or_renumber_indices() {
++    let white = Vec3::new(1.0, 1.0, 1.0);
++    let lighting = Lighting::new(vec![
++        DirectionalLight::new(Vec3::Z, white, 0.0).unwrap(),
++        DirectionalLight::new(-Vec3::Z, white, 1.0).unwrap(),
++        DirectionalLight::new(Vec3::Z, Vec3::ZERO, 1.0).unwrap(),
++        DirectionalLight::new(Vec3::X, white, 1.0).unwrap(),
++        DirectionalLight::new(Vec3::Z, white, PI).unwrap(),
++    ])
++    .unwrap();
++    let mut visited = Vec::new();
++    let actual = lighting
++        .shade_linear_transmitted(lambert(), Vec3::Z, Vec3::Z, |index, direction| {
++            assert_eq!((index, direction), (4, Vec3::Z));
++            visited.push(index);
++            Ok(white)
++        })
++        .unwrap();
++    assert_eq!(visited, vec![4]);
++    assert!((actual - Vec3::new(0.8, 0.5, 0.25)).len() < 1e-14);
++    assert_eq!(lighting.shade_linear_transmitted(lambert(), Vec3::Z, -Vec3::Z, |_, _| panic!("backfacing view")).unwrap(), Vec3::ZERO);
++    assert_eq!(lighting.shade_linear_transmitted(lambert(), Vec3::Z, Vec3::X, |_, _| panic!("tangent view")).unwrap(), Vec3::ZERO);
++    assert_eq!(Lighting::new(Vec::new()).unwrap().shade_linear_transmitted(lambert(), Vec3::Z, Vec3::Z, |_, _| panic!("no lights")).unwrap(), Vec3::ZERO);
++}
++
++#[test]
++fn transmitted_rejects_every_invalid_channel_and_propagates_callback_errors() {
++    let lighting = Lighting::new(vec![DirectionalLight::new(Vec3::Z, Vec3::new(1.0, 1.0, 1.0), PI).unwrap()]).unwrap();
++    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.01, 1.01] {
++        for channel in 0..3 {
++            let transmittance = match channel {
++                0 => Vec3::new(bad, 0.0, 0.0),
++                1 => Vec3::new(0.0, bad, 0.0),
++                _ => Vec3::new(0.0, 0.0, bad),
++            };
++            assert!(matches!(lighting.shade_linear_transmitted(lambert(), Vec3::Z, Vec3::Z, |_, _| Ok(transmittance)), Err(TraceError::InvalidInput(_))));
++        }
++    }
++    for error in [TraceError::Cancelled, TraceError::WorkLimit, TraceError::MemoryLimit] {
++        assert_eq!(lighting.shade_linear_transmitted(lambert(), Vec3::Z, Vec3::Z, |_, _| Err(error)), Err(error));
++    }
++}
++
++#[test]
++fn transmitted_keeps_shading_direction_validation_and_scale_normalization() {
++    let lighting = Lighting::new(vec![DirectionalLight::new(Vec3::Z, Vec3::new(1.0, 1.0, 1.0), PI).unwrap()]).unwrap();
++    for bad in [Vec3::ZERO, Vec3::new(f64::NAN, 0.0, 1.0), Vec3::new(0.0, 0.0, f64::INFINITY)] {
++        assert!(lighting.shade_linear_transmitted(lambert(), bad, Vec3::Z, |_, _| panic!("invalid normal")).is_err());
++        assert!(lighting.shade_linear_transmitted(lambert(), Vec3::Z, bad, |_, _| panic!("invalid view")).is_err());
++    }
++    for magnitude in [1e-300, 1e308] {
++        let actual = lighting
++            .shade_linear_transmitted(lambert(), Vec3::new(0.0, 0.0, magnitude), Vec3::new(0.0, 0.0, magnitude), |_, _| Ok(Vec3::new(0.5, 0.25, 1.0)))
++            .unwrap();
++        assert!((actual - Vec3::new(0.4, 0.125, 0.25)).len() < 1e-14);
++    }
++}
++
++#[test]
++fn transmitted_checks_accumulated_radiance_after_transmission_without_clamping() {
++    // Hostile INTERNAL fixture deliberately bypasses DirectionalLight::new's
++    // intensity admission. This isolates the existing accumulated-radiance gate;
++    // these intensities are not asserted to be accepted by the public API.
++    // Each unattenuated term is (.6,.375,.1875)*MAX; two exceed MAX in red.
++    let light = DirectionalLight { direction: Vec3::Z, color: Vec3::new(1.0, 1.0, 1.0), intensity: 0.75 * PI * MAX_LINEAR_RADIANCE };
++    let lighting = Lighting::new(vec![light, light]).unwrap();
++    let mut visits = 0;
++    assert!(matches!(lighting.shade_linear_transmitted(lambert(), Vec3::Z, Vec3::Z, |_, _| {
++        visits += 1;
++        Ok(Vec3::new(1.0, 1.0, 1.0))
++    }), Err(TraceError::InvalidInput(_))));
++    assert_eq!(visits, 2);
++    let attenuated = lighting
++        .shade_linear_transmitted(lambert(), Vec3::Z, Vec3::Z, |_, _| Ok(Vec3::new(0.5, 0.5, 0.5)))
++        .unwrap();
++    let expected = Vec3::new(0.6, 0.375, 0.1875) * MAX_LINEAR_RADIANCE;
++    assert!((attenuated - expected).len() <= MAX_LINEAR_RADIANCE * 1e-14);
++    assert_eq!(lighting.shade_linear_transmitted(lambert(), Vec3::Z, Vec3::Z, |_, _| Ok(Vec3::ZERO)).unwrap(), Vec3::ZERO);
++}

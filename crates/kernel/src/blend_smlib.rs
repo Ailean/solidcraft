@@ -121,7 +121,7 @@ mod imp {
     use crate::body::Body;
     use crate::history::{BodyHistory, Change, EdgeOrigin, FaceOrigin, History};
     use crate::native::{body_from_smlib_ordered, smlib_body_ordered};
-    use crate::{guard, record, KernelError, Result};
+    use crate::{KernelError, Result, guard, record};
 
     fn failed(what: &str, step: &str, e: impl std::fmt::Display) -> KernelError {
         KernelError::Failed(format!("SMLib {what}: {step}: {e}"))
@@ -669,11 +669,13 @@ mod tests {
         assert!(matches!(v.smlib, Some(crate::SmlibCheck::Valid)), "{:?}", v.smlib);
         let saved = crate::decode_native_body(&crate::encode_native_body(&r).unwrap()).unwrap();
         assert!(crate::validity(&saved).record.is_ok());
-        assert!(crate::validity(
-            &crate::transform_matrix(&saved, [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [5.0, 0.0, 0.0, 1.0]]).unwrap()
-        )
-        .record
-        .is_ok());
+        assert!(
+            crate::validity(
+                &crate::transform_matrix(&saved, [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [5.0, 0.0, 0.0, 1.0]]).unwrap()
+            )
+            .record
+            .is_ok()
+        );
     }
 
     #[test]

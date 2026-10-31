@@ -197,3 +197,7 @@ The complete API consumer connects captured direct visibility and RGB shading to
 ### 31 October — C23 quality budget controls and minimal TIR test-call adapter
 
 [Three-path source and exact delta](../2026-10-31/c23-three-path-source/README.md). Existing GPU review/acknowledgement/currentness/save preserved;74old inspector tests and original TIR oracles retained,7newUI tests UNRUN. No universal CPU/Raster quality presets, compilation, native/GPU/full-CI or readiness claim.
+
+### 31 October — CPU glass directional-shadow UI bridge
+
+[Four-path source and request-boundary documentation](../2026-10-31/cpu-directional-shadow-ui/README.md). UniformON/OFF reaches the existing producer; mixed assignments refuse explicitly. Original277cases retained, one old unsupported-feature frontier deliberately updated,7newcasesUNRUN. Included in C23source only, not native/image/GPU/full-CI qualification.

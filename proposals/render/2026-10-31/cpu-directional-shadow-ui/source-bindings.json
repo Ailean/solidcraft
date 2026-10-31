@@ -1,0 +1,56 @@
+{
+  "status": "SOURCE_ADOPTED_IN_C23_UNFORMATTED_UNCOMPILED_UNRUN",
+  "baseline_manifest_sha256": "9b193a92875783101d2511342eb4e4781abeb2f149187179f8900931fbd06e3f",
+  "C23_adopted_source_manifest_sha256": "55bcda795f1c124465330f9156ad6894501ac1e184203fe3e2994d1052eee45b",
+  "paths": [
+    {
+      "path": "crates/ui-egui/src/render_workspace_materials.rs",
+      "before": {
+        "sha256": "22b2c1133789921d1d1d7eea0dbdc8b4662fd1fcce746143ccd30e200897d8b5",
+        "bytes": 54279
+      },
+      "candidate": {
+        "sha256": "9ae7a34a965878639e9f79a74c4983a93db9a0568019535984c97384d0f4cb13",
+        "bytes": 55277
+      },
+      "eol": "LF"
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before": {
+        "sha256": "9aa14ddb50930aeb02b48e27bf146a0b53ab7d68139bac8971bf091756bbd6de",
+        "bytes": 607819
+      },
+      "candidate": {
+        "sha256": "39c50dd512df0741ed96f32be2e2095a3632776542679c10968a162560dacf69",
+        "bytes": 618884
+      },
+      "eol": "LF"
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_cpu.rs",
+      "before": {
+        "sha256": "4c144e8ee0c6a51380da60ecd70d350a66fce363261a6e711d24626df371be08",
+        "bytes": 41773
+      },
+      "candidate": {
+        "sha256": "3a06929c32104559374f62f4dd5134333c785345e4ba62762445f587a722daf9",
+        "bytes": 42638
+      },
+      "eol": "LF"
+    },
+    {
+      "path": "assets/locales/pending/cpu-directional-shadow-ui.json",
+      "before": null,
+      "candidate": {
+        "sha256": "8f8cd93a753193ef93bdc3d1e7ffc16e4833065b3a73c5e23332339346745815",
+        "bytes": 9827
+      },
+      "eol": "LF"
+    }
+  ],
+  "new_tests_UNRUN": 7,
+  "old_main_test_bodies_preserved": 277,
+  "native_test_frontier_exception": "same original CPU fixture; old blanket shadow unsupported error replaced with typed-wire and real-preflight positive; no other oracle changed",
+  "scope": "uniform per-body ON/OFF only; mixed bodies refuse; no per-body mask or physical refraction/caustics claim"
+}

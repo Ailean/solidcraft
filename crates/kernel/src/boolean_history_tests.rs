@@ -446,9 +446,16 @@ mod smlib {
             crate::sphere(Vec3::new(10.0, 10.0, 10.0), 4.0).unwrap(),
             crate::torus(Vec3::new(0.0, 0.0, 0.0), 10.0, 2.0).unwrap(),
         ];
+        // SMLib imports a record's faces and edges in the record's order, and the record is
+        // already canonical: SMLib's face and edge i are the record's i (the order is the
+        // identity, or empty, which says the same), with no edge split into pieces.
         for (i, b) in bodies.iter().enumerate() {
             let (_, order) = crate::native::smlib_body_ordered(b).unwrap();
-            assert!(order.is_some(), "body {i}");
+            let order = order.unwrap_or_else(|| panic!("body {i}: no order"));
+            let identity = |to: &[usize], n: usize| to.is_empty() || to.iter().copied().eq(0..n);
+            assert!(identity(&order.faces, b.face_count()), "body {i}: faces {:?}", order.faces);
+            assert!(identity(&order.edges, b.edge_count()), "body {i}: edges {:?}", order.edges);
+            assert!(order.pieces.is_empty(), "body {i}: {:?}", order.pieces);
         }
     }
 

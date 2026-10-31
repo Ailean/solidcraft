@@ -3472,6 +3472,7 @@
   "ui.joints": "조인트",
   "ui.keyboard_shortcuts": "키보드 단축키",
   "ui.language": "언어",
+  "ui.lasso_select": "올가미(자유롭게 둘러 그리기: 완전히 안쪽에 있는 것을 선택)",
   "ui.layout_compact": "컴팩트",
   "ui.layout_floating": "플로팅",
   "ui.length": "길이",

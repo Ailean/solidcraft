@@ -4676,6 +4676,7 @@
   "ui.joints": "Các khớp nối",
   "ui.keyboard_shortcuts": "Phím tắt bàn phím",
   "ui.language": "Ngôn ngữ (Language)",
+  "ui.lasso_select": "Lasso (kéo một vòng tự do: chọn những gì nằm hoàn toàn bên trong)",
   "ui.layout_compact": "Gọn",
   "ui.layout_floating": "Nổi",
   "ui.length": "Chiều dài",

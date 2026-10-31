@@ -4676,6 +4676,7 @@
   "ui.joints": "Joints",
   "ui.keyboard_shortcuts": "Keyboard Shortcuts",
   "ui.language": "Language",
+  "ui.lasso_select": "Lasso (drag a freehand loop: takes what is wholly inside)",
   "ui.layout_compact": "Compact",
   "ui.layout_floating": "Floating",
   "ui.length": "Length",

@@ -4676,6 +4676,7 @@
   "ui.joints": "מפרקים",
   "ui.keyboard_shortcuts": "קיצורי מקלדת",
   "ui.language": "שפה",
+  "ui.lasso_select": "לאסו (גרירת לולאה חופשית: בוחר את מה שנמצא כולו בתוכה)",
   "ui.layout_compact": "דחוס",
   "ui.layout_floating": "צף",
   "ui.length": "אורך",

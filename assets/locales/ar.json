@@ -4676,6 +4676,7 @@
   "ui.joints": "المفاصل",
   "ui.keyboard_shortcuts": "الاختصارات",
   "ui.language": "اللغة",
+  "ui.lasso_select": "الحبل (اسحب حلقة حرة: يحدّد ما يقع داخلها بالكامل)",
   "ui.layout_compact": "مضغوط",
   "ui.layout_floating": "عائم",
   "ui.length": "الطول",

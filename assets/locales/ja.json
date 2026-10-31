@@ -4676,6 +4676,7 @@
   "ui.joints": "ジョイント",
   "ui.keyboard_shortcuts": "キーボードショートカット",
   "ui.language": "言語",
+  "ui.lasso_select": "投げ縄（フリーハンドで囲む：完全に内側にあるものを選択）",
   "ui.layout_compact": "コンパクト",
   "ui.layout_floating": "フローティング",
   "ui.length": "長さ",

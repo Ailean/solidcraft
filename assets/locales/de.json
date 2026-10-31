@@ -4675,6 +4675,7 @@
   "ui.joints": "Gelenke",
   "ui.keyboard_shortcuts": "Tastenkürzel",
   "ui.language": "Sprache",
+  "ui.lasso_select": "Lasso (freihändig umfahren: wählt, was ganz innen liegt)",
   "ui.layout_compact": "Kompakt",
   "ui.layout_floating": "Schwebend",
   "ui.length": "Länge",

@@ -4676,6 +4676,7 @@
   "ui.joints": "关节",
   "ui.keyboard_shortcuts": "键盘快捷键",
   "ui.language": "语言",
+  "ui.lasso_select": "套索（徒手圈选：选择完全在圈内的对象）",
   "ui.layout_compact": "紧凑",
   "ui.layout_floating": "浮动",
   "ui.length": "长度",

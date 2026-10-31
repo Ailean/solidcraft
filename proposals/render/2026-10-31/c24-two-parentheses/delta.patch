@@ -1,0 +1,11 @@
+--- a/crates/ui-egui/src/render_workspace_inspector_tests.rs
++++ b/crates/ui-egui/src/render_workspace_inspector_tests.rs
+@@ -2683,7 +2683,7 @@
+                 .app
+                 .run(
+                     "render.quality.prepare",
+-                    json!({"id":["Q-001","Q-002","Q-003"][index],"variant":"fixed_samples_png","acknowledge_omissions":true}),
++                    json!({"id":(["Q-001","Q-002","Q-003"][index]),"variant":"fixed_samples_png","acknowledge_omissions":true}),
+                 )
+                 .unwrap();
+             apply_quality(&mut h.app, &plan).unwrap();

@@ -203,3 +203,7 @@ The complete API consumer connects captured direct visibility and RGB shading to
 [Four-path source and request-boundary documentation](../2026-10-31/cpu-directional-shadow-ui/README.md). UniformON/OFF reaches the existing producer; mixed assignments refuse explicitly. Original277cases retained, one old unsupported-feature frontier deliberately updated,7newcasesUNRUN. Included in C23source only, not native/image/GPU/full-CI qualification.
 
 - [U04 original GPU owner patches: proposed source integration](../2026-10-31/u04-owner-integrated-source/README.md) — Twelve literal hunks from plexi32's #6813 and #6850, original tests and RAW bindings. Not adopted; Rust/Naga/GPU/native UNRUN.
+
+## C24 existing quality-test macro expression (2026-10-31)
+
+[One-file checkpoint, exact two-parentheses delta and source bindings](../2026-10-31/c24-two-parentheses/README.md). Immediate base is C23 post-format source, not the earlier unformatted public candidate. No production change or new tests; C24 resource admission stopped before combined Cargo, with 953 cases and 60 required marker contracts UNRUN. No gate/readiness PASS inferred.

@@ -1,0 +1,33 @@
+{
+  "schema": "portable-source-bindings-v1",
+  "scope": "One existing test expression, two inserted parentheses, no production change",
+  "path": "crates/ui-egui/src/render_workspace_inspector_tests.rs",
+  "before_sha256": "87c0acbdfd3e45128e3ced3819fa5b9740d8940eec2ce5402aa567b3435b53b9",
+  "before_bytes": 153358,
+  "candidate": "candidate/crates/ui-egui/src/render_workspace_inspector_tests.rs",
+  "candidate_sha256": "5dfa8eb8be2da3ae24895ed098ebe62029a4de69f508ab7e26cabdba54ad5292",
+  "candidate_bytes": 153360,
+  "delta": "delta.patch",
+  "delta_sha256": "a8b1b1134222c6579228d02dc0d8850828938fec824c468306325c23f6283850",
+  "delta_bytes": 597,
+  "immediate_receiver": "Actual C23 post-format test source; not the earlier public unformatted candidate",
+  "lineage": {
+    "prior_public_unit": "proposals/render/2026-10-31/c23-three-path-source/",
+    "prior_public_candidate_sha256": "867fbaa191e057b56dcc09b0d61e624edab130e53dab0ea3882e98ee850a2da6",
+    "actual_C23_post_format_source_manifest_sha256": "7cc6a040e808f5dd973310dd095f5a457ae482ab5a240309602c4f97d231b99e",
+    "C24_adopted_source_manifest_sha256": "2f39172dd42414588fb0c88cb23d30c2d5f626592ab3d4632b032701e85edbf1",
+    "C24_independent_expression_source_review_sha256": "ab7fd9e787e4cceb881047377d9efc640c53cf09166943ee412fe2c70dafa7b6",
+    "production_checkout_HEAD_at_source_adoption": "a077906234972dbbf11e80c54893f85ece97c8b7",
+    "archive_parent_commit_supplied_for_publication": "53a60b772d5c31a10bc86195814c86704d66c43f"
+  },
+  "test_contract": {
+    "existing_case": "quality_highlight_derives_every_projected_field_and_returns_to_custom",
+    "test_declarations_before_and_after": 81,
+    "new_declarations": 0,
+    "other_fixture_ID_index_variant_acknowledgement_assertion_oracle_bytes_unchanged": true,
+    "selected_cases_UNRUN_on_C24_source": 953,
+    "required_TRUE_marker_contracts_UNRUN": 60
+  },
+  "C24_execution_status_at_curation": "Resource admission stop before combined Cargo build, as reported by Engineer; no passing normal gate, test run or readiness inferred",
+  "combined_build_or_test_qualification": false
+}

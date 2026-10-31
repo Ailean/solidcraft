@@ -3608,6 +3608,7 @@
   "ui.properties.inertia_y": "Iyx, Iyy, Iyz",
   "ui.properties.inertia_z": "Izx, Izy, Izz",
   "ui.properties.measuring": "측정 중…",
+  "ui.properties.measuring_bodies": "측정 중… 바디 {total}개 중 {done}개",
   "ui.properties.measuring_failed": "측정이 끝나기 전에 중단되었습니다.",
   "ui.properties.principal_axis": "주축 {number}",
   "ui.properties.principal_moments": "주관성 모멘트",

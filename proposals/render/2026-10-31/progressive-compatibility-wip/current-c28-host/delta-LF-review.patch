@@ -1,0 +1,10 @@
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -842,7 +842,6 @@
+         }
+     }
+ }
+-
+ 
+ struct Running {
+     source_master: Option<Arc<RenderFrame>>,

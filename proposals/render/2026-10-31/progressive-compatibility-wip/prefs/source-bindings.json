@@ -1,0 +1,29 @@
+{
+  "status": "SOURCE_ONLY_NOT_ADOPTED_UNCOMPILED_UNRUN",
+  "subpackage": "prefs",
+  "base_source_manifest_sha256": "d38a8d946b6653864ad8918d4da662725bd24ca01b2e5aa2d3b38b47b1a7e163",
+  "base_rule": "Exact per-file RAW preimages only. Not current main, not a combined candidate. LF patch is review aid; RAW candidate bytes are authoritative.",
+  "files": [
+    {
+      "path": "assets/locales/pending/cpu-progressive-policy-preferences.json",
+      "before_sha256": null,
+      "before_bytes": null,
+      "after_sha256": "18fc39ddb923c03eb640f02f860c8ae10d9debf8843b1b9eadb9b0e0ce397f20",
+      "after_bytes": 4818
+    },
+    {
+      "path": "crates/ui-egui/src/prefs.rs",
+      "before_sha256": "b90ea63d6238bf41cb467a41efcd2b3888196e3be60f2453c635078d0933c97d",
+      "before_bytes": 378635,
+      "after_sha256": "b24b15f754e2ab01f5b3dc084db3fe214474669c936da244a189e708c8cb6b11",
+      "after_bytes": 382245
+    }
+  ],
+  "full_CI_native_or_readiness": false,
+  "candidate_whole_file_overlay_safe": true,
+  "locale_successor_lineage": {
+    "intermediate_before_sha256": "6d9e78b16fc3d8e015467c6512fb6401fd01b64ae871e8d643bdd61669fb154a",
+    "successor_after_sha256": "18fc39ddb923c03eb640f02f860c8ae10d9debf8843b1b9eadb9b0e0ce397f20",
+    "new_original_base_file": true
+  }
+}

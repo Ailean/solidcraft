@@ -1,0 +1,27 @@
+{
+  "status": "EXACT_C28_COMPILED_HOST_REFERENCE_NOT_COMPATIBILITY_WIP",
+  "base_source_manifest_sha256": "d38a8d946b6653864ad8918d4da662725bd24ca01b2e5aa2d3b38b47b1a7e163",
+  "source_binding": "RAW before of the sealed compatibility owner packet, preserved as the exact earlier C28 formatted source; not the compatibility candidate.",
+  "files": [
+    {
+      "path": "crates/render/src/job/host.rs",
+      "before_sha256": "2c72c307ec49a94b100f4be32ab6a4af4be494199ff7ad5c87bb698e7f13ab4e",
+      "before_bytes": 135425,
+      "after_sha256": "9dbf55511147641a8d7d7c3b4bf444ae8b8ece154aab49db4b57cb208347b4a8",
+      "after_bytes": 135424
+    }
+  ],
+  "delta": "Exactly one LF removed by the earlier C28 formatter, no other bytes changed from the SHA-state recovery.",
+  "known_C28_result": {
+    "build": "five library artifacts; ten inventories completed",
+    "selected_cases": 983,
+    "passed": 28,
+    "failed_font_fixture": 1,
+    "unrun": 954,
+    "cpu_supported_true_markers": 2,
+    "postchecks_executed": false,
+    "native_acceptance": false,
+    "full_CI_or_readiness": false
+  },
+  "standalone_full_source_or_new_execution_claim": false
+}

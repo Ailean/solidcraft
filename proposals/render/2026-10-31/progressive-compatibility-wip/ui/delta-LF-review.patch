@@ -1,0 +1,285 @@
+--- a/crates/render/src/job/interactive.rs
++++ b/crates/render/src/job/interactive.rs
+@@ -296,6 +296,7 @@
+ 
+     fn request(options: RaytraceOptions) -> ImageRequest {
+         ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+--- a/crates/ui-egui/src/render_workspace.rs
++++ b/crates/ui-egui/src/render_workspace.rs
+@@ -898,7 +898,19 @@
+ 
+ /// Pure request construction is shared with offline setup editing; host checks stay above.
+ fn image_request(app: &SolveApp) -> Result<serde_json::Value, String> {
+-    light::filter_request(app, raw_image_request(app)?)
++    let request = light::filter_request(app, raw_image_request(app)?)?;
++    cpu_checkpoint_policy(app, request, app.render_workspace.view.raytrace.progressive.is_some())
++}
++
++/// One transient command flag for capture and identity, never saved setup intent.
++fn cpu_checkpoint_policy(app: &SolveApp, mut request: serde_json::Value, progressive: bool) -> Result<serde_json::Value, String> {
++    if app.render_workspace.view.method == ImageMethod::CpuRaytrace && progressive && !app.preferences.render_cpu_progressive_every_pass {
++        request
++            .as_object_mut()
++            .ok_or_else(|| app.tr("render.error_provisional_identity").to_string())?
++            .insert("cpu_progressive_every_pass".into(), json!(false));
++    }
++    Ok(request)
+ }
+ 
+ fn raw_image_request(app: &SolveApp) -> Result<serde_json::Value, String> {
+@@ -915,7 +927,9 @@
+     if app.render_workspace.view.method != ImageMethod::CpuRaytrace {
+         return Err(app.tr("render.interactive_requires_cpu").into());
+     }
+-    light::filter_request(app, runtime_image_request(app, true)?)
++    let request = light::filter_request(app, runtime_image_request(app, true)?)?;
++    // Interactive always becomes CPU progressive, including a Fixed final editor.
++    cpu_checkpoint_policy(app, request, true)
+ }
+ 
+ /// The existing runtime branch, shared without changing Final Check/Start policy.
+--- a/crates/ui-egui/src/render_workspace_cpu.rs
++++ b/crates/ui-egui/src/render_workspace_cpu.rs
+@@ -369,7 +369,20 @@
+     {
+         return Err(app.tr("render.cpu_binding_stale").to_string());
+     }
+-    params_with_binding_policy(app, params, binding_interactive_current)
++    params_with_binding_policy(app, params, binding_interactive_current)?;
++    if !app.preferences.render_cpu_interactive_explicit_sampling {
++        let options = params
++            .get_mut("raytrace")
++            .and_then(Value::as_object_mut)
++            .ok_or_else(|| app.tr("render.error_provisional_identity").to_string())?;
++        // The original request was validated above. Only an explicit progressive
++        // object is replaced; Fixed stays Fixed until the engine's existing
++        // preview conversion applies primary/reflection1 and the fallback16/0.
++        if options.get("progressive").is_some_and(|value| !value.is_null()) {
++            options.insert("progressive".into(), json!(solidcraft_engine::render::job::CpuProgressiveOptions::default()));
++        }
++    }
++    Ok(())
+ }
+ 
+ fn params_with_binding_policy(app: &SolveApp, params: &mut Value, current: fn(&SolveApp, &str) -> bool) -> Result<(), String> {
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -1211,6 +1211,7 @@
+         let mut task = ImageTask::new(
+             scene,
+             ImageRequest {
++                cpu_progressive_every_pass: true,
+                 raster_punctual_lights: None,
+                 raster_area_lights: None,
+                 raster_exposure_ev: 0.0,
+@@ -3622,6 +3623,7 @@
+ fn large_image_display_uses_captured_profile_and_keeps_export_pixels_unchanged() {
+     use solidcraft_engine::render::job::{CpuBudget, ImageRequest, RaytraceOptions};
+     let request = ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+@@ -8613,6 +8615,7 @@
+ fn partial_png_contract_request() -> solidcraft_engine::render::job::ImageRequest {
+     use solidcraft_engine::render::job::{CpuProgressiveOptions, ImageRequest, RaytraceOptions};
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+@@ -11484,6 +11487,7 @@
+     state.view.job = Some(job);
+     state.preview_image = Some(PreviewImage { info: PreviewInfo { frame_sequence: 2, samples_per_pixel: 2, frame }, image: Ok(texture) });
+     let request = ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_exposure_ev: 0.0,
+         raster_lights: None,
+         raster_punctual_lights: None,
+@@ -11588,3 +11592,172 @@
+     cache_preview_image(&mut h.app, &ctx);
+     assert!(h.app.render_workspace.preview_image.is_none());
+ }
++
++
++#[test]
++fn cpu_capture_policy_preferences_preserve_typed_setup_final_intent_and_independent_sampling_copy() {
++    use solidcraft_engine::render::job::CpuProgressiveOptions;
++    let mut h = Harness::new();
++    h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++    h.app.render_workspace.view.draft.width = 16;
++    h.app.render_workspace.view.draft.height = 16;
++    h.app.render_workspace.view.raytrace.primary_samples = 1;
++    h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel: 31, seed: 741 });
++    let original_options = json!(h.app.render_workspace.view.raytrace);
++    let saved = setups::snapshot(&h.app).unwrap();
++    let document = h.app.session.doc.clone();
++    let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty());
++    for each_pass in [true, false] {
++        for preserve_sampling in [true, false] {
++            h.app.preferences.render_cpu_progressive_every_pass = each_pass;
++            h.app.preferences.render_cpu_interactive_explicit_sampling = preserve_sampling;
++            let final_request = image_request(&h.app).unwrap();
++            assert_eq!(final_request["settings"], json!(saved), "portable settings.job stays intact");
++            assert!(final_request.get("raytrace").is_none(), "no contradictory parallel runtime CPU options");
++            assert_eq!(final_request.get("cpu_progressive_every_pass"), (!each_pass).then_some(&json!(false)));
++            let interactive = interactive_request(&h.app).unwrap();
++            assert_eq!(interactive["raytrace"]["progressive"]["samples_per_pixel"], if preserve_sampling { 31 } else { 16 });
++            assert_eq!(interactive["raytrace"]["progressive"]["seed"], if preserve_sampling { 741 } else { 0 });
++            assert_eq!(interactive.get("cpu_progressive_every_pass"), (!each_pass).then_some(&json!(false)));
++            assert_eq!(interactive["settings"]["width"], 16);
++            assert_eq!(interactive["settings"]["height"], 16);
++            let frozen_command = interactive.clone();
++            h.app.preferences.render_cpu_progressive_every_pass = !each_pass;
++            let later_command = interactive_request(&h.app).unwrap();
++            assert_ne!(frozen_command, later_command, "the exact Value identity carries the policy");
++            assert_eq!(frozen_command, interactive, "an issued command copy cannot follow a later preference edit");
++            h.app.preferences.render_cpu_progressive_every_pass = each_pass;
++            assert_eq!(json!(h.app.render_workspace.view.raytrace), original_options);
++            assert_eq!(setups::snapshot(&h.app).unwrap(), saved);
++        }
++    }
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!(history, (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty()));
++}
++
++#[test]
++fn cpu_capture_cadence_is_absent_for_single_raster_gpu_and_present_for_derived_interactive_progressive() {
++    let mut h = Harness::new();
++    h.app.preferences.render_cpu_progressive_every_pass = false;
++    h.app.preferences.render_cpu_interactive_explicit_sampling = false;
++    h.app.render_workspace.view.draft.width = 16;
++    h.app.render_workspace.view.draft.height = 16;
++    for method in [ImageMethod::Raster, ImageMethod::GpuRaytrace, ImageMethod::CpuRaytrace] {
++        h.app.render_workspace.view.method = method;
++        h.app.render_workspace.view.raytrace.progressive = None;
++        let request = image_request(&h.app).unwrap();
++        assert!(request.get("cpu_progressive_every_pass").is_none());
++    }
++    h.app.render_workspace.view.raytrace.primary_samples = 16;
++    let fixed_editor = json!(h.app.render_workspace.view.raytrace);
++    let preview_request = interactive_request(&h.app).unwrap();
++    assert_eq!(preview_request["cpu_progressive_every_pass"], false);
++    assert!(preview_request["raytrace"].get("progressive").is_none(), "engine owns Fixed-to-Interactive conversion");
++    assert_eq!(preview_request["raytrace"]["primary_samples"], 16);
++    assert_eq!(json!(h.app.render_workspace.view.raytrace), fixed_editor);
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn legacy_interactive_sampling_keeps_reduced_preview_admission_without_final_budget_or_hostile_repair() {
++    use solidcraft_engine::render::job::{CpuProgressiveOptions, ImageRequest, interactive::cpu_request};
++    let mut h = Harness::new();
++    h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++    h.app.render_workspace.view.draft.width = 3840;
++    h.app.render_workspace.view.draft.height = 2160;
++    h.app.render_workspace.view.raytrace.primary_samples = 1;
++    h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel: 31, seed: 741 });
++    h.app.preferences.render_cpu_progressive_every_pass = false;
++    h.app.preferences.render_cpu_interactive_explicit_sampling = false;
++    let editor = json!(h.app.render_workspace.view.raytrace);
++    assert!(image_request(&h.app).is_err(), "the original final dimensions still exceed Compact progressive admission");
++    let wire = interactive_request(&h.app).unwrap();
++    assert_eq!((wire["settings"]["width"].as_u64(), wire["settings"]["height"].as_u64()), (Some(3840), Some(2160)));
++    let request: ImageRequest = serde_json::from_value(json!({
++        "integrator":"raytrace", "camera":h.app.cam, "width":3840, "height":2160,
++        "background":h.app.render_workspace.view.draft.background, "transparent_background":false,
++        "raytrace":wire["raytrace"], "cpu_progressive_every_pass":wire["cpu_progressive_every_pass"]
++    })).unwrap();
++    let preview = cpu_request(&request).unwrap();
++    assert_eq!((preview.width, preview.height), (1024, 576));
++    assert!(!preview.cpu_progressive_every_pass, "the same canonical cadence flag survives derived capture");
++    assert_eq!(preview.raytrace.as_ref().unwrap().progressive, Some(CpuProgressiveOptions { samples_per_pixel: 16, seed: 0 }));
++    assert_eq!(json!(h.app.render_workspace.view.raytrace), editor);
++    h.app.preferences.render_cpu_interactive_explicit_sampling = true;
++    let explicit = interactive_request(&h.app).unwrap();
++    let mut explicit_request = request.clone();
++    explicit_request.raytrace = Some(serde_json::from_value(explicit["raytrace"].clone()).unwrap());
++    assert!(cpu_request(&explicit_request).is_err(), "31SPP exceeds the reduced image's original camera-sample envelope; never downgrade it");
++    h.app.preferences.render_cpu_interactive_explicit_sampling = false;
++    h.app.render_workspace.view.raytrace.progressive.as_mut().unwrap().samples_per_pixel = 0;
++    assert!(interactive_request(&h.app).is_err(), "legacy preview cannot repair an invalid numerical request");
++    assert_eq!(h.app.render_workspace.view.raytrace.progressive.unwrap().samples_per_pixel, 0);
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_snapshot_policy_and_sampling_stay_captured_after_later_preference_edits() {
++    use solidcraft_engine::render::job::{CpuProgressiveOptions, Phase, interactive::VisualRevision};
++    use std::time::Duration;
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_snapshot_policy_and_sampling_stay_captured_after_later_preference_edits") {
++        return;
++    }
++    h.app.render_workspace.view.draft.width = 4;
++    h.app.render_workspace.view.draft.height = 4;
++    h.app.render_workspace.view.raytrace.primary_samples = 1;
++    h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel: 5, seed: 741 });
++    h.app.preferences.render_cpu_progressive_every_pass = false;
++    h.app.preferences.render_cpu_interactive_explicit_sampling = false;
++    let captured_value = interactive_request(&h.app).unwrap();
++    let context = h.app.session.interactive_render().unwrap();
++    context.enable(VisualRevision { scene_generation: h.app.session.revision, visual_revision: 1 }, Duration::ZERO).unwrap();
++    let ticket = context.capture(Duration::from_millis(201)).unwrap().unwrap();
++    let snapshot = context.snapshot(&h.app.session, ticket, &captured_value).unwrap();
++    h.app.preferences.render_cpu_progressive_every_pass = true;
++    h.app.preferences.render_cpu_interactive_explicit_sampling = true;
++    assert_ne!(interactive_request(&h.app).unwrap(), captured_value);
++    assert!(snapshot.run().unwrap(), "the real snapshot prepares its frozen command Value");
++    let handle = context.current().unwrap().unwrap();
++    let status = handle.wait_timeout(Duration::from_secs(60)).unwrap();
++    assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
++    assert!(!status.request.cpu_progressive_every_pass);
++    assert_eq!(status.request.raytrace.as_ref().unwrap().progressive, Some(CpuProgressiveOptions { samples_per_pixel: 16, seed: 0 }));
++    assert_eq!(serde_json::to_value(&status.request).unwrap()["cpu_progressive_every_pass"], false, "prepared metadata keeps the canonical false value");
++    assert!(handle.frame().unwrap().is_some());
++    assert_eq!(h.app.render_workspace.view.raytrace.progressive, Some(CpuProgressiveOptions { samples_per_pixel: 5, seed: 741 }));
++    interactive_assert_final_export_isolation(&mut h, &handle);
++    context.disable().unwrap();
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_cadence_preference_edit_invalidates_real_capture_through_existing_request_identity() {
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_cadence_preference_edit_invalidates_real_capture_through_existing_request_identity") {
++        return;
++    }
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch, true);
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let held = interactive_hold_real_completed_callback(&mut h);
++    held.sender.send(held.reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.3, false, true);
++    assert!(painted);
++    output.textures_delta.clear();
++    let old_visual = interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
++    let old_request = interactive_request(&h.app).unwrap();
++    h.app.preferences.render_cpu_progressive_every_pass = false;
++    interactive_control_frame(&mut h, epoch + 0.4, vec![]);
++    assert!(interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap() > old_visual);
++    assert!(interactive::test_current(&h.app).unwrap().is_none(), "existing edit path releases/cancels its owned capture");
++    assert!(interactive::test_cache(&h.app).is_none());
++    assert!(!h.app.render_workspace.interactive.pending(), "before_paint cannot launch a replacement");
++    assert_ne!(interactive_request(&h.app).unwrap(), old_request);
++    assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
++    // This real source completed before the edit; this test does not claim to
++    // observe cancellation of an in-flight renderer or every physical repaint.
++    assert!(held.job.frame().unwrap().is_some());
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
+--- a/crates/ui-egui/src/render_workspace_thumbnails.rs
++++ b/crates/ui-egui/src/render_workspace_thumbnails.rs
+@@ -138,6 +138,7 @@
+         let permit = WorkerPermit;
+         let Some(setup) = app.session.doc.render.setups.get(&key.name) else { return };
+         let request = solidcraft_engine::render::job::ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,

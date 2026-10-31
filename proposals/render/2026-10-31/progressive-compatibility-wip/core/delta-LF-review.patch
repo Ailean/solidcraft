@@ -1,0 +1,846 @@
+--- a/crates/engine/src/cmd/render.rs
++++ b/crates/engine/src/cmd/render.rs
+@@ -124,7 +124,7 @@
+ CommandSpec::new("render.settings.capture_hdr", "Save Render Settings with HDR", resources::capture_settings).icon("settings").doc_only()
+     .params("name, set: typed CPU/GPU setup patch with hdr/environment unset; path: scoped HDR; expected_sha256?: digest returned by render.hdr.inspect (changed sources refuse); rotation_rad?:0, intensity?:1; samples?:1/4/16/64 for CPU only (default16); assume_linear_srgb?:false for GPU only. Captures immutable bytes and saves resource plus setup atomically in one undo, without a host; returns name/setup/resource metadata, never source bytes"),
+ CommandSpec::new("render.preflight", "Check Render Request", jobs::preflight).icon("inspect").noundo().doc_only()
+-    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace, transient studio_weights, raster_lights and progressive_feedback may accompany it. raster_lights?: transient null (legacy studio) or 0..8 directional sources {direction:[x,y,z],color:[linear r,g,b],intensity:0..64}; empty array is dark direct lighting. Requires builtin Raster without studio_weights, raytrace, HDR, transmission or other method controls; existing RenderSetup.exposure_ev is captured for Raster within -32..32. Directions are finite/nonzero and bounded by 1e9; RGB is 0..1. Not saved; no shadows or physical glass. raster_punctual_lights?: transient null or 0..8 shared point/spot sources {position_mm:[x,y,z],color:[linear r,g,b],intensity:0..64,reference_distance_mm:0.001..1000000,minimum_distance_mm:0.001..reference_distance_mm,cone?:{emitted_axis:[x,y,z],inner_half_angle_radians,outer_half_angle_radians}}. Spot angles require 0<=inner<outer<=pi/2 and a finite nonzero emitted axis. raster_area_lights?: transient null or 0..4 rectangles {center_mm:[x,y,z],edge_u_mm:[x,y,z],edge_v_mm:[x,y,z],color:[linear r,g,b],intensity:0..64}; full perpendicular side lengths 0.000001..1000000mm, corners within +/-1000000000mm, U cross V emits. Local sources require a runtime request with settings.job:null or an untyped setup; saved typed jobs refuse them. All three absent/null collections preserve the legacy studio; any explicit local array, even empty, disables implicit sources, and absent raster_lights then means no directionals. Local images use unshadowed point/spot falloff and a one-point projected-area rectangle approximation; no finite footprint, soft shadows, environment, area_samples, softness or seed. Local light evaluations count within the existing projected-work limit; caps are 8directional+8shared point/spot+4rectangle, with the existing Raster memory envelope and one captured exposure. Positions and spot-axis components are finite and bounded by1e9; RGB0..1. No saved/UI local-light authoring yet. progressive_feedback?: false; transient protected display updates during CPU progressive rendering only; true refuses raster, GPU and fixed CPU requests. Omission preserves legacy admission/submission. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy requires fixed sampling; certified smooth thin-sheet/box dielectrics support fixed or progressive sampling under the same certificates and bounded optical transport. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed or progressive CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; progressive/Interactive optics retain primary_samples:1 and selected reflections.samples:1 limits and never drop unsupported intent. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
++    .params("setup?: saved name OR settings?: full RenderSetup. A typed job selects raster/cpu_raytrace/gpu_path and its numerical options plus embedded HDR before dispatch; only replace, transient studio_weights, raster_lights and progressive_feedback may accompany it. raster_lights?: transient null (legacy studio) or 0..8 directional sources {direction:[x,y,z],color:[linear r,g,b],intensity:0..64}; empty array is dark direct lighting. Requires builtin Raster without studio_weights, raytrace, HDR, transmission or other method controls; existing RenderSetup.exposure_ev is captured for Raster within -32..32. Directions are finite/nonzero and bounded by 1e9; RGB is 0..1. Not saved; no shadows or physical glass. raster_punctual_lights?: transient null or 0..8 shared point/spot sources {position_mm:[x,y,z],color:[linear r,g,b],intensity:0..64,reference_distance_mm:0.001..1000000,minimum_distance_mm:0.001..reference_distance_mm,cone?:{emitted_axis:[x,y,z],inner_half_angle_radians,outer_half_angle_radians}}. Spot angles require 0<=inner<outer<=pi/2 and a finite nonzero emitted axis. raster_area_lights?: transient null or 0..4 rectangles {center_mm:[x,y,z],edge_u_mm:[x,y,z],edge_v_mm:[x,y,z],color:[linear r,g,b],intensity:0..64}; full perpendicular side lengths 0.000001..1000000mm, corners within +/-1000000000mm, U cross V emits. Local sources require a runtime request with settings.job:null or an untyped setup; saved typed jobs refuse them. All three absent/null collections preserve the legacy studio; any explicit local array, even empty, disables implicit sources, and absent raster_lights then means no directionals. Local images use unshadowed point/spot falloff and a one-point projected-area rectangle approximation; no finite footprint, soft shadows, environment, area_samples, softness or seed. Local light evaluations count within the existing projected-work limit; caps are 8directional+8shared point/spot+4rectangle, with the existing Raster memory envelope and one captured exposure. Positions and spot-axis components are finite and bounded by1e9; RGB0..1. No saved/UI local-light authoring yet. progressive_feedback?: false; transient protected display updates during CPU progressive rendering only; true refuses raster, GPU and fixed CPU requests. Omission preserves legacy admission/submission. Without job, the legacy runtime controls below remain available. See docs/render-settings.md. studio_weights?: three finite 0..1 visibility weights for raster or implicit GPU studio sources only; never saved. integrator?: raster (default) or raytrace; progressive?: false (registered GPU path, CPU integrator/LED options are mutually exclusive); samples?: 1..4096; max_depth?: 1..16; seed?: u32 for progressive; raytrace?: bounded runtime progressive/primary_samples/lights/punctual_lights/area_lights/area_samples/seed/exposure_ev/shadows/reflections/anisotropic_faces/emissions/surface_effects/dielectrics/environment options, only with raytrace. CPU raytrace.budget?: compact (legacy default), studio or workstation; see docs/render-cpu-resource-profiles.md for explicit image/geometry/memory/work limits. CPU raytrace.progressive?: {samples_per_pixel:1..profile limit, seed:u32}; requires primary_samples:1 and selected reflections.samples:1; bounded area/LED direct lights retain their existing source and emitter-sample limits; anisotropy requires fixed sampling; certified smooth thin-sheet/box dielectrics support fixed or progressive sampling under the same certificates and bounded optical transport. See docs/render-cpu-progressive.md; environment?: {path: scoped HDR, expected_sha256?: inspected digest, rotation_radians: 0, intensity: 1, samples: 16} OR {resource: saved HDR digest, rotation_radians, intensity, samples}; embedded resources cannot combine with path/hash; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS or GI. CPU runtime dielectrics support only certified thin_sheet/closed_box boundaries with explicit IOR and Beer absorption. nested_media?: false is the existing JobOptions opt-in; fixed or progressive CPU images admit only strictly nested certified closed_box boundaries with an exterior camera, while touching/partial overlaps, sheets within volumes and clearcoat combinations refuse. Other nondefault JobOptions remain unsupported on CPU; progressive/Interactive optics retain primary_samples:1 and selected reflections.samples:1 limits and never drop unsupported intent. GPU progressive uses the same nested_media field with its own certified-media contract; see docs/render-raytrace-dielectrics.md. CPU emissions are visible radiance only; surface_effects change roughness/shading normals without geometry changes. led_strip?: continuous world-mm LED rectangle recipe; led_samples?: 1/4/16/64 for the whole strip, default16. At most8directional+8punctual+4rectangle/LED sources; shared area N. See docs/render-light-union.md. transparent_background?: false; replace?: false. With progressive:true, raytrace instead accepts GPU dielectrics/clear_coats/textures; environment instead accepts tagged hdr/embedded_hdr/sky with rotation_rad/intensity; file hdr supports expected_sha256, embedded_hdr uses a document resource digest. See docs/render-hdr-resources.md. GPU lens, studio lighting, tone_map, denoise, bounded finishing/backdrop and linear_exr retention are also available. GPU adaptive?: {pilot_samples:16..256,min_samples:16..samples,relative_error:0..1,absolute_error:0.000001..1000000,coverage_error:0.001..0.25} allocates independent production budgets; pilots are discarded, not a certified error guarantee. transmission_samples?:1|2|4 stratifies the first Fresnel branch with extra path cost. volume?:{min_mm:[x,y,z],max_mm:[x,y,z],extinction_per_mm:0..1000,scattering_albedo:[r,g,b],anisotropy:-0.95..0.95} is one finite homogeneous world-mm medium; active media require explicit lighting/environment and refuse glass, denoise and multiple transmission strata. These fields also persist in GPU job.options. See docs/render-materials/TRANSPORT-MASTER-BATCH-2026-10-23.md; see docs/render-transmission.md, render-environment.md, render-runtime-textures.md, render-thin-lens.md, render-studio-lighting.md and render-denoise.md. cpu_progressive_every_pass?: transient CPU progressive publication policy; omission/true publishes every complete pass, false restores power-of-two checkpoints and at most64 protected feedback opportunities. Independent of the saved sample target/seed; not stored in the design. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
+ CommandSpec::new("render.start", "Render Image", jobs::start).key("R").noundo().doc_only().at("RENDER", "IMAGE").icon("render_image")
+     .params("Same request as render.preflight. Captures an immutable product scene and queues a bounded image job. Returns its session-scoped job identity, captured scene_generation and progress. Does not change the design. See docs/render-jobs.md"),
+ CommandSpec::new("render.status", "Render Progress", jobs::status).icon("list").noundo().doc_only()
+--- a/crates/engine/src/cmd/render/jobs.rs
++++ b/crates/engine/src/cmd/render/jobs.rs
+@@ -18,6 +18,8 @@
+     #[serde(default, deserialize_with = "solidcraft_render::job::deserialize_raster_area_lights")]
+     raster_area_lights: Option<Vec<solidcraft_render::job::RectangleLightOptions>>,
+     progressive_feedback: bool,
++    #[serde(default, deserialize_with = "cpu_progressive_every_pass_input")]
++    cpu_progressive_every_pass: Option<bool>,
+     nested_media: bool,
+     studio_weights: Option<[f64; 3]>,
+     progressive: bool,
+@@ -34,6 +36,11 @@
+     settings: Option<RenderSetup>,
+     transparent_background: bool,
+     replace: bool,
++}
++
++// Omission is allowed; an explicitly supplied null/string/number is not a bool.
++fn cpu_progressive_every_pass_input<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Option<bool>, D::Error> {
++    bool::deserialize(deserializer).map(Some)
+ }
+ 
+ #[derive(Deserialize)]
+@@ -155,6 +162,7 @@
+         }
+     }
+     let final_request = ImageRequest {
++        cpu_progressive_every_pass: input.cpu_progressive_every_pass.unwrap_or(true),
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+@@ -203,6 +211,69 @@
+ 
+ #[cfg(test)]
+ mod union_lowering_tests {
++    #[test]
++    fn cpu_cadence_wire_rejects_null_nonbool_and_nonprogressive_controls_before_capture() {
++        let mut wire = json!({"cpu_progressive_every_pass":false});
++        assert_eq!(Start::deserialize(&wire).unwrap().cpu_progressive_every_pass, Some(false));
++        assert_eq!(Start::deserialize(&json!({})).unwrap().cpu_progressive_every_pass, None);
++        for invalid in [Value::Null, json!(0), json!("false"), json!([]), json!({})] {
++            wire["cpu_progressive_every_pass"] = invalid;
++            assert!(Start::deserialize(&wire).is_err());
++        }
++        for params in [
++            json!({"cpu_progressive_every_pass":false}),
++            json!({"cpu_progressive_every_pass":true,"integrator":"raytrace","raytrace":{}}),
++            json!({"cpu_progressive_every_pass":false,"progressive":true}),
++        ] {
++            let error = prepare(&Session::default(), &params, "render.preflight").err().unwrap().to_string();
++            assert!(error.contains("cpu_progressive_every_pass requires CPU progressive raytracing"), "{error}");
++        }
++    }
++
++    #[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++    #[test]
++    fn saved_cpu_cadence_command_replay_normalizes_false_and_keeps_it_through_the_native_worker() {
++        let mut session = Session::default();
++        let host = solidcraft_render::job::CpuHost::for_platform().unwrap();
++        session.set_render_job_host(Some(host)).unwrap();
++        let document = session.doc.to_json();
++        let original = json!({"settings":{"width":4,"height":3,"background":[17,31,59],
++            "job":{"method":"cpu_raytrace","options":{"lights":[],"shadows":false,"progressive":{"samples_per_pixel":5,"seed":97}}}},
++            "cpu_progressive_every_pass":false});
++        let replay: Value = serde_json::from_str(&serde_json::to_string(&original).unwrap()).unwrap();
++        assert_eq!(replay, original);
++        let normalized = normalize_saved_job(&session, &replay, "render.start").unwrap().unwrap();
++        assert_eq!(normalized.params["cpu_progressive_every_pass"], false);
++        assert!(normalized.params["settings"]["job"].is_null());
++        let prepared = prepare(&session, &replay, "render.preflight").unwrap();
++        assert!(!prepared.request.cpu_progressive_every_pass);
++        assert_eq!(prepared.reply["request"]["cpu_progressive_every_pass"], false);
++        let decoded: ImageRequest = serde_json::from_value(prepared.reply["request"].clone()).unwrap();
++        assert!(!decoded.cpu_progressive_every_pass);
++        assert_eq!(decoded.raytrace.as_ref().unwrap().progressive.unwrap().seed, 97);
++        let mut reference: Option<Vec<u8>> = None;
++        for every_pass in [false, true] {
++            let mut params = replay.clone();
++            params["cpu_progressive_every_pass"] = json!(every_pass);
++            let started = start(&mut session, &params).unwrap();
++            let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
++            let handle = session.render_job_handle(id).unwrap();
++            let status = handle.wait_timeout(std::time::Duration::from_secs(20)).unwrap();
++            assert_eq!(status.progress.phase, solidcraft_render::job::Phase::Completed);
++            assert_eq!(status.request.cpu_progressive_every_pass, every_pass);
++            let status_wire = serde_json::to_value(&status).unwrap();
++            assert_eq!(status_wire["request"].get("cpu_progressive_every_pass"), (!every_pass).then_some(&Value::Bool(false)));
++            let frame = handle.frame().unwrap().unwrap();
++            if let Some(expected) = &reference {
++                assert_eq!(frame.png(), expected.as_slice());
++            } else {
++                reference = Some(frame.png().to_vec());
++            }
++        }
++        assert_eq!(session.doc.to_json(), document, "runtime cadence cannot become saved document intent");
++    }
++
++
+ 
+     #[cfg(not(target_arch = "wasm32"))]
+     fn raster_local_command_fixture() -> (Session, Value) {
+@@ -755,6 +826,7 @@
+                 | "replace"
+                 | "studio_weights"
+                 | "progressive_feedback"
++                | "cpu_progressive_every_pass"
+                 | "raster_lights"
+                 | "raster_punctual_lights"
+                 | "raster_area_lights"
+@@ -820,6 +892,9 @@
+     if let Some(feedback) = object.get("progressive_feedback") {
+         lowered["progressive_feedback"] = feedback.clone();
+     }
++    if let Some(every_pass) = object.get("cpu_progressive_every_pass") {
++        lowered["cpu_progressive_every_pass"] = every_pass.clone();
++    }
+     Ok(Some(Normalized { params: lowered, hdr, surfaces, optics }))
+ }
+ 
+@@ -828,6 +903,9 @@
+     let saved_hdr = normalized.as_ref().and_then(|normalized| normalized.hdr.as_ref());
+     let params = normalized.as_ref().map_or(params, |normalized| &normalized.params);
+     if params.get("progressive").and_then(Value::as_bool) == Some(true) {
++        if params.get("cpu_progressive_every_pass").is_some() {
++            return Err(bad(command, "cpu_progressive_every_pass requires CPU progressive raytracing"));
++        }
+         let hdr = match saved_hdr {
+             Some(SavedHdr::Gpu(hdr)) => Some(*hdr),
+             Some(SavedHdr::Cpu(_)) => return Err(bad(command, "saved CPU HDR cannot enter a GPU request")),
+@@ -856,6 +934,11 @@
+         ));
+     }
+     let mut input = Start::deserialize(params).map_err(|e| bad(command, e.to_string()))?;
++    if input.cpu_progressive_every_pass.is_some()
++        && (input.integrator != Integrator::Raytrace || input.progressive || input.raytrace.as_ref().and_then(|options| options.progressive).is_none())
++    {
++        return Err(bad(command, "cpu_progressive_every_pass requires CPU progressive raytracing"));
++    }
+     solidcraft_render::job::validate_raster_lights(&input.raster_lights).map_err(job_error)?;
+     solidcraft_render::job::validate_raster_punctual_lights(&input.raster_punctual_lights).map_err(job_error)?;
+     solidcraft_render::job::validate_raster_area_lights(&input.raster_area_lights).map_err(job_error)?;
+@@ -1052,6 +1135,7 @@
+         return Err(bad(command, "resolved executor is not installed as an image job host"));
+     }
+     let request = ImageRequest {
++        cpu_progressive_every_pass: input.cpu_progressive_every_pass.unwrap_or(true),
+         raster_punctual_lights: input.raster_punctual_lights.take(),
+         raster_area_lights: input.raster_area_lights.take(),
+         raster_exposure_ev: if input.integrator == Integrator::Raster { settings.exposure_ev } else { 0.0 },
+@@ -1285,6 +1369,7 @@
+         return Err(bad(command, "image host is unavailable"));
+     }
+     let request = ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/engine/src/render_jobs.rs
++++ b/crates/engine/src/render_jobs.rs
+@@ -800,6 +800,7 @@
+         use solidcraft_render::job::{CpuProgressiveOptions, ImageRequest, JobOptions, RaytraceOptions};
+         let (session, host) = native().unwrap();
+         let request = ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+--- a/crates/gpu/src/path/denoise_tests.rs
++++ b/crates/gpu/src/path/denoise_tests.rs
+@@ -157,6 +157,7 @@
+     let mut camera = Camera { distance: 4.0, ..Default::default() };
+     camera.set_view(StandardView::Top);
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/gpu/src/path/tests.rs
++++ b/crates/gpu/src/path/tests.rs
+@@ -21,6 +21,7 @@
+     let mut camera = Camera { distance: 4.0, ..Default::default() };
+     camera.set_view(StandardView::Top);
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+@@ -434,6 +435,7 @@
+     let bounds = meshes.iter().fold(Aabb3::EMPTY, |a, m| a.union(&m.mesh.bounds()));
+     let camera = Camera { target: Vec3::new(0.0, 0.0, 1.0), yaw: -0.45, pitch: 0.5, distance: 13.0, fov: 0.65, ..Default::default() };
+     let request = ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/render/examples/cpu_resource_smoke.rs
++++ b/crates/render/examples/cpu_resource_smoke.rs
+@@ -31,6 +31,7 @@
+     let mut camera = Camera { distance: 65.0, ..Default::default() };
+     camera.set_view(StandardView::Top);
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -188,6 +188,7 @@
+             strip.append_to(&mut options, 64)?;
+         }
+         Ok(ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+@@ -1183,7 +1184,7 @@
+         if let Some(partial) = self.partial.as_mut() {
+             let partial = partial.get_mut()?;
+             let task = self.task.as_ref().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial CPU task"))?;
+-            let uniform_pass = task.completed_pass_ready(partial.credits.plan)?;
++            let uniform_pass = if self.handle.0.request.cpu_progressive_every_pass { task.completed_pass_ready(partial.credits.plan)? } else { None };
+             let automatic_pass = uniform_pass.filter(|pass| *pass > partial.last_pass_attempt);
+             if let Some(pass) = automatic_pass {
+                 partial.last_pass_attempt = pass;
+@@ -1383,10 +1384,12 @@
+                 data = self.handle.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render preview publication lock poisoned"))?;
+                 self.handle.0.cancel.check()?;
+             }
+-            self.next_checkpoint_pass = self
+-                .next_checkpoint_pass
+-                .checked_add(1)
+-                .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "checkpoint pass ordinal exhausted"))?;
++            self.next_checkpoint_pass = if self.handle.0.request.cpu_progressive_every_pass {
++                self.next_checkpoint_pass.checked_add(1)
++            } else {
++                self.next_checkpoint_pass.checked_mul(2)
++            }
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "checkpoint pass ordinal exhausted"))?;
+             let Some(reservation) = reservation else {
+                 data.cpu_preview_retention_skips = data
+                     .cpu_preview_retention_skips
+@@ -1656,7 +1659,7 @@
+             .and_then(|v| v.progressive)
+             .ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "protected previews require CPU progressive intent"))?
+             .samples_per_pixel;
+-        let plan = super::ProtectedPreviewPlan::new(request.width, request.height, samples, request.cpu_budget())?;
++        let plan = super::ProtectedPreviewPlan::with_cadence(request.width, request.height, samples, request.cpu_budget(), request.cpu_progressive_every_pass)?;
+         Ok(CpuPreviewPolicy::Protected(plan))
+     }
+ 
+@@ -1742,7 +1745,7 @@
+                     .ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "protected previews require a progressive sample target"))?
+                     .samples_per_pixel;
+                 protected.validate()?;
+-                if protected != super::ProtectedPreviewPlan::new(request.width, request.height, samples, request.cpu_budget())? {
++                if protected != super::ProtectedPreviewPlan::with_cadence(request.width, request.height, samples, request.cpu_budget(), request.cpu_progressive_every_pass)? {
+                     return Err(JobError::new(ErrorCode::InvalidRequest, "protected feedback plan does not match its admitted request"));
+                 }
+             }
+@@ -2159,6 +2162,7 @@
+         )
+         .map_err(|e| JobError::new(ErrorCode::InvalidRequest, e.to_string()))?;
+         let request = ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+@@ -2390,6 +2394,7 @@
+         let mut lights = Vec::with_capacity(8);
+         lights.push(super::super::DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 1.0 });
+         ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+@@ -2464,6 +2469,7 @@
+         let mut host = CpuHost::for_platform().unwrap();
+         let budget = host.0.shared.budget.clone();
+         let request = ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+@@ -2581,6 +2587,7 @@
+ 
+     fn request() -> ImageRequest {
+         ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+--- a/crates/render/src/job/host_regrade_tests.rs
++++ b/crates/render/src/job/host_regrade_tests.rs
+@@ -47,6 +47,7 @@
+     let begins = Arc::new(AtomicUsize::new(0));
+     let host = ImageHost::cooperative_with(Arc::new(FixtureExecutor(begins.clone())));
+     let request = ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/render/src/job/host_tests.rs
++++ b/crates/render/src/job/host_tests.rs
+@@ -546,6 +546,90 @@
+         (host, job, running)
+     }
+ 
++    fn fixture_with_cadence(samples: u32, every_pass: bool) -> (CpuHost, JobHandle, Running) {
++        let host = ImageHost(Arc::new(Owner {
++            executor: None,
++            shared: CpuHost::shared(MEMORY_LIMIT),
++            kind: HostKind::NativeWorker,
++            running: Mutex::new(None),
++            _worker: None,
++        }));
++        let request = ImageRequest {
++            cpu_progressive_every_pass: every_pass,
++            integrator: Integrator::Raytrace,
++            raytrace: Some(RaytraceOptions {
++                progressive: Some(CpuProgressiveOptions { samples_per_pixel: samples, seed: 123 }),
++                lights: Some(Vec::new()),
++                ..Default::default()
++            }),
++            width: 4,
++            height: 4,
++            ..request()
++        };
++        let expected = admit(&empty(), &request).unwrap().estimated_total_bytes;
++        let job = host.submit(id(7300, 1), 19, empty(), request).unwrap();
++        assert_eq!(host.admitted_bytes(), expected);
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        let running = Running::begin(work).unwrap();
++        (host, job, running)
++    }
++
++    #[test]
++    fn captured_legacy_cadence_reaches_real_worker_checkpoints_and_keeps_final_bytes_identical() {
++        for (target, sparse) in [(3, vec![1, 2]), (5, vec![1, 2, 4]), (9, vec![1, 2, 4, 8])] {
++            let mut baseline: Option<Vec<u8>> = None;
++            for every_pass in [true, false] {
++                let (host, job, mut running) = fixture_with_cadence(target, every_pass);
++                let mut samples = Vec::new();
++                let mut last_sequence = 0;
++                let mut complete = false;
++                for _ in 0..100_000 {
++                    let more = running.advance(1).unwrap();
++                    if let Some(preview) = job.preview().unwrap()
++                        && preview.info.frame_sequence != last_sequence
++                    {
++                        last_sequence = preview.info.frame_sequence;
++                        samples.push(preview.info.samples_per_pixel);
++                    }
++                    assert_eq!(job.status().unwrap().request.cpu_progressive_every_pass, every_pass);
++                    if !more {
++                        complete = true;
++                        break;
++                    }
++                }
++                assert!(complete);
++                assert_eq!(samples, if every_pass { (1..target).collect::<Vec<_>>() } else { sparse.clone() });
++                assert_eq!(job.status().unwrap().cpu_preview_retention_skips, 0);
++                let frame = job.frame().unwrap().unwrap();
++                if let Some(expected) = &baseline {
++                    assert_eq!(frame.png(), expected.as_slice());
++                } else {
++                    baseline = Some(frame.png().to_vec());
++                }
++                assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
++                drop(frame);
++                drop(running);
++                drop(job);
++                assert_eq!(host.admitted_bytes(), 0);
++            }
++        }
++    }
++
++    #[test]
++    fn legacy_cadence_cancellation_during_hashing_cannot_publish_or_release_a_live_payload_early() {
++        let (host, job, mut running) = fixture_with_cadence(9, false);
++        before_preview(&mut running);
++        assert!(running.pending_png.is_some());
++        job.cancel().unwrap();
++        assert!(!running.guarded_step(1));
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Cancelled);
++        assert!(job.preview().unwrap().is_none());
++        assert!(job.frame().unwrap().is_none());
++        drop(running);
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++
+     fn before_preview(running: &mut Running) {
+         for _ in 0..100_000 {
+             if running.pending_png.as_ref().is_some_and(|p| p.preview_samples.is_some()) {
+@@ -655,6 +739,7 @@
+ 
+ fn request() -> ImageRequest {
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/render/src/job/image_tests.rs
++++ b/crates/render/src/job/image_tests.rs
+@@ -98,6 +98,7 @@
+     let mut camera = Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(StandardView::Front);
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+@@ -860,3 +861,55 @@
+         assert_eq!(image::load_from_memory(&png).unwrap().to_rgba8().dimensions(), (8, 8));
+     }
+ }
++
++#[test]
++fn captured_cpu_preview_cadence_roundtrips_without_saved_sampling_or_nested_aliases() {
++    let mut input = request();
++    input.integrator = super::super::Integrator::Raytrace;
++    input.transparent_background = false;
++    input.raytrace = Some(super::super::RaytraceOptions {
++        progressive: Some(super::super::CpuProgressiveOptions { samples_per_pixel: 5, seed: 13 }),
++        ..Default::default()
++    });
++    for every_pass in [true, false] {
++        input.cpu_progressive_every_pass = every_pass;
++        let wire = serde_json::to_value(&input).unwrap();
++        assert_eq!(wire.get("cpu_progressive_every_pass"), (!every_pass).then_some(&serde_json::Value::Bool(false)));
++        assert!(wire["raytrace"].get("cpu_progressive_every_pass").is_none());
++        let decoded: ImageRequest = serde_json::from_value(wire).unwrap();
++        assert_eq!(decoded.cpu_progressive_every_pass, every_pass);
++        assert_eq!(decoded.raytrace.as_ref().unwrap().progressive, input.raytrace.as_ref().unwrap().progressive);
++        assert_eq!(decoded.try_clone_for_host().unwrap().cpu_progressive_every_pass, every_pass);
++    }
++}
++
++#[cfg(feature = "raytrace-cpu")]
++#[test]
++fn legacy_protected_feedback_restores_the_original_global_distribution_and_sixty_four_cap() {
++    use super::super::{CpuBudget, ProtectedPreviewPlan};
++    let tiny = ProtectedPreviewPlan::with_cadence(2, 1, 5, CpuBudget::Compact, false).unwrap();
++    assert_eq!(tiny.quota_limit(), 9);
++    assert_eq!((0..9).map(|index| tiny.milestone(index).unwrap()).collect::<Vec<_>>(), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
++    let plan = ProtectedPreviewPlan::with_cadence(65, 1, 3, CpuBudget::Compact, false).unwrap();
++    plan.validate().unwrap();
++    assert_eq!(plan.quota_limit(), 64);
++    assert_eq!([0, 1, 31, 32, 63].map(|index| plan.milestone(index).unwrap()), [1, 4, 95, 99, 194]);
++    let milestones: Vec<_> = (0..64).map(|index| plan.milestone(index).unwrap()).collect();
++    for committed in 0..=195 {
++        let expected = milestones.iter().filter(|&&milestone| milestone <= committed).count() as u32;
++        assert_eq!(plan.reached_milestones(committed).unwrap(), expected);
++    }
++    assert!(plan.reached_milestones(196).is_err());
++    assert!(plan.milestone(64).is_err());
++    assert_eq!(plan.presentation_limit().unwrap(), 64 * plan.snapshot_work().unwrap());
++    assert_eq!(plan.ordinary_limit(), CpuBudget::Compact.limits().max_work_units);
++    let single = ProtectedPreviewPlan::with_cadence(1, 1, 1, CpuBudget::Compact, false).unwrap();
++    assert_eq!((single.quota_limit(), single.reached_milestones(1).unwrap()), (0, 0));
++    let one = ProtectedPreviewPlan::with_cadence(1, 1, 2, CpuBudget::Compact, false).unwrap();
++    assert_eq!((one.quota_limit(), one.milestone(0).unwrap(), one.reached_milestones(1).unwrap()), (1, 1, 1));
++    let high = ProtectedPreviewPlan::with_cadence(1, 1, 1_048_576, CpuBudget::Workstation, false).unwrap();
++    assert_eq!((high.quota_limit(), high.milestone(63).unwrap()), (64, 1_048_575));
++    assert_eq!(high.reached_milestones(1_048_576).unwrap(), 64);
++    let current = ProtectedPreviewPlan::new(65, 1, 3, CpuBudget::Compact).unwrap();
++    assert_eq!(current.quota_limit(), 66);
++}
+--- a/crates/render/src/job/led_strip/tests.rs
++++ b/crates/render/src/job/led_strip/tests.rs
+@@ -192,6 +192,7 @@
+         let mut camera = Camera { distance: 50.0, ..Default::default() };
+         camera.set_view(StandardView::Top);
+         ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+--- a/crates/render/src/job/mod.rs
++++ b/crates/render/src/job/mod.rs
+@@ -1118,6 +1118,10 @@
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct ImageRequest {
++    /// Captured CPU publication policy, separate from saved sampling intent.
++    /// False survives request serialization; omission preserves every-pass mode.
++    #[serde(default = "default_cpu_progressive_every_pass", skip_serializing_if = "cpu_progressive_every_pass_enabled")]
++    pub cpu_progressive_every_pass: bool,
+     /// Resolved Raster-only capture of RenderSetup.exposure_ev, never a second authority.
+     #[serde(default, skip_serializing_if = "zero_raster_exposure")]
+     pub raster_exposure_ev: f64,
+@@ -1160,6 +1164,14 @@
+     Straight,
+ }
+ 
++fn default_cpu_progressive_every_pass() -> bool {
++    true
++}
++
++fn cpu_progressive_every_pass_enabled(value: &bool) -> bool {
++    *value
++}
++
+ impl ImageRequest {
+     pub fn has_local_raster_lights(&self) -> bool {
+         self.raster_punctual_lights.is_some() || self.raster_area_lights.is_some()
+@@ -1234,6 +1246,7 @@
+             return Ok(self.clone());
+         }
+         Ok(Self {
++            cpu_progressive_every_pass: self.cpu_progressive_every_pass,
+             raster_exposure_ev: self.raster_exposure_ev,
+             raster_lights: raster_lights::try_copy(&self.raster_lights)?,
+             raster_punctual_lights: raster_lights::try_copy_punctual(&self.raster_punctual_lights)?,
+@@ -1771,6 +1784,7 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub struct ProtectedPreviewPlan {
+     preview: PartialPreviewPlan,
++    every_pass: bool,
+     samples_per_pixel: u32,
+     budget: CpuBudget,
+     total_commits: u64,
+@@ -1778,6 +1792,9 @@
+ }
+ impl ProtectedPreviewPlan {
+     pub fn new(source_width: u32, source_height: u32, samples_per_pixel: u32, budget: CpuBudget) -> Result<Self> {
++        Self::with_cadence(source_width, source_height, samples_per_pixel, budget, true)
++    }
++    pub(crate) fn with_cadence(source_width: u32, source_height: u32, samples_per_pixel: u32, budget: CpuBudget, every_pass: bool) -> Result<Self> {
+         budget.validate_image(source_width, source_height, Some(CpuProgressiveOptions { samples_per_pixel, seed: 0 }))?;
+         let preview = PartialPreviewPlan::new(source_width, source_height)?;
+         let total_commits = u64::from(source_width)
+@@ -1787,14 +1804,17 @@
+         let pixels = u64::from(source_width) * u64::from(source_height);
+         let early =
+             u32::try_from(pixels.saturating_sub(1).min(64)).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "protected early quota overflow"))?;
+-        let quota_limit =
+-            early.checked_add(samples_per_pixel - 1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected quota overflow"))?;
+-        let plan = Self { preview, samples_per_pixel, budget, total_commits, quota_limit };
++        let quota_limit = if every_pass {
++            early.checked_add(samples_per_pixel - 1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected quota overflow"))?
++        } else {
++            u32::try_from(total_commits.saturating_sub(1).min(64)).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "protected quota overflow"))?
++        };
++        let plan = Self { preview, every_pass, samples_per_pixel, budget, total_commits, quota_limit };
+         plan.aggregate_limit()?;
+         Ok(plan)
+     }
+     pub fn validate(&self) -> Result<()> {
+-        if *self != Self::new(self.preview.source_width(), self.preview.source_height(), self.samples_per_pixel, self.budget)? {
++        if *self != Self::with_cadence(self.preview.source_width(), self.preview.source_height(), self.samples_per_pixel, self.budget, self.every_pass)? {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "protected feedback plan differs from its canonical policy"));
+         }
+         Ok(())
+@@ -1838,6 +1858,20 @@
+     pub(crate) fn reached_milestones(&self, committed: u64) -> Result<u32> {
+         if committed > self.total_commits {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "protected frontier exceeds its final target"));
++        }
++        if !self.every_pass {
++            if committed == 0 || self.quota_limit == 0 {
++                return Ok(0);
++            }
++            if committed >= self.total_commits - 1 || self.quota_limit == 1 {
++                return Ok(self.quota_limit);
++            }
++            return committed
++                .checked_mul(u64::from(self.quota_limit - 1))
++                .map(|n| n.div_ceil(self.total_commits - 2))
++                .and_then(|n| u32::try_from(n).ok())
++                .filter(|n| *n <= self.quota_limit)
++                .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected legacy reached quota overflow"));
+         }
+         let pixels = u64::from(self.preview.source_width()) * u64::from(self.preview.source_height());
+         let early = pixels.saturating_sub(1).min(64);
+@@ -1866,6 +1900,17 @@
+         if index >= self.quota_limit {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "protected milestone index outside its quota"));
+         }
++        if !self.every_pass {
++            if self.quota_limit == 1 {
++                return Ok(1);
++            }
++            return self.total_commits
++                .checked_sub(2)
++                .and_then(|n| n.checked_mul(u64::from(index)))
++                .and_then(|n| n.checked_div(u64::from(self.quota_limit - 1)))
++                .and_then(|n| n.checked_add(1))
++                .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected legacy milestone overflow"));
++        }
+         let pixels = u64::from(self.preview.source_width()) * u64::from(self.preview.source_height());
+         let early = u32::try_from(pixels.saturating_sub(1).min(64))
+             .map_err(|_| JobError::new(ErrorCode::LimitExceeded, "protected early milestone overflow"))?;
+--- a/crates/render/src/job/png.rs
++++ b/crates/render/src/job/png.rs
+@@ -104,6 +104,7 @@
+ 
+     fn request(width: u32, height: u32) -> ImageRequest {
+         ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+--- a/crates/render/src/job/regrade.rs
++++ b/crates/render/src/job/regrade.rs
+@@ -94,6 +94,7 @@
+                 return self.pending(done, total);
+             }
+             let request = ImageRequest {
++                cpu_progressive_every_pass: true,
+                 raster_punctual_lights: None,
+                 raster_area_lights: None,
+                 raster_exposure_ev: 0.0,
+@@ -180,6 +181,7 @@
+         }
+         self.linear = None;
+         let request = ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+--- a/crates/render/src/job/rt2_tests.rs
++++ b/crates/render/src/job/rt2_tests.rs
+@@ -6,6 +6,7 @@
+ 
+ fn request(integrator: Integrator) -> ImageRequest {
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/render/src/raytrace/anisotropic_faces_tests.rs
++++ b/crates/render/src/raytrace/anisotropic_faces_tests.rs
+@@ -146,6 +146,7 @@
+ fn decoded_cpu_png_rotates_only_the_two_explicit_planar_targets() {
+     fn render(scene: ProductScene, camera: Camera, options: RaytraceOptions) -> ::image::RgbaImage {
+         let request = ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+--- a/crates/render/src/raytrace/anisotropic_reflection_image_tests.rs
++++ b/crates/render/src/raytrace/anisotropic_reflection_image_tests.rs
+@@ -64,6 +64,7 @@
+         ..Default::default()
+     };
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/render/src/raytrace/deterministic_primary_tests.rs
++++ b/crates/render/src/raytrace/deterministic_primary_tests.rs
+@@ -64,6 +64,7 @@
+         ..Default::default()
+     };
+     let request = ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+@@ -233,6 +234,7 @@
+         ..Default::default()
+     };
+     let request = ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/render/src/raytrace/dielectric_tests.rs
++++ b/crates/render/src/raytrace/dielectric_tests.rs
+@@ -43,6 +43,7 @@
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Top);
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/render/src/raytrace/environment_image_tests.rs
++++ b/crates/render/src/raytrace/environment_image_tests.rs
+@@ -35,6 +35,7 @@
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Top);
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/render/src/raytrace/environment_reflection_tests.rs
++++ b/crates/render/src/raytrace/environment_reflection_tests.rs
+@@ -40,6 +40,7 @@
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Top);
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/render/src/raytrace/image.rs
++++ b/crates/render/src/raytrace/image.rs
+@@ -171,7 +171,7 @@
+         plan.validate()?;
+         let progressive =
+             options.progressive.ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "protected feedback requires progressive CPU sampling"))?;
+-        if plan != job::ProtectedPreviewPlan::new(request.width, request.height, progressive.samples_per_pixel, options.budget)? {
++        if plan != job::ProtectedPreviewPlan::with_cadence(request.width, request.height, progressive.samples_per_pixel, options.budget, request.cpu_progressive_every_pass)? {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "protected feedback plan differs from actual source sampling or budget"));
+         }
+     }
+@@ -2192,13 +2192,13 @@
+                 if self.pixel == self.request.width as usize * self.request.height as usize {
+                     if let Some(progressive) = &mut self.progressive {
+                         let samples = progressive.film.samples();
+-                        if progressive.partial_plan.is_some() && samples < progressive.options.samples_per_pixel && samples > self.last_pass_boundary
++                        if self.request.cpu_progressive_every_pass && progressive.partial_plan.is_some() && samples < progressive.options.samples_per_pixel && samples > self.last_pass_boundary
+                         {
+                             self.last_pass_boundary = samples;
+                             return Ok(ImageAdvance::Legacy(ImagePoll::Pending(self.progress())));
+                         }
+                         self.work.tick(&self.cancel).map_err(error)?;
+-                        if samples == progressive.options.samples_per_pixel || progressive.partial_plan.is_none() {
++                        if samples == progressive.options.samples_per_pixel || (progressive.partial_plan.is_none() && (self.request.cpu_progressive_every_pass || samples.is_power_of_two())) {
+                             progressive.resolving = true;
+                         } else {
+                             self.pixel = 0;
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -176,6 +176,7 @@
+ }
+ fn request() -> ImageRequest {
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+@@ -3127,6 +3128,7 @@
+             ..Default::default()
+         };
+         let request = ImageRequest {
++            cpu_progressive_every_pass: true,
+             raster_punctual_lights: None,
+             raster_area_lights: None,
+             raster_exposure_ev: 0.0,
+--- a/crates/render/src/raytrace/primary_aa_tests.rs
++++ b/crates/render/src/raytrace/primary_aa_tests.rs
+@@ -178,6 +178,7 @@
+         ..Default::default()
+     };
+     let request = ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+@@ -781,6 +782,7 @@
+         ..Default::default()
+     };
+     let request = ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+@@ -1978,3 +1980,52 @@
+     assert_eq!(bits, [[0.0_f64.to_bits(); 3]]);
+     assert!(task.done && task.progressive.is_none());
+ }
++
++#[test]
++fn sparse_checkpoint_compatibility_preserves_each_final_png_and_deterministic_sample_prefix() {
++    for (target, expected_sparse) in [(1, vec![]), (3, vec![1, 2]), (5, vec![1, 2, 4]), (9, vec![1, 2, 4, 8])] {
++        let current = progressive_fixture(target, 19, Some(true), 1.0);
++        let source = current.visibility_owner.source().clone();
++        let options = current.visibility_owner.options().clone();
++        let mut legacy_request = current.request.clone();
++        legacy_request.cpu_progressive_every_pass = false;
++        let legacy = ImageTask::new(source, legacy_request, CancelToken::default(), options).unwrap();
++        let (each_previews, each_final, _) = progressive_complete(current, 1);
++        let (legacy_previews, legacy_final, _) = progressive_complete(legacy, 3);
++        assert_eq!(each_previews.iter().map(|(samples, _)| *samples).collect::<Vec<_>>(), (1..target).collect::<Vec<_>>());
++        assert_eq!(legacy_previews.iter().map(|(samples, _)| *samples).collect::<Vec<_>>(), expected_sparse);
++        assert_eq!(legacy_final, each_final, "publication policy must not change the requested final PNG");
++        for (samples, png) in legacy_previews {
++            assert_eq!(png, each_previews.iter().find(|(count, _)| *count == samples).unwrap().1);
++        }
++    }
++}
++
++#[test]
++fn legacy_protected_producer_consumes_the_original_global_milestones_without_changing_final_pixels() {
++    let (scene, mut request, options) = partial_four_pixel_source(5, 29);
++    request.cpu_progressive_every_pass = false;
++    let reference = ImageTask::new(scene.clone(), request.clone(), CancelToken::default(), options.clone()).unwrap();
++    let (_, expected_png, _) = progressive_complete(reference, 3);
++    let plan = job::ProtectedPreviewPlan::with_cadence(request.width, request.height, 5, options.budget, false).unwrap();
++    assert_eq!((plan.total_commits(), plan.quota_limit()), (20, 19));
++    let mut task = ImageTask::new_with_environment_and_nested_and_protected_partial(
++        scene, request, CancelToken::default(), options, None, false, plan,
++    )
++    .unwrap();
++    let mut rays = Vec::new();
++    for committed in 1..20 {
++        reach_partial_frontier(&mut task, (committed / 4) as u32, (committed % 4) as usize, &mut rays);
++        assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(), PartialBegin::Started));
++        let (_, _, passes, prefix) = finish_partial_snapshot(&mut task);
++        assert_eq!(u64::from(passes) * 4 + prefix, committed);
++        let report = task.protected_preview_report().unwrap();
++        assert_eq!((report.accepted_snapshots, report.next_milestone_index), (committed as u32, committed as u32));
++        assert_eq!(report.quota_limit, 19);
++    }
++    let (actual_png, _) = finish_partial_final(&mut task, true, &mut rays);
++    assert_eq!(actual_png, expected_png);
++    let report = task.protected_preview_report().unwrap();
++    assert_eq!((report.accepted_snapshots, report.quota_limit), (19, 19));
++    assert_eq!(report.presentation_used, 19 * plan.snapshot_work().unwrap());
++}
+--- a/crates/render/src/raytrace/punctual_image_tests.rs
++++ b/crates/render/src/raytrace/punctual_image_tests.rs
+@@ -44,6 +44,7 @@
+         ..Default::default()
+     };
+     let request = ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,
+--- a/crates/render/src/raytrace/reflection_image_tests.rs
++++ b/crates/render/src/raytrace/reflection_image_tests.rs
+@@ -183,6 +183,7 @@
+     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
+     camera.set_view(crate::StandardView::Front);
+     ImageRequest {
++        cpu_progressive_every_pass: true,
+         raster_punctual_lights: None,
+         raster_area_lights: None,
+         raster_exposure_ev: 0.0,

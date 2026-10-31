@@ -1,0 +1,10 @@
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -11335,6 +11335,7 @@
+         h.app.render_workspace.view.raytrace.budget = budget;
+         let before = json!(h.app.render_workspace.view.raytrace);
+         let ctx = egui::Context::default();
++        crate::fonts::setup_bundled_fonts(&ctx);
+         let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+             assert!(cpu::progressive_controls(&mut h.app, ui));
+         });

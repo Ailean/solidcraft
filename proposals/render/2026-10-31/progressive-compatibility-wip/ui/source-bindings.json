@@ -1,0 +1,46 @@
+{
+  "status": "SOURCE_ONLY_NOT_ADOPTED_UNCOMPILED_UNRUN",
+  "subpackage": "ui",
+  "base_source_manifest_sha256": "d38a8d946b6653864ad8918d4da662725bd24ca01b2e5aa2d3b38b47b1a7e163",
+  "base_rule": "Exact per-file RAW preimages only. Not current main, not a combined candidate. LF patch is review aid; RAW candidate bytes are authoritative.",
+  "files": [
+    {
+      "path": "crates/render/src/job/interactive.rs",
+      "before_sha256": "97395da5b097d9283ac080e197f6de612b6123d9a90396e1850ca911d6ca5812",
+      "before_bytes": 14389,
+      "after_sha256": "5e0c502ffd7efdcfddc27dda0aa496d640e57eed0f775fd94a4ad036360748ab",
+      "after_bytes": 14435
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace.rs",
+      "before_sha256": "1434d0b576ab7c8a94ca7f23b9f0bb617f755509cd6f16bfafb3a86cfed05263",
+      "before_bytes": 111146,
+      "after_sha256": "cffe8870ab6a3608ef0e286009ca8caa3f5e905a4aa1c57c418dab130018d59e",
+      "after_bytes": 111985
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_cpu.rs",
+      "before_sha256": "fd6de0f8121dc4d1bfce308c376901f65e2d920b68a756c38a25f82679db64ad",
+      "before_bytes": 42703,
+      "after_sha256": "00b1f5c25f8fe07719451683dd8d9a5f8b0b52b89f8b5e466b365cafc14e585d",
+      "after_bytes": 43431
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before_sha256": "28ddafe4a8f133c522ddf6f1e0eaaaf70f954d7b8acdb7cca44aabef9a512e47",
+      "before_bytes": 634699,
+      "after_sha256": "d9850e1996aecdcef2d3c55a5704ea7d3c29e7c237025415ce3d69a3c63f2fcf",
+      "after_bytes": 646092
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_thumbnails.rs",
+      "before_sha256": "001729728a657f2ba0f2d1b50d1a4644f3f7ad505609cf8e674fa7f3f627e445",
+      "before_bytes": 7420,
+      "after_sha256": "85d5a8d2529df5b922243eab4f14de3b4ab684907834c4bbe29784930077e83d",
+      "after_bytes": 7466
+    }
+  ],
+  "full_CI_native_or_readiness": false,
+  "candidate_whole_file_overlay_safe": false,
+  "shared_before_test_file_sha256": "28ddafe4a8f133c522ddf6f1e0eaaaf70f954d7b8acdb7cca44aabef9a512e47"
+}

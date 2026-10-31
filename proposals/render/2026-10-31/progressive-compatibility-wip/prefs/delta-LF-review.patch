@@ -1,0 +1,125 @@
+--- /dev/null
++++ b/assets/locales/pending/cpu-progressive-policy-preferences.json
+@@ -0,0 +1,44 @@
++{
++  "de": {
++    "prefs.cpu_render_advanced": "Erweitertes CPU-Rendering",
++    "prefs.render_cpu_interactive_explicit_sampling": "Erfasste progressive Abtastung in Interactive verwenden",
++    "prefs.render_cpu_interactive_explicit_sampling_help": "Verwendet das erfasste Abtastziel und den Zufallsstartwert. Aus stellt nur für Interactive 16 Abtastungen und Startwert 0 wieder her. Ohne progressive Anfrage bleibt 16/0; finale Einstellungen bleiben unverändert.",
++    "prefs.render_cpu_progressive_every_pass": "Jeden vollständigen CPU-Durchgang veröffentlichen",
++    "prefs.render_cpu_progressive_every_pass_help": "Veröffentlicht jeden vollständigen nichtfinalen Durchgang bei verfügbarem Snapshot-Speicher. Aus stellt die frühere sparsame Rückmeldung wieder her. Das Ziel bleibt gleich; die Anzeige kann Aktualisierungen zusammenfassen."
++  },
++  "en": {
++    "prefs.cpu_render_advanced": "Advanced CPU rendering",
++    "prefs.render_cpu_interactive_explicit_sampling": "Use captured progressive sampling in Interactive",
++    "prefs.render_cpu_interactive_explicit_sampling_help": "Use the captured progressive target and seed. Off restores 16 samples and seed 0 for Interactive only. An absent progressive request still uses 16/0; final settings are unchanged.",
++    "prefs.render_cpu_progressive_every_pass": "Publish every complete CPU pass",
++    "prefs.render_cpu_progressive_every_pass_help": "Publish each complete nonfinal pass when snapshot storage is available. Off restores the earlier sparse feedback policy. The target is unchanged; the screen may combine updates."
++  },
++  "es": {
++    "prefs.cpu_render_advanced": "Renderizado CPU avanzado",
++    "prefs.render_cpu_interactive_explicit_sampling": "Usar el muestreo progresivo capturado en Interactive",
++    "prefs.render_cpu_interactive_explicit_sampling_help": "Usa el objetivo y la semilla progresivos capturados. Desactivado restaura 16 muestras y semilla 0 solo en Interactive. Sin petición progresiva se conserva 16/0; los ajustes finales no cambian.",
++    "prefs.render_cpu_progressive_every_pass": "Publicar cada pasada CPU completa",
++    "prefs.render_cpu_progressive_every_pass_help": "Publica cada pasada completa no final cuando hay espacio para snapshots. Desactivado restaura la política anterior de actualizaciones espaciadas. El objetivo no cambia; la pantalla puede agrupar actualizaciones."
++  },
++  "ja": {
++    "prefs.cpu_render_advanced": "CPUレンダリングの詳細設定",
++    "prefs.render_cpu_interactive_explicit_sampling": "Interactiveで取得済みのプログレッシブ設定を使用",
++    "prefs.render_cpu_interactive_explicit_sampling_help": "取得済みの目標サンプル数とシードを使用します。オフではInteractiveのみ16サンプル、シード0に戻ります。プログレッシブ指定がない場合は16/0を維持し、最終設定は変わりません。",
++    "prefs.render_cpu_progressive_every_pass": "CPUの各完了パスを公開",
++    "prefs.render_cpu_progressive_every_pass_help": "スナップショット用の空きがある場合、最終以外の各完了パスを公開します。オフでは以前の間隔を空けた更新方針に戻ります。目標は変わらず、画面更新はまとめられる場合があります。"
++  },
++  "ko": {
++    "prefs.cpu_render_advanced": "고급 CPU 렌더링",
++    "prefs.render_cpu_interactive_explicit_sampling": "Interactive에서 캡처한 점진적 샘플링 사용",
++    "prefs.render_cpu_interactive_explicit_sampling_help": "캡처한 샘플 목표와 시드를 사용합니다. 끄면 Interactive만16샘플과 시드0으로 돌아갑니다. 점진적 요청이 없으면16/0을 유지하며 최종 설정은 바뀌지 않습니다.",
++    "prefs.render_cpu_progressive_every_pass": "완료된 CPU 패스마다 게시",
++    "prefs.render_cpu_progressive_every_pass_help": "스냅샷 공간이 있으면 마지막을 제외한 각 완료 패스를 게시합니다. 끄면 이전의 간헐적 피드백 정책으로 돌아갑니다. 목표는 그대로이며 화면 업데이트가 합쳐질 수 있습니다."
++  },
++  "zh": {
++    "prefs.cpu_render_advanced": "高级CPU渲染",
++    "prefs.render_cpu_interactive_explicit_sampling": "在Interactive中使用已捕获的渐进采样设置",
++    "prefs.render_cpu_interactive_explicit_sampling_help": "使用已捕获的采样目标和种子。关闭后，仅Interactive恢复为16个样本和种子0。未指定渐进请求时仍使用16/0；最终设置不变。",
++    "prefs.render_cpu_progressive_every_pass": "发布每个完整的CPU遍次",
++    "prefs.render_cpu_progressive_every_pass_help": "快照空间可用时，发布最终遍次之前的每个完整遍次。关闭后恢复之前间隔更新的策略。目标不变；屏幕可能合并更新。"
++  }
++}
+--- a/crates/ui-egui/src/prefs.rs
++++ b/crates/ui-egui/src/prefs.rs
+@@ -942,6 +942,10 @@
+     render_previous_geometry_budget: bool = false, PAGE_GRAPHICS => check_id("prefs.render_previous_geometry_budget");
+     /// Open Result once after a successful GUI Start; false preserves the selected view.
+     render_open_result_on_start: bool = true, PAGE_GRAPHICS => check_id("prefs.render_open_result_on_start");
++    /// CPU snapshot boundaries; false restores powers-of-two feedback without changing the sample target.
++    render_cpu_progressive_every_pass: bool = true, PAGE_GRAPHICS => check_id("prefs.render_cpu_progressive_every_pass");
++    /// Interactive sampling policy; false restores its old16SPP/seed0 envelope.
++    render_cpu_interactive_explicit_sampling: bool = true, PAGE_GRAPHICS => check_id("prefs.render_cpu_interactive_explicit_sampling");
+     /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
+     /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
+     display_quality: String = "normal".into(), PAGE_GRAPHICS;
+@@ -2278,10 +2282,25 @@
+         PAGE_INTERFACE => interface::interface(app, ui, t),
+         PAGE_DESIGN => design::show(app, ui),
+         PAGE_NAVIGATION => navigation::show(app, ui, t),
+-        PAGE_GRAPHICS => graphics::show(app, ui),
++        PAGE_GRAPHICS => {
++            graphics::show(app, ui);
++            cpu_progressive_advanced_preferences(app, ui);
++        }
+         PAGE_SKETCH => sketch::show(app, ui),
+         _ => {}
+     }
++}
++
++fn cpu_progressive_advanced_preferences(app: &mut SolveApp, ui: &mut egui::Ui) {
++    let title = app.tr("prefs.cpu_render_advanced").to_string();
++    ui_kit::section(ui, "prefs_cpu_render_advanced", &title, false, |ui| {
++        let response = setting::render_cpu_progressive_every_pass(app, ui)
++            .on_hover_text(app.tr("prefs.render_cpu_progressive_every_pass_help"));
++        crate::scenario::publish_target("prefs:render-cpu-progressive-every-pass", response.rect);
++        let response = setting::render_cpu_interactive_explicit_sampling(app, ui)
++            .on_hover_text(app.tr("prefs.render_cpu_interactive_explicit_sampling_help"));
++        crate::scenario::publish_target("prefs:render-cpu-interactive-explicit-sampling", response.rect);
++    });
+ }
+ 
+ fn page_index(name: &str) -> Option<usize> {
+@@ -3334,6 +3353,37 @@
+ #[cfg(test)]
+ mod tests {
+     #[test]
++    fn cpu_progressive_policy_preferences_default_roundtrip_validate_and_reset_independently() {
++        let defaults = Prefs::default();
++        assert!(defaults.render_cpu_progressive_every_pass && defaults.render_cpu_interactive_explicit_sampling);
++        let omitted: Prefs = serde_json::from_value(json!({})).unwrap();
++        assert!(omitted.render_cpu_progressive_every_pass && omitted.render_cpu_interactive_explicit_sampling);
++        let mut app = SolveApp::new(Default::default(), Default::default());
++        let document = app.session.doc.clone();
++        let history = (app.session.revision, app.session.undo.len(), app.session.is_dirty());
++        for key in ["render_cpu_progressive_every_pass", "render_cpu_interactive_explicit_sampling"] {
++            let reply = super::set(&mut app, &json!({key:false})).unwrap();
++            assert_eq!(reply[key], false);
++            for invalid in [json!("false"), json!(0), json!(null), json!([])] {
++                assert!(super::set(&mut app, &json!({key:invalid})).is_err());
++                assert_eq!(serde_json::to_value(&app.preferences).unwrap()[key], false);
++            }
++        }
++        let mut restored = SolveApp::new(Default::default(), Default::default());
++        restored.load_prefs(&app.prefs());
++        assert!(!restored.preferences.render_cpu_progressive_every_pass && !restored.preferences.render_cpu_interactive_explicit_sampling);
++        super::defaults(&mut restored, super::PAGE_GENERAL);
++        assert!(!restored.preferences.render_cpu_progressive_every_pass && !restored.preferences.render_cpu_interactive_explicit_sampling);
++        let reply = super::set(&mut restored, &json!({"render_cpu_progressive_every_pass":true})).unwrap();
++        assert_eq!(reply["render_cpu_progressive_every_pass"], true);
++        assert_eq!(reply["render_cpu_interactive_explicit_sampling"], false);
++        super::defaults(&mut restored, super::PAGE_GRAPHICS);
++        assert!(restored.preferences.render_cpu_progressive_every_pass && restored.preferences.render_cpu_interactive_explicit_sampling);
++        assert!(std::sync::Arc::ptr_eq(&document, &app.session.doc));
++        assert_eq!(history, (app.session.revision, app.session.undo.len(), app.session.is_dirty()));
++    }
++
++    #[test]
+     fn render_open_result_on_start_defaults_persists_validates_and_resets() {
+         assert!(Prefs::default().render_open_result_on_start);
+         assert!(serde_json::from_value::<Prefs>(json!({})).unwrap().render_open_result_on_start);

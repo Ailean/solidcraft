@@ -235,3 +235,13 @@ compilation are pending at curation; the planned 983 cases are all UNRUN.
 Apply only on the exact C27 failed-source composition, not arbitrary main.
 
 The single-host recovery has now been independently source-reviewed and adopted locally. Compilation, all 983 planned cases and native each-pass image acceptance remain pending.
+
+## Progressive CPU compatibility WIP, isolated fixture and exact C28 host — 31 October
+
+[Separated source packages and exact bindings](../2026-10-31/progressive-compatibility-wip/README.md)
+preserve 34 uncompiled WIP candidates plus the actual earlier formatted C28 host
+(35 source files). C28: 28 PASS / 1 font-fixture FAIL / 954 UNRUN, two actual
+CPU-supported markers; no postchecks/native acceptance. The corrected test is
+UNRUN. Compatibility remains NOT ADOPTED, UNCOMPILED and UNRUN; fixed Record
+ABI/accounting and one P3 parameter-list omission remain pending. No full CI or
+readiness claim, no implied composition of overlapping UI and font-fix files.

@@ -1,0 +1,18 @@
+{
+  "status": "SOURCE_ONLY_NOT_ADOPTED_UNCOMPILED_UNRUN",
+  "subpackage": "fontfix",
+  "base_source_manifest_sha256": "d38a8d946b6653864ad8918d4da662725bd24ca01b2e5aa2d3b38b47b1a7e163",
+  "base_rule": "Exact per-file RAW preimages only. Not current main, not a combined candidate. LF patch is review aid; RAW candidate bytes are authoritative.",
+  "files": [
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before_sha256": "28ddafe4a8f133c522ddf6f1e0eaaaf70f954d7b8acdb7cca44aabef9a512e47",
+      "before_bytes": 634699,
+      "after_sha256": "9a3e58d83f6180ef8cd89c36a4ae4a8d09679f23a15f222a95edc2b70db25e9c",
+      "after_bytes": 634748
+    }
+  ],
+  "full_CI_native_or_readiness": false,
+  "candidate_whole_file_overlay_safe": false,
+  "shared_before_test_file_sha256": "28ddafe4a8f133c522ddf6f1e0eaaaf70f954d7b8acdb7cca44aabef9a512e47"
+}

@@ -4718,13 +4718,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let st = crate::open_meshing::shown_world(app);
                 app.session.active_sketch.and_then(|s| st.sketch(s)).and_then(|ss| {
                     let sk = &ss.sketch;
-                    let (mut own, mut exclude) = crate::drag_snap::moving_points(sk, &id);
-                    for (o, x) in with.iter().map(|w| crate::drag_snap::moving_points(sk, w)) {
-                        own.extend(o);
-                        exclude.extend(x);
-                    }
-                    own.sort_unstable();
-                    own.dedup();
+                    let (own, exclude) = crate::drag_snap::moving_points(sk, std::iter::once(id.as_str()).chain(with.iter().map(String::as_str)));
                     if own.iter().any(|&p| sk.point_locked(p)) {
                         return crate::drag_snap::find(sk, &[], &[], 0.0);
                     }

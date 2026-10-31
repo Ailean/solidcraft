@@ -1,0 +1,229 @@
+{
+  "status": "SOURCE_PRESERVATION_C27_POSTFORMAT_BUILD_FAILED_ALL_SELECTED_TESTS_UNRUN",
+  "base": "Exact per-file before RAW bindings below, not arbitrary main or the earlier nine-file snapshot. Preserve unrelated files.",
+  "before_source_manifest_sha256": "2f39172dd42414588fb0c88cb23d30c2d5f626592ab3d4632b032701e85edbf1",
+  "after_source_manifest_sha256": "a7b088eef563cbba4bfc5f2c26cf2d02ac6e855088710a072fdff35f889c1551",
+  "files": [
+    {
+      "path": "assets/locales/pending/cpu-progressive-passes.json",
+      "before_sha256": null,
+      "before_bytes": null,
+      "after_sha256": "7d11a688edad617ae6da92e8460f8833e121167ddb1b296001807f585e7b8c12",
+      "after_bytes": 619,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "crates/render/src/film_primary.rs",
+      "before_sha256": "2c8b7cf8b1d6aff1d58f4137b05973467b23072c2caff9467256606058fb8f88",
+      "before_bytes": 8361,
+      "after_sha256": "d65f9fda36674199aac47ef9c393d59fe59d193addbb7423e324f0795211d1c5",
+      "after_bytes": 8123,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "crates/render/src/film_tests.rs",
+      "before_sha256": "3fc4f5251f04f63a2a43a1f141fdccd3f66c50d3d8d42eff77754d21c4bdb2b7",
+      "before_bytes": 20416,
+      "after_sha256": "7e184b0c71f73bdeda036930c3e5a6a775a448b779283fde46b32c65ab3e9f20",
+      "after_bytes": 29879,
+      "formatted_in_actual_C27": true
+    },
+    {
+      "path": "crates/render/src/job/cpu_budget.rs",
+      "before_sha256": "7756fedf76658a1eedd0c0194aa98141d33464c0f7df85fe86f9e255fd8b8ce2",
+      "before_bytes": 7771,
+      "after_sha256": "e02df70cd48a5116a42363431839c0c4d6f25f041e761f7ce01c04dc998a8aca",
+      "after_bytes": 7776,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "crates/render/src/job/host.rs",
+      "before_sha256": "58147bb99311a07182a75e9e28aeb7f1aca752dff43724234225715479b741f2",
+      "before_bytes": 122246,
+      "after_sha256": "f775f4e458947b2c402fe97f10b320f7c7f4a9060cf502b5a69975e006eec71e",
+      "after_bytes": 131474,
+      "formatted_in_actual_C27": true
+    },
+    {
+      "path": "crates/render/src/job/host_tests.rs",
+      "before_sha256": "c46cddeafe1816f0c479a9c68482ff86ccd8e124c2f5fc1bb7cd6e3509ef7f8e",
+      "before_bytes": 106536,
+      "after_sha256": "f159bd988beb8055b7d6e80a89eef5ba1e967e982c97d5480b80c93d19509ef0",
+      "after_bytes": 119544,
+      "formatted_in_actual_C27": true
+    },
+    {
+      "path": "crates/render/src/job/interactive.rs",
+      "before_sha256": "5fb7062276adfdc22d1fa651750119feb90870b31d12fb0fc0b852c4b430468d",
+      "before_bytes": 11135,
+      "after_sha256": "97395da5b097d9283ac080e197f6de612b6123d9a90396e1850ca911d6ca5812",
+      "after_bytes": 14389,
+      "formatted_in_actual_C27": true
+    },
+    {
+      "path": "crates/render/src/job/mod.rs",
+      "before_sha256": "87c5b59cf171009c3f3261e7d7a7691f84fc3e9ddd25f8458e6b1098e1a45543",
+      "before_bytes": 82216,
+      "after_sha256": "ad442c55f9a3edeeac359ca4c91c2dc5028bee36b981f6953e6399daf65c7c12",
+      "after_bytes": 84674,
+      "formatted_in_actual_C27": true
+    },
+    {
+      "path": "crates/render/src/raytrace/environment_image_tests.rs",
+      "before_sha256": "9ee820799d6da59f8518197116984035d0292b86db4bbecb01135529590d1f53",
+      "before_bytes": 14628,
+      "after_sha256": "42442aaa4bcdda016b4349e096fd389e731df13683dbef9938925298432912b9",
+      "after_bytes": 14637,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "crates/render/src/raytrace/image.rs",
+      "before_sha256": "d833890ff3fde61b22993b2a736a0914c6675a8d810b2f396d0b611ef66f51e4",
+      "before_bytes": 124736,
+      "after_sha256": "4e8f63765ca35f305e3caa0946fceba90573be243717bd08b54deeb948f59326",
+      "after_bytes": 126260,
+      "formatted_in_actual_C27": true
+    },
+    {
+      "path": "crates/render/src/raytrace/image_tests.rs",
+      "before_sha256": "8af684984fce86ee3d8b8eff35c6a70efd88b0b9b7bbfefd42d082584bc9aa91",
+      "before_bytes": 173377,
+      "after_sha256": "5e6724dfe01a583b880862e24a2bfada40052bda09388e977f28f70f55029f89",
+      "after_bytes": 173358,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "crates/render/src/raytrace/mod.rs",
+      "before_sha256": "d7f8ed95a60384d1e8f896ec0637af39682778adf4546c646104ae22ab53fbb8",
+      "before_bytes": 18244,
+      "after_sha256": "cf1a6ebf707d86552bdb62bb94b80910eca1709682c8e7133c1ae54ce1af4c15",
+      "after_bytes": 18040,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "crates/render/src/raytrace/primary_aa_tests.rs",
+      "before_sha256": "693af2028d9446f95b61b002644649d5c9a945a049ec019508849712be06ea7e",
+      "before_bytes": 91756,
+      "after_sha256": "9366a35fa85e3b04eca01438da697979a1be4528fbc57a21d13da4b69aa175fc",
+      "after_bytes": 98436,
+      "formatted_in_actual_C27": true
+    },
+    {
+      "path": "crates/render/src/raytrace/progressive.rs",
+      "before_sha256": "8ee8fd60c78d93d02ab3b15270b27491bd993d5fc4e0e36217f8653c4881993a",
+      "before_bytes": 4252,
+      "after_sha256": "04b0431ba2b06c910ab884bdcd2fe7945b8211acc6527f4006fcc35b415c19d3",
+      "after_bytes": 4252,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "crates/render/src/raytrace/tests.rs",
+      "before_sha256": "2a105d16f476821e15962c6014d3b8fa8e124447ba36a8ee1d393bb2715d8e79",
+      "before_bytes": 20569,
+      "after_sha256": "a47fd554d0cd504d64237de7e160e89f89f53181eed4e30a9e0092ee7869fec7",
+      "after_bytes": 22825,
+      "formatted_in_actual_C27": true
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace.rs",
+      "before_sha256": "6262d926d6e3dae4d6ed92fee6f429b413cf1de9f9185da2701cd351e5b20ab1",
+      "before_bytes": 108186,
+      "after_sha256": "1434d0b576ab7c8a94ca7f23b9f0bb617f755509cd6f16bfafb3a86cfed05263",
+      "after_bytes": 111146,
+      "formatted_in_actual_C27": true
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_cpu.rs",
+      "before_sha256": "3a06929c32104559374f62f4dd5134333c785345e4ba62762445f587a722daf9",
+      "before_bytes": 42638,
+      "after_sha256": "fd6de0f8121dc4d1bfce308c376901f65e2d920b68a756c38a25f82679db64ad",
+      "after_bytes": 42703,
+      "formatted_in_actual_C27": true
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_interactive.rs",
+      "before_sha256": "41dfccef77b9079af801bcfa3998dadc4976e20e7b1000f2666e1c75a3cf3332",
+      "before_bytes": 56174,
+      "after_sha256": "b0ecc5211491343015ca3b69749d707bcafd9826c3a7e90d9fc3cce89ade9d9d",
+      "after_bytes": 57748,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before_sha256": "e7ff1b00bc5462db698096712965cb47f4177682bdb39ac0b6850d9c26710535",
+      "before_bytes": 619102,
+      "after_sha256": "28ddafe4a8f133c522ddf6f1e0eaaaf70f954d7b8acdb7cca44aabef9a512e47",
+      "after_bytes": 634699,
+      "formatted_in_actual_C27": true
+    },
+    {
+      "path": "docs/render-cpu-progressive.md",
+      "before_sha256": "d5eb9a24058ae465529539768a3885cd14e38f2de14597e2eecb64ae5a099821",
+      "before_bytes": 10324,
+      "after_sha256": "8bbd70ac09e49585ad266d44d5c4034cae811e9e266a54b7979a202db20d81aa",
+      "after_bytes": 12920,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "docs/render-cpu-resource-profiles.md",
+      "before_sha256": "b7c0a7101dba8906dbdc40994539dc558a97e8d32f8b363eea4ec83459e7a7b8",
+      "before_bytes": 6149,
+      "after_sha256": "acd230a198874f627df5d2e191a1c471e8dde744e4b7b3fad27618ac464e0063",
+      "after_bytes": 7218,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "docs/render-cpu-workspace.md",
+      "before_sha256": "75e77c82e266f9b58eba8e1a09bc27d3ade505394ad9c34cb1d583bae098fe8e",
+      "before_bytes": 10769,
+      "after_sha256": "f87351e1b28849e74a5fb7e6027caeac724eb9665c7a0d135ac3ff25d589b39f",
+      "after_bytes": 12121,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "docs/render-interactive.md",
+      "before_sha256": "f98decbcdb5d91568e103c794a0b785b31d127d6dc439eb8911270534b13be82",
+      "before_bytes": 8333,
+      "after_sha256": "6ee032d7e595e7402d235d45cc6719f3ec0e2309680e3ae87cea4baef122a58e",
+      "after_bytes": 9354,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "docs/render-jobs.md",
+      "before_sha256": "c54c1e0d6376874faefc9b2f64ae21ea2658006fae557c8c048b0f0fb9282b81",
+      "before_bytes": 8826,
+      "after_sha256": "f07479ae20c57baa025809c298a8adc005e96f28a3f9ad05a78233406bc5cc8b",
+      "after_bytes": 10187,
+      "formatted_in_actual_C27": false
+    },
+    {
+      "path": "docs/render-settings.md",
+      "before_sha256": "fee45ded12b0b4f62765b06e05ff4d2cdbe9a28b1cd2588f3f18165797c3c1d0",
+      "before_bytes": 21700,
+      "after_sha256": "6887fb62faf5e82731ba9849f76445cd66cdf1539cc81f054db2068b3359276d",
+      "after_bytes": 22284,
+      "formatted_in_actual_C27": false
+    }
+  ],
+  "selected_paths": 25,
+  "actual_formatter_changed_paths": 11,
+  "C27_result": {
+    "formatter_exit": 0,
+    "format_check_exit": 0,
+    "combined_build_exit": 101,
+    "coded_error": "E0308",
+    "location": "crates/render/src/job/host.rs:734",
+    "meaning": "A compile-time aggregate metadata-size bound is false; exact layout bytes were not inferred and the bound was not relaxed",
+    "native_selected": 982,
+    "native_executed": 0,
+    "native_passed": 0,
+    "native_failed": 0,
+    "native_unrun": 982,
+    "inventories_executed": 0,
+    "qualified_five_library_artifact_set": false,
+    "full_CI_or_native_acceptance": false
+  },
+  "supersedes_for_continuation": "dbc6041ba7059ec30b11fa72b5d1abd59f5b104a nine-file high-pass/UI source snapshot; earlier files remain historical alternatives, not patches to stack blindly",
+  "producer_host_fix": "Private successor pending, not included in this exact failed-source snapshot",
+  "default_change_process": "Unresolved before production readiness; this preservation does not waive a preference/default rule"
+}

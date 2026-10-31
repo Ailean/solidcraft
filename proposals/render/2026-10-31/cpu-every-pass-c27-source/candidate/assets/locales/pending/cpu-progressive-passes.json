@@ -1,0 +1,20 @@
+{
+  "de": {
+    "render.cpu_pass_progress": "Vollständige Durchgänge: {current} / {target} · vorläufig"
+  },
+  "en": {
+    "render.cpu_pass_progress": "Complete passes: {current} / {target} · provisional"
+  },
+  "es": {
+    "render.cpu_pass_progress": "Pasadas completas: {current} / {target} · provisional"
+  },
+  "ja": {
+    "render.cpu_pass_progress": "完了したパス: {current} / {target} · 暫定"
+  },
+  "ko": {
+    "render.cpu_pass_progress": "완료된 패스: {current} / {target} · 임시"
+  },
+  "zh": {
+    "render.cpu_pass_progress": "完整遍数：{current} / {target} · 临时结果"
+  }
+}

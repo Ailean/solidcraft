@@ -1,0 +1,27 @@
+{
+  "status": "SOURCE_ONLY_C27_SHA_STATE_RECOVERY_V2_UNFORMATTED_UNCOMPILED_UNRUN",
+  "required_receiver": "Exact C27 post-format failed-build 25-file composition, with every unrelated file preserved; not arbitrary main or the earlier nine-file checkpoint.",
+  "receiver_source_manifest_sha256": "a7b088eef563cbba4bfc5f2c26cf2d02ac6e855088710a072fdff35f889c1551",
+  "files": [
+    {
+      "path": "crates/render/src/job/host.rs",
+      "before_sha256": "f775f4e458947b2c402fe97f10b320f7c7f4a9060cf502b5a69975e006eec71e",
+      "before_bytes": 131474,
+      "after_sha256": "2c72c307ec49a94b100f4be32ab6a4af4be494199ff7ad5c87bb698e7f13ab4e",
+      "after_bytes": 135425
+    }
+  ],
+  "production_change": "One retained active SHA256 state plus the finalized 32-byte PNG output; the existing1024-byte metadata allowance/assertions are unchanged. No new heap-backed state is introduced.",
+  "new_test": "job::host::sequential_png_and_exr_hashing_preserves_independent_payload_digests",
+  "new_tests_written": 1,
+  "new_tests_run": 0,
+  "actual_C27_selected_cases_UNRUN": 982,
+  "proposed_next_selected_cases": 983,
+  "all_proposed_cases_state": "UNRUN",
+  "Kernel_independent_review": "CLOSED_NO_BLOCKING_SOURCE_FINDING_NOT_RUNTIME",
+  "E0308_resolved_by_compilation": false,
+  "exact_target_ABI_layout_known": false,
+  "full_CI_native_or_GPU_acceptance": false,
+  "local_source_adoption": "COMPLETE_NO_EXECUTION_GRANT",
+  "local_adopted_source_manifest_sha256": "9a2bfddacbd5a7f38ec4e4aba0e75fb99420d278a483d7ae8c2cf1cf53a359bb"
+}

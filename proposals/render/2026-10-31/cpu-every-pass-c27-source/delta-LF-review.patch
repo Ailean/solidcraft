@@ -1,0 +1,2811 @@
+--- a/assets/locales/pending/cpu-progressive-passes.json
++++ b/assets/locales/pending/cpu-progressive-passes.json
+@@ -0,0 +1,20 @@
++{
++  "de": {
++    "render.cpu_pass_progress": "Vollständige Durchgänge: {current} / {target} · vorläufig"
++  },
++  "en": {
++    "render.cpu_pass_progress": "Complete passes: {current} / {target} · provisional"
++  },
++  "es": {
++    "render.cpu_pass_progress": "Pasadas completas: {current} / {target} · provisional"
++  },
++  "ja": {
++    "render.cpu_pass_progress": "完了したパス: {current} / {target} · 暫定"
++  },
++  "ko": {
++    "render.cpu_pass_progress": "완료된 패스: {current} / {target} · 임시"
++  },
++  "zh": {
++    "render.cpu_pass_progress": "完整遍数：{current} / {target} · 临时结果"
++  }
++}
+--- a/crates/render/src/film_primary.rs
++++ b/crates/render/src/film_primary.rs
+@@ -129,14 +129,12 @@
+ 
+     /// A display consumer can only read a fully completed, immutable pass. The
+     /// returned radiance is premultiplied by coverage; background is kept separate.
+-    pub(crate) fn pixel(&self, index: usize) -> Result<([f64; 3], u16, u16)> {
++    pub(crate) fn pixel(&self, index: usize) -> Result<([f64; 3], u32, u32)> {
+         if !self.ready() || self.next_pixel != 0 || self.samples == 0 {
+             return Err(invalid("primary film has no uniform complete pass"));
+         }
+         let pixel = self.pixels.get(index).ok_or_else(|| invalid("primary film resolve index out of range"))?;
+-        let covered = u16::try_from(pixel.covered).map_err(|_| limit("primary coverage exceeds resolve representation"))?;
+-        let samples = u16::try_from(self.samples).map_err(|_| limit("primary sample count exceeds resolve representation"))?;
+-        Ok((pixel.sum.map(|sum| sum / f64::from(self.samples)), covered, samples))
++        Ok((pixel.sum.map(|sum| sum / f64::from(self.samples)), pixel.covered, self.samples))
+     }
+     /// Inspect only the real committed state. This value does not freeze the film
+     /// or authorize a snapshot. A caller resolving several pixels must keep the
+--- a/crates/render/src/film_tests.rs
++++ b/crates/render/src/film_tests.rs
+@@ -452,3 +452,181 @@
+         }
+     }
+ }
++
++#[cfg(feature = "raytrace-cpu")]
++mod workstation_primary_counts {
++    use super::primary::{PartialPixel, PrimaryFilm};
++    use super::*;
++    use crate::job::{CpuBudget, CpuProgressiveOptions};
++
++    fn primary(target: u32) -> PrimaryFilm {
++        let options = CpuProgressiveOptions { samples_per_pixel: target, seed: 7 };
++        let bytes = PrimaryFilm::required_bytes(1, 1, options, CpuBudget::Workstation).unwrap();
++        let mut film = PrimaryFilm::new(1, 1, options, bytes, &CancelToken::default(), CpuBudget::Workstation).unwrap();
++        film.initialize_one(&CancelToken::default(), &mut || Ok(())).unwrap();
++        film
++    }
++
++    #[test]
++    fn workstation_cap_is_explicit_and_other_profiles_and_defaults_stay_fixed() {
++        assert_eq!(crate::job::MAX_CPU_SAMPLES_PER_PIXEL, 1_048_576);
++        assert_eq!(CpuBudget::Workstation.limits().max_samples_per_pixel, 1_048_576);
++        assert_eq!(CpuBudget::Studio.limits().max_samples_per_pixel, 1024);
++        assert_eq!(CpuBudget::Compact.limits().max_samples_per_pixel, 64);
++        assert_eq!(CpuBudget::default(), CpuBudget::Compact);
++        assert_eq!(CpuProgressiveOptions::default(), CpuProgressiveOptions { samples_per_pixel: 16, seed: 0 });
++        for samples_per_pixel in [0, 1_048_577, u32::MAX] {
++            assert!(CpuBudget::Workstation.validate_samples(samples_per_pixel).is_err());
++        }
++        for (budget, cap) in [(CpuBudget::Compact, 64), (CpuBudget::Studio, 1024), (CpuBudget::Workstation, 1_048_576)] {
++            budget.validate_samples(cap).unwrap();
++            assert!(budget.validate_samples(cap + 1).is_err());
++        }
++        let large = CpuProgressiveOptions { samples_per_pixel: 1_048_576, seed: 7 };
++        assert!(large.validate().is_err(), "the no-profile compatibility check must remain Compact");
++        assert!(large.validate_image(1, 1).is_err());
++    }
++
++    #[test]
++    fn high_sample_intent_keeps_camera_resolution_work_and_memory_admission() {
++        let limits = CpuBudget::Workstation.limits();
++        assert_eq!(limits.max_camera_samples, 68_719_476_736);
++        assert_eq!(limits.max_dimension, 16_384);
++        assert_eq!(limits.max_pixels, 67_108_864);
++        assert_eq!(limits.max_progressive_pixels, 67_108_864);
++        assert_eq!(limits.max_job_bytes, 12 * 1024 * 1024 * 1024);
++        assert_eq!(limits.max_work_units, 16_000_000_000_000);
++        assert_eq!(crate::job::NATIVE_CPU_POOL_BYTES, 16 * 1024 * 1024 * 1024);
++        let million = Some(CpuProgressiveOptions { samples_per_pixel: 1_048_576, seed: 7 });
++        CpuBudget::Workstation.validate_image(256, 256, million).unwrap();
++        assert!(CpuBudget::Workstation.validate_image(257, 256, million).is_err());
++        assert!(CpuBudget::Workstation.validate_image(u32::MAX, u32::MAX, million).is_err());
++        // Pure admission boundaries, no large image or film allocation.
++        for (width, height, samples) in [(1920, 1080, 33_140), (3840, 2160, 8_285), (7680, 4320, 2_071), (8192, 8192, 1024)] {
++            CpuBudget::Workstation.validate_image(width, height, Some(CpuProgressiveOptions { samples_per_pixel: samples, seed: 7 })).unwrap();
++            assert!(
++                CpuBudget::Workstation
++                    .validate_image(width, height, Some(CpuProgressiveOptions { samples_per_pixel: samples + 1, seed: 7 }))
++                    .is_err()
++            );
++        }
++        for budget in [CpuBudget::Studio, CpuBudget::Workstation] {
++            assert_eq!(budget.validate_execution().is_err(), cfg!(target_arch = "wasm32") || usize::BITS < 64);
++        }
++        CpuBudget::Compact.validate_execution().unwrap();
++    }
++
++    #[test]
++    fn one_pixel_million_sample_intent_does_not_allocate_a_sample_history() {
++        let low = CpuProgressiveOptions { samples_per_pixel: 1, seed: 7 };
++        let high = CpuProgressiveOptions { samples_per_pixel: 1_048_576, seed: 7 };
++        let bytes = PrimaryFilm::required_bytes(1, 1, high, CpuBudget::Workstation).unwrap();
++        assert_eq!(PrimaryFilm::required_bytes(1, 1, low, CpuBudget::Workstation).unwrap(), bytes);
++        assert!(PrimaryFilm::new(1, 1, high, bytes - 1, &CancelToken::default(), CpuBudget::Workstation).is_err());
++        for samples_per_pixel in [0, 1_048_577, u32::MAX] {
++            assert!(PrimaryFilm::required_bytes(1, 1, CpuProgressiveOptions { samples_per_pixel, seed: 7 }, CpuBudget::Workstation).is_err());
++        }
++        assert!(PrimaryFilm::required_bytes(257, 256, high, CpuBudget::Workstation).is_err());
++    }
++
++    #[test]
++    fn primary_resolve_keeps_exact_u32_counts_at_65535_65536_and_the_workstation_cap() {
++        // Real film commits, one pixel only: no ray tracing, PNG, host or million-frame render.
++        let mut film = primary(1_048_576);
++        let cancel = CancelToken::default();
++        let mut charged = 0u64;
++        for ordinal in 0..1_048_576 {
++            film.add(0, ordinal, [1.0, 2.0, 4.0], true, &cancel, &mut || {
++                charged += 1;
++                Ok(())
++            })
++            .unwrap();
++            let count = ordinal + 1;
++            if [4096, 65_535, 65_536, 1_048_576].contains(&count) {
++                let (mean, covered, samples): ([f64; 3], u32, u32) = film.pixel(0).unwrap();
++                assert_eq!(mean, [1.0, 2.0, 4.0]);
++                assert_eq!((covered, samples), (count, count));
++                assert_eq!(film.samples(), count);
++                assert_eq!(charged, u64::from(count));
++                assert_eq!(film.partial_pixel(0).unwrap(), PartialPixel::Sampled { linear_premultiplied: mean, covered: count, count });
++            }
++        }
++        let before = film.pixel(0).unwrap();
++        let frontier = film.partial_frontier().unwrap();
++        for ordinal in [1_048_576, 1_048_577, u32::MAX] {
++            assert!(film.add(0, ordinal, [0.0; 3], false, &cancel, &mut || panic!("rejected ordinal charged work")).is_err());
++            assert_eq!(film.pixel(0).unwrap(), before);
++            assert_eq!(film.partial_frontier().unwrap(), frontier);
++        }
++    }
++
++    #[test]
++    fn high_counts_keep_misses_in_the_mean_and_the_real_coverage_denominator() {
++        let mut film = primary(65_537);
++        let cancel = CancelToken::default();
++        for ordinal in 0..65_537 {
++            let covered = ordinal % 2 == 0;
++            film.add(0, ordinal, if covered { [2.0, 4.0, 8.0] } else { [0.0; 3] }, covered, &cancel, &mut || Ok(())).unwrap();
++            let count = ordinal + 1;
++            if [65_535, 65_536, 65_537].contains(&count) {
++                let hits = count.div_ceil(2);
++                let expected = [2.0, 4.0, 8.0].map(|value| value * f64::from(hits) / f64::from(count));
++                assert_eq!(film.pixel(0).unwrap(), (expected, hits, count));
++                assert_eq!(film.partial_pixel(0).unwrap(), PartialPixel::Sampled { linear_premultiplied: expected, covered: hits, count });
++            }
++        }
++    }
++
++    #[test]
++    fn high_count_cancellation_and_work_failure_preserve_the_exact_committed_film() {
++        let mut film = primary(65_537);
++        for ordinal in 0..65_536 {
++            film.add(0, ordinal, [1.0, 2.0, 4.0], true, &CancelToken::default(), &mut || Ok(())).unwrap();
++        }
++        let before = film.pixel(0).unwrap();
++        let frontier = film.partial_frontier().unwrap();
++        let cancelled = CancelToken::default();
++        cancelled.cancel();
++        assert_eq!(
++            film.add(0, 65_536, [3.0; 3], true, &cancelled, &mut || panic!("cancelled input charged work")).unwrap_err().code,
++            ErrorCode::Cancelled
++        );
++        let cancel = CancelToken::default();
++        let observer = cancel.clone();
++        let mut charged = 0;
++        assert_eq!(
++            film.add(0, 65_536, [3.0; 3], true, &cancel, &mut || {
++                charged += 1;
++                observer.cancel();
++                Ok(())
++            })
++            .unwrap_err()
++            .code,
++            ErrorCode::Cancelled
++        );
++        assert_eq!(charged, 1);
++        assert!(film.add(0, 65_536, [3.0; 3], true, &CancelToken::default(), &mut || Err(limit("same cumulative job exhausted"))).is_err());
++        assert_eq!(film.pixel(0).unwrap(), before);
++        assert_eq!(film.partial_frontier().unwrap(), frontier);
++        film.add(0, 65_536, [1.0, 2.0, 4.0], true, &CancelToken::default(), &mut || Ok(())).unwrap();
++        assert_eq!(film.pixel(0).unwrap(), ([1.0, 2.0, 4.0], 65_537, 65_537));
++    }
++
++    #[test]
++    fn changing_only_the_target_keeps_old_4096_prefix_bits_and_ordinals() {
++        let mut old_target = primary(4096);
++        let mut high_target = primary(1_048_576);
++        let cancel = CancelToken::default();
++        for ordinal in 0..4096 {
++            let covered = ordinal % 3 != 0;
++            let sample = if covered { [0.25, 2.0, 8.0] } else { [0.0; 3] };
++            old_target.add(0, ordinal, sample, covered, &cancel, &mut || Ok(())).unwrap();
++            high_target.add(0, ordinal, sample, covered, &cancel, &mut || Ok(())).unwrap();
++            let (old_mean, old_covered, old_count) = old_target.pixel(0).unwrap();
++            let (high_mean, high_covered, high_count) = high_target.pixel(0).unwrap();
++            assert_eq!(old_mean.map(f64::to_bits), high_mean.map(f64::to_bits));
++            assert_eq!((old_covered, old_count), (high_covered, high_count));
++            assert_eq!(old_target.partial_frontier().unwrap(), high_target.partial_frontier().unwrap());
++        }
++    }
++}
+--- a/crates/render/src/job/cpu_budget.rs
++++ b/crates/render/src/job/cpu_budget.rs
+@@ -14,7 +14,7 @@
+ pub const MAX_CPU_TRIANGLES: usize = 8_000_000;
+ pub const MAX_CPU_BODIES: usize = 262_144;
+ /// Maximum admitted primary-film samples, shared with the display resolver.
+-pub const MAX_CPU_SAMPLES_PER_PIXEL: u32 = 4096;
++pub const MAX_CPU_SAMPLES_PER_PIXEL: u32 = 1_048_576;
+ 
+ #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(rename_all = "snake_case")]
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -438,7 +438,84 @@
+ pub struct RenderPreview {
+     pub info: PreviewInfo,
+     png: Vec<u8>,
+-    _reservation: Reservation,
++    _reservation: CheckpointLease,
++}
++
++/// Two reusable, immutable complete-pass slots. No consumer acknowledgement or
++/// queue: externally pinned slots are diagnosed and never stall final work.
++struct CheckpointCredits {
++    state: Mutex<CheckpointCreditState>,
++    slot_bytes: u64,
++    capacity: u64,
++}
++struct CheckpointCreditState {
++    free: Reservation,
++    closed: bool,
++}
++impl CheckpointCredits {
++    fn new(reservation: &mut Reservation, slot_bytes: u64, slots: u32) -> Result<Arc<Self>> {
++        if !(1..=2).contains(&slots) || slot_bytes == 0 {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "checkpoint credits require one or two finite slots"));
++        }
++        let capacity = slot_bytes
++            .checked_mul(u64::from(slots))
++            .and_then(|n| n.checked_add(1024))
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "checkpoint credit capacity overflow"))?;
++        let free = reservation.split(capacity)?;
++        Ok(Arc::new(Self { state: Mutex::new(CheckpointCreditState { free, closed: false }), slot_bytes, capacity }))
++    }
++    fn acquire(self: &Arc<Self>) -> Result<Option<CheckpointLease>> {
++        let mut state = self.state.lock().map_err(|_| JobError::new(ErrorCode::Internal, "checkpoint credit lock poisoned"))?;
++        if state.closed {
++            return Err(JobError::new(ErrorCode::Cancelled, "checkpoint credits are closed"));
++        }
++        let needed = self.slot_bytes.checked_add(1024).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "checkpoint credit bound overflow"))?;
++        if state.free.bytes < needed {
++            return Ok(None);
++        }
++        let reservation = state.free.split(self.slot_bytes)?;
++        Ok(Some(CheckpointLease { reservation, credits: self.clone() }))
++    }
++    fn close(&self) {
++        let mut state = match self.state.lock() {
++            Ok(state) => state,
++            Err(error) => error.into_inner(),
++        };
++        state.closed = true;
++        let _ = state.free.shrink(0);
++    }
++}
++struct CheckpointLease {
++    reservation: Reservation,
++    credits: Arc<CheckpointCredits>,
++}
++impl std::ops::Deref for CheckpointLease {
++    type Target = Reservation;
++    fn deref(&self) -> &Reservation {
++        &self.reservation
++    }
++}
++impl Drop for CheckpointLease {
++    fn drop(&mut self) {
++        let mut state = match self.credits.state.lock() {
++            Ok(state) => state,
++            Err(error) => {
++                let mut state = error.into_inner();
++                state.closed = true;
++                let _ = state.free.shrink(0);
++                state
++            }
++        };
++        if !state.closed {
++            if state.free.bytes.checked_add(self.reservation.bytes).is_some_and(|n| n <= self.credits.capacity)
++                && state.free.merge_from(&mut self.reservation).is_ok()
++            {
++                return;
++            }
++            state.closed = true;
++            let _ = state.free.shrink(0);
++        }
++    }
+ }
+ 
+ impl RenderPreview {
+@@ -457,6 +534,9 @@
+ 
+ #[derive(Clone, Debug, Serialize)]
+ pub struct JobStatus {
++    /// Completed CPU passes whose immutable snapshot could not be published
++    /// because both admitted slots remained pinned by external consumers.
++    pub cpu_preview_retention_skips: u32,
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub punctual_diagnostics: Option<super::PunctualDiagnostics>,
+     #[serde(skip_serializing_if = "Option::is_none")]
+@@ -481,6 +561,7 @@
+ }
+ 
+ struct Data {
++    cpu_preview_retention_skips: u32,
+     partial_preview: Option<Arc<RenderPartialPreview>>,
+     punctual_diagnostics: Option<super::PunctualDiagnostics>,
+     sampling: Option<super::adaptive::SamplingReport>,
+@@ -529,6 +610,7 @@
+     pub fn status(&self) -> Result<JobStatus> {
+         let data = self.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render status lock poisoned"))?;
+         Ok(JobStatus {
++            cpu_preview_retention_skips: data.cpu_preview_retention_skips,
+             punctual_diagnostics: data.punctual_diagnostics,
+             presentation: self.0.presentation.as_deref().map(|retained| retained.info.clone()),
+             sampling: data.sampling.clone(),
+@@ -700,8 +782,18 @@
+     handle: JobHandle,
+     reservation: Option<Reservation>,
+     next_preview_sequence: u32,
++    next_checkpoint_pass: u32,
++    checkpoints: Option<Arc<CheckpointCredits>>,
+     // Task/PNG allocations above die before the in-flight credit below.
+     partial: Option<TaskSlot<PartialRunning>>,
++}
++
++impl Drop for Running {
++    fn drop(&mut self) {
++        if let Some(credits) = &self.checkpoints {
++            credits.close();
++        }
++    }
+ }
+ 
+ /// One fallibly allocated task, keeping the dispatch enum small in either build.
+@@ -736,7 +828,7 @@
+     #[cfg(feature = "raytrace-cpu")]
+     Partial {
+         png: Vec<u8>,
+-        covered: Vec<u16>,
++        covered: Vec<u32>,
+         completed_passes: u32,
+         updated_prefix: u64,
+     },
+@@ -762,6 +854,14 @@
+             #[cfg(feature = "raytrace-cpu")]
+             Self::Raytrace(task) => task.get_mut()?.partial_preview_ready(plan),
+             _ => Ok(false),
++        }
++    }
++    fn completed_pass_ready(&self, plan: super::PartialPreviewPlan) -> Result<Option<u32>> {
++        let _ = &plan;
++        match self {
++            #[cfg(feature = "raytrace-cpu")]
++            Self::Raytrace(slot) => slot.0.first().map_or(Ok(None), |task| task.completed_pass_preview_ready(plan)),
++            _ => Ok(None),
+         }
+     }
+     fn begin_partial(&mut self, plan: super::PartialPreviewPlan) -> Result<bool> {
+@@ -919,7 +1019,37 @@
+ 
+     // The private factory keeps post-construction setup fallible without losing
+     // the real ledger. It runs only after report capture and outside every lock.
+-    fn begin_with_partial_factory(work: Work, make_partial: impl FnOnce(Arc<PartialCredits>) -> Result<TaskSlot<PartialRunning>>) -> Option<Self> {
++    fn begin_with_partial_factory(
++        mut work: Work,
++        make_partial: impl FnOnce(Arc<PartialCredits>) -> Result<TaskSlot<PartialRunning>>,
++    ) -> Option<Self> {
++        let checkpoints = (|| {
++            let slots = work
++                .handle
++                .0
++                .request
++                .raytrace
++                .as_ref()
++                .and_then(|options| options.progressive)
++                .filter(|_| work.handle.0.partial.is_none() && work.executor.is_none())
++                .map_or(0, |options| options.samples_per_pixel.saturating_sub(1).min(2));
++            if slots == 0 {
++                return Ok(None);
++            }
++            let slot_bytes = u64::from(work.handle.0.request.width)
++                .checked_mul(u64::from(work.handle.0.request.height))
++                .and_then(|n| n.checked_mul(8))
++                .and_then(|n| n.checked_add(65_536 + FRAME_METADATA_BYTES))
++                .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "checkpoint slot overflow"))?;
++            CheckpointCredits::new(&mut work.reservation, slot_bytes, slots).map(Some)
++        })();
++        let checkpoints = match checkpoints {
++            Ok(credits) => credits,
++            Err(error) => {
++                terminal(&work.handle, error);
++                return None;
++            }
++        };
+         if work.handle.0.cancel.is_cancelled() {
+             terminal(&work.handle, JobError::new(ErrorCode::Cancelled, "render cancelled"));
+             return None;
+@@ -967,6 +1097,8 @@
+                 handle: work.handle,
+                 reservation: Some(work.reservation),
+                 next_preview_sequence: 1,
++                next_checkpoint_pass: 1,
++                checkpoints,
+             }),
+             Err(error) => {
+                 terminal(&work.handle, error);
+@@ -982,21 +1114,58 @@
+         }
+         if let Some(partial) = self.partial.as_mut() {
+             let partial = partial.get_mut()?;
+-            if partial.lease.is_none() && partial.credits.requested.load(Ordering::Acquire) && !partial.credits.exhausted.load(Ordering::Acquire) {
++            let task = self.task.as_ref().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial CPU task"))?;
++            let uniform_pass = task.completed_pass_ready(partial.credits.plan)?;
++            let automatic_pass = uniform_pass.filter(|pass| *pass > partial.last_pass_attempt);
++            if let Some(pass) = automatic_pass {
++                partial.last_pass_attempt = pass;
++                partial.credits.request()?;
++            }
++            if partial.lease.is_none()
++                && partial.credits.requested.load(Ordering::Acquire)
++                && !partial.credits.exhausted.load(Ordering::Acquire)
++                && (uniform_pass.is_none() || automatic_pass.is_some())
++            {
+                 let task = self.task.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial CPU task"))?;
+-                if task.partial_ready(partial.credits.plan)?
+-                    && let Some(lease) = partial.credits.acquire()?
+-                {
+-                    // Keep the lease past any producer error until task buffers drop.
+-                    partial.lease = Some(lease);
+-                    let begin = task.begin_partial(partial.credits.plan);
+-                    partial.credits.store_report(task.protected_report())?;
+-                    if !begin? {
+-                        if partial.credits.protected.is_some() && !partial.credits.exhausted.load(Ordering::Acquire) {
+-                            return Err(JobError::new(ErrorCode::Internal, "protected feedback refused without real quota exhaustion"));
++                if task.partial_ready(partial.credits.plan)? {
++                    let mut lease = partial.credits.acquire()?;
++                    if lease.is_none() && automatic_pass.is_some() {
++                        let released = self
++                            .handle
++                            .0
++                            .data
++                            .lock()
++                            .map_err(|_| JobError::new(ErrorCode::Internal, "partial retirement lock poisoned"))?
++                            .partial_preview
++                            .take();
++                        drop(released);
++                        lease = partial.credits.acquire()?;
++                    }
++                    if lease.is_none() && automatic_pass.is_some() && partial.credits.retained_slots_blocked()? {
++                        let mut data = self
++                            .handle
++                            .0
++                            .data
++                            .lock()
++                            .map_err(|_| JobError::new(ErrorCode::Internal, "partial retention diagnostic lock poisoned"))?;
++                        self.handle.0.cancel.check()?;
++                        data.cpu_preview_retention_skips = data
++                            .cpu_preview_retention_skips
++                            .checked_add(1)
++                            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial retention diagnostic overflow"))?;
++                    }
++                    if let Some(lease) = lease {
++                        // Keep the lease past any producer error until task buffers drop.
++                        partial.lease = Some(lease);
++                        let begin = task.begin_partial(partial.credits.plan);
++                        partial.credits.store_report(task.protected_report())?;
++                        if !begin? {
++                            if partial.credits.protected.is_some() && !partial.credits.exhausted.load(Ordering::Acquire) {
++                                return Err(JobError::new(ErrorCode::Internal, "protected feedback refused without real quota exhaustion"));
++                            }
++                            partial.credits.exhaust();
++                            drop(partial.lease.take());
+                         }
+-                        partial.credits.exhaust();
+-                        drop(partial.lease.take());
+                     }
+                 }
+             }
+@@ -1099,7 +1268,9 @@
+         // actual hex allocation, bounded copied IDs and Arc/header allowance.
+         // The PNG allocation itself is retained once and billed by capacity below.
+         let frame_layout = if preview_samples.is_some() { std::mem::size_of::<RenderPreview>() } else { std::mem::size_of::<RenderFrame>() };
+-        let fixed_metadata = std::mem::size_of::<Running>() + frame_layout + 2 * crate::MAX_RENDER_ID_BYTES + 32;
++        let checkpoint_metadata =
++            if preview_samples.is_some() { std::mem::size_of::<CheckpointCredits>() + 2 * std::mem::size_of::<usize>() } else { 0 };
++        let fixed_metadata = std::mem::size_of::<Running>() + frame_layout + checkpoint_metadata + 2 * crate::MAX_RENDER_ID_BYTES + 32;
+         let linear_digest_bytes = if exr.is_some() { 64 } else { 0 };
+         if fixed_metadata
+             .checked_add(info.png_sha256.capacity())
+@@ -1123,16 +1294,37 @@
+                 .and_then(|options| options.progressive)
+                 .ok_or_else(|| JobError::new(ErrorCode::Internal, "preview requires CPU progressive intent"))?;
+             let frame_sequence = self.next_preview_sequence;
+-            let expected = frame_sequence.checked_sub(1).and_then(|n| 1_u32.checked_shl(n));
++            let expected = Some(self.next_checkpoint_pass);
+             if expected != Some(samples_per_pixel) || samples_per_pixel >= options.samples_per_pixel || self.task.is_none() {
+                 return Err(JobError::new(ErrorCode::Internal, "invalid progressive checkpoint sequence"));
+             }
+             let next_sequence = frame_sequence.checked_add(1).ok_or_else(|| JobError::new(ErrorCode::Internal, "preview sequence exhausted"))?;
+-            let reservation = self
+-                .reservation
+-                .as_mut()
+-                .ok_or_else(|| JobError::new(ErrorCode::Internal, "missing progressive reservation"))?
+-                .split(png.capacity() as u64 + FRAME_METADATA_BYTES)?;
++            let credits = self.checkpoints.as_ref().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing checkpoint credits"))?;
++            if (png.capacity() as u64).checked_add(FRAME_METADATA_BYTES).is_none_or(|bytes| bytes > credits.slot_bytes) {
++                return Err(JobError::new(ErrorCode::LimitExceeded, "checkpoint PNG exceeds its admitted slot"));
++            }
++            let mut reservation = credits.acquire()?;
++            if reservation.is_none() {
++                // Retire the host's obsolete slot before treating a consumer as
++                // pinned. A headless client never has to acknowledge previews.
++                let released = data.preview.take();
++                drop(data);
++                drop(released);
++                reservation = credits.acquire()?;
++                data = self.handle.0.data.lock().map_err(|_| JobError::new(ErrorCode::Internal, "render preview publication lock poisoned"))?;
++                self.handle.0.cancel.check()?;
++            }
++            self.next_checkpoint_pass = self
++                .next_checkpoint_pass
++                .checked_add(1)
++                .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "checkpoint pass ordinal exhausted"))?;
++            let Some(reservation) = reservation else {
++                data.cpu_preview_retention_skips = data
++                    .cpu_preview_retention_skips
++                    .checked_add(1)
++                    .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "checkpoint retention diagnostic overflow"))?;
++                return Ok(true);
++            };
+             data.preview = Some(Arc::new(RenderPreview {
+                 info: PreviewInfo { frame_sequence, samples_per_pixel, frame: info },
+                 png,
+@@ -1168,6 +1360,9 @@
+         data.preview = None;
+         let released = data.partial_preview.take();
+         data.progress = Progress { phase: Phase::Completed, done: 1, total: 1 };
++        if let Some(credits) = &self.checkpoints {
++            credits.close();
++        }
+         drop(data);
+         if let Some(credits) = &self.handle.0.partial {
+             credits.close();
+@@ -1817,6 +2012,7 @@
+             resolved,
+             cancel: CancelToken::default(),
+             data: Mutex::new(Data {
++                cpu_preview_retention_skips: 0,
+                 partial_preview: None,
+                 punctual_diagnostics: None,
+                 sampling: None,
+@@ -1940,6 +2136,7 @@
+             resolved,
+             cancel: CancelToken::default(),
+             data: Mutex::new(Data {
++                cpu_preview_retention_skips: 0,
+                 partial_preview: None,
+                 punctual_diagnostics: None,
+                 sampling: None,
+@@ -2357,7 +2554,7 @@
+ pub struct RenderPartialPreview {
+     pub info: PartialPreviewInfo,
+     png: Vec<u8>,
+-    covered: Vec<u16>,
++    covered: Vec<u32>,
+     _lease: ReturnReservation,
+ }
+ const _: [(); 1] = [(); (std::mem::size_of::<RenderPartialPreview>() + 2 * crate::MAX_RENDER_ID_BYTES + 256 <= 2048) as usize];
+@@ -2365,7 +2562,7 @@
+     pub fn png(&self) -> &[u8] {
+         &self.png
+     }
+-    pub fn covered(&self) -> &[u16] {
++    pub fn covered(&self) -> &[u32] {
+         &self.covered
+     }
+ }
+@@ -2436,6 +2633,14 @@
+         self.requested.store(false, Ordering::Release);
+         Ok(Some(ReturnReservation { reservation: Some(reservation), credits: self.clone(), in_flight: true }))
+     }
++    fn retained_slots_blocked(&self) -> Result<bool> {
++        let state = self.state.lock().map_err(|_| JobError::new(ErrorCode::Internal, "partial retention lock poisoned"))?;
++        Ok(!state.closed
++            && !state.in_flight
++            && !self.exhausted.load(Ordering::Acquire)
++            && self.requested.load(Ordering::Acquire)
++            && state.free.bytes < self.plan.slot_bytes()?)
++    }
+     fn exhaust(&self) {
+         self.exhausted.store(true, Ordering::Release);
+         self.requested.store(false, Ordering::Release);
+@@ -2501,7 +2706,7 @@
+     }
+ }
+ struct PartialPending {
+-    covered: Vec<u16>,
++    covered: Vec<u32>,
+     completed_passes: u32,
+     updated_prefix: u64,
+ }
+@@ -2512,6 +2717,7 @@
+     lease: ReturnReservation,
+ }
+ struct PartialRunning {
++    last_pass_attempt: u32,
+     pending: Option<PartialPending>,
+     lease: Option<ReturnReservation>,
+     credits: Arc<PartialCredits>,
+@@ -2519,7 +2725,7 @@
+ }
+ impl PartialRunning {
+     fn new(credits: Arc<PartialCredits>) -> Self {
+-        Self { pending: None, lease: None, credits, next_sequence: 1 }
++        Self { pending: None, lease: None, credits, next_sequence: 1, last_pass_attempt: 0 }
+     }
+ }
+ impl JobHandle {
+@@ -2552,7 +2758,7 @@
+ }
+ impl Running {
+     #[cfg(feature = "raytrace-cpu")]
+-    fn capture_partial(&mut self, png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64) -> Result<()> {
++    fn capture_partial(&mut self, png: Vec<u8>, covered: Vec<u32>, completed_passes: u32, updated_prefix: u64) -> Result<()> {
+         self.handle.0.cancel.check()?;
+         let partial = self.partial.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "partial output without its policy"))?.get_mut()?;
+         let plan = partial.credits.plan;
+@@ -2573,7 +2779,7 @@
+             || updated_prefix >= source_pixels
+             || (completed_passes == 0 && updated_prefix == 0)
+             || covered.len() as u64 != plan.pixels()
+-            || (covered.capacity() as u64).checked_mul(2).is_none_or(|v| v > covered_limit)
++            || (covered.capacity() as u64).checked_mul(4).is_none_or(|v| v > covered_limit)
+             || png.capacity() as u64 > plan.encoded_limit()?
+         {
+             return Err(JobError::new(ErrorCode::LimitExceeded, "partial payload exceeds its admitted frontier or capacities"));
+@@ -2585,7 +2791,7 @@
+             let samples = completed_passes
+                 .checked_add(u32::from(source < updated_prefix))
+                 .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial sample count overflow"))?;
+-            if u32::from(*count) > samples {
++            if *count > samples {
+                 return Err(JobError::new(ErrorCode::Internal, "partial coverage exceeds committed source samples"));
+             }
+         }
+--- a/crates/render/src/job/host_tests.rs
++++ b/crates/render/src/job/host_tests.rs
+@@ -362,7 +362,7 @@
+                 break;
+             }
+         }
+-        assert_eq!(seen, [1, 2, 4, 8]);
++        assert_eq!(seen, [1, 2, 3, 4, 5, 6, 7, 8]);
+         assert_eq!(interactive.state().unwrap(), State::TargetReached);
+         assert!(job.frame().unwrap().is_some());
+         assert!(!interactive.attach(ticket, job.clone()).unwrap(), "duplicate acknowledgement cannot restart or cancel the accepted job");
+@@ -1376,7 +1376,7 @@
+         }
+         let plan = PartialPreviewPlan::new(16384, 4096).unwrap();
+         assert_eq!(plan.source_index(1025).unwrap(), 16 * 16384 + 16);
+-        assert_eq!(plan.snapshot_work().unwrap(), 12 * 1024 * 256 + 65538);
++        assert_eq!(plan.snapshot_work().unwrap(), 14 * 1024 * 256 + 65538);
+         assert!(PartialPreviewPlan::new(0, 1).is_err());
+         assert!(PartialPreviewPlan::new(1, 0).is_err());
+     }
+@@ -1640,21 +1640,24 @@
+     #[test]
+     fn profile_ordinary_caps_are_unchanged_and_protected_aggregate_is_explicit() {
+         assert_eq!(MAX_CPU_WORK, 16_000_000_000_000);
+-        assert_eq!(MAX_PROTECTED_CPU_WORK, 16_000_809_500_800);
++        assert_eq!(MAX_PROTECTED_CPU_WORK, 31_462_813_335_678);
+         for (profile, ordinary) in
+             [(CpuBudget::Compact, 1_000_000_000), (CpuBudget::Studio, 1_000_000_000_000), (CpuBudget::Workstation, MAX_CPU_WORK)]
+         {
+             let plan = ProtectedPreviewPlan::new(1024, 1024, 16, profile).unwrap();
+             plan.validate().unwrap();
+             assert_eq!(plan.ordinary_limit(), ordinary);
+-            assert_eq!(plan.quota_limit(), 64);
+-            assert_eq!(plan.snapshot_work().unwrap(), 12_648_450);
+-            assert_eq!(plan.presentation_limit().unwrap(), 809_500_800);
+-            assert_eq!(plan.aggregate_limit().unwrap(), ordinary + 809_500_800);
++            assert_eq!(plan.quota_limit(), 79);
++            assert_eq!(plan.snapshot_work().unwrap(), 14_745_602);
++            assert_eq!(plan.presentation_limit().unwrap(), 1_164_902_558);
++            assert_eq!(plan.aggregate_limit().unwrap(), ordinary + 1_164_902_558);
+             assert_eq!(plan.preview_plan(), crate::job::PartialPreviewPlan::new(1024, 1024).unwrap());
+         }
+         let largest = ProtectedPreviewPlan::new(1024, 1024, 16, CpuBudget::Workstation).unwrap();
+-        assert_eq!(largest.aggregate_limit().unwrap(), MAX_PROTECTED_CPU_WORK);
++        assert!(
++            largest.aggregate_limit().unwrap() < MAX_PROTECTED_CPU_WORK,
++            "the independent Cartesian ceiling need not be attained by this request"
++        );
+     }
+     #[test]
+     fn zero_single_and_spread_milestones_are_checked_below_final_target() {
+@@ -1666,12 +1669,12 @@
+         assert_eq!(single.quota_limit(), 1);
+         assert_eq!(single.milestone(0).unwrap(), 1);
+         assert!(single.milestone(1).is_err());
+-        for (w, h, spp, quota) in [(3, 1, 1, 2), (66, 1, 1, 64), (32, 32, 64, 64)] {
++        for (w, h, spp, quota, last) in [(3, 1, 1, 2, 2), (66, 1, 1, 64, 65), (32, 32, 64, 127, 64_512)] {
+             let plan = ProtectedPreviewPlan::new(w, h, spp, CpuBudget::Compact).unwrap();
+             assert_eq!(plan.quota_limit(), quota);
+             let milestones: Vec<_> = (0..quota).map(|j| plan.milestone(j).unwrap()).collect();
+             assert_eq!(milestones.first(), Some(&1));
+-            assert_eq!(milestones.last(), Some(&(plan.total_commits() - 1)));
++            assert_eq!(milestones.last(), Some(&last));
+             assert!(milestones.windows(2).all(|pair| pair[0] < pair[1]));
+             assert!(plan.milestone(quota).is_err());
+             assert!(plan.milestone(u32::MAX).is_err());
+@@ -1726,11 +1729,11 @@
+         let plan = ProtectedPreviewPlan::new(32, 32, 64, CpuBudget::Compact).unwrap();
+         let (budget, work, credits) = credits(plan);
+         assert!(credits.state.lock().unwrap().report.is_none());
+-        let value = report(plan, 31, 1, 64);
++        let value = report(plan, 31, 1, 127);
+         credits.store_report(Some(value)).unwrap();
+         assert_eq!(credits.state.lock().unwrap().report, Some(value));
+         assert!(value.milestones_complete && !value.quota_exhausted);
+-        assert_eq!(value.presentation_used, 77_826);
++        assert_eq!(value.presentation_used, 79_874);
+         assert!(value.presentation_used < value.presentation_limit);
+         assert!(!credits.exhausted.load(Ordering::Acquire));
+         assert!(credits.request().unwrap());
+@@ -1836,8 +1839,8 @@
+         finish(&mut control_run);
+         let control_report = control.protected_preview_report().unwrap().unwrap();
+         let control_frame = control.frame().unwrap().unwrap();
+-        assert_eq!(control_report.presentation_used, 0);
+-        assert_eq!(control_report.accepted_snapshots, 0);
++        assert_eq!(control_report.presentation_used, 5_032_062);
++        assert_eq!(control_report.accepted_snapshots, 63);
+         assert!(control_report.ordinary_used > 0);
+         let (host, job, mut running) = fixture(2, 32, 32, 64);
+         assert!(job.request_partial_preview().unwrap());
+@@ -1846,9 +1849,10 @@
+         assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
+         assert_eq!(report.ordinary_used, control_report.ordinary_used);
+         assert_eq!(report.ordinary_limit, 1_000_000_000);
+-        assert_eq!(report.accepted_snapshots, 1);
+-        assert_eq!(report.presentation_used, 77_826);
+-        assert_eq!(report.ordinary_used + report.presentation_used, control_report.ordinary_used + 77_826);
++        assert_eq!(report.accepted_snapshots, 64);
++        assert_eq!(report.presentation_used, 5_111_936);
++        assert_eq!(report.ordinary_used + report.presentation_used, control_report.ordinary_used + 5_111_936);
++        assert_eq!(report.presentation_used - control_report.presentation_used, 79_874);
+         assert_eq!(report.aggregate_limit, report.ordinary_limit + report.presentation_limit);
+         assert!(!report.quota_exhausted);
+         let frame = job.frame().unwrap().unwrap();
+@@ -1891,7 +1895,7 @@
+         assert!(exhausted_seen);
+         assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
+         let report = job.protected_preview_report().unwrap().unwrap();
+-        assert_eq!((report.accepted_snapshots, report.quota_limit, report.next_milestone_index), (3, 3, 3));
++        assert_eq!((report.accepted_snapshots, report.quota_limit, report.next_milestone_index), (2, 2, 2));
+         assert!(report.quota_exhausted && report.milestones_complete);
+         assert_eq!(report.presentation_used, report.presentation_limit);
+         assert_eq!(report.ordinary_used, expected.ordinary_used, "full-pass tick and final remain ordinary");
+@@ -1931,8 +1935,8 @@
+         finish(&mut running);
+         assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
+         let report = job.protected_preview_report().unwrap().unwrap();
+-        assert_eq!((report.accepted_snapshots, report.quota_limit), (2, 3));
+-        assert!(!report.quota_exhausted);
++        assert_eq!((report.accepted_snapshots, report.quota_limit), (2, 2));
++        assert!(report.quota_exhausted);
+         assert_eq!(Sha256::digest(first.png()), old_hash);
+         drop(running);
+         let slot = job.0.partial.as_ref().unwrap().plan.slot_bytes().unwrap();
+@@ -1961,7 +1965,7 @@
+         assert_eq!(job.status().unwrap().progress.phase, Phase::Failed);
+         let report = job.protected_preview_report().unwrap().unwrap();
+         assert_eq!(report.accepted_snapshots, 1);
+-        assert_eq!(report.presentation_used, 77_826);
++        assert_eq!(report.presentation_used, 79_874);
+         assert!(job.frame().unwrap().is_none());
+         assert!(!job.request_partial_preview().unwrap());
+         drop(running);
+@@ -1980,7 +1984,7 @@
+         }
+         assert!(running.pending_png.is_some());
+         let before = job.protected_preview_report().unwrap().unwrap();
+-        assert_eq!((before.accepted_snapshots, before.presentation_used), (1, 77_826));
++        assert_eq!((before.accepted_snapshots, before.presentation_used), (1, 79_874));
+         job.cancel().unwrap();
+         assert!(!running.guarded_step(1));
+         assert_eq!(job.protected_preview_report().unwrap(), Some(before));
+@@ -2230,3 +2234,304 @@
+         assert_eq!(host.admitted_bytes(), 0);
+     }
+ }
++
++// Original fixtures for consecutive CPU publication; WRITTEN, NOT RUN.
++#[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
++mod every_cpu_pass {
++    use super::*;
++    use crate::job::{CpuBudget, CpuProgressiveOptions, RaytraceOptions};
++
++    enum Snapshot {
++        Complete(Arc<RenderPreview>),
++        Partial(Arc<RenderPartialPreview>),
++    }
++    impl Snapshot {
++        fn pass(&self) -> u32 {
++            match self {
++                Self::Complete(preview) => preview.info.samples_per_pixel,
++                Self::Partial(preview) => {
++                    assert_eq!(preview.info.updated_prefix, 0, "automatic publication is a uniform complete pass");
++                    preview.info.completed_passes
++                }
++            }
++        }
++        fn png(&self) -> &[u8] {
++            match self {
++                Self::Complete(preview) => preview.png(),
++                Self::Partial(preview) => preview.png(),
++            }
++        }
++        fn sequence(&self) -> u64 {
++            match self {
++                Self::Complete(preview) => u64::from(preview.info.frame_sequence),
++                Self::Partial(preview) => preview.info.sequence,
++            }
++        }
++    }
++    fn snapshot(job: &JobHandle, protected: bool) -> Option<Snapshot> {
++        if protected { job.partial_preview().unwrap().map(Snapshot::Partial) } else { job.preview().unwrap().map(Snapshot::Complete) }
++    }
++    fn fixture(samples: u32, protected: bool) -> (CpuHost, JobHandle, Running) {
++        let host = ImageHost(Arc::new(Owner {
++            executor: None,
++            shared: CpuHost::shared(MEMORY_LIMIT),
++            kind: HostKind::NativeWorker,
++            running: Mutex::new(None),
++            _worker: None,
++        }));
++        let request = ImageRequest {
++            integrator: Integrator::Raytrace,
++            raytrace: Some(RaytraceOptions {
++                budget: if samples > 64 { CpuBudget::Workstation } else { CpuBudget::Compact },
++                progressive: Some(CpuProgressiveOptions { samples_per_pixel: samples, seed: 123 }),
++                lights: Some(Vec::new()),
++                ..Default::default()
++            }),
++            width: 1,
++            height: 1,
++            background: [10, 20, 30],
++            ..request()
++        };
++        let job = if protected {
++            host.submit_cpu_protected_partial_with_environment_and_options(id(7790, 1), 19, empty(), request, JobOptions::default(), None)
++        } else {
++            host.submit(id(7790, 1), 19, empty(), request)
++        }
++        .unwrap();
++        let work = host.0.shared.queue.lock().unwrap().pop_front().unwrap();
++        let running = Running::begin(work).unwrap();
++        (host, job, running)
++    }
++    fn finish(running: &mut Running) {
++        for _ in 0..10_000_000 {
++            if !running.advance(16_384).unwrap() {
++                return;
++            }
++        }
++        panic!("one-pixel every-pass fixture exceeded its finite continuation bound");
++    }
++    fn run_all(samples: u32, protected: bool, quantum: usize) {
++        let (host, job, mut running) = fixture(samples, protected);
++        let admission = host.admitted_bytes();
++        let mut previous = 0;
++        let mut complete = false;
++        for _ in 0..10_000_000 {
++            let more = running.advance(quantum).unwrap();
++            if let Some(preview) = snapshot(&job, protected) {
++                let pass = preview.pass();
++                if pass != previous {
++                    assert_eq!(pass, previous + 1, "no missing, duplicate or reordered complete pass");
++                    assert!(pass < samples);
++                    match &preview {
++                        Snapshot::Complete(value) => {
++                            assert_eq!(value.info.frame_sequence, pass);
++                            assert_eq!(value.info.frame.job, job.id());
++                            assert_eq!(value.info.frame.scene_generation, 19);
++                        }
++                        Snapshot::Partial(value) => {
++                            assert_eq!(value.info.sequence, u64::from(pass));
++                            assert_eq!(value.info.frame.job, job.id());
++                            assert_eq!(value.info.frame.scene_generation, 19);
++                            assert_eq!(value.covered(), &[0]);
++                        }
++                    }
++                    assert_eq!(image::load_from_memory(preview.png()).unwrap().to_rgba8().get_pixel(0, 0).0, [10, 20, 30, 255]);
++                    assert!(job.frame().unwrap().is_none(), "a provisional pass is not a final image");
++                    previous = pass;
++                }
++            } // No retained consumer Arc and no UI acknowledgement.
++            assert!(host.admitted_bytes() <= admission, "publication recycles the same two prepaid slots");
++            if !more {
++                complete = true;
++                break;
++            }
++        }
++        assert!(complete);
++        assert_eq!(previous, samples - 1);
++        let status = job.status().unwrap();
++        assert_eq!(status.progress.phase, Phase::Completed);
++        assert_eq!(status.cpu_preview_retention_skips, 0);
++        assert_eq!(status.request.raytrace.as_ref().unwrap().progressive, Some(CpuProgressiveOptions { samples_per_pixel: samples, seed: 123 }));
++        assert!(job.preview().unwrap().is_none() && job.partial_preview().unwrap().is_none());
++        let frame = job.frame().unwrap().unwrap();
++        assert_eq!(image::load_from_memory(frame.png()).unwrap().to_rgba8().get_pixel(0, 0).0, [10, 20, 30, 255]);
++        if protected {
++            let report = job.protected_preview_report().unwrap().unwrap();
++            assert_eq!(report.accepted_snapshots, samples - 1);
++            assert_eq!(report.presentation_used, u64::from(samples - 1) * 65_552);
++        }
++        drop(frame);
++        drop(status);
++        drop(running);
++        drop(job);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++
++    #[test]
++    fn real_legacy_and_protected_hosts_publish_every_pass_without_ui_demand() {
++        for protected in [false, true] {
++            for quantum in [1, 16_384] {
++                for samples in [1, 7] {
++                    run_all(samples, protected, quantum);
++                }
++            }
++        }
++    }
++    #[test]
++    #[cfg(target_pointer_width = "64")]
++    fn real_one_pixel_high_target_crosses_64_with_constant_slots() {
++        for protected in [false, true] {
++            run_all(65, protected, 16_384);
++        }
++    }
++    #[test]
++    fn two_external_snapshots_are_diagnosed_without_waiting_or_losing_the_final() {
++        for protected in [false, true] {
++            let (host, job, mut running) = fixture(7, protected);
++            let mut held = Vec::new();
++            for _ in 0..100_000 {
++                assert!(running.advance(1).unwrap());
++                if let Some(preview) = snapshot(&job, protected) {
++                    if preview.pass() == held.len() as u32 + 1 {
++                        held.push(preview);
++                    }
++                }
++                if held.len() == 2 {
++                    break;
++                }
++            }
++            assert_eq!(held.len(), 2);
++            let hashes: Vec<_> = held.iter().map(|preview| Sha256::digest(preview.png())).collect();
++            finish(&mut running);
++            let status = job.status().unwrap();
++            assert_eq!(status.progress.phase, Phase::Completed);
++            assert_eq!(status.cpu_preview_retention_skips, 4, "passes 3,4,5,6 had both slots externally pinned");
++            assert!(job.frame().unwrap().is_some());
++            for (preview, hash) in held.iter().zip(hashes) {
++                assert_eq!(Sha256::digest(preview.png()), hash);
++            }
++            drop(running);
++            drop(status);
++            drop(job);
++            assert!(host.admitted_bytes() > 0, "external snapshots remain charged after their job drops");
++            drop(held);
++            assert_eq!(host.admitted_bytes(), 0);
++        }
++    }
++    #[test]
++    fn release_after_a_pinned_pass_keeps_publication_sequence_separate_from_actual_spp() {
++        for protected in [false, true] {
++            let (host, job, mut running) = fixture(7, protected);
++            let mut held = Vec::new();
++            for _ in 0..100_000 {
++                assert!(running.advance(1).unwrap());
++                if let Some(preview) = snapshot(&job, protected) {
++                    if preview.pass() == held.len() as u32 + 1 {
++                        held.push(preview);
++                    }
++                }
++                if held.len() == 2 {
++                    break;
++                }
++            }
++            assert_eq!(held.len(), 2);
++            for _ in 0..100_000 {
++                if job.status().unwrap().cpu_preview_retention_skips == 1 {
++                    break;
++                }
++                assert!(running.advance(1).unwrap());
++            }
++            assert_eq!(job.status().unwrap().cpu_preview_retention_skips, 1);
++            drop(held.remove(0)); // Return exactly one old consumer slot after pass 3.
++            let mut fourth = None;
++            for _ in 0..100_000 {
++                assert!(running.advance(1).unwrap());
++                if let Some(preview) = snapshot(&job, protected) {
++                    if preview.pass() == 4 {
++                        fourth = Some(preview);
++                        break;
++                    }
++                }
++            }
++            let fourth = fourth.unwrap();
++            assert_eq!(fourth.pass(), 4);
++            assert_eq!(fourth.sequence(), 3, "SPP 3 was diagnosed, not published");
++            assert_eq!(job.status().unwrap().cpu_preview_retention_skips, 1);
++            drop(fourth);
++            finish(&mut running);
++            assert_eq!(job.status().unwrap().progress.phase, Phase::Completed);
++            assert_eq!(job.status().unwrap().cpu_preview_retention_skips, 1);
++            drop(running);
++            drop(job);
++            drop(held);
++            assert_eq!(host.admitted_bytes(), 0);
++        }
++    }
++    #[test]
++    fn cancellation_after_third_pass_and_last_digest_chunk_never_publishes_late() {
++        for protected in [false, true] {
++            let (host, job, mut running) = fixture(7, protected);
++            let mut held = None;
++            for _ in 0..100_000 {
++                assert!(running.advance(1).unwrap());
++                if let Some(preview) = snapshot(&job, protected) {
++                    if preview.pass() == 3 {
++                        held = Some(preview);
++                        break;
++                    }
++                }
++            }
++            let held = held.unwrap();
++            let hash = Sha256::digest(held.png());
++            for _ in 0..100_000 {
++                if running.pending_png.is_some() {
++                    break;
++                }
++                assert!(running.advance(1).unwrap());
++            }
++            let pending = running.pending_png.as_mut().unwrap();
++            while !pending.step(1, &job.0.cancel).unwrap() {}
++            job.cancel().unwrap();
++            assert!(!running.guarded_step(1));
++            assert_eq!(job.status().unwrap().progress.phase, Phase::Cancelled);
++            assert!(job.preview().unwrap().is_none() && job.partial_preview().unwrap().is_none());
++            assert!(job.frame().unwrap().is_none());
++            assert_eq!(Sha256::digest(held.png()), hash);
++            drop(running);
++            drop(job);
++            drop(held);
++            assert_eq!(host.admitted_bytes(), 0);
++        }
++    }
++    #[test]
++    fn third_checkpoint_is_valid_after_two_but_a_gap_still_fails() {
++        let (host, job, mut running) = fixture(7, false);
++        let mut third = None;
++        for _ in 0..100_000 {
++            assert!(running.advance(1).unwrap());
++            if let Some(preview) = job.preview().unwrap() {
++                if preview.info.samples_per_pixel == 3 {
++                    third = Some(preview);
++                    break;
++                }
++            }
++        }
++        let third = third.unwrap();
++        assert_eq!(third.info.frame_sequence, 3);
++        for _ in 0..100_000 {
++            if running.pending_png.as_ref().is_some_and(|pending| pending.preview_samples == Some(4)) {
++                break;
++            }
++            assert!(running.advance(1).unwrap());
++        }
++        running.pending_png.as_mut().unwrap().preview_samples = Some(5);
++        assert!(!running.guarded_step(1));
++        assert_eq!(job.status().unwrap().progress.phase, Phase::Failed);
++        assert!(job.preview().unwrap().is_none() && job.frame().unwrap().is_none());
++        assert_eq!(third.info.samples_per_pixel, 3);
++        drop(running);
++        drop(job);
++        drop(third);
++        assert_eq!(host.admitted_bytes(), 0);
++    }
++}
+--- a/crates/render/src/job/interactive.rs
++++ b/crates/render/src/job/interactive.rs
+@@ -30,9 +30,10 @@
+     request.height = fit(height);
+     let options = request.raytrace.get_or_insert_default();
+     options.primary_samples = 1;
+-    // These are preview sampling choices only. Incompatible transport remains an
+-    // explicit error, rather than silently removing the user's requested effects.
+-    options.progressive = Some(CpuProgressiveOptions::default());
++    // Preserve explicit accumulation intent, including its deterministic seed.
++    // Fixed-image callers keep the original preview default. Incompatible
++    // transport remains an error rather than silently removing requested effects.
++    options.progressive.get_or_insert_with(CpuProgressiveOptions::default);
+     if let Some(reflections) = &mut options.reflections {
+         reflections.samples = 1;
+     }
+@@ -287,3 +288,84 @@
+         let _ = self.cancel();
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::job::{CpuBudget, RaytraceOptions};
++
++    fn request(options: RaytraceOptions) -> ImageRequest {
++        ImageRequest {
++            raster_punctual_lights: None,
++            raster_area_lights: None,
++            raster_exposure_ev: 0.0,
++            raster_lights: None,
++            studio_weights: None,
++            integrator: Integrator::Raytrace,
++            raytrace: Some(options),
++            textures: None,
++            environment: None,
++            camera: Default::default(),
++            width: 81,
++            height: 53,
++            background: [40, 80, 120],
++            transparent_background: false,
++        }
++    }
++
++    #[test]
++    fn explicit_progressive_target_and_seed_survive_interactive_conversion() {
++        for (budget, samples) in [(CpuBudget::Compact, 31), (CpuBudget::Studio, 997), (CpuBudget::Workstation, 1_048_576)] {
++            let mut source = request(RaytraceOptions {
++                budget,
++                progressive: Some(CpuProgressiveOptions { samples_per_pixel: samples, seed: u32::MAX }),
++                primary_samples: 1,
++                exposure_ev: -2.0,
++                shadows: false,
++                ..Default::default()
++            });
++            // The high target still obeys P*SPP admission; no implicit resize/profile.
++            if budget == CpuBudget::Workstation {
++                source.width = 3840;
++                source.height = 1;
++            }
++            let before = serde_json::to_value(&source).unwrap();
++            let converted = cpu_request(&source).unwrap();
++            let mut expected = source.clone();
++            if budget == CpuBudget::Workstation {
++                expected.width = 1024;
++            }
++            assert_eq!(serde_json::to_value(converted).unwrap(), serde_json::to_value(expected).unwrap());
++            assert_eq!(serde_json::to_value(&source).unwrap(), before);
++        }
++    }
++
++    #[test]
++    fn fixed_interactive_keeps_original_default_and_invalid_explicit_intent_refuses() {
++        let source = request(RaytraceOptions { primary_samples: 16, ..Default::default() });
++        let converted = cpu_request(&source).unwrap();
++        let options = converted.raytrace.unwrap();
++        assert_eq!(options.progressive, Some(CpuProgressiveOptions { samples_per_pixel: 16, seed: 0 }));
++        assert_eq!(options.primary_samples, 1);
++        assert!(source.raytrace.as_ref().unwrap().progressive.is_none());
++        for (budget, samples) in [(CpuBudget::Compact, 65), (CpuBudget::Studio, 1025), (CpuBudget::Workstation, 1_048_577)] {
++            let invalid = request(RaytraceOptions {
++                budget,
++                primary_samples: 1,
++                progressive: Some(CpuProgressiveOptions { samples_per_pixel: samples, seed: 741 }),
++                ..Default::default()
++            });
++            let before = serde_json::to_value(&invalid).unwrap();
++            assert!(cpu_request(&invalid).is_err());
++            assert_eq!(serde_json::to_value(&invalid).unwrap(), before);
++        }
++        let mut over_work = request(RaytraceOptions {
++            primary_samples: 1,
++            progressive: Some(CpuProgressiveOptions { samples_per_pixel: 64, seed: 741 }),
++            ..Default::default()
++        });
++        over_work.width = 1024;
++        over_work.height = 1024;
++        assert!(cpu_request(&over_work).is_err(), "do not reduce the explicit target to fit the profile");
++    }
++}
+--- a/crates/render/src/job/mod.rs
++++ b/crates/render/src/job/mod.rs
+@@ -694,10 +694,11 @@
+         budget.validate_image(width, height, Some(*self))
+     }
+ 
+-    /// Nonfinal checkpoints whose PNG allocations may remain externally retained.
++    /// At most two reusable checkpoint reservations. A pinned consumer keeps its
++    /// slot charged; it does not authorize a new allocation per pass.
+     #[cfg(feature = "raytrace-cpu")]
+-    pub(crate) fn preview_count(&self) -> u32 {
+-        if self.samples_per_pixel <= 1 { 0 } else { (self.samples_per_pixel - 1).ilog2() + 1 }
++    pub(crate) fn checkpoint_slots(&self) -> u32 {
++        self.samples_per_pixel.saturating_sub(1).min(2)
+     }
+ }
+ 
+@@ -1735,12 +1736,12 @@
+     }
+     pub fn covered_bytes(&self) -> Result<u64> {
+         self.validate()?;
+-        self.pixels().checked_mul(2).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial coverage capacity overflow"))
++        self.pixels().checked_mul(4).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial coverage capacity overflow"))
+     }
+     pub fn snapshot_work(&self) -> Result<u64> {
+         self.validate()?;
+         self.pixels()
+-            .checked_mul(12)
++            .checked_mul(14)
+             .and_then(|v| v.checked_add(65_538))
+             .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial work bound overflow"))
+     }
+@@ -1761,7 +1762,10 @@
+ }
+ 
+ /// Explicit protected-feedback aggregate ceiling; the ordinary MAX_CPU_WORK is unchanged.
+-pub const MAX_PROTECTED_CPU_WORK: u64 = 16_000_809_500_800;
++// At most 1024² representatives: 14 work units each plus 65,538 codec/hash
++// overhead. At most 64 early milestones and MAX_SPP-1 complete-pass snapshots.
++// This Cartesian upper bound is deliberately conservative; ordinary work is unchanged.
++pub const MAX_PROTECTED_CPU_WORK: u64 = MAX_CPU_WORK + 14_745_602 * (MAX_CPU_SAMPLES_PER_PIXEL as u64 + 63);
+ 
+ /// Checked per-job feedback policy, not an admission token or an arbitrary work envelope.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -1780,11 +1784,11 @@
+             .checked_mul(u64::from(source_height))
+             .and_then(|v| v.checked_mul(u64::from(samples_per_pixel)))
+             .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected camera-commit count overflow"))?;
+-        let quota_limit = if total_commits <= 1 {
+-            0
+-        } else {
+-            u32::try_from((total_commits - 1).min(64)).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "protected quota overflow"))?
+-        };
++        let pixels = u64::from(source_width) * u64::from(source_height);
++        let early =
++            u32::try_from(pixels.saturating_sub(1).min(64)).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "protected early quota overflow"))?;
++        let quota_limit =
++            early.checked_add(samples_per_pixel - 1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected quota overflow"))?;
+         let plan = Self { preview, samples_per_pixel, budget, total_commits, quota_limit };
+         plan.aggregate_limit()?;
+         Ok(plan)
+@@ -1827,20 +1831,58 @@
+             .filter(|v| *v <= MAX_PROTECTED_CPU_WORK)
+             .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected aggregate work exceeds its explicit ceiling"))
+     }
++    /// Number of reached milestones in O(1), including a final sentinel without
++    /// adding a final-image snapshot. A delayed consumer cannot create a long
++    /// uninterruptible coalescing loop in the worker.
++    #[cfg(feature = "raytrace-cpu")]
++    pub(crate) fn reached_milestones(&self, committed: u64) -> Result<u32> {
++        if committed > self.total_commits {
++            return Err(JobError::new(ErrorCode::InvalidRequest, "protected frontier exceeds its final target"));
++        }
++        let pixels = u64::from(self.preview.source_width()) * u64::from(self.preview.source_height());
++        let early = pixels.saturating_sub(1).min(64);
++        let reached_early = if committed == 0 || early == 0 {
++            0
++        } else if committed >= pixels - 1 {
++            early
++        } else if early == 1 {
++            1
++        } else {
++            committed
++                .checked_mul(early - 1)
++                .map(|n| n.div_ceil(pixels - 2))
++                .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected reached milestone overflow"))?
++        };
++        let passes = (committed / pixels).min(u64::from(self.samples_per_pixel - 1));
++        reached_early
++            .checked_add(passes)
++            .and_then(|n| u32::try_from(n).ok())
++            .filter(|n| *n <= self.quota_limit)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected reached quota overflow"))
++    }
++
+     /// Zero-based, strictly increasing milestones below the final target.
+     pub fn milestone(&self, index: u32) -> Result<u64> {
+         if index >= self.quota_limit {
+             return Err(JobError::new(ErrorCode::InvalidRequest, "protected milestone index outside its quota"));
+         }
+-        if self.quota_limit == 1 {
+-            return Ok(1);
+-        }
+-        self.total_commits
+-            .checked_sub(2)
+-            .and_then(|v| v.checked_mul(u64::from(index)))
+-            .and_then(|v| v.checked_div(u64::from(self.quota_limit - 1)))
+-            .and_then(|v| v.checked_add(1))
+-            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected milestone arithmetic overflow"))
++        let pixels = u64::from(self.preview.source_width()) * u64::from(self.preview.source_height());
++        let early = u32::try_from(pixels.saturating_sub(1).min(64))
++            .map_err(|_| JobError::new(ErrorCode::LimitExceeded, "protected early milestone overflow"))?;
++        if index < early {
++            if early == 1 {
++                return Ok(1);
++            }
++            return pixels
++                .checked_sub(2)
++                .and_then(|n| n.checked_mul(u64::from(index)))
++                .and_then(|n| n.checked_div(u64::from(early - 1)))
++                .and_then(|n| n.checked_add(1))
++                .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected early milestone arithmetic overflow"));
++        }
++        u64::from(index - early + 1)
++            .checked_mul(pixels)
++            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected pass milestone arithmetic overflow"))
+     }
+ }
+ 
+--- a/crates/render/src/raytrace/environment_image_tests.rs
++++ b/crates/render/src/raytrace/environment_image_tests.rs
+@@ -133,7 +133,7 @@
+ 
+ #[test]
+ fn progressive_hdr_and_rough_reflections_keep_the_same_absolute_prefix_at_every_quantum() {
+-    for (target, checkpoints) in [(3, vec![1, 2]), (7, vec![1, 2, 4])] {
++    for (target, checkpoints) in [(3, vec![1, 2]), (7, vec![1, 2, 3, 4, 5, 6])] {
+         let result = progressive_hdr_png(target, 82, 1, Some(input()));
+         assert_eq!(result.previews.iter().map(|(n, _)| *n).collect::<Vec<_>>(), checkpoints);
+         let other = progressive_hdr_png(target, 82, 16384, Some(input()));
+--- a/crates/render/src/raytrace/image.rs
++++ b/crates/render/src/raytrace/image.rs
+@@ -302,7 +302,10 @@
+         let previews = if let Some(plan) = partial {
+             plan.additional_bytes()?
+         } else {
+-            u64::from(progressive.preview_count()).checked_mul(checkpoint).ok_or_else(|| error(TraceError::MemoryLimit))?
++            u64::from(progressive.checkpoint_slots())
++                .checked_mul(checkpoint)
++                .and_then(|bytes| bytes.checked_add(if progressive.checkpoint_slots() == 0 { 0 } else { 1024 }))
++                .ok_or_else(|| error(TraceError::MemoryLimit))?
+         };
+         PrimaryFilm::required_bytes(request.width, request.height, progressive, options.budget)?
+             .checked_add(previews)
+@@ -618,6 +621,7 @@
+ pub struct ImageTask {
+     punctual_diagnostics: job::PunctualDiagnostics,
+     progressive: Option<Progressive>,
++    last_pass_boundary: u32,
+     optical: Vec<OpticalTask>,
+     anisotropic_targets: [Option<PlanarTarget>; 2],
+     environment: Option<crate::lighting::environment_input::EnvironmentState>,
+@@ -667,7 +671,7 @@
+ pub(crate) enum PartialImagePoll {
+     Pending(Progress),
+     Complete(Vec<u8>),
+-    Preview { png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64 },
++    Preview { png: Vec<u8>, covered: Vec<u32>, completed_passes: u32, updated_prefix: u64 },
+ }
+ 
+ pub(crate) enum PartialBegin {
+@@ -677,7 +681,7 @@
+ 
+ enum ImageAdvance {
+     Legacy(ImagePoll),
+-    Partial { png: Vec<u8>, covered: Vec<u16>, completed_passes: u32, updated_prefix: u64 },
++    Partial { png: Vec<u8>, covered: Vec<u32>, completed_passes: u32, updated_prefix: u64 },
+ }
+ 
+ impl ImageTask {
+@@ -868,6 +872,7 @@
+         Ok(Self {
+             punctual_diagnostics: Default::default(),
+             progressive,
++            last_pass_boundary: 0,
+             optical,
+             anisotropic_targets,
+             environment,
+@@ -1087,8 +1092,8 @@
+                 .ok_or_else(|| invalid("spatial coverage bound"))?;
+             let rgba = composite_spatial(
+                 self.spatial_radiance,
+-                self.primary_coverage,
+-                attempts,
++                u32::from(self.primary_coverage),
++                u32::from(attempts),
+                 self.request.background,
+                 self.visibility_owner.options().exposure_ev,
+             )?;
+@@ -1960,6 +1965,14 @@
+         progressive::represented_changed(plan, progressive.last_partial, frontier)
+     }
+ 
++    pub(crate) fn completed_pass_preview_ready(&self, plan: job::PartialPreviewPlan) -> job::Result<Option<u32>> {
++        if self.work.protected.is_none() || !self.partial_preview_ready(plan)? {
++            return Ok(None);
++        }
++        let frontier = self.progressive.as_ref().ok_or_else(|| invalid("missing progressive film"))?.film.partial_frontier()?;
++        Ok((frontier.updated_prefix == 0 && frontier.completed_passes > 0).then_some(frontier.completed_passes))
++    }
++
+     /// Host must already hold its one in-flight credit. No host lease or clock
+     /// lives here; an insufficient optional debit does not mutate trace state.
+     pub(crate) fn begin_partial_preview(&mut self, plan: job::PartialPreviewPlan) -> job::Result<PartialBegin> {
+@@ -2008,8 +2021,6 @@
+             let (rgba, covered) = match value {
+                 crate::film::primary::PartialPixel::Unknown => ([0; 4], 0),
+                 crate::film::primary::PartialPixel::Sampled { linear_premultiplied, covered, count } => {
+-                    let covered = u16::try_from(covered).map_err(|_| error(TraceError::MemoryLimit))?;
+-                    let count = u16::try_from(count).map_err(|_| error(TraceError::MemoryLimit))?;
+                     let [r, g, b] = linear_premultiplied;
+                     (
+                         composite_spatial(Vec3::new(r, g, b), covered, count, self.request.background, self.visibility_owner.options().exposure_ev)?,
+@@ -2180,9 +2191,14 @@
+             } else if self.bvh.is_some() {
+                 if self.pixel == self.request.width as usize * self.request.height as usize {
+                     if let Some(progressive) = &mut self.progressive {
++                        let samples = progressive.film.samples();
++                        if progressive.partial_plan.is_some() && samples < progressive.options.samples_per_pixel && samples > self.last_pass_boundary
++                        {
++                            self.last_pass_boundary = samples;
++                            return Ok(ImageAdvance::Legacy(ImagePoll::Pending(self.progress())));
++                        }
+                         self.work.tick(&self.cancel).map_err(error)?;
+-                        let samples = progressive.film.samples();
+-                        if samples == progressive.options.samples_per_pixel || (progressive.partial_plan.is_none() && samples.is_power_of_two()) {
++                        if samples == progressive.options.samples_per_pixel || progressive.partial_plan.is_none() {
+                             progressive.resolving = true;
+                         } else {
+                             self.pixel = 0;
+@@ -2270,15 +2286,30 @@
+     if spatial_samples == 1 && film_sample == 0 {
+         return Ok(pixel);
+     }
+-    pixel
+-        .checked_mul(u64::from(job::MAX_CPU_SAMPLES_PER_PIXEL) * 16)
+-        .and_then(|key| key.checked_add(u64::from(film_sample) * 16 + u64::from(spatial)))
+-        .map(|key| key ^ 0x4152_4541_5341_4d50)
+-        .ok_or_else(|| invalid("area-light sample identity overflow"))
+-}
+-
+-fn composite_spatial(premultiplied: Vec3, covered: u16, attempts: u16, background: [u8; 3], exposure: f64) -> job::Result<[u8; 4]> {
+-    if attempts == 0 || u32::from(attempts) > job::MAX_CPU_SAMPLES_PER_PIXEL || covered > attempts || !bounded_radiance(premultiplied) {
++    if film_sample < 4096 {
++        // Preserve every historical ordinal and fixed-primary key exactly.
++        return pixel
++            .checked_mul(4096 * 16)
++            .and_then(|key| key.checked_add(u64::from(film_sample) * 16 + u64::from(spatial)))
++            .map(|key| key ^ 0x4152_4541_5341_4d50)
++            .ok_or_else(|| invalid("area-light sample identity overflow"));
++    }
++    if pixel >= (1_u64 << 26) || film_sample >= (1_u32 << 20) {
++        return Err(invalid("area-light extended sample identity exceeds its fields"));
++    }
++    let mode = match spatial_samples {
++        1 => 0_u64,
++        4 => 1,
++        16 => 2,
++        _ => return Err(invalid("area-light primary mode")),
++    };
++    // Separate extended ordinals from old keys and reserve ten low bits for
++    // the existing light/emitter RNG offsets. No target/budget/cadence key.
++    Ok((1_u64 << 63) | (pixel << 36) | (u64::from(film_sample) << 16) | (mode << 14) | (u64::from(spatial) << 10))
++}
++
++fn composite_spatial(premultiplied: Vec3, covered: u32, attempts: u32, background: [u8; 3], exposure: f64) -> job::Result<[u8; 4]> {
++    if attempts == 0 || attempts > job::MAX_CPU_SAMPLES_PER_PIXEL || covered > attempts || !bounded_radiance(premultiplied) {
+         return Err(invalid("invalid spatial coverage/radiance"));
+     }
+     if covered == 0 {
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -1758,7 +1758,7 @@
+                 assert!(task.pending.is_none());
+                 assert!(task.optical.first().unwrap().pending.is_none());
+                 let (_, covered, count) = task.progressive.as_ref().unwrap().film.pixel(0).unwrap();
+-                assert_eq!((u32::from(covered), u32::from(count)), (samples_per_pixel, samples_per_pixel));
++                assert_eq!((covered, count), (samples_per_pixel, samples_per_pixel));
+                 checkpoints.push((samples_per_pixel, png));
+             }
+             ImagePoll::Complete(png) => {
+@@ -1778,7 +1778,7 @@
+         let four = finish_optical_progressive(ImageTask::new(scene, request, CancelToken::default(), options).unwrap(), 4);
+         assert_eq!(one, four, "film bits, actual primary rays, checkpoints, final and total work agree");
+         assert_eq!(one.primaries.len(), 5);
+-        assert_eq!(one.checkpoints.iter().map(|c| c.0).collect::<Vec<_>>(), [1, 2, 4]);
++        assert_eq!(one.checkpoints.iter().map(|c| c.0).collect::<Vec<_>>(), [1, 2, 3, 4]);
+         assert_ne!(one.primaries[0].2, one.primaries[1].2, "fresh camera jitter, no repeated completed sample");
+         let linear = f64::from_bits(one.film[0][0]);
+         assert!(linear > 0.999 && linear <= 1.0 + 1e-12, "bounded eight-boundary lossless response, not alpha or branch averaging");
+--- a/crates/render/src/raytrace/mod.rs
++++ b/crates/render/src/raytrace/mod.rs
+@@ -179,13 +179,7 @@
+         let presentation_used = state.presentation_used.checked_add(cost).filter(|v| *v <= state.presentation_limit).ok_or(TraceError::WorkLimit)?;
+         let used = self.used.checked_add(cost).filter(|v| *v <= state.aggregate_limit).ok_or(TraceError::WorkLimit)?;
+         let accepted = state.accepted_snapshots.checked_add(1).filter(|n| *n <= state.plan.quota_limit()).ok_or(TraceError::WorkLimit)?;
+-        let mut next = state.next_milestone_index;
+-        while next < state.plan.quota_limit() {
+-            if state.plan.milestone(next).map_err(|_| TraceError::Internal("invalid protected milestone"))? > committed {
+-                break;
+-            }
+-            next = next.checked_add(1).ok_or(TraceError::WorkLimit)?;
+-        }
++        let next = state.plan.reached_milestones(committed).map_err(|_| TraceError::Internal("invalid protected reached frontier"))?;
+         check_cancel(cancel)?;
+         let state = self.protected.as_mut().ok_or(TraceError::Internal("protected ledger disappeared"))?;
+         state.presentation_used = presentation_used;
+--- a/crates/render/src/raytrace/primary_aa_tests.rs
++++ b/crates/render/src/raytrace/primary_aa_tests.rs
+@@ -35,7 +35,7 @@
+ #[test]
+ fn progressive_real_png_has_stable_prefixes_quanta_and_fresh_primary_samples() {
+     let (previews, final_png, work) = progressive_complete(progressive_fixture(8, 123, Some(true), 0.0), 1);
+-    assert_eq!(previews.iter().map(|(samples, _)| *samples).collect::<Vec<_>>(), [1, 2, 4]);
++    assert_eq!(previews.iter().map(|(samples, _)| *samples).collect::<Vec<_>>(), [1, 2, 3, 4, 5, 6, 7]);
+     let (other, other_final, other_work) = progressive_complete(progressive_fixture(8, 123, Some(true), 0.0), 16_384);
+     assert_eq!(other, previews);
+     assert_eq!(other_final, final_png);
+@@ -75,7 +75,11 @@
+         assert_eq!(::image::load_from_memory(&half).unwrap().to_rgba8().get_pixel(0, 0).0, [expected, expected, expected, 255]);
+     }
+     let (previews, _, _) = progressive_complete(progressive_fixture(5, 9, Some(true), 0.0), 1);
+-    assert_eq!(previews.iter().map(|(samples, _)| *samples).collect::<Vec<_>>(), [1, 2, 4], "non-power-of-two target still has an exact final pass");
++    assert_eq!(
++        previews.iter().map(|(samples, _)| *samples).collect::<Vec<_>>(),
++        [1, 2, 3, 4],
++        "non-power-of-two target still has an exact final pass"
++    );
+ }
+ 
+ #[test]
+@@ -456,25 +460,37 @@
+ }
+ 
+ #[test]
+-fn workstation_progressive_resolves_every_checkpoint_through_its_admitted_cap() {
++fn workstation_progressive_streams_every_historical_2048_4096_checkpoint_and_checks_the_new_cap() {
+     let fixed = fixture(1, 1, Some(true));
+     let cap = job::CpuBudget::Workstation.limits().max_samples_per_pixel;
+-    assert_eq!(cap, 4096);
+-    for samples in [2048, cap] {
++    assert_eq!(cap, 1_048_576);
++    for samples in [2048, 4096] {
+         let mut options = fixed.visibility_owner.options().clone();
+         options.budget = job::CpuBudget::Workstation;
+         options.progressive = Some(job::CpuProgressiveOptions { samples_per_pixel: samples, seed: 123 });
+         let request = ImageRequest { raytrace: Some(options.clone()), ..fixed.request.clone() };
+-        let task = ImageTask::new(fixed.visibility_owner.source().clone(), request, CancelToken::default(), options).unwrap();
+-        let (previews, final_png, _) = progressive_complete(task, 16_384);
+-        let expected: Vec<_> = (0..samples.ilog2()).map(|power| 1_u32 << power).collect();
+-        assert_eq!(previews.iter().map(|(n, _)| *n).collect::<Vec<_>>(), expected);
+-        for (_, png) in &previews {
+-            assert_eq!(::image::load_from_memory(png).unwrap().to_rgba8().dimensions(), (1, 1));
+-        }
+-        assert_eq!(::image::load_from_memory(&final_png).unwrap().to_rgba8().dimensions(), (1, 1));
+-    }
+-    assert!(composite_spatial(Vec3::ZERO, 0, 4097, [0; 3], 0.0).is_err());
++        let mut task = ImageTask::new(fixed.visibility_owner.source().clone(), request, CancelToken::default(), options).unwrap();
++        let mut observed = Vec::new();
++        let mut complete = false;
++        for _ in 0..200_000 {
++            match task.step_with_previews(16_384).unwrap() {
++                ImagePoll::Pending(_) => {}
++                ImagePoll::Preview { png, samples_per_pixel } => {
++                    observed.push(samples_per_pixel);
++                    assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().dimensions(), (1, 1));
++                }
++                ImagePoll::Complete(png) => {
++                    assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().dimensions(), (1, 1));
++                    complete = true;
++                    break;
++                }
++            }
++        }
++        assert!(complete);
++        assert_eq!(observed, (1..samples).collect::<Vec<_>>());
++    }
++    assert_eq!(composite_spatial(Vec3::ZERO, 0, 4097, [0; 3], 0.0).unwrap(), [0, 0, 0, 255]);
++    assert!(composite_spatial(Vec3::ZERO, 0, 1_048_577, [0; 3], 0.0).is_err());
+ }
+ 
+ #[test]
+@@ -492,7 +508,8 @@
+         }
+     }
+     assert_eq!(area_sample_key(41, 0, 1, 0).unwrap(), 41);
+-    assert!(area_sample_key(41, 0, 1, 4096).is_err());
++    assert_eq!(area_sample_key(41, 0, 1, 4096).unwrap(), (1_u64 << 63) | (41_u64 << 36) | (4096_u64 << 16));
++    assert!(area_sample_key(41, 0, 1, 1_048_576).is_err());
+     assert!(area_sample_key(41, 4, 4, 0).is_err());
+     assert!(area_sample_key(u64::MAX, 0, 4, 0).is_err());
+ }
+@@ -611,7 +628,7 @@
+         let small = progressive_complete(progressive_area_fixture(count, 5, 23, true), 1);
+         let large = progressive_complete(progressive_area_fixture(count, 5, 23, true), 16_384);
+         assert_eq!(small, large, "area continuation must share the same cumulative work across quanta");
+-        assert_eq!(small.0.iter().map(|(samples, _)| *samples).collect::<Vec<_>>(), [1, 2, 4]);
++        assert_eq!(small.0.iter().map(|(samples, _)| *samples).collect::<Vec<_>>(), [1, 2, 3, 4]);
+         for (samples, checkpoint) in &small.0 {
+             let (_, final_png, _) = progressive_complete(progressive_area_fixture(count, *samples, 23, true), 3);
+             assert_eq!(&final_png, checkpoint);
+@@ -821,7 +838,7 @@
+     }
+     panic!("real task did not reach requested committed frontier");
+ }
+-fn finish_partial_snapshot(task: &mut ImageTask) -> (Vec<u8>, Vec<u16>, u32, u64) {
++fn finish_partial_snapshot(task: &mut ImageTask) -> (Vec<u8>, Vec<u32>, u32, u64) {
+     let paid = task.work.used();
+     for _ in 0..200_000 {
+         let poll = task.step_with_partial_previews(1).unwrap();
+@@ -1217,7 +1234,7 @@
+ fn protected_actual_empty_counterexample_preserves_final_work_while_shared_cap_can_starve() {
+     let source = empty_progressive_source();
+     let plan = protected_plan(&source);
+-    assert_eq!((plan.total_commits(), plan.quota_limit(), plan.snapshot_work().unwrap()), (65536, 64, 77826));
++    assert_eq!((plan.total_commits(), plan.quota_limit(), plan.snapshot_work().unwrap()), (65536, 127, 79874));
+     let mut reference = shared_partial_rebuild(&source, None);
+     let mut reference_rays = Vec::new();
+     let expected = finish_partial_final(&mut reference, true, &mut reference_rays);
+@@ -1263,7 +1280,7 @@
+             let _ = finish_partial_snapshot(&mut task);
+             let paid = task.protected_preview_report().unwrap();
+             assert_eq!(paid.ordinary_used, before.ordinary_used);
+-            assert_eq!((paid.presentation_used, paid.accepted_snapshots), (77826, 1));
++            assert_eq!((paid.presentation_used, paid.accepted_snapshots), (79874, 1));
+         }
+         let actual = finish_partial_final(&mut task, true, &mut rays);
+         assert_eq!(actual, expected, "protected feedback cannot change PNG or linear film");
+@@ -1271,7 +1288,7 @@
+         assert_eq!(rays.len(), 65536);
+         let report = task.protected_preview_report().expect("actual report survives completed-film destruction");
+         assert_eq!(report.ordinary_used, ordinary);
+-        let optional = if request_snapshot { 77826 } else { 0 };
++        let optional = if request_snapshot { 79874 } else { 0 };
+         assert_eq!(report.presentation_used, optional);
+         assert_eq!(task.work.used(), ordinary + optional);
+         assert_eq!(report.aggregate_limit, ordinary + plan.presentation_limit().unwrap());
+@@ -1319,7 +1336,7 @@
+     assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(), PartialBegin::Started));
+     let _ = finish_partial_snapshot(&mut task);
+     let coalesced = task.protected_preview_report().unwrap();
+-    assert_eq!((coalesced.accepted_snapshots, coalesced.next_milestone_index, coalesced.quota_limit), (1, 19, 19));
++    assert_eq!((coalesced.accepted_snapshots, coalesced.next_milestone_index, coalesced.quota_limit), (1, 7, 7));
+     assert!(coalesced.milestones_complete && !coalesced.quota_exhausted);
+     assert_eq!(coalesced.presentation_used, plan.snapshot_work().unwrap());
+     assert!(coalesced.presentation_used < coalesced.presentation_limit);
+@@ -1336,7 +1353,7 @@
+ }
+ 
+ #[test]
+-fn protected_actual_sixty_four_snapshots_exhaust_quota_without_failing_final() {
++fn protected_actual_every_pass_and_early_snapshots_exhaust_quota_without_failing_final() {
+     let source = empty_progressive_source();
+     let mut control = shared_partial_rebuild(&source, None);
+     let expected = finish_partial_final(&mut control, true, &mut Vec::new());
+@@ -1345,7 +1362,7 @@
+     initial_test_work(&mut task, ordinary, true);
+     let plan = protected_plan(&task);
+     let mut rays = Vec::new();
+-    for index in 0..64 {
++    for index in 0..127 {
+         let milestone = plan.milestone(index).unwrap();
+         reach_partial_frontier(&mut task, (milestone / 1024) as u32, (milestone % 1024) as usize, &mut rays);
+         assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(), PartialBegin::Started));
+@@ -1353,7 +1370,7 @@
+         let report = task.protected_preview_report().unwrap();
+         assert_eq!(report.accepted_snapshots, index + 1);
+         assert_eq!(report.next_milestone_index, index + 1);
+-        assert_eq!(report.presentation_used, u64::from(index + 1) * 77826);
++        assert_eq!(report.presentation_used, u64::from(index + 1) * 79874);
+     }
+     let exhausted = task.protected_preview_report().unwrap();
+     assert!(exhausted.quota_exhausted && exhausted.milestones_complete);
+@@ -1374,7 +1391,7 @@
+     let complete = task.protected_preview_report().unwrap();
+     assert_eq!(complete.ordinary_used, ordinary);
+     assert_eq!(task.work.used(), complete.aggregate_limit, "O reaches its full original T and V exactly Q");
+-    assert_eq!(complete.presentation_used, 64 * 77826);
++    assert_eq!(complete.presentation_used, 127 * 79874);
+ }
+ 
+ #[test]
+@@ -1837,3 +1854,127 @@
+         assert_eq!(report.presentation_used, plan.snapshot_work().unwrap());
+     }
+ }
++
++#[test]
++fn every_cpu_pass_seven_has_exact_short_job_pngs_across_worker_quanta() {
++    let run = progressive_complete(progressive_fixture(7, 123, Some(true), 0.0), 1);
++    assert_eq!(run.0.iter().map(|(samples, _)| *samples).collect::<Vec<_>>(), [1, 2, 3, 4, 5, 6]);
++    assert_eq!(run, progressive_complete(progressive_fixture(7, 123, Some(true), 0.0), 16_384));
++    for (samples, png) in &run.0 {
++        assert_eq!(png, &progressive_complete(progressive_fixture(*samples, 123, Some(true), 0.0), 3).1);
++    }
++}
++
++#[test]
++fn every_cpu_pass_area_sample_keys_preserve_history_and_separate_high_ordinal_blocks() {
++    for (pixel, ordinal, spatial, primary, expected) in [
++        (0_u64, 4095_u32, 0_u8, 1_u8, 0x4152_4541_5341_b2a0_u64),
++        (0, 4096, 0, 1, 0x8000_0000_1000_0000),
++        (1, 4096, 0, 1, 0x8000_0010_1000_0000),
++        (0, 4096, 0, 4, 0x8000_0000_1000_4000),
++        (0, 4096, 3, 4, 0x8000_0000_1000_4c00),
++        (0, 1_048_575, 15, 16, 0x8000_000f_ffff_bc00),
++        (67_108_863, 1_048_575, 15, 16, 0xbfff_ffff_ffff_bc00),
++    ] {
++        assert_eq!(area_sample_key(pixel, spatial, primary, ordinal).unwrap(), expected);
++    }
++    for pixel in [0_u64, 1, 67_108_863] {
++        for primary in [1_u8, 4, 16] {
++            for spatial in 0..primary {
++                for ordinal in [0_u32, 1, 63, 4095] {
++                    let expected = if primary == 1 && ordinal == 0 {
++                        pixel
++                    } else {
++                        (pixel * 65_536 + u64::from(ordinal) * 16 + u64::from(spatial)) ^ 0x4152_4541_5341_4d50
++                    };
++                    assert_eq!(area_sample_key(pixel, spatial, primary, ordinal).unwrap(), expected);
++                }
++                for ordinal in [4096_u32, 65_535, 65_536, 1_048_575] {
++                    let mode = match primary {
++                        1 => 0_u64,
++                        4 => 1,
++                        16 => 2,
++                        _ => unreachable!(),
++                    };
++                    let expected = (1_u64 << 63) | (pixel << 36) | (u64::from(ordinal) << 16) | (mode << 14) | (u64::from(spatial) << 10);
++                    assert_eq!(area_sample_key(pixel, spatial, primary, ordinal).unwrap(), expected);
++                    assert_eq!(expected & 1023, 0);
++                    assert_ne!(
++                        area_sample_key(pixel, spatial, primary, ordinal).unwrap(),
++                        area_sample_key(pixel, spatial, primary, ordinal % 4096).unwrap()
++                    );
++                }
++            }
++        }
++    }
++    assert!(area_sample_key(u64::MAX, 0, 1, 1).is_err());
++    assert!(area_sample_key(0, 0, 1, 1_048_576).is_err());
++    assert!(area_sample_key(1_u64 << 26, 0, 1, 4096).is_err());
++    let mut states = std::collections::BTreeSet::new();
++    for pixel in [0_u64, 67_108_863] {
++        for ordinal in [4096_u32, 65_535, 1_048_575] {
++            for light in 0..4_u64 {
++                for sample in 0..64_u64 {
++                    let key = area_sample_key(pixel, 0, 1, ordinal).unwrap();
++                    let state = key.checked_add(u64::from(u32::MAX) * 65_537 + light * 104_729 + sample * 8191).unwrap();
++                    assert_ne!(state & (1_u64 << 63), 0);
++                    assert!(states.insert(state), "initial RNG states, not generated UVs, stay distinct");
++                }
++            }
++        }
++    }
++}
++
++#[test]
++fn every_cpu_pass_display_uses_full_u32_coverage_without_saturation() {
++    assert_eq!(composite_spatial(Vec3::ZERO, 65_536, 65_536, [13, 27, 41], 0.0).unwrap(), [0, 0, 0, 255]);
++    assert_eq!(composite_spatial(Vec3::ZERO, 0, 65_536, [13, 27, 41], 0.0).unwrap(), [13, 27, 41, 255]);
++    assert!(composite_spatial(Vec3::ZERO, 65_537, 65_536, [13, 27, 41], 0.0).is_err());
++}
++
++#[test]
++#[cfg(target_pointer_width = "64")]
++fn every_cpu_pass_actual_65536_film_resolves_one_u32_snapshot_and_unique_final() {
++    let source = fixture(1, 1, None);
++    let mut options = source.visibility_owner.options().clone();
++    options.budget = job::CpuBudget::Workstation;
++    options.progressive = Some(job::CpuProgressiveOptions { samples_per_pixel: 65_537, seed: 123 });
++    let plan = job::ProtectedPreviewPlan::new(1, 1, 65_537, job::CpuBudget::Workstation).unwrap();
++    let request = ImageRequest { raytrace: Some(options.clone()), ..source.request.clone() };
++    let mut task = ImageTask::new_with_environment_and_nested_and_protected_partial(
++        source.visibility_owner.source().clone(),
++        request,
++        CancelToken::default(),
++        options,
++        None,
++        false,
++        plan,
++    )
++    .unwrap();
++    let mut reached = false;
++    for _ in 0..2_000_000 {
++        if task.progressive.as_ref().is_some_and(|state| state.film.ready() && state.film.samples() == 65_536)
++            && task.partial_preview_ready(plan.preview_plan()).unwrap()
++        {
++            reached = true;
++            break;
++        }
++        assert!(matches!(task.step_with_partial_previews(16_384).unwrap(), PartialImagePoll::Pending(_)));
++    }
++    assert!(reached);
++    let (linear, covered, count) = task.progressive.as_ref().unwrap().film.pixel(0).unwrap();
++    assert_eq!(linear, [0.0; 3]);
++    assert_eq!((covered, count), (0, 65_536));
++    assert!(matches!(task.begin_partial_preview(plan.preview_plan()).unwrap(), PartialBegin::Started));
++    let (png, covered, passes, prefix) = finish_partial_snapshot(&mut task);
++    assert_eq!(covered, [0]);
++    assert_eq!((passes, prefix), (65_536, 0));
++    assert_eq!(::image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(0, 0).0, [255; 4]);
++    let report = task.protected_preview_report().unwrap();
++    assert_eq!((report.accepted_snapshots, report.next_milestone_index), (1, 65_536));
++    assert_eq!(report.presentation_used, 65_552);
++    let (final_png, bits) = finish_partial_final(&mut task, true, &mut Vec::new());
++    assert_eq!(::image::load_from_memory(&final_png).unwrap().to_rgba8().get_pixel(0, 0).0, [255; 4]);
++    assert_eq!(bits, [[0.0_f64.to_bits(); 3]]);
++    assert!(task.done && task.progressive.is_none());
++}
+--- a/crates/render/src/raytrace/progressive.rs
++++ b/crates/render/src/raytrace/progressive.rs
+@@ -18,7 +18,7 @@
+     pub frontier: crate::film::primary::PartialFrontier,
+     pub resume_pixel: usize,
+     pub next: usize,
+-    pub covered: Vec<u16>,
++    pub covered: Vec<u32>,
+ }
+ 
+ /// Read-only O(1) test for new represented data; no scan over the source film.
+--- a/crates/render/src/raytrace/tests.rs
++++ b/crates/render/src/raytrace/tests.rs
+@@ -264,7 +264,7 @@
+ fn protected_ledger_keeps_ordinary_profiles_and_requires_the_explicit_new_envelope() {
+     use crate::job::{CpuBudget, MAX_CPU_WORK, MAX_PROTECTED_CPU_WORK, ProtectedPreviewPlan};
+     assert_eq!(MAX_CPU_WORK, 16_000_000_000_000);
+-    assert_eq!(MAX_PROTECTED_CPU_WORK, 16_000_809_500_800);
++    assert_eq!(MAX_PROTECTED_CPU_WORK, 31_462_813_335_678);
+     assert!(WorkBudget::new(MAX_CPU_WORK + 1).is_err());
+     assert!(WorkBudget::new(MAX_PROTECTED_CPU_WORK).is_err());
+     for budget in CpuBudget::ALL {
+@@ -272,7 +272,7 @@
+         let work = WorkBudget::new_protected(plan).unwrap();
+         let report = work.protected_report().unwrap();
+         assert_eq!(report.ordinary_limit, budget.limits().max_work_units);
+-        assert_eq!(report.presentation_limit, 64 * 12_648_450);
++        assert_eq!(report.presentation_limit, 958_464_130);
+         assert_eq!(report.aggregate_limit, report.ordinary_limit + report.presentation_limit);
+         assert_eq!(work.remaining(), report.ordinary_limit);
+         assert_eq!(work.ordinary_remaining(), report.ordinary_limit);
+@@ -281,7 +281,7 @@
+         assert_eq!((report.ordinary_used, report.presentation_used, work.used()), (0, 0, 0));
+     }
+     let max = ProtectedPreviewPlan::new(1024, 1024, 2, CpuBudget::Workstation).unwrap();
+-    assert_eq!(max.aggregate_limit().unwrap(), MAX_PROTECTED_CPU_WORK);
++    assert_eq!(max.aggregate_limit().unwrap(), MAX_CPU_WORK + 958_464_130);
+     assert!(WorkBudget::new(100).unwrap().protected_report().is_none());
+     assert!(ProtectedPreviewPlan::new(u32::MAX, u32::MAX, u32::MAX, CpuBudget::Workstation).is_err());
+ }
+@@ -321,7 +321,7 @@
+     assert_eq!(work.protected_report().unwrap(), initial);
+     assert!(work.charge_presentation(19, &CancelToken::default()).unwrap());
+     let coalesced = work.protected_report().unwrap();
+-    assert_eq!((coalesced.accepted_snapshots, coalesced.next_milestone_index, coalesced.quota_limit), (1, 19, 19));
++    assert_eq!((coalesced.accepted_snapshots, coalesced.next_milestone_index, coalesced.quota_limit), (1, 7, 7));
+     assert_eq!(coalesced.presentation_used, plan.snapshot_work().unwrap());
+     assert!(coalesced.presentation_used < coalesced.presentation_limit);
+     assert!(coalesced.milestones_complete);
+@@ -361,11 +361,11 @@
+     let plan = ProtectedPreviewPlan::new(32, 32, 64, CpuBudget::Compact).unwrap();
+     let cancel = CancelToken::default();
+     let mut work = WorkBudget::new_protected_for_test(plan, 17).unwrap();
+-    for index in 0..64 {
++    for index in 0..127 {
+         assert!(work.charge_presentation(plan.milestone(index).unwrap(), &cancel).unwrap());
+     }
+     let exhausted = work.protected_report().unwrap();
+-    assert_eq!((exhausted.accepted_snapshots, exhausted.next_milestone_index), (64, 64));
++    assert_eq!((exhausted.accepted_snapshots, exhausted.next_milestone_index), (127, 127));
+     assert_eq!(exhausted.presentation_used, exhausted.presentation_limit);
+     assert!(exhausted.quota_exhausted && exhausted.milestones_complete);
+     assert_eq!(work.ordinary_remaining(), 17);
+@@ -414,3 +414,42 @@
+     assert_eq!(second.protected_report().unwrap().presentation_used, 0);
+     assert_eq!(first.protected_report().unwrap(), paid);
+ }
++
++#[test]
++fn protected_reached_milestones_match_literal_small_and_first_pass_boundaries() {
++    use crate::job::{CpuBudget, ProtectedPreviewPlan};
++    for (pixels, samples, cases) in [
++        (1, 1, vec![(0, 0), (1, 0)]),
++        (1, 7, vec![(0, 0), (1, 1), (5, 5), (6, 6), (7, 6)]),
++        (2, 4, vec![(0, 0), (1, 1), (2, 2), (3, 2), (4, 3), (5, 3), (6, 4), (7, 4), (8, 4)]),
++        (3, 4, vec![(0, 0), (1, 1), (2, 2), (3, 3), (4, 3), (5, 3), (6, 4), (8, 4), (9, 5), (11, 5), (12, 5)]),
++        (65, 3, vec![(0, 0), (63, 63), (64, 64), (65, 65), (129, 65), (130, 66), (194, 66), (195, 66)]),
++        (66, 3, vec![(0, 0), (64, 63), (65, 64), (66, 65), (131, 65), (132, 66), (197, 66), (198, 66)]),
++        (67, 3, vec![(0, 0), (65, 63), (66, 64), (67, 65), (133, 65), (134, 66), (200, 66), (201, 66)]),
++    ] {
++        let plan = ProtectedPreviewPlan::new(pixels, 1, samples, CpuBudget::Compact).unwrap();
++        for (committed, expected) in cases {
++            assert_eq!(plan.reached_milestones(committed).unwrap(), expected, "P={pixels} S={samples} c={committed}");
++        }
++        assert!(plan.reached_milestones(plan.total_commits() + 1).is_err());
++        assert!(plan.reached_milestones(u64::MAX).is_err());
++    }
++}
++
++#[test]
++fn protected_large_delayed_frontier_coalesces_once_without_allocating_a_film_or_spending_ordinary_work() {
++    use crate::job::{CpuBudget, ProtectedPreviewPlan};
++    let plan = ProtectedPreviewPlan::new(1, 1, 1_048_576, CpuBudget::Workstation).unwrap();
++    assert_eq!(plan.quota_limit(), 1_048_575);
++    assert_eq!(plan.reached_milestones(65_536).unwrap(), 65_536);
++    assert_eq!(plan.reached_milestones(1_048_575).unwrap(), 1_048_575);
++    assert_eq!(plan.reached_milestones(1_048_576).unwrap(), 1_048_575);
++    let mut work = WorkBudget::new_protected_for_test(plan, 17).unwrap();
++    assert!(work.charge_presentation(1_048_575, &CancelToken::default()).unwrap());
++    let report = work.protected_report().unwrap();
++    assert_eq!((report.accepted_snapshots, report.next_milestone_index), (1, 1_048_575));
++    assert_eq!(report.presentation_used, 65_552);
++    assert_eq!(report.ordinary_used, 0);
++    assert_eq!(work.ordinary_remaining(), 17);
++    assert!(report.milestones_complete && !report.quota_exhausted);
++}
+--- a/crates/ui-egui/src/render_workspace.rs
++++ b/crates/ui-egui/src/render_workspace.rs
+@@ -1424,11 +1424,20 @@
+         return;
+     }
+     let result = (|| -> Result<egui::TextureHandle, String> {
+-        if info.frame_sequence == 0 || !(1..=4096).contains(&info.samples_per_pixel) {
++        if info.frame_sequence == 0 || !(1..=solidcraft_engine::render::job::MAX_CPU_SAMPLES_PER_PIXEL).contains(&info.samples_per_pixel) {
+             return Err(crate::i18n::tr("render.error_provisional_identity").into());
+         }
+         let handle = app.session.render_job_handle(info.frame.job).map_err(|e| e.to_string())?;
+         let captured = handle.status().map_err(|e| e.to_string())?;
++        if captured
++            .request
++            .raytrace
++            .as_ref()
++            .and_then(|options| options.progressive)
++            .is_some_and(|target| info.samples_per_pixel > target.samples_per_pixel)
++        {
++            return Err(crate::i18n::tr("render.error_provisional_identity").into());
++        }
+         if (info.frame.width, info.frame.height) != (captured.request.width, captured.request.height) {
+             return Err(crate::i18n::tr("render.error_checkpoint_dimensions").into());
+         }
+@@ -1447,6 +1456,30 @@
+     app.render_workspace.preview_image = Some(PreviewImage { info: info.clone(), image: result });
+ }
+ 
++// Consumer-only reconciliation of a temporarily absent latest publication.
++// Status must come from the actual handle; retained pixels never imply new work.
++fn reconcile_missing_cpu_preview(state: &mut State, job: JobId, status: Option<&solidcraft_engine::render::job::JobStatus>) {
++    let retain = state.preview_image.as_ref().is_some_and(|cached| {
++        cached.image.is_ok()
++            && status.is_some_and(|current| {
++                current.job == job
++                    && cached.info.frame.job == current.job
++                    && cached.info.frame.scene_generation == current.scene_generation
++                    && (cached.info.frame.width, cached.info.frame.height) == (current.request.width, current.request.height)
++                    && current.request.integrator == Integrator::Raytrace
++                    && current.request.raytrace.as_ref().is_some_and(|options| options.progressive.is_some())
++                    && current.cpu_preview_retention_skips > 0
++                    && !current.progress.phase.terminal()
++                    && current.progress.phase != solidcraft_engine::render::job::Phase::Cancelling
++                    && current.error.is_none()
++                    && current.frame.is_none()
++            })
++    });
++    if !retain {
++        state.preview_image = None;
++    }
++}
++
+ fn cache_preview_image(app: &mut SolveApp, ctx: &egui::Context) {
+     if let Some(job) = app.render_workspace.view.job
+         && let Ok(handle) = app.session.render_job_handle(job)
+@@ -1477,7 +1510,10 @@
+             if let Some(preview) = preview {
+                 cache_preview_frame(app, ctx, &preview.info, preview.png());
+             } else {
+-                app.render_workspace.preview_image = None;
++                // Re-read after observing None: the producer may have certified
++                // a retention skip after the earlier status snapshot.
++                let current = handle.status().ok();
++                reconcile_missing_cpu_preview(&mut app.render_workspace, job, current.as_ref());
+             }
+             if let Some(partial) = partial
+                 && let Err(error) = cache_final_partial(app, ctx, &handle, &status, &partial)
+@@ -1745,10 +1781,28 @@
+                     preview.frame_sequence
+                 ),
+             );
++            if let Ok(handle) = app.session.render_job_handle(preview.frame.job)
++                && let Ok(status) = handle.status()
++                && let Some(target) = status.request.raytrace.as_ref().and_then(|options| options.progressive)
++            {
++                ui.small(crate::i18n::format(
++                    "render.cpu_pass_progress",
++                    &[("current", &preview.samples_per_pixel.to_string()), ("target", &target.samples_per_pixel.to_string())],
++                ));
++            }
+             ui.small(app.tr("render.result_provisional_help"));
+         }
+         if let Some((info, sampling)) = &partial {
+             ui.colored_label(t.warning, app.tr("render.result_provisional"));
++            if let Ok(handle) = app.session.render_job_handle(info.frame.job)
++                && let Ok(status) = handle.status()
++                && let Some(target) = status.request.raytrace.as_ref().and_then(|options| options.progressive)
++            {
++                ui.small(crate::i18n::format(
++                    "render.cpu_pass_progress",
++                    &[("current", &info.completed_passes.to_string()), ("target", &target.samples_per_pixel.to_string())],
++                ));
++            }
+             let (min, max) = sampling.sample_range();
+             ui.small(crate::i18n::format(
+                 "render.interactive_partial_samples",
+--- a/crates/ui-egui/src/render_workspace_cpu.rs
++++ b/crates/ui-egui/src/render_workspace_cpu.rs
+@@ -138,8 +138,9 @@
+         ui_kit::text(ui, app.tr("render.children.progressive_reason"), ui_kit::Text::Note("render.children.progressive_reason"));
+     }
+     ui.add_enabled_ui(enabled, |ui| {
+-        let response =
+-            ui_kit::row(ui, app.tr("render.cpu_progressive_spp"), |ui| ui_kit::number_field(ui, &mut options.samples_per_pixel, 1..=4096, 1.0, ""));
++        let response = ui_kit::row(ui, app.tr("render.cpu_progressive_spp"), |ui| {
++            ui_kit::number_field(ui, &mut options.samples_per_pixel, 1..=solidcraft_engine::render::job::MAX_CPU_SAMPLES_PER_PIXEL, 1.0, "")
++        });
+         app.render_workspace.view.dirty |= response.changed();
+         crate::scenario::publish_target("render:cpu-spp", response.rect);
+         let response =
+--- a/crates/ui-egui/src/render_workspace_interactive.rs
++++ b/crates/ui-egui/src/render_workspace_interactive.rs
+@@ -62,8 +62,8 @@
+ 
+ /// Alpha denotes knowledge only in this additive provisional PNG contract.
+ /// Physical primary coverage has already been composited by the renderer.
+-pub(super) fn validate_partial_pixel(count: u32, covered: u16, pixel: egui::Color32, background: [u8; 3]) -> Result<(), String> {
+-    if u32::from(covered) > count
++pub(super) fn validate_partial_pixel(count: u32, covered: u32, pixel: egui::Color32, background: [u8; 3]) -> Result<(), String> {
++    if covered > count
+         || (count == 0 && pixel.a() != 0)
+         || (count > 0 && pixel.a() != 255)
+         || (count > 0 && covered == 0 && pixel != egui::Color32::from_rgb(background[0], background[1], background[2]))
+@@ -174,7 +174,7 @@
+ pub(super) fn validate_partial_pixels(
+     sampling: PartialSampling,
+     target: u32,
+-    covered: &[u16],
++    covered: &[u32],
+     image: &egui::ColorImage,
+     background: [u8; 3],
+ ) -> Result<(), String> {
+@@ -204,7 +204,7 @@
+     request: &solidcraft_engine::render::job::ImageRequest,
+     info: &solidcraft_engine::render::job::PartialPreviewInfo,
+     png: &[u8],
+-    covered: &[u16],
++    covered: &[u32],
+     sampling: PartialSampling,
+     max_texture_side: usize,
+ ) -> Result<egui::ColorImage, String> {
+@@ -321,6 +321,7 @@
+     revision: VisualRevision,
+     info: FrameInfo,
+     samples: u32,
++    target_samples: u32,
+     partial: Option<PartialSampling>,
+     final_dimensions: [u32; 2],
+     // Accepted job camera, never the latest observed intent after Pause.
+@@ -655,6 +656,7 @@
+             revision: ticket.revision(),
+             info: info.clone(),
+             samples: 0,
++            target_samples: request.raytrace.as_ref().and_then(|options| options.progressive).ok_or_else(invalid)?.samples_per_pixel,
+             partial: Some(sampling),
+             final_dimensions,
+             camera: request.camera,
+@@ -677,12 +679,18 @@
+         payload: (&[u8], &solidcraft_engine::render::job::ImageRequest),
+     ) -> Result<(), String> {
+         let (png, request) = payload;
++        let progressive = request
++            .raytrace
++            .as_ref()
++            .and_then(|options| options.progressive)
++            .ok_or_else(|| crate::i18n::tr("render.error_provisional_identity").to_string())?;
++        progressive.validate_image_with_budget(request.width, request.height, request.cpu_budget()).map_err(|error| error.to_string())?;
+         if self.frame.as_ref().is_some_and(|frame| frame.partial.is_none() && frame.key == key && frame.revision == revision) {
+             return Ok(());
+         }
+         if info.job != key.job
+             || info.scene_generation != revision.scene_generation
+-            || !(1..=16).contains(&samples)
++            || !(1..=progressive.samples_per_pixel).contains(&samples)
+             || (info.width, info.height) != (request.width, request.height)
+             || info.width > 1024
+             || info.height > 1024
+@@ -703,6 +711,7 @@
+             revision,
+             info: info.clone(),
+             samples,
++            target_samples: progressive.samples_per_pixel,
+             partial: None,
+             final_dimensions: self.issued_dimensions.ok_or_else(|| crate::i18n::tr("render.error_provisional_identity").to_string())?,
+             camera: request.camera,
+@@ -1051,6 +1060,7 @@
+     let error = state.error.clone();
+     let partial = state.frame.as_ref().and_then(|frame| frame.partial);
+     let samples = state.frame.as_ref().and_then(|frame| frame.partial.map_or(Some(frame.samples), |sampling| sampling.uniform_samples()));
++    let target_samples = state.frame.as_ref().map(|frame| frame.target_samples);
+     let dimensions = state.frame.as_ref().map(|frame| (frame.info.width, frame.info.height));
+     let stale = state.frame.as_ref().is_some_and(|frame| frame.stale);
+     let final_active = state.final_active;
+@@ -1103,6 +1113,13 @@
+                     ui_kit::text(ui, app.tr("render.interactive_provisional"), ui_kit::Text::Note("render.interactive_provisional"));
+                 }
+                 if let Some(sampling) = partial {
++                    if let Some(target) = target_samples {
++                        let label = crate::i18n::format(
++                            "render.cpu_pass_progress",
++                            &[("current", &sampling.cursor.completed_passes.to_string()), ("target", &target.to_string())],
++                        );
++                        ui_kit::text(ui, &label, ui_kit::Text::Inline);
++                    }
+                     let (min, max) = sampling.sample_range();
+                     let pixels = u64::from(sampling.plan.source_width()) * u64::from(sampling.plan.source_height());
+                     let label = crate::i18n::format(
+@@ -1115,8 +1132,8 @@
+                         ],
+                     );
+                     ui_kit::text(ui, &label, ui_kit::Text::Inline);
+-                } else if let Some(samples) = samples {
+-                    let label = crate::i18n::format("render.interactive_samples", &[("done", &samples.to_string()), ("total", "16")]);
++                } else if let (Some(samples), Some(target)) = (samples, target_samples) {
++                    let label = crate::i18n::format("render.interactive_samples", &[("done", &samples.to_string()), ("total", &target.to_string())]);
+                     ui_kit::text(ui, &label, ui_kit::Text::Inline);
+                 }
+                 if let Some(sampling) = partial {
+@@ -1190,8 +1207,17 @@
+ }
+ pub(super) fn inspect(app: &SolveApp) -> Value {
+     let state = &app.render_workspace.interactive;
++    // A diagnostic of the actual admitted capture, never a synthetic zero from
++    // a missing context, pending ticket or failed status read.
++    let retention_skips = state
++        .context
++        .as_ref()
++        .and_then(|context| context.current().ok().flatten())
++        .and_then(|job| job.status().ok())
++        .map(|status| status.cpu_preview_retention_skips);
+     json!({"enabled":state.context.is_some(),"phase":format!("{:?}",state.phase),"visual_revision":state.visual,
+         "pending_capture":state.pending.is_some(),"paused":state.user_paused,"error":state.error,
++        "cpu_preview_retention_skips":retention_skips,
+         "samples":state.frame.as_ref().and_then(|frame|frame.partial.map_or(Some(frame.samples), |sampling|sampling.uniform_samples())),
+         "partial":state.frame.as_ref().and_then(|frame|frame.partial).map(|sampling|json!({
+             "sequence":sampling.cursor.sequence,"completed_passes":sampling.cursor.completed_passes,"updated_prefix":sampling.cursor.updated_prefix,
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -11304,3 +11304,287 @@
+         }
+     }
+ }
++
++#[test]
++fn cpu_partial_coverage_crosses_u16_boundary_without_relaxing_alpha_or_sample_frontier() {
++    for count in [65_535, 65_536, 1_048_576] {
++        assert!(interactive::validate_partial_pixel(count, count, Color32::BLACK, [40, 80, 120]).is_ok());
++        assert!(interactive::validate_partial_pixel(count, count + 1, Color32::BLACK, [40, 80, 120]).is_err());
++        assert!(interactive::validate_partial_pixel(count, count, Color32::TRANSPARENT, [40, 80, 120]).is_err());
++        assert_eq!(interactive::partial_sample_count(count, 0, 0, 1, 1_048_576).unwrap(), count);
++    }
++    assert!(interactive::validate_partial_pixel(0, 0, Color32::BLACK, [40, 80, 120]).is_err());
++    assert!(interactive::validate_partial_pixel(65_536, 0, Color32::BLACK, [40, 80, 120]).is_err());
++    assert!(interactive::validate_partial_pixel(65_536, 0, Color32::from_rgb(40, 80, 120), [40, 80, 120]).is_ok());
++    assert!(interactive::partial_sample_count(65_536, 1, 0, 1, 65_536).is_err());
++}
++
++#[test]
++fn cpu_progressive_editor_preserves_high_intent_without_resizing_or_changing_profile_seed_or_mode() {
++    use solidcraft_engine::render::job::{CpuBudget, CpuProgressiveOptions};
++    let mut h = Harness::new();
++    h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++    h.app.render_workspace.view.draft.width = 1;
++    h.app.render_workspace.view.draft.height = 1;
++    h.app.render_workspace.view.raytrace.budget = CpuBudget::Workstation;
++    h.app.render_workspace.view.raytrace.primary_samples = 1;
++    h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel: 1_048_576, seed: u32::MAX });
++    let doc = h.app.session.doc.clone();
++    let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty());
++    for budget in [CpuBudget::Workstation, CpuBudget::Compact, CpuBudget::Studio] {
++        h.app.render_workspace.view.raytrace.budget = budget;
++        let before = json!(h.app.render_workspace.view.raytrace);
++        let ctx = egui::Context::default();
++        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
++            assert!(cpu::progressive_controls(&mut h.app, ui));
++        });
++        assert_eq!(json!(h.app.render_workspace.view.raytrace), before, "painting cannot clamp retained intent to a different profile");
++        assert_eq!((h.app.render_workspace.view.draft.width, h.app.render_workspace.view.draft.height), (1, 1));
++        assert_eq!(cpu::validate_progressive_image(&h.app).is_ok(), budget == CpuBudget::Workstation);
++    }
++    assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
++    assert_eq!(history, (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty()));
++}
++
++// Request/consumer coverage only. Real native per-pass presentation remains
++// mandatory acceptance; see the archived unsupported cooperative-host fixture.
++#[test]
++fn cpu_progressive_request_keeps_explicit_target_seed_without_claiming_native_pass_presentation() {
++    use solidcraft_engine::render::job::CpuProgressiveOptions;
++    let mut h = Harness::new();
++    h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++    h.app.render_workspace.view.draft.width = 1;
++    h.app.render_workspace.view.draft.height = 1;
++    h.app.render_workspace.view.raytrace.primary_samples = 1;
++    h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel: 4, seed: 741 });
++    let document = h.app.session.doc.clone();
++    let before = json!(h.app.render_workspace.view.raytrace);
++    let request = interactive_request(&h.app).unwrap();
++    assert_eq!(request["raytrace"]["progressive"]["samples_per_pixel"], 4);
++    assert_eq!(request["raytrace"]["progressive"]["seed"], 741);
++    assert_ne!(request["progressive"], json!(true), "CPU intent cannot select a registered GPU executor");
++    assert_eq!(json!(h.app.render_workspace.view.raytrace), before);
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert!(h.app.render_workspace.view.job.is_none() && h.app.render_workspace.view.completed.is_none());
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_real_explicit_pass_target_png_and_seed_survive_cache_pause_and_final_isolation() {
++    use solidcraft_engine::render::job::{CpuProgressiveOptions, Phase};
++    use std::{sync::mpsc, time::Duration};
++    let mut h = interactive_ui_fixture();
++    if !interactive_test_cpu_branch(&mut h, "interactive_real_explicit_pass_target_png_and_seed_survive_cache_pause_and_final_isolation") {
++        return;
++    }
++    h.app.render_workspace.view.raytrace.primary_samples = 1;
++    h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel: 31, seed: 741 });
++    let before = json!(h.app.render_workspace.view.raytrace);
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    interactive_clear_acceptance_frame(&mut h, epoch, true);
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    // Withhold only the real worker reply. All frame bytes come from the renderer.
++    let mut pending = h.app.render_workspace.interactive.pending.take().unwrap();
++    let reply = pending.receiver.recv_timeout(Duration::from_secs(60)).unwrap();
++    assert!(matches!(&reply, Ok(true)), "{reply:?}");
++    let job = interactive::test_current(&h.app).unwrap().unwrap();
++    let status = job.wait_timeout(Duration::from_secs(60)).unwrap();
++    assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
++    assert_eq!(status.request.raytrace.as_ref().unwrap().progressive, Some(CpuProgressiveOptions { samples_per_pixel: 31, seed: 741 }));
++    let frame = job.frame().unwrap().unwrap();
++    assert_eq!(frame.info.executor.as_str(), "cpu-raytrace");
++    assert!(!frame.png().is_empty());
++    let (sender, receiver) = mpsc::channel();
++    pending.receiver = receiver;
++    h.app.render_workspace.interactive.pending = Some(pending);
++    sender.send(reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.3, false, true);
++    assert!(painted);
++    let (cached, samples, complete, texture) = interactive::test_cache(&h.app).unwrap();
++    assert_eq!((cached.job, samples, complete), (job.id(), 31, true));
++    assert_eq!(cached.png_sha256, frame.info.png_sha256);
++    let png = image::load_from_memory_with_format(frame.png(), image::ImageFormat::Png).unwrap().to_rgba8();
++    let egui::ImageData::Color(pixels) = &output.textures_delta.set.get(&texture).unwrap().first().unwrap().image;
++    assert_eq!(pixels.size, [png.width() as usize, png.height() as usize]);
++    assert!(
++        pixels.pixels.iter().zip(png.pixels()).all(|(actual, rgba)| *actual == Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]))
++    );
++    output.textures_delta.clear();
++    assert_eq!(json!(h.app.render_workspace.view.raytrace), before);
++    h.app.run("render.interactive", json!({"action":"pause"})).unwrap();
++    h.app.render_workspace.view.raytrace.progressive = Some(CpuProgressiveOptions { samples_per_pixel: 47, seed: 999 });
++    let expected = crate::i18n::format("render.interactive_samples", &[("done", "31"), ("total", "31")]);
++    let controls = h.ctx.run_ui(egui::RawInput::default(), |ui| interactive::controls(&mut h.app, ui));
++    assert!(crate::test_support::text_shapes(&controls).any(|shape| shape.galley.text() == expected));
++    assert_eq!(interactive::test_cache(&h.app).unwrap().3, texture);
++    interactive_assert_final_export_isolation(&mut h, &job);
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++}
++
++#[test]
++fn interactive_retention_skip_inspect_is_null_without_an_admitted_capture() {
++    let h = Harness::new();
++    assert!(interactive::inspect(&h.app)["cpu_preview_retention_skips"].is_null());
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++#[test]
++fn interactive_retention_skip_inspect_preserves_real_zero_and_clears_after_off() {
++    let mut h = interactive_ui_fixture();
++    assert!(interactive::inspect(&h.app)["cpu_preview_retention_skips"].is_null());
++    if !interactive_test_cpu_branch(&mut h, "interactive_retention_skip_inspect_preserves_real_zero_and_clears_after_off") {
++        assert!(interactive::inspect(&h.app)["cpu_preview_retention_skips"].is_null());
++        return;
++    }
++    let epoch = interactive::test_clock(&h.app).as_secs_f64();
++    h.app.run("render.interactive", json!({"action":"on"})).unwrap();
++    assert!(interactive::inspect(&h.app)["cpu_preview_retention_skips"].is_null(), "enabling without an admitted job cannot fabricate zero");
++    interactive_clear_acceptance_frame(&mut h, epoch, true);
++    interactive_clear_acceptance_frame(&mut h, epoch + 0.201, true);
++    let held = interactive_hold_real_completed_callback(&mut h);
++    let captured = held.job.status().unwrap();
++    assert_eq!(captured.cpu_preview_retention_skips, 0);
++    assert_eq!(interactive::inspect(&h.app)["cpu_preview_retention_skips"], json!(captured.cpu_preview_retention_skips));
++    interactive_assert_final_export_isolation(&mut h, &held.job);
++    held.sender.send(held.reply).unwrap();
++    let (mut output, painted) = interactive_acceptance_frame(&mut h, epoch + 0.3, false, true);
++    assert!(painted);
++    output.textures_delta.clear();
++    assert_eq!(interactive::inspect(&h.app)["cpu_preview_retention_skips"], json!(0));
++    h.app.run("render.interactive", json!({"action":"off"})).unwrap();
++    assert!(interactive::inspect(&h.app)["cpu_preview_retention_skips"].is_null());
++}
++
++// Typed consumer state only: this texture is input to the absent-slot policy.
++// It is not a renderer PNG, a CPU admission fixture, or per-pass UI acceptance.
++fn cpu_preview_consumer_fixture(ctx: &egui::Context) -> (State, JobId, solidcraft_engine::render::job::JobStatus) {
++    use solidcraft_engine::render::job::{
++        AlphaConvention, ColourEncoding, CpuProgressiveOptions, FrameInfo, ImageRequest, JobOptions, JobStatus, Phase, Progress, RaytraceOptions,
++    };
++    use solidcraft_engine::render::{BackendId, ExecutorId, RenderMode, RenderOperation, RenderProfile, ResolvedRequest};
++    let job = JobId { session: 9012, serial: 1, generation: 1 };
++    let backend = BackendId::new("consumer-fixture").unwrap();
++    let executor = ExecutorId::new("consumer-fixture").unwrap();
++    let frame = FrameInfo {
++        job,
++        scene_generation: 19,
++        backend: backend.clone(),
++        executor: executor.clone(),
++        width: 1,
++        height: 1,
++        encoding: ColourEncoding::Srgb,
++        alpha: AlphaConvention::Straight,
++        png_bytes: 0,
++        png_sha256: String::new(),
++    };
++    let texture =
++        ctx.load_texture("consumer-only-input", egui::ColorImage::new([1, 1], vec![Color32::from_rgb(40, 80, 120)]), egui::TextureOptions::LINEAR);
++    let mut state = State::default();
++    state.view.job = Some(job);
++    state.preview_image = Some(PreviewImage { info: PreviewInfo { frame_sequence: 2, samples_per_pixel: 2, frame }, image: Ok(texture) });
++    let request = ImageRequest {
++        raster_exposure_ev: 0.0,
++        raster_lights: None,
++        raster_punctual_lights: None,
++        raster_area_lights: None,
++        studio_weights: None,
++        environment: None,
++        textures: None,
++        integrator: Integrator::Raytrace,
++        raytrace: Some(RaytraceOptions {
++            primary_samples: 1,
++            progressive: Some(CpuProgressiveOptions { samples_per_pixel: 7, seed: 741 }),
++            ..Default::default()
++        }),
++        camera: Default::default(),
++        width: 1,
++        height: 1,
++        background: [40, 80, 120],
++        transparent_background: false,
++    };
++    let status = JobStatus {
++        cpu_preview_retention_skips: 1,
++        punctual_diagnostics: None,
++        presentation: None,
++        sampling: None,
++        linear_master: None,
++        preview: None,
++        textures: None,
++        options: JobOptions::default(),
++        environment: None,
++        job,
++        scene_generation: 19,
++        request,
++        resolved: ResolvedRequest {
++            backend,
++            executor,
++            profile: RenderProfile { mode: RenderMode::Preview, operation: RenderOperation::Image, formats: Vec::new(), features: Vec::new() },
++            width: 1,
++            height: 1,
++            format: None,
++            estimated_scratch_bytes: 0,
++            warnings: Vec::new(),
++        },
++        progress: Progress { phase: Phase::Running, done: 3, total: 7 },
++        error: None,
++        frame: None,
++    };
++    (state, job, status)
++}
++
++#[test]
++fn cpu_missing_snapshot_consumer_keeps_exact_pixels_identity_and_pass_only_for_certified_live_capture() {
++    let ctx = egui::Context::default();
++    let (mut state, job, mut status) = cpu_preview_consumer_fixture(&ctx);
++    let before = state.preview_image.as_ref().unwrap();
++    let texture = before.image.as_ref().unwrap().id();
++    let identity = (before.info.frame.job, before.info.frame.scene_generation, before.info.frame_sequence, before.info.samples_per_pixel);
++    status.progress.done = 4;
++    reconcile_missing_cpu_preview(&mut state, job, Some(&status));
++    let kept = state.preview_image.as_ref().unwrap();
++    assert_eq!(kept.image.as_ref().unwrap().id(), texture);
++    assert_eq!((kept.info.frame.job, kept.info.frame.scene_generation, kept.info.frame_sequence, kept.info.samples_per_pixel), identity);
++    assert_eq!(kept.info.samples_per_pixel, 2, "producer progress cannot relabel accepted pixels");
++    assert!(state.view.completed.is_none(), "retention cannot manufacture final authority");
++}
++
++#[test]
++fn cpu_missing_snapshot_consumer_clears_wrong_capture_cancel_error_final_and_lookup_failure() {
++    use solidcraft_engine::render::job::{ErrorCode, JobError, Phase};
++    let ctx = egui::Context::default();
++    for case in 0..13 {
++        let (mut state, job, mut status) = cpu_preview_consumer_fixture(&ctx);
++        let mut lookup_ok = true;
++        match case {
++            0 => status.job.serial += 1,
++            1 => status.scene_generation += 1,
++            2 => status.request.width += 1,
++            3 => status.progress.phase = Phase::Cancelling,
++            4 => status.progress.phase = Phase::Cancelled,
++            5 => status.progress.phase = Phase::Failed,
++            6 => status.progress.phase = Phase::Completed,
++            7 => status.error = Some(JobError::new(ErrorCode::Internal, "consumer fixture status error")),
++            8 => status.frame = Some(state.preview_image.as_ref().unwrap().info.frame.clone()),
++            9 => status.cpu_preview_retention_skips = 0,
++            10 => status.request.raytrace.as_mut().unwrap().progressive = None,
++            11 => state.preview_image.as_mut().unwrap().image = Err("consumer fixture decode error".into()),
++            12 => lookup_ok = false,
++            _ => unreachable!(),
++        }
++        reconcile_missing_cpu_preview(&mut state, job, lookup_ok.then_some(&status));
++        assert!(state.preview_image.is_none(), "case {case}");
++        assert!(state.view.completed.is_none());
++    }
++    let mut h = Harness::new();
++    let (mut state, job, _) = cpu_preview_consumer_fixture(&ctx);
++    state.view.job = None;
++    h.app.render_workspace = state;
++    cache_preview_image(&mut h.app, &ctx);
++    assert!(h.app.render_workspace.preview_image.is_none());
++    let (state, _, _) = cpu_preview_consumer_fixture(&ctx);
++    h.app.render_workspace = state;
++    assert!(h.app.session.render_job_handle(job).is_err(), "consumer fixture is deliberately not an admitted job");
++    cache_preview_image(&mut h.app, &ctx);
++    assert!(h.app.render_workspace.preview_image.is_none());
++}
+--- a/docs/render-cpu-progressive.md
++++ b/docs/render-cpu-progressive.md
+@@ -2,11 +2,21 @@
+ 
+ The limits below describe the compatibility **Compact** profile. Explicit Studio and Workstation envelopes are documented in [CPU resource profiles](render-cpu-resource-profiles.md); their implementation batch still requires consolidated validation.
+ 
++The every-pass cadence and bounded snapshot policy below describe a composed
++source proposal awaiting integration and validation, not a new native display or
++CI result. The earlier published policy used powers-of-two checkpoints. This is
++an intentional requested behavior change; its default-change classification and
++preference handling remain unresolved before production readiness. This document
++does not settle that process question.
++
+ CPU progressive rendering repeatedly traces fresh camera samples into a bounded
+-linear-light film. Checkpoints are complete image passes, at 1, 2, 4, 8, 16 and
+-32 samples per pixel when below the requested final sample count. The exact
+-requested count produces the final PNG, including non-powers of two such as 3
+-or 5. A one-sample job has no provisional checkpoint.
++linear-light film. Each complete nonfinal pass, 1 through the requested count
++minus one, is a checkpoint boundary. Normal consumption publishes each boundary;
++the diagnosed external-retention exception is defined below. The exact requested
++count produces one final PNG, including non-powers of two such as 3 or 5. A
++one-sample job has no nonfinal complete-pass checkpoint. Optional first-pass
++partial-coverage feedback is separate from a uniform checkpoint. Publication
++does not guarantee that a slower client physically repaints every image.
+ 
+ This mode uses the native `cpu-raytrace` executor and its existing direct-light
+ and selected-reflection transport. It does not add diffuse global illumination,
+@@ -97,10 +107,13 @@
+ At 1024 × 1024 the camera-sample cap allows at most 16 samples per pixel; at
+ 512 × 512 it allows 64. Requests are also subject to the selected CPU resource profile's geometry,
+ job-memory and shared-host pool limits; see [CPU resource profiles](render-cpu-resource-profiles.md). Traversal,
+-shading, film updates, resolve, PNG encoding and hashing share one cumulative
+-1,000,000,000-unit work ceiling. The count is not reset at a pass boundary.
+-The camera-sample limit is a cold upper bound, not a promise that every scene
+-will finish below the cumulative runtime work ceiling.
++shading, film updates and ordinary output work retain the selected profile's
++cumulative work ceiling: Compact 1,000,000,000, Studio 1,000,000,000,000 and
++Workstation 16,000,000,000,000. The count is not reset at a pass boundary.
++Presentation has a separate finite precharge for the bounded early feedback and
++nonfinal complete-pass opportunities; increasing the target is not an unbounded
++codec/work grant. The camera-sample limit is a cold upper bound, not a promise
++that every scene will finish below cumulative work or host-memory limits.
+ 
+ ## Sampling, linear film and display
+ 
+@@ -141,9 +154,23 @@
+ `JobHandle::preview()` returns an `Arc<RenderPreview>` whose `png()` is the
+ immutable encoded snapshot. The first checkpoint has sequence 1. The job's
+ `JobId { session, serial, generation }` and captured `scene_generation` remain
+-unchanged across every pass. `frame_sequence` is a separate monotonic counter.
+-Clients cache previews by `(JobId, frame_sequence)` and may retain an older
+-snapshot without mutating it.
++unchanged across every pass. `frame_sequence` counts actual publications, not
++samples or skipped boundaries. Clients cache previews by `(JobId, frame_sequence)`
++and may retain an older snapshot without mutating it. For example, publications
++SPP1/sequence1 and SPP2/sequence2 can be followed by a diagnosed retained-slot
++skip at SPP3, then SPP4/sequence3 when a slot returns. The producer still processes
++each real pass in order; this exception does not license a fabricated producer
++jump from pass1 to pass3.
++
++The runtime `JobStatus.cpu_preview_retention_skips: u32` counts nonfinal uniform
++boundaries whose snapshot could not be published because both reusable slots
++were externally retained. Retire an obsolete host-owned snapshot and retry the
++credit before diagnosing that condition. Count that boundary once, not each
++poll or a later retry of the same boundary. Closed pools, in-flight buffers,
++unrequested feedback or an exhausted optional feedback quota are not themselves
++evidence of external retention. Cancellation is checked before the diagnostic
++update. This counter is runtime metadata, never saved
++intent, and does not count frames physically displayed by a client.
+ 
+ The preview slot is separate from `JobStatus.frame`/`JobHandle::frame()`. A
+ preview cannot be exported through `render.export`, cannot become the session's
+@@ -162,18 +189,27 @@
+ ## Allocation and retained snapshots
+ 
+ Admission reserves the working film, existing RGBA/encoder/final-PNG capacity,
+-and the maximum encoded capacity plus metadata for every possible nonfinal
+-checkpoint. This conservative upper bound covers a consumer retaining all
+-checkpoints at once. Actual film and PNG capacities are checked against their
+-admitted capacities after fallible allocation.
+-
+-A completed checkpoint moves its PNG allocation into the preview object.
+-`Reservation::split` transfers that allocation's share of the running lease
+-without increasing or decreasing the pool total. Replacing or clearing the host
+-preview drops only the host's `Arc`; any external `Arc` keeps its memory billed.
+-At final completion the task releases its working buffers before the remaining
+-lease shrinks to the final PNG. Dropping each last external snapshot releases
+-only that snapshot's reservation. There is no full-film clone per checkpoint.
++and at most two reusable immutable checkpoint slots with their metadata. It no
++longer reserves a separate PNG for every possible pass. Protected feedback uses
++its existing two partial-snapshot slots. Actual film, sidecar and PNG capacities
++remain checked against admitted capacities after fallible allocation; there is
++no full-film clone or growing production list of checkpoint PNGs.
++
++A published snapshot retains a lease for its admitted slot. Replacing or clearing
++the host's `Arc` cannot mutate externally held bytes or release their charge.
++When the last consumer releases a snapshot, its credit can be reused while the
++job is active. Terminal cleanup closes free credits; externally retained leases
++stay billed until their last release. Existing working codec and final-image
++buffers remain accounted separately.
++
++If both slots are externally pinned, the diagnosed boundary produces no new
++snapshot. The renderer continues sampling and final work without waiting for an
++acknowledgement, failing the final merely because of retention, allocating an
++extra slot or inventing a frame. Returning a credit permits a later real pass to
++publish again. Final-only export, cancellation and captured identity are unchanged.
++Even without pinned consumers, a latest-image client can coalesce observations
++when it repaints more slowly than the worker; no latency or unconditional
++physical-display guarantee follows from every-pass publication.
+ 
+ ## Regression coverage
+ 
+--- a/docs/render-cpu-resource-profiles.md
++++ b/docs/render-cpu-resource-profiles.md
+@@ -1,6 +1,6 @@
+ # Explicit CPU resource profiles
+ 
+-**Implementation batch: source prepared; consolidated compilation and large-scene runtime acceptance are pending.** These envelopes are admission limits, not measured performance or a final-quality certification.
++**Composed-source proposal: integration, consolidated validation and large-scene native acceptance are pending.** The raised Workstation target requires the coordinated CPU accumulation, publication and UI adapters. These envelopes are admission limits, not measured performance or a final-quality certification.
+ 
+ ## Intent
+ 
+@@ -13,7 +13,7 @@
+ | Maximum side | 4,096 px | 8,192 px | 16,384 px |
+ | Fixed-sampling pixels | 4,194,304 | 16,777,216 | 67,108,864 |
+ | Progressive pixels | 1,048,576 | 16,777,216 | 67,108,864 |
+-| Progressive samples/pixel | 64 | 1,024 | 4,096 |
++| Progressive samples/pixel | 64 | 1,024 | 1,048,576 |
+ | Total camera samples | 16,777,216 | 4,294,967,296 | 68,719,476,736 |
+ | Captured triangles | 262,144 | 2,000,000 | 8,000,000 |
+ | Visible bodies | 16,384 | 65,536 | 262,144 |
+@@ -21,7 +21,7 @@
+ | Complete job admission | 384 MiB | 3 GiB | 12 GiB |
+ | Cumulative work units | 1,000,000,000 | 1,000,000,000,000 | 16,000,000,000,000 |
+ 
+-Every column is an intersection of limits: a scene that fits the triangle count may still exceed its complete byte estimate. Similarly, a sample count within the per-pixel limit may exceed the total camera-sample or cumulative traversal-work limit. No claim is made that all maxima can be reached simultaneously or within a particular time.
++Every column is an intersection of limits: a scene that fits the triangle count may still exceed its complete byte estimate. Similarly, a sample count within the per-pixel limit may exceed the total camera-sample or cumulative traversal-work limit. At 1,048,576 SPP, 256 × 256 already reaches Workstation's unchanged 68,719,476,736 camera-sample ceiling; the high target is not permission to use every resolution. Compact 64 and Studio 1024 remain unchanged. No claim is made that all maxima can be reached simultaneously or within a particular time.
+ 
+ Examples of cardinality admission, before geometry and memory are considered: Studio permits 3840 × 2160 at 128 samples/pixel; Workstation permits 7680 × 4320 at 128 samples/pixel. Compact rejects both instead of silently resizing them.
+ 
+@@ -55,7 +55,9 @@
+ 
+ The native CPU host has a finite 16 GiB logical reservation pool on 64-bit platforms, including retained results and previews. It does not allocate that amount at startup, promise that physical RAM is available, or account for the rest of the CAD application or other processes. Per-job profiles remain smaller. Cooperative and registered GPU host pools retain their original 512 MiB limit; this change is not a GPU-memory expansion.
+ 
+-Fallible allocation, actual vector-capacity checks, checked arithmetic, bounded work quanta, cancellation checks and final-only publication remain required. A failed or cancelled job must release its working reservations and preserve the previous completed result. Every retained progressive checkpoint is still conservatively charged; this increment does not implement tiled/out-of-core rendering or unbounded preview retention.
++Fallible allocation, actual vector-capacity checks, checked arithmetic, bounded work quanta, cancellation checks and final-only publication remain required. A failed or cancelled job must release its working reservations and preserve the previous completed result. Progressive publication prepays two reusable snapshot slots plus existing working codec/final capacity, not one PNG per pass. Externally held snapshots keep their leases charged; if both slots are pinned, a diagnosed boundary can be skipped without blocking or failing final work. See [CPU progressive sampling](render-cpu-progressive.md#allocation-and-retained-snapshots).
++
++Ordinary cumulative work caps remain exactly 1e9 / 1e12 / 16e12 for Compact / Studio / Workstation. The presentation allowance is separate and finite: with P output pixels and target H, at most min(P−1,64)+(H−1) early/uniform opportunities are precharged, each at 14 × preview_pixels + 65,538 units, with preview_pixels at most 1024². This allowance is not extra ordinary traversal work, an admission promise, or a display-latency guarantee. This increment does not implement tiled/out-of-core rendering or unbounded preview retention.
+ 
+ ## Compatibility and limits
+ 
+--- a/docs/render-cpu-workspace.md
++++ b/docs/render-cpu-workspace.md
+@@ -13,9 +13,16 @@
+ ## Progressive CPU sampling
+ 
+ **CPU sampling mode → CPU progressive** accumulates samples of the existing CPU
+-integrator. Set **samples per pixel** from 1 to 64 and the separate CPU sampling
+-seed. Selecting the mode explicitly chooses one primary sample per pass; returning
+-to **Single image** restores the AA selector without discarding lights or HDR controls.
++integrator. In the coordinated source proposal, **samples per pixel** is bounded
++by the selected profile: Compact 64, Studio 1024 or Workstation 1,048,576, together
++with the unchanged pixel/camera-sample and other admission intersections. The
++separate CPU sampling seed and explicit target are preserved on save/reopen;
++Interactive uses those captured values rather than forcing every request to
++16/0. The fallback 16/0 applies only without explicit progressive intent. These
++changes require integration, validation and native acceptance.
++
++Selecting the mode explicitly chooses one primary sample per pass; returning to
++**Single image** restores the AA selector without discarding lights or HDR controls.
+ This is camera sampling of the existing integrator, not diffuse global illumination,
+ adaptive sampling or CPU denoising.
+ 
+@@ -25,20 +32,32 @@
+ switching modes never silently removes these inputs. Check and Start report an
+ incompatible combination through the same request validation.
+ 
+-Admission allows at most 1,048,576 pixels, dimensions up to 4096, and
+-16,777,216 pixel × sample evaluations. For example, 1024 × 1024 supports 16 SPP,
+-whereas 64 SPP requires at most 262,144 pixels. Increasing SPP or loading a setup
+-never changes its dimensions automatically. If needed, the panel displays a
++The compatibility Compact profile allows at most 1,048,576 progressive pixels,
++dimensions up to 4096, and 16,777,216 pixel × sample evaluations. For example,
++1024 × 1024 supports 16 SPP, whereas 64 SPP requires at most 262,144 pixels.
++Explicit larger profiles retain their own intersecting limits; see
++[CPU resource profiles](render-cpu-resource-profiles.md). Increasing SPP or loading
++a setup never changes its dimensions automatically. If needed, the panel displays a
+ **Use the largest size at this aspect: W × H** action; only clicking it resizes
+ the draft. Save applies the same numeric limits without requiring a renderer and
+ leaves invalid drafts intact. Traversal, sampling and image encoding also share
+ the backend's cumulative work budget.
+ 
+-The result canvas shows provisional PNG checkpoints after 1, 2, 4, … samples,
+-before the requested final count. A provisional label includes its SPP and checkpoint
+-sequence; the job identity and captured revision remain unchanged. Checkpoint updates
+-reuse the current pan/zoom. Completion replaces the preview with its final image;
+-cancellation or failure removes the preview and returns to the previous completed
++Normal source publication attempts a provisional snapshot at every complete
++nonfinal pass 1, 2, 3, …, followed by the unique final at the requested target. Two
++reusable snapshot slots bound retention. If both are externally pinned, the
++actual runtime `cpu_preview_retention_skips` counter diagnoses that skipped
++boundary while final work continues; it does not fabricate an image or sample.
++The current-handle inspection diagnostic uses a real count, including zero, or
++null when unavailable/failed; lookup errors are not included, and other reported errors are independent.
++
++Publication is distinct from physical canvas repaint: a fast worker and slower
++client can coalesce visible images. A provisional label includes actual SPP and
++publication sequence; these need not be equal after a diagnosed skip. Job identity
++and captured revision remain unchanged. Checkpoint updates reuse current pan/zoom.
++Neither a counter nor the source change proves native 1→2→3→4 display or a latency
++bound. Completion replaces the preview with its final image; cancellation or
++failure removes the preview and returns to the previous completed
+ result with the same framing. **Export final PNG** always exports a completed frame,
+ even while a different provisional image is visible. With no completed frame, export
+ remains disabled. The UI keeps one decoded provisional texture and metadata, not
+--- a/docs/render-interactive.md
++++ b/docs/render-interactive.md
+@@ -46,15 +46,22 @@
+ 
+ ## Preview envelope
+ 
+-`cpu_request` clones an immutable final request. It preserves the camera,
+-background, shadows, exposure, lighting, resources and transport. Only preview
+-dimensions and camera/reflection sampling change: maximum 1024 pixels along the
+-longest edge, rounded to the nearest pixel without enlargement, 16 SPP, seed 0,
+-one primary and one selected reflection attempt per camera sample. The original
+-final request stays untouched. Integer aspect rounding is at most half a pixel
+-(or one pixel for an extreme aspect). Transparent output, another integrator or
++In the coordinated source proposal, `cpu_request` clones an immutable final
++request and preserves its camera, background, shadows, exposure, lighting,
++resources and transport. If that captured request has explicit CPU progressive
++intent, its target and seed are retained; they are not replaced by the current
++live draft or silently reduced to 16/0. Only an absent progressive intent uses
++the existing fallback of 16 SPP and seed 0. One primary and one selected
++reflection attempt are used per camera sample. The original final request stays
++untouched.
++
++Preview dimensions remain bounded to 1024 pixels along the longest edge,
++rounded to the nearest pixel without enlargement. Integer aspect rounding is at
++most half a pixel (or one pixel for an extreme aspect). Preserving a high target
++does not remove the selected profile's pixel, total camera-sample, geometry,
++traversal or memory intersections. Transparent output, another integrator or
+ unsupported progressive transport returns an error instead of dropping effects.
+-The existing profile and host still enforce geometry, traversal and memory limits.
++These changes still require integrated validation and native observation.
+ Rectangle/LED direct-light inputs, their emitter-sample count and area-pattern
+ seed survive preview lowering unchanged. Only camera/reflection sampling uses
+ the preview envelope; dielectric intent is retained for capture and transport
+@@ -63,6 +70,14 @@
+ See [CPU progressive sampling](render-cpu-progressive.md) and
+ [CPU resource profiles](render-cpu-resource-profiles.md) for the separate final
+ request and admission contracts.
++
++The coordinated retention diagnostic is read from the actual current job handle.
++A successful status supplies `Some(count)`, including `Some(0)`; an absent handle
++or failed status lookup supplies no count (`null` in the inspection reply), not
++a fabricated zero. Lookup errors are not included; other reported errors are independent. A nonzero count
++reports skipped snapshot boundaries caused by externally retained slots, not
++missing samples or a count of physical canvas repaints; see
++[CPU progressive publication](render-cpu-progressive.md#preview-publication-and-final-export).
+ 
+ ## Exposure and image ownership
+ 
+@@ -87,7 +102,8 @@
+ - Allocate a distinct transient job session for each document's Interactive
+   controller. Never recreate a controller with the same session while callbacks
+   from its previous instance can arrive. Do not register its jobs in the engine's
+-  final/export registry. Even its 16-SPP completed image is provisional content.
++  final/export registry. Reaching its captured sample target still produces
++  provisional content, not an exportable final.
+ - Increment `VisualRevision.visual_revision` whenever camera, draft, material,
+   visibility, lighting, HDR/resource, method or output intent changes. Include
+   changes that leave the document revision unchanged. Capture this counter and
+--- a/docs/render-jobs.md
++++ b/docs/render-jobs.md
+@@ -58,7 +58,26 @@
+ but remains separate from the retained final image and `render.export`.
+ Cancellation, failure and final publication clear the provisional slot while
+ preserving the previous successful result when no newer final exists. Each
+-externally retained preview keeps its own admitted memory reservation.
++externally retained preview keeps the lease for its reusable admitted snapshot
++slot until release; the composed every-pass policy reserves two slots rather
++than one PNG for every pass. Publication may outpace physical client repaint.
++
++The composed CPU source adds runtime `cpu_preview_retention_skips: u32` to job
++status. It increments once for a real nonfinal uniform boundary that cannot
++publish because both reusable slots remain externally pinned after retiring the
++obsolete host snapshot and retrying its credit. Polling does not increment it;
++closed pools, in-flight buffers, unrequested feedback or an exhausted optional
++feedback quota are not themselves retention skips.
++Sampling and final work continue without observer acknowledgements or an extra
++snapshot allocation. SPP1/sequence1, SPP2/sequence2, skipped SPP3/count1, then
++SPP4/sequence3/count1 is a valid publication history after one slot returns.
++Actual producer passes must still be processed in order.
++
++Zero is a value from a real status, not a substitute status after lookup failure.
++The separate Interactive inspection diagnostic is nullable when there is no
++current handle or its status lookup fails; lookup errors are not included and other reported errors are independent. Neither
++form is saved in the design or proves that every snapshot was physically shown.
++This is a source proposal pending integrated validation, not a native result.
+ 
+ ## Native and browser execution
+ 
+--- a/docs/render-settings.md
++++ b/docs/render-settings.md
+@@ -179,10 +179,18 @@
+ 
+ CPU `progressive: {samples_per_pixel, seed}` stores bounded camera accumulation
+ using the existing CPU transport. An absent/null value preserves fixed AA; an
+-empty object defaults to 16 samples and seed 0. Samples are 1..64 and the seed is
+-u32. `primary_samples` must be 1, output is at most 1,048,576 pixels, and
+-`width × height × samples_per_pixel` is at most 16,777,216. Saving checks these
+-limits without a render host. Area/LED direct lights retain the existing four
++empty object defaults to 16 samples and seed 0. The seed is u32 and
++`primary_samples` must be 1. In the coordinated source proposal, per-pixel targets
++are 1..64 for omitted/explicit Compact, 1..1024 for Studio and 1..1,048,576 for
++explicit Workstation. Each remains subject to its profile's unchanged dimensions,
++pixels, total camera-sample and other admission limits; see
++[CPU resource profiles](render-cpu-resource-profiles.md). The compatibility
++Compact limits remain 1,048,576 progressive pixels and 16,777,216 total camera
++samples. Saving validates the selected intersection without a render host;
++reopen preserves the explicit target, seed and budget rather than clamping intent.
++Snapshots, checkpoint leases and the runtime retention-skip counter are not
++saved fields. These source changes await integrated validation/native acceptance.
++Area/LED direct lights retain the existing four
+ shared rectangle slots, emitter-sample counts and power normalization. Dielectric
+ and anisotropic-face overrides remain refused; the fixed CPU route retains them.
+ Embedded HDR and one setup exposure remain compatible. See

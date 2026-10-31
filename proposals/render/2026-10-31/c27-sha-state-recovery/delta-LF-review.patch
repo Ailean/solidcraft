@@ -1,0 +1,171 @@
+--- a/crates/render/src/job/host.rs
++++ b/crates/render/src/job/host.rs
+@@ -725,7 +725,7 @@
+     hashed: usize,
+     preview_samples: Option<u32>,
+     exr: Option<Vec<u8>>,
+-    exr_digest: Sha256,
++    png_digest: Option<sha2::digest::Output<Sha256>>,
+     exr_hashed: usize,
+ }
+ // Keep the new fixed completion state within the existing metadata allowance
+@@ -741,7 +741,7 @@
+ 
+ impl PendingPng {
+     fn new(png: Vec<u8>) -> Self {
+-        Self { png, digest: Sha256::new(), hashed: 0, preview_samples: None, exr: None, exr_digest: Sha256::new(), exr_hashed: 0 }
++        Self { png, digest: Sha256::new(), hashed: 0, preview_samples: None, exr: None, png_digest: None, exr_hashed: 0 }
+     }
+ 
+     #[cfg(feature = "raytrace-cpu")]
+@@ -749,20 +749,30 @@
+         Self { preview_samples: Some(samples), ..Self::new(png) }
+     }
+ 
++    fn finish_png_digest(&mut self) {
++        if self.hashed == self.png.len() && self.png_digest.is_none() {
++            // PNG and EXR are scanned serially. Keep the completed PNG output,
++            // then reuse a fresh digest state for EXR without another allocation.
++            self.png_digest = Some(std::mem::take(&mut self.digest).finalize());
++        }
++    }
++
+     fn step(&mut self, units: usize, cancel: &CancelToken) -> Result<bool> {
+         cancel.check()?;
++        self.finish_png_digest();
+         for _ in 0..units.min(PNG_HASH_CHUNKS_PER_ADVANCE) {
+-            let (bytes, hashed, digest) = if self.hashed < self.png.len() {
+-                (&self.png, &mut self.hashed, &mut self.digest)
++            let (bytes, hashed) = if self.hashed < self.png.len() {
++                (&self.png, &mut self.hashed)
+             } else if let Some(exr) = self.exr.as_ref().filter(|exr| self.exr_hashed < exr.len()) {
+-                (exr, &mut self.exr_hashed, &mut self.exr_digest)
++                (exr, &mut self.exr_hashed)
+             } else {
+                 break;
+             };
+             let end = hashed.saturating_add(PNG_HASH_CHUNK_BYTES).min(bytes.len());
+-            digest.update(bytes.get(*hashed..end).ok_or_else(|| JobError::new(ErrorCode::Internal, "missing completed image digest chunk"))?);
++            self.digest.update(bytes.get(*hashed..end).ok_or_else(|| JobError::new(ErrorCode::Internal, "missing completed image digest chunk"))?);
+             *hashed = end;
+             cancel.check()?;
++            self.finish_png_digest();
+         }
+         Ok(self.hashed == self.png.len() && self.exr.as_ref().is_none_or(|exr| self.exr_hashed == exr.len()))
+     }
+@@ -774,6 +784,65 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++#[test]
++fn sequential_png_and_exr_hashing_preserves_independent_payload_digests() {
++    let quantum_bytes = PNG_HASH_CHUNK_BYTES * PNG_HASH_CHUNKS_PER_ADVANCE;
++    for units in [1, 3] {
++        for exr_length in [None, Some(0), Some(quantum_bytes + 29)] {
++            let png: Vec<u8> = (0..quantum_bytes + 13).map(|index| (index as u8).wrapping_mul(17).wrapping_add(3)).collect();
++            let exr: Option<Vec<u8>> = exr_length.map(|length| (0..length).map(|index| (index as u8).wrapping_mul(29).wrapping_add(101)).collect());
++            let expected_png = Sha256::digest(&png);
++            let expected_exr = exr.as_ref().map(Sha256::digest);
++            if let Some(expected_exr) = &expected_exr {
++                assert_ne!(&expected_png, expected_exr, "the distinct payloads must not share a digest");
++            }
++            let png_length = png.len();
++            let exr_length = exr.as_ref().map_or(0, Vec::len);
++            assert!(png_length > quantum_bytes);
++            assert!(exr_length == 0 || exr_length > quantum_bytes);
++            let chunks = png_length.div_ceil(PNG_HASH_CHUNK_BYTES) + exr_length.div_ceil(PNG_HASH_CHUNK_BYTES);
++            let steps = chunks.div_ceil(units);
++            let mut pending = PendingPng::new(png);
++            pending.exr = exr;
++            let cancel = CancelToken::default();
++            assert!(!pending.step(0, &cancel).unwrap());
++            assert_eq!((pending.hashed, pending.exr_hashed), (0, 0));
++            assert!(pending.png_digest.is_none());
++            let mut crossed_within_step = false;
++            let mut saw_png_only_boundary = false;
++            for step in 0..steps {
++                let before_png = pending.hashed;
++                let before_exr = pending.exr_hashed;
++                let done = pending.step(units, &cancel).unwrap();
++                assert_eq!(done, step + 1 == steps);
++                let advanced = pending.hashed + pending.exr_hashed - before_png - before_exr;
++                assert!(advanced > 0 && advanced <= units * PNG_HASH_CHUNK_BYTES);
++                if pending.hashed == png_length {
++                    assert_eq!(pending.png_digest.as_ref(), Some(&expected_png));
++                    saw_png_only_boundary |= pending.exr_hashed == 0;
++                }
++                crossed_within_step |= before_png < png_length && pending.hashed == png_length && pending.exr_hashed > 0;
++                assert_eq!(pending.progress().done, (pending.hashed + pending.exr_hashed) as u64);
++                assert_eq!(pending.progress().total, (png_length + exr_length) as u64);
++            }
++            assert_eq!((pending.hashed, pending.exr_hashed), (png_length, exr_length));
++            if exr_length > 0 {
++                assert_eq!(crossed_within_step, units == 3);
++                assert_eq!(saw_png_only_boundary, units == 1);
++            }
++            for extra_units in [0, 1] {
++                assert!(pending.step(extra_units, &cancel).unwrap());
++                assert_eq!(pending.png_digest.as_ref(), Some(&expected_png));
++                let actual_exr = pending.exr.as_ref().map(|_| pending.digest.clone().finalize());
++                assert_eq!(actual_exr, expected_exr, "EXR must start from a fresh SHA state and survive repeated completed steps");
++                assert_eq!((pending.hashed, pending.exr_hashed), (png_length, exr_length));
++            }
++        }
++    }
++}
++
+ 
+ struct Running {
+     source_master: Option<Arc<RenderFrame>>,
+@@ -1247,10 +1316,11 @@
+             data.progress = progress;
+             return Ok(true);
+         }
+-        let PendingPng { png, digest, preview_samples, exr, exr_digest, .. } =
++        let PendingPng { png, digest, preview_samples, exr, png_digest, .. } =
+             self.pending_png.take().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing completed PNG digest"))?;
++        let png_digest = png_digest.ok_or_else(|| JobError::new(ErrorCode::Internal, "missing finalized PNG digest"))?;
+         if self.partial.as_ref().and_then(|slot| slot.0.first()).is_some_and(|partial| partial.pending.is_some()) {
+-            return self.publish_partial(png, digest);
++            return self.publish_partial(png, png_digest);
+         }
+         let info = FrameInfo {
+             job: self.handle.0.id,
+@@ -1262,7 +1332,7 @@
+             encoding: ColourEncoding::Srgb,
+             alpha: AlphaConvention::Straight,
+             png_bytes: png.len() as u64,
+-            png_sha256: format!("{:x}", digest.finalize()),
++            png_sha256: format!("{:x}", png_digest),
+         };
+         // Include the working digest/Vec metadata, completed frame layout,
+         // actual hex allocation, bounded copied IDs and Arc/header allowance.
+@@ -1340,7 +1410,7 @@
+         let exr = exr.map(|bytes| {
+             let info = LinearMasterInfo {
+                 bytes: bytes.len() as u64,
+-                sha256: format!("{:x}", exr_digest.finalize()),
++                sha256: format!("{:x}", digest.finalize()),
+                 encoding: LinearColourEncoding::SceneLinearSrgbD65,
+                 alpha: LinearAlphaConvention::CoveragePremultiplied,
+             };
+@@ -2799,7 +2869,7 @@
+         self.pending_png = Some(PendingPng::new(png));
+         Ok(())
+     }
+-    fn publish_partial(&mut self, png: Vec<u8>, digest: Sha256) -> Result<bool> {
++    fn publish_partial(&mut self, png: Vec<u8>, digest: sha2::digest::Output<Sha256>) -> Result<bool> {
+         self.handle.0.cancel.check()?;
+         let partial = self.partial.as_mut().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial publication state"))?.get_mut()?;
+         let pending = partial.pending.take().ok_or_else(|| JobError::new(ErrorCode::Internal, "missing partial metadata"))?;
+@@ -2818,7 +2888,7 @@
+             encoding: ColourEncoding::Srgb,
+             alpha: AlphaConvention::Straight,
+             png_bytes: publication.png.len() as u64,
+-            png_sha256: format!("{:x}", digest.finalize()),
++            png_sha256: format!("{:x}", digest),
+         };
+         let metadata = std::mem::size_of::<RenderPartialPreview>()
+             .checked_add(64 + 2 * crate::MAX_RENDER_ID_BYTES)

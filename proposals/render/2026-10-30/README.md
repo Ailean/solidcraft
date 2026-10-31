@@ -215,3 +215,23 @@ preserve the source-reviewed 1,048,576 Workstation ceiling, u32 film resolve and
 explicit Interactive target/seed controls. Thirteen new tests are written and
 UNRUN. **Producer/host per-pass and u32 adapters are still pending; not adoptable
 alone, compiled, installed, ready or merged.** Existing budget limits remain.
+
+## CPU every-pass composition after C27 — 31 October
+
+[Twenty-five exact post-format source files and portable bindings](../2026-10-31/cpu-every-pass-c27-source/README.md)
+preserve the complete CPU proposal and its actual failed-build source. C27
+format/check exited 0; combined compilation stopped on the existing 1,024-byte
+metadata-size assertion (E0308). All 982 selected cases are UNRUN; the private
+layout repair, full CI and native each-pass acceptance remain pending. This
+supersedes the earlier nine-file snapshot for continuation, not production readiness.
+
+
+## C27 metadata recovery: single active SHA state — 31 October
+
+[One exact host-source successor and bindings](../2026-10-31/c27-sha-state-recovery/README.md)
+propose serial PNG/EXR hashing with one active SHA state and the completed PNG
+digest. The 1,024-byte assertion remains unchanged. Kernel review and actual
+compilation are pending at curation; the planned 983 cases are all UNRUN.
+Apply only on the exact C27 failed-source composition, not arbitrary main.
+
+The single-host recovery has now been independently source-reviewed and adopted locally. Compilation, all 983 planned cases and native each-pass image acceptance remain pending.

@@ -587,8 +587,8 @@ fn link_geom(s: &Seg2) -> Option<LinkGeom> {
             LinkGeom::Arc { c: center, a, b }
         }
         Seg2::Conic { a, apex, b, w } => LinkGeom::Conic { a, apex, b, rho: w / (1. + w) },
-        Seg2::Cubic { p0, p1, p2, p3 } => LinkGeom::Spline { pts: vec![p0, p1, p2, p3], control: true, degree: 3, periodic: false },
-        Seg2::Bezier { n, p } => LinkGeom::Spline { pts: p.get(..=usize::from(n))?.to_vec(), control: true, degree: n, periodic: false },
+        Seg2::Cubic { p0, p1, p2, p3 } => LinkGeom::Spline { pts: vec![p0, p1, p2, p3], control: true, degree: 3, periodic: false, nurbs: None },
+        Seg2::Bezier { n, p } => LinkGeom::Spline { pts: p.get(..=usize::from(n))?.to_vec(), control: true, degree: n, periodic: false, nurbs: None },
     })
 }
 
@@ -1088,9 +1088,10 @@ fn project_sketch_curve(sk: &Sketch, from: &Plane, ci: usize, to: &Plane) -> Vec
             (Some(c), Some(m)) => vec![LinkGeom::Ellipse { c: map(c), major: map(m), minor: *r }],
             _ => Vec::new(),
         },
-        Some(CurveKind::Spline { pts, control, degree, periodic }) if parallel => {
+        Some(CurveKind::Spline { pts, control, degree, periodic, nurbs }) if parallel => {
             let p: Option<Vec<Vec2>> = pts.iter().map(|q| sk.point(*q).map(map)).collect();
-            p.map(|pts| vec![LinkGeom::Spline { pts, control: *control, degree: *degree, periodic: *periodic }]).unwrap_or_default()
+            p.map(|pts| vec![LinkGeom::Spline { pts, control: *control, degree: *degree, periodic: *periodic, nurbs: nurbs.clone() }])
+                .unwrap_or_default()
         }
         Some(CurveKind::Conic { a, b, apex, rho }) if parallel => match (sk.point(*a), sk.point(*apex), sk.point(*b)) {
             (Some(a), Some(x), Some(b)) => vec![LinkGeom::Conic { a: map(a), apex: map(x), b: map(b), rho: *rho }],
@@ -1206,7 +1207,7 @@ fn as_spline(pts: &[Vec2], tol: f64) -> Option<LinkGeom> {
                 <= tol
         });
         if ok {
-            return Some(LinkGeom::Spline { pts: fit, control: false, degree: 3, periodic: false });
+            return Some(LinkGeom::Spline { pts: fit, control: false, degree: 3, periodic: false, nurbs: None });
         }
     }
     None

@@ -184,3 +184,8 @@ explicit. Source review and replay are not compilation, full CI or GPU parity.
 ## 2026-10-31: Interactive dielectric lowering contract
 
 [Three-file test-contract alignment](../2026-10-31/interactive-dielectric-lowering-contract/README.md) preserves the exact valid glass payload with full typed local-retention checks, all other original negatives and new invalid-thickness/IOR controls, plus precise capability documentation. Same 8 declarations / 0 new and 1 disclosed oracle change; full fixture remains inadmissible. Source-only/unformatted/uncompiled/unrun, not a product fix or C21 PASS. Sole delta, before/candidate RAW snapshots and portable bindings are included.
+
+## CPU directional RGB image consumer — source-only proposal, 31 October
+
+[Twelve-file source packet and limitations](../2026-10-31/cpu-directional-rgb-consumer/README.md).
+The complete API consumer connects captured direct visibility and RGB shading to bounded CPU image continuations, preserving legacy mode by default. Sixteen new tests are written but UNRUN. All before/candidate sources, unchanged RGB references and the exact delta are included; mixed ancestry and Raster composition requirements are explicit. This is a source archive, not an adopted complete workspace, UI feature-parity claim, test pass or production readiness result.

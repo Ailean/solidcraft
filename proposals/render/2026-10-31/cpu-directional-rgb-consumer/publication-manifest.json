@@ -1,0 +1,184 @@
+{
+  "status": "PREPARED_ONLY_NOT_PUBLISHED_REVIEW_AND_COMPOSITION_PENDING",
+  "allowlist": [
+    "before/crates/engine/src/cmd/render/jobs.rs",
+    "before/crates/render/src/job/host_tests.rs",
+    "before/crates/render/src/job/host.rs",
+    "before/crates/render/src/job/mod.rs",
+    "before/crates/render/src/job/rt2_tests.rs",
+    "before/crates/render/src/raytrace/deterministic_primary_tests.rs",
+    "before/crates/render/src/raytrace/dielectric_tests.rs",
+    "before/crates/render/src/raytrace/dielectric.rs",
+    "before/crates/render/src/raytrace/image_tests.rs",
+    "before/crates/render/src/raytrace/image.rs",
+    "before/crates/render/src/raytrace/primary_aa_tests.rs",
+    "before/crates/render/src/raytrace/punctual_image_tests.rs",
+    "candidate/crates/engine/src/cmd/render/jobs.rs",
+    "candidate/crates/render/src/job/host_tests.rs",
+    "candidate/crates/render/src/job/host.rs",
+    "candidate/crates/render/src/job/mod.rs",
+    "candidate/crates/render/src/job/rt2_tests.rs",
+    "candidate/crates/render/src/raytrace/deterministic_primary_tests.rs",
+    "candidate/crates/render/src/raytrace/dielectric_tests.rs",
+    "candidate/crates/render/src/raytrace/dielectric.rs",
+    "candidate/crates/render/src/raytrace/image_tests.rs",
+    "candidate/crates/render/src/raytrace/image.rs",
+    "candidate/crates/render/src/raytrace/primary_aa_tests.rs",
+    "candidate/crates/render/src/raytrace/punctual_image_tests.rs",
+    "delta.patch",
+    "publication-manifest.json",
+    "README.md",
+    "reference/crates/render/src/raytrace/lighting_tests.rs",
+    "reference/crates/render/src/raytrace/lighting.rs",
+    "source-bindings.json"
+  ],
+  "self": "publication-manifest.json",
+  "self_hash": "EXCLUDED_TO_AVOID_CIRCULAR_HASH",
+  "files": [
+    {
+      "path": "before/crates/engine/src/cmd/render/jobs.rs",
+      "bytes": 77327,
+      "sha256": "0e6a7a72254604a7e0c944edb57f6c16f6ecb37b7aa29cdedf2d3e4ecc55c4d5"
+    },
+    {
+      "path": "before/crates/render/src/job/host_tests.rs",
+      "bytes": 102170,
+      "sha256": "a421e66274f201634da648d7e4e5d2acd8ce96dc2c6096600f3f2f9dab9f0f4e"
+    },
+    {
+      "path": "before/crates/render/src/job/host.rs",
+      "bytes": 116953,
+      "sha256": "647c2d5d4453ee3028818f1088531b18aff17aa639168ac05c9d206028e86c78"
+    },
+    {
+      "path": "before/crates/render/src/job/mod.rs",
+      "bytes": 70555,
+      "sha256": "fc57562478cd46620ee694b1d647d9ec6d7726ecf29b884df63de2738991098b"
+    },
+    {
+      "path": "before/crates/render/src/job/rt2_tests.rs",
+      "bytes": 8639,
+      "sha256": "c68da6cf970df8cec8e850af62fc99580a5a1a073fc906564eaedfe8b76f9710"
+    },
+    {
+      "path": "before/crates/render/src/raytrace/deterministic_primary_tests.rs",
+      "bytes": 26110,
+      "sha256": "e963db2a2bcffb2917e7f76a28c3f079234d7f5849464576df0f19198727934d"
+    },
+    {
+      "path": "before/crates/render/src/raytrace/dielectric_tests.rs",
+      "bytes": 55581,
+      "sha256": "3d99e8301bf103ed6805b705500c0389acf25d567b88003a55da4085feb67b54"
+    },
+    {
+      "path": "before/crates/render/src/raytrace/dielectric.rs",
+      "bytes": 33664,
+      "sha256": "f98b0b157222fc09f807e2e51ea75649ceccbeb759f8206212a4682efcca5c61"
+    },
+    {
+      "path": "before/crates/render/src/raytrace/image_tests.rs",
+      "bytes": 143136,
+      "sha256": "3e0f2c3f4b7b89bcfe521efc68571facf66a16334ff58812bf2fc7a0ec4a5bee"
+    },
+    {
+      "path": "before/crates/render/src/raytrace/image.rs",
+      "bytes": 115405,
+      "sha256": "928115ae0c8cb460438da47a1b73c94f37e4a8dbf2c48c301957a40eadfb4ccf"
+    },
+    {
+      "path": "before/crates/render/src/raytrace/primary_aa_tests.rs",
+      "bytes": 89829,
+      "sha256": "e2af6353d85f56d4dc7d3d1dd838f7d2422db80fd256770e196b8d694158913c"
+    },
+    {
+      "path": "before/crates/render/src/raytrace/punctual_image_tests.rs",
+      "bytes": 11192,
+      "sha256": "fbda59fd4a543f9fbdc450d4ec586db215cc69fe1a110a32d93d646ffc92d392"
+    },
+    {
+      "path": "candidate/crates/engine/src/cmd/render/jobs.rs",
+      "bytes": 79936,
+      "sha256": "925df1f1e39cfd201fb64fd165a89b399e6023d8e91e70e6085bbdf59256ddf1"
+    },
+    {
+      "path": "candidate/crates/render/src/job/host_tests.rs",
+      "bytes": 106059,
+      "sha256": "70b8e0b90d9fcba9c3cec37767a58c1847985be84cf891154b1b1a9dd661059a"
+    },
+    {
+      "path": "candidate/crates/render/src/job/host.rs",
+      "bytes": 117225,
+      "sha256": "73f13b8293b90187d18544d8f501264cb833a51a8235a7c96888ae2ab1047c7d"
+    },
+    {
+      "path": "candidate/crates/render/src/job/mod.rs",
+      "bytes": 71430,
+      "sha256": "54578e65ae116934c5155631225cf3649c51defc878111170abceaf362bc95a9"
+    },
+    {
+      "path": "candidate/crates/render/src/job/rt2_tests.rs",
+      "bytes": 11956,
+      "sha256": "c5463c924b0e20bd49ff6449957fccf81b9a691e47671793e812ed5a1ceb7592"
+    },
+    {
+      "path": "candidate/crates/render/src/raytrace/deterministic_primary_tests.rs",
+      "bytes": 26513,
+      "sha256": "aa9315d0eee6773a52a9f08e543b123cfaa0b6d7bb172ee0ed0c542dfffed202"
+    },
+    {
+      "path": "candidate/crates/render/src/raytrace/dielectric_tests.rs",
+      "bytes": 56724,
+      "sha256": "23f44930a242c507145e7d8ce2a013febb1dedbc1d9aee6e44e8e99b501eed72"
+    },
+    {
+      "path": "candidate/crates/render/src/raytrace/dielectric.rs",
+      "bytes": 33896,
+      "sha256": "fbf044304e67b3156e4dd31c5b98585308773352c7565d7d8cce699dd232ffe7"
+    },
+    {
+      "path": "candidate/crates/render/src/raytrace/image_tests.rs",
+      "bytes": 171492,
+      "sha256": "5d04f9b58448a6ded646343d37888e0cf909f88dfcda399e2f15d16d43c24cc0"
+    },
+    {
+      "path": "candidate/crates/render/src/raytrace/image.rs",
+      "bytes": 126109,
+      "sha256": "76ca3ec1dda4990921f1d72c240c6b130848d9b928ae5c37f8ce0203b914938e"
+    },
+    {
+      "path": "candidate/crates/render/src/raytrace/primary_aa_tests.rs",
+      "bytes": 91462,
+      "sha256": "b4d23fec6f693193032abddd44f22ccc1d32cd0f580a378bea867fe4ce7f5472"
+    },
+    {
+      "path": "candidate/crates/render/src/raytrace/punctual_image_tests.rs",
+      "bytes": 11441,
+      "sha256": "223ffaa0e117ae193f5061b0f99829dbf58c8eea1c302ec8f8ae1201ca4764af"
+    },
+    {
+      "path": "delta.patch",
+      "bytes": 324785,
+      "sha256": "266d3a77d3e6fc3f6891d31ba0698a33dbccdb38e49961680e09889e3ee78805"
+    },
+    {
+      "path": "README.md",
+      "bytes": 4116,
+      "sha256": "7981b99f57d8b1683c5f6438698ae7378a310ed1ff93d5afd68eeae38e6f0b17"
+    },
+    {
+      "path": "reference/crates/render/src/raytrace/lighting_tests.rs",
+      "bytes": 14927,
+      "sha256": "cfd4194e7e5d6c6996700b0367984e2d91069078ee1a3aa3b6aa5453bd2cfc85"
+    },
+    {
+      "path": "reference/crates/render/src/raytrace/lighting.rs",
+      "bytes": 8678,
+      "sha256": "ab270656a20eedaea08e6858bdf0fd349ca64a5e528c0fc9162207adda541764"
+    },
+    {
+      "path": "source-bindings.json",
+      "bytes": 6220,
+      "sha256": "842c9c7d9878c29fbe90c4f729c145c25515bab1a6e24e1425aee6c07ee0f7a8"
+    }
+  ]
+}

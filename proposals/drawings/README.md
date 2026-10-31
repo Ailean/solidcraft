@@ -59,3 +59,7 @@ real emitted-content coverage, PDF readers and actual validation remain pending.
 ## 2026-10-31: X1 two-file main reconciliation
 
 [X1 main reconciliation](2026-10-31/x1-main-reconciliation/README.md) preserves the exact caller successor, foreign source payload, 53 original byte pins and 18+7 test declarations. Only two of the 12 legitimate X1 paths are supplied; ten prerequisite paths remain separate. Source-only/uncompiled/unrun, not standalone main or a resolved/ready PR. Policy references are retained; no historical result transfers.
+
+## 2026-10-31: combined X1 source reconciliation
+
+[Eleven-path X1 alternative](2026-10-31/x1-combined-source-reconciliation/README.md) combines nine original prerequisite candidates with the exact already archived two-file parent, preserving foreign source, generic contracts, 53 pins and 117+25 source test declarations. Apply its sole combined delta once to frozen main, never sequentially after the parent. Two absent paths are explicit /dev/null additions. Source-only/uncompiled/unrun; lock resolution and whole-workspace API validation remain pending. No readiness or result transfer.

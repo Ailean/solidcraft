@@ -4386,6 +4386,7 @@
   "ui.dark": "深色",
   "ui.default_modelling_orientation": "默认建模方向",
   "ui.delete": "删除",
+  "ui.delete_select_first": "请先选择要删除的内容：特征、实体、组件或草图几何",
   "ui.depth": "深度",
   "ui.design": "设计",
   "ui.design_properties.author": "作者",

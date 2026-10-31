@@ -505,6 +505,9 @@ pub struct SolveApp {
     /// The views around opening the open sketch. Leaving it goes back to the earlier one as the
     /// "When a sketch ends" preference says (#7038).
     pub pre_sketch_cam: Option<PreSketchView>,
+    /// The view from before Extrude turned it to isometric (#9176); the view goes back to it when
+    /// the dialog closes, as the "and back when it closes" preference says.
+    pub pre_extrude_cam: Option<Camera>,
     /// The component active before Edit Sketch activated the one the sketch is in (#8127);
     /// leaving the sketch makes it active again.
     pub pre_sketch_component: Option<PreSketchComponent>,
@@ -762,6 +765,7 @@ impl SolveApp {
             now: 0.0,
             pre_sketch_marker: None,
             pre_sketch_cam: None,
+            pre_extrude_cam: None,
             pre_sketch_component: None,
             services,
             file_picker: None,
@@ -1938,7 +1942,11 @@ impl SolveApp {
             if d.wants_picks() && !self.session.selection.is_empty() {
                 let _ = self.session.execute("select.clear", &json!({}));
             }
+            let extrude = matches!(d.kind, dialogs::Kind::Extrude { .. });
             self.dialog = Some(d);
+            if extrude {
+                self.turn_for_extrude();
+            }
             return;
         }
         // Undo and redo can recompute much of the history: off the window thread when slow.
@@ -2074,6 +2082,30 @@ impl SolveApp {
         }
         self.pre_sketch_cam = self.session.active_sketch.map(|sketch| PreSketchView { sketch, before, facing: self.settled_cam() });
         turn
+    }
+
+    /// Extrude opened: turn the view to isometric when Preferences say so, and remember the view
+    /// from before for when the dialog closes (#9176).
+    fn turn_for_extrude(&mut self) {
+        if !self.preferences.extrude_view_isometric {
+            return;
+        }
+        let before = self.settled_cam();
+        let mut to = before;
+        to.set_view(StandardView::Iso);
+        self.pre_extrude_cam = self.preferences.extrude_view_return.then_some(before);
+        self.animate_to(to);
+    }
+
+    /// Once Extrude has closed, however it closed, the view goes back to where it was before
+    /// Extrude turned it (#9176). Going back keeps the projection, as at the end of a sketch.
+    fn return_from_extrude_view(&mut self) {
+        if self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::Extrude { .. })) {
+            return;
+        }
+        if let Some(before) = self.pre_extrude_cam.take() {
+            self.animate_to(Camera { fov: self.settled_cam().fov, ..before });
+        }
     }
 
     /// Where the camera is going: the end of the running camera animation, else where it is.
@@ -2586,6 +2618,7 @@ impl SolveApp {
         self.poll_control_jobs(ctx);
         self.drain_control(ctx);
         self.follow_view_request(true);
+        self.return_from_extrude_view();
         agent_cursor::step(self, ctx);
         browser::eye_drag_frame(self, ctx);
         if !self.synthetic.is_empty() {

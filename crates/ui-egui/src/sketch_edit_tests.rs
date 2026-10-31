@@ -368,6 +368,86 @@ mod exit_view_preference {
     }
 }
 
+/// Preferences › Design › Extrude's view (#9176): with the first preference on, the view turns to
+/// isometric each time Extrude opens; with the second as well, it goes back to the view from
+/// before when Extrude closes, by OK, Cancel or Esc. Both are off by default: the view stays.
+mod extrude_view_preference {
+    use crate::scenario::Harness;
+    use serde_json::json;
+    use solidcraft_engine::render::{Camera, StandardView};
+
+    /// A finished sketch on XY, seen from the top, with the two preferences set; and that view.
+    fn from_the_top(isometric: bool, back: bool) -> (Harness, Camera) {
+        let mut h = Harness::new();
+        h.app.preferences.extrude_view_isometric = isometric;
+        h.app.preferences.extrude_view_return = back;
+        h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        h.app.run("sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [40, 30]})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        h.call("ui.view", json!({"view": "top"}));
+        h.settle();
+        crate::scenario::check(&mut h, &json!({"camera": {"yaw_deg": 0, "pitch_deg": 90}})).unwrap();
+        let top = h.app.cam;
+        (h, top)
+    }
+
+    fn open_extrude(h: &mut Harness) {
+        h.step(&json!({"start": "solid.extrude"})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_some(), "Extrude is open");
+    }
+
+    fn iso_of(cam: Camera) -> Camera {
+        let mut iso = cam;
+        iso.set_view(StandardView::Iso);
+        iso
+    }
+
+    #[test]
+    fn both_are_off_by_default_and_the_view_stays() {
+        let prefs = crate::prefs::Prefs::default();
+        assert!(!prefs.extrude_view_isometric && !prefs.extrude_view_return);
+        let (mut h, top) = from_the_top(false, false);
+        open_extrude(&mut h);
+        assert_eq!(h.app.cam, top);
+        // The second one alone does nothing either.
+        let (mut h, top) = from_the_top(false, true);
+        open_extrude(&mut h);
+        assert_eq!(h.app.cam, top);
+    }
+
+    #[test]
+    fn extrude_turns_the_view_to_isometric_and_leaves_it_there() {
+        let (mut h, top) = from_the_top(true, false);
+        open_extrude(&mut h);
+        assert_eq!(h.app.cam, iso_of(top), "isometric when Extrude opens");
+        h.step(&json!({"widget": "Cancel"})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none());
+        assert_eq!(h.app.cam, iso_of(top), "without the second preference it stays isometric");
+    }
+
+    #[test]
+    fn ok_cancel_and_escape_go_back_to_the_view_from_before() {
+        for close in ["OK", "Cancel", "Escape"] {
+            let (mut h, top) = from_the_top(true, true);
+            open_extrude(&mut h);
+            assert_eq!(h.app.cam, iso_of(top), "{close}: isometric while Extrude is open");
+            match close {
+                "Escape" => h.step(&json!({"key": "Escape"})).unwrap(),
+                other => h.step(&json!({"widget": other})).unwrap(),
+            };
+            h.settle();
+            assert!(h.app.dialog.is_none(), "{close}");
+            assert_eq!(h.app.session.doc.features.len(), if close == "OK" { 2 } else { 1 }, "{close}: OK adds the extrude");
+            assert_eq!(h.app.cam, top, "{close}: back to the view from before");
+            // Each time it opens, not only the first.
+            open_extrude(&mut h);
+            assert_eq!(h.app.cam, iso_of(top), "{close}: isometric again");
+        }
+    }
+}
+
 /// #8127: a sketch inside an inserted fastener, opened from its row in the browser, activates the
 /// fastener's component while it is open; Finish and Cancel make the design active again, so the
 /// other bodies are no longer drawn faded. Editing it with the fastener already active leaves the

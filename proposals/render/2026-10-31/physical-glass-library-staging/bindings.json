@@ -1,0 +1,82 @@
+{
+  "status": "SOURCE_ONLY_UNRUN_NOT_ADOPTED",
+  "changes": [
+    {
+      "path": "crates/ui-egui/src/render_workspace_library.rs",
+      "before_state": "PRESENT",
+      "before_sha256": "7c7131e8dca944e4088de6bb0865cb33ff481a3dff53f12e0e42f7727ca6ab6c",
+      "candidate_sha256": "e4b809875f965c6ae13b06931a3de8df7cbf654afc64fd2fed221cfcbd9ea762"
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_materials.rs",
+      "before_state": "PRESENT",
+      "before_sha256": "5f9efcda8d42627eea7b05a8ccea2006a265492325824885442c76b6ec07e85a",
+      "candidate_sha256": "d0846cf8c8b0d2e05b7f8182cae26aae5ad1562c7d2e1b0561f6fcf9a39c80ef"
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before_state": "PRESENT",
+      "before_sha256": "8f2d6589162ad3d14b0aceb5a80fe0543738d7205ce2498ac0debc89b688ffd2",
+      "candidate_sha256": "29c4fe6134a955711c2690220aba30c2bdde8ddec979c7093bc5dc2a39d55c73"
+    },
+    {
+      "path": "assets/locales/pending/render-glass-library-route.json",
+      "before_state": "ABSENT",
+      "before_sha256": null,
+      "candidate_sha256": "c5c6695b5df44d5093cf0b2aa6e474c8d7b1a6101c5f0c11b12d0de6934d3c05"
+    }
+  ],
+  "tests": {
+    "preserved": 267,
+    "added": 10,
+    "total": 277,
+    "executed": 0
+  },
+  "members": [
+    {
+      "path": "before/crates/ui-egui/src/render_workspace_library.rs",
+      "bytes": 101279,
+      "sha256": "7c7131e8dca944e4088de6bb0865cb33ff481a3dff53f12e0e42f7727ca6ab6c"
+    },
+    {
+      "path": "before/crates/ui-egui/src/render_workspace_materials.rs",
+      "bytes": 48776,
+      "sha256": "5f9efcda8d42627eea7b05a8ccea2006a265492325824885442c76b6ec07e85a"
+    },
+    {
+      "path": "before/crates/ui-egui/src/render_workspace_tests.rs",
+      "bytes": 592713,
+      "sha256": "8f2d6589162ad3d14b0aceb5a80fe0543738d7205ce2498ac0debc89b688ffd2"
+    },
+    {
+      "path": "candidate/crates/ui-egui/src/render_workspace_library.rs",
+      "bytes": 102873,
+      "sha256": "e4b809875f965c6ae13b06931a3de8df7cbf654afc64fd2fed221cfcbd9ea762"
+    },
+    {
+      "path": "candidate/crates/ui-egui/src/render_workspace_materials.rs",
+      "bytes": 54225,
+      "sha256": "d0846cf8c8b0d2e05b7f8182cae26aae5ad1562c7d2e1b0561f6fcf9a39c80ef"
+    },
+    {
+      "path": "candidate/crates/ui-egui/src/render_workspace_tests.rs",
+      "bytes": 607306,
+      "sha256": "29c4fe6134a955711c2690220aba30c2bdde8ddec979c7093bc5dc2a39d55c73"
+    },
+    {
+      "path": "candidate/assets/locales/pending/render-glass-library-route.json",
+      "bytes": 7753,
+      "sha256": "c5c6695b5df44d5093cf0b2aa6e474c8d7b1a6101c5f0c11b12d0de6934d3c05"
+    },
+    {
+      "path": "delta.patch",
+      "bytes": 31436,
+      "sha256": "0a81e97b9d368cbebfe8e8067a1c14b6274ccc1152802a63c29bf22bf4f7f70a"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2329,
+      "sha256": "86950cc7ef634cfadfbbca9ba93bb87e1919f35c78c147994d70b29dfecbf03f"
+    }
+  ]
+}

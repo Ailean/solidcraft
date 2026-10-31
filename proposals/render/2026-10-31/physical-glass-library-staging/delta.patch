@@ -1,0 +1,469 @@
+--- a/crates/ui-egui/src/render_workspace_library.rs
++++ b/crates/ui-egui/src/render_workspace_library.rs
+@@ -944,6 +944,36 @@
+         })
+ }
+ 
++/// Explicit staging is separate from scalar Apply and the blocked glass tile.
++pub(super) fn stage_glass(app: &mut SolveApp, id: &str) -> Result<(), String> {
++    materials::stage_library_glass(app, id)?;
++    app.render_workspace.view.selection = super::RenderSelection::Object(app.session.selection.clone());
++    app.render_workspace.view.inspector.page = super::inspector::Page::Appearance;
++    app.render_workspace.view.dirty = true;
++    app.set_status(app.tr("render.glass_library_prepared").to_string(), false);
++    Ok(())
++}
++
++fn glass_route_controls(app: &mut SolveApp, ui: &mut egui::Ui, view: &View) {
++    if view.kind != "appearances" {
++        return;
++    }
++    let Some(id) = view.selected.as_deref().filter(|id| {
++        solidcraft_engine::doc::appearance_pack::find(id)
++            .is_some_and(|preset| preset.id == *id && matches!(preset.recipe, solidcraft_engine::doc::appearance_pack::Recipe::Glass(_)))
++    }) else { return };
++    ui_kit::text(ui, app.tr("render.glass_library_help"), ui_kit::Text::Note("render:library:glass-help"));
++    let ready = materials::library_glass_ready(app, id);
++    let action = ui_kit::button(ui, app.tr("render.glass_library_edit"), ui_kit::Button::Enabled(ready.is_ok()));
++    crate::scenario::publish_target("render:library:prepare-glass", action.rect);
++    if let Err(reason) = &ready {
++        ui_kit::text(ui, reason, ui_kit::Text::Note("render:library:glass-reason"));
++    }
++    if action.clicked() && let Err(error) = stage_glass(app, id) {
++        app.set_status(error, true);
++    }
++}
++
+ fn browse_contents(app: &mut SolveApp, ui: &mut egui::Ui, stage_card: bool) {
+     let mut view = std::mem::take(&mut app.render_workspace.view.library);
+     let document_changed =
+@@ -1246,6 +1276,7 @@
+             }
+         }
+         if stage_card {
++            glass_route_controls(app, ui, &view);
+             ui_kit::catalog_footer_with_tip(ui, app.tr("render.stage_layout.appearance_note"), app.tr("render.assign_help"));
+             if view.kind == "materials" {
+                 ui_kit::text(ui, app.tr("render.library_specification_only"), ui_kit::Text::Note("appearance:reference:reason"));
+--- a/crates/ui-egui/src/render_workspace_materials.rs
++++ b/crates/ui-egui/src/render_workspace_materials.rs
+@@ -706,6 +706,113 @@
+ 
+ /// Prepare through the engine, then install only a request-local binding. No
+ /// authored material may silently remove a glass override or switch executor.
++/// Read-only eligibility for an explicit catalogue action, not a certificate.
++pub(super) fn library_glass_ready(app: &SolveApp, id: &str) -> Result<(), String> {
++    if !matches!(app.render_workspace.view.method, super::ImageMethod::CpuRaytrace | super::ImageMethod::GpuRaytrace) {
++        return Err(app.tr("render.glass_library_method").into());
++    }
++    if id.is_empty() || id.len() > 128 {
++        return Err(app.tr("render.error_glass_recipe").into());
++    }
++    let preset = appearance_pack::find(id).filter(|preset| preset.id == id)
++        .ok_or_else(|| app.tr("render.error_glass_recipe").to_string())?;
++    if !matches!(preset.recipe, Recipe::Glass(_)) {
++        return Err(app.tr("render.error_physical_glass").into());
++    }
++    let [solidcraft_engine::Sel::Body { name }] = app.session.selection.as_slice() else {
++        return Err(app.tr("render.appearance_editor.body_reason").into());
++    };
++    if name.is_empty() || name.len() > 1024 || name.chars().any(char::is_control) || !app.session.body_visible(name) {
++        return Err(app.tr("render.material_target_missing").into());
++    }
++    if app.session.model.is_stale() {
++        return Err(app.tr("render.material_revalidate_needed").into());
++    }
++    let bindings = &app.render_workspace.view.materials.bindings;
++    let mut matching = bindings.iter().filter(|binding| binding.target.name == *name);
++    let existing = matching.next();
++    if matching.next().is_some() {
++        return Err(app.tr("render.glass_library_conflict").into());
++    }
++    if bindings.len() > MAX_BINDINGS || (existing.is_none() && bindings.len() == MAX_BINDINGS) {
++        return Err(app.tr("render.material_limits").into());
++    }
++    if app.render_workspace.view.method == super::ImageMethod::CpuRaytrace
++        && existing.is_none_or(|binding| !binding.active())
++        && bindings.iter().filter(|binding| binding.active()).count() >= 8
++    {
++        return Err(app.tr("render.cpu_optics_limit").into());
++    }
++    Ok(())
++}
++
++fn same_library_glass(a: &Glass, b: &Glass) -> bool {
++    a.recipe == b.recipe && a.ior == b.ior && a.absorption == b.absorption
++        && a.boundary == b.boundary && a.thickness == b.thickness
++        && a.shadows == b.shadows && a.subsurface.is_none() && b.subsurface.is_none()
++}
++
++/// Stage authored values in the existing editor. No appearance assignment,
++/// implicit CPU permission, boundary inference, geometry certification or save.
++pub(super) fn stage_library_glass(app: &mut SolveApp, id: &str) -> Result<(), String> {
++    library_glass_ready(app, id)?;
++    let glass = Glass::recipe(id)?; // The one existing validated conversion.
++    let [solidcraft_engine::Sel::Body { name }] = app.session.selection.as_slice() else {
++        return Err(app.tr("render.appearance_editor.body_reason").into());
++    };
++    let name = name.clone();
++    let revision = app.session.revision;
++    let document = Arc::downgrade(&app.session.doc);
++    let targets = read_targets(app)?;
++    if revision != app.session.revision || !Weak::ptr_eq(&document, &Arc::downgrade(&app.session.doc)) || app.session.model.is_stale() {
++        return Err(app.tr("render.material_revalidate_needed").into());
++    }
++    let mut matching = targets.into_iter().filter(|target| target.name == name);
++    let target = matching.next().ok_or_else(|| app.tr("render.material_target_missing").to_string())?;
++    if matching.next().is_some() {
++        return Err(app.tr("render.material_target_missing").into());
++    }
++    target.stable_target.as_ref().ok_or_else(|| app.tr("render.material_target_missing").to_string())?
++        .validate().map_err(|error| error.to_string())?;
++    let existing = app.render_workspace.view.materials.bindings.iter().position(|binding| binding.target.name == name);
++    let binding = if let Some(index) = existing {
++        let old = app.render_workspace.view.materials.bindings.get(index)
++            .ok_or_else(|| app.tr("render.error_material_binding").to_string())?;
++        if old.target != target || !old.current(app) {
++            return Err(app.tr("render.material_revalidate_needed").into());
++        }
++        if old.coat_enabled || old.maps_enabled {
++            return Err(app.tr("render.glass_library_conflict").into());
++        }
++        if same_library_glass(&old.glass, &glass) {
++            return Ok(()); // An exact repeat preserves ALL existing opt-ins and disabled state.
++        }
++        if old.glass_enabled || !same_library_glass(&old.glass, &Glass::default()) {
++            return Err(app.tr("render.glass_library_conflict").into());
++        }
++        old.clone() // An empty existing slot retains its other authored fields/permission.
++    } else {
++        Binding::new(target, app) // New CPU permission remains false.
++    };
++    let mut binding = binding;
++    binding.glass = glass;
++    binding.glass_enabled = true;
++    let view = &mut app.render_workspace.view.materials;
++    if let Some(index) = existing {
++        let slot = view.bindings.get_mut(index).ok_or_else(|| crate::i18n::tr("render.error_material_binding").to_string())?;
++        *slot = binding;
++    } else {
++        let was_empty = view.bindings.is_empty();
++        view.bindings.try_reserve_exact(1).map_err(|_| crate::i18n::tr("render.material_limits").to_string())?;
++        view.bindings.push(binding);
++        if was_empty {
++            view.enabled = true;
++        }
++        // A previously disabled nonempty group is never reactivated by staging.
++    }
++    Ok(())
++}
++
+ pub(super) fn install_library_surface(app: &mut SolveApp, id: &str, target: Target, plane: &str, scale: f64) -> Result<(), String> {
+     if app.render_workspace.view.method != super::ImageMethod::GpuRaytrace {
+         return Err(app.tr("render.material_gpu_required").into());
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -10852,3 +10852,235 @@
+     h.app.run("edit.undo", json!({})).unwrap();
+     assert_eq!(h.app.session.doc.to_json(), before);
+ }
++
++// Explicit catalogue staging, not a scalar appearance assignment or transport oracle.
++mod glass_library_bridge {
++    use super::*;
++    use solidcraft_engine::{Sel, doc::appearance_pack::{Recipe, STARTER_PACK}};
++
++    fn fixture() -> Harness {
++        let mut h = Harness::new();
++        h.app.run("solid.box", json!({"length":20,"width":20,"height":4,"body_name":"Optics"})).unwrap();
++        enter(&mut h.app, true).unwrap();
++        h.app.run("render.scene", json!({})).unwrap();
++        h.app.run("select.set", json!({"items":[Sel::Body { name:"Optics".into() }]})).unwrap();
++        h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
++        h.app.render_workspace.view.stage = Stage::Look;
++        h.app.render_workspace.view.draft.width = 64;
++        h.app.render_workspace.view.draft.height = 64;
++        h.app.render_workspace.view.transparent = false;
++        h.app.render_workspace.view.raytrace.progressive = None;
++        h.app.session.mark_saved();
++        h
++    }
++
++    #[test]
++    fn library_bridge_stages_all_six_authored_recipes_without_cpu_permission_or_design_changes() {
++        let mut count = 0;
++        for preset in STARTER_PACK {
++            let Recipe::Glass(recipe) = preset.recipe else { continue };
++            let mut h = fixture();
++            let doc = h.app.session.doc.clone();
++            let before = (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty());
++            let options = serde_json::to_value(&h.app.render_workspace.view.raytrace).unwrap();
++            library::stage_glass(&mut h.app, preset.id).unwrap();
++            let binding = &h.app.render_workspace.view.materials.bindings[0];
++            assert_eq!(binding.target.name, "Optics");
++            assert!(binding.target.stable_target.is_some());
++            assert!(binding.glass_enabled && !binding.cpu_optics && !binding.maps_enabled && !binding.coat_enabled);
++            assert_eq!(binding.glass.recipe, Some(preset.id));
++            assert_eq!(binding.glass.ior, recipe.dielectric_ior);
++            for (sigma, transmission) in binding.glass.absorption.into_iter().zip(recipe.transmission_linear_rgb) {
++                assert!(((-sigma * recipe.reference_path_mm).exp() - transmission).abs() < 1e-12);
++            }
++            match recipe.boundary {
++                solidcraft_engine::doc::appearance_pack::GlassBoundary::Closed => {
++                    assert_eq!(binding.glass.boundary, materials::Boundary::Closed);
++                    assert!(!binding.glass.shadows);
++                }
++                solidcraft_engine::doc::appearance_pack::GlassBoundary::Thin { thickness_mm } => {
++                    assert_eq!(binding.glass.boundary, materials::Boundary::Thin);
++                    assert_eq!(binding.glass.thickness, thickness_mm);
++                    assert!(binding.glass.shadows, "preparing a Thin recipe is not consent to remove transmitted shadows");
++                }
++            }
++            assert_eq!(h.app.render_workspace.view.method, ImageMethod::CpuRaytrace);
++            assert_eq!(serde_json::to_value(&h.app.render_workspace.view.raytrace).unwrap(), options);
++            assert!(runtime_image_request(&h.app, false).is_err(), "CPU permission is still explicit");
++            assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
++            assert_eq!(before, (h.app.session.revision, h.app.session.undo.len(), h.app.session.is_dirty()));
++            assert!(matches!(&h.app.render_workspace.view.selection, RenderSelection::Object(items) if items == &h.app.session.selection));
++            assert_eq!(h.app.render_workspace.view.inspector.page, inspector::Page::Appearance);
++            assert_eq!(h.app.status.as_ref().unwrap().0, h.app.tr("render.glass_library_prepared"));
++            assert_ne!(h.app.status.as_ref().unwrap().0, h.app.tr("render.library_applied"));
++            count += 1;
++        }
++        assert_eq!(count, 6);
++    }
++
++    #[test]
++    fn library_bridge_requires_stable_glass_id_and_keeps_scalar_assignment_guards() {
++        let mut h = fixture();
++        let opaque = STARTER_PACK.iter().find(|p| matches!(p.recipe, Recipe::Opaque(_))).unwrap();
++        for id in ["Glass - Clear", "Glass Recipe - Low Iron Clear", opaque.id, "starter.glass.not-a-recipe"] {
++            assert!(library::stage_glass(&mut h.app, id).is_err());
++            assert!(h.app.render_workspace.view.materials.bindings.is_empty());
++        }
++        let catalog = h.app.run("appearance.library", json!({})).unwrap();
++        let glass = catalog["appearances"].as_array().unwrap().iter().find(|p| p["id"] == "starter.glass.low-iron-clear").unwrap();
++        assert_eq!(glass["available"], false);
++        for appearance in ["starter.glass.low-iron-clear", "Glass Recipe - Low Iron Clear"] {
++            assert!(h.app.run("appearance.assign", json!({"bodies":["Optics"],"appearance":appearance,"color":"#ffffff","opacity":1.0})).is_err());
++        }
++        h.app.run("appearance.assign", json!({"bodies":["Optics"],"appearance":"Glass - Clear"})).unwrap();
++        assert!(h.app.session.doc.appearances.bodies["Optics"].opacity < 1.0);
++        assert!(h.app.render_workspace.view.materials.bindings.is_empty(), "legacy alpha is never promoted to physical glass");
++    }
++
++    #[test]
++    fn library_bridge_refuses_face_component_empty_multiple_and_raster_targets() {
++        let mut h = fixture();
++        h.app.run("select.filter", json!({"mode":"face"})).unwrap();
++        let hit = crate::viewport::Hit::Face { body:"Optics".into(), index:0, point:solidcraft_engine::geom::Vec3::ZERO };
++        let face = crate::viewport::candidate(&h.app, &[hit]).unwrap().1;
++        assert!(matches!(face, Sel::Face { .. }));
++        let component = h.app.run("component.create", json!({"name":"Unassigned component"})).unwrap();
++        let occurrence = component["occurrence"].as_u64().unwrap();
++        for selection in [vec![], vec![face], vec![Sel::Occurrence { path:vec![occurrence] }],
++            vec![Sel::Body { name:"Optics".into() }, Sel::Body { name:"Optics".into() }]] {
++            h.app.session.selection = selection;
++            assert!(library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").is_err());
++            assert!(h.app.render_workspace.view.materials.bindings.is_empty());
++        }
++        h.app.session.selection = vec![Sel::Body { name:"Optics".into() }];
++        h.app.render_workspace.view.method = ImageMethod::Raster;
++        assert!(library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").is_err());
++        assert_eq!(h.app.render_workspace.view.method, ImageMethod::Raster);
++    }
++
++    #[test]
++    fn library_bridge_hidden_stale_document_and_changed_target_never_refresh_a_binding() {
++        let mut h = fixture();
++        h.app.session.visibility.hidden_bodies.push("Optics".into());
++        assert!(library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").is_err());
++        assert!(h.app.render_workspace.view.materials.bindings.is_empty());
++        h.app.session.visibility.hidden_bodies.clear();
++        library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").unwrap();
++        let original = h.app.render_workspace.view.materials.bindings[0].clone();
++        h.app.render_workspace.view.materials.bindings[0].target.ordinal += 1;
++        assert!(library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").is_err());
++        assert_eq!(h.app.render_workspace.view.materials.bindings[0].target.ordinal, original.target.ordinal + 1);
++        h.app.render_workspace.view.materials.bindings[0] = original.clone();
++        h.app.session.doc = Arc::new((*h.app.session.doc).clone());
++        assert!(library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").is_err());
++        h.app.render_workspace.view.materials.bindings[0] = original;
++        h.app.run("appearance.assign", json!({"bodies":["Optics"],"color":"#123456"})).unwrap();
++        assert!(library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").is_err(), "CAD revision is not silently revalidated");
++    }
++
++    #[test]
++    fn library_bridge_conflicts_preserve_permission_shadows_scattering_and_other_material_intent() {
++        for conflict in 0..4 {
++            let mut h = fixture();
++            library::stage_glass(&mut h.app, "starter.glass.thin-clear").unwrap();
++            let binding = &mut h.app.render_workspace.view.materials.bindings[0];
++            binding.cpu_optics = true;
++            match conflict {
++                0 => binding.coat_enabled = true,
++                1 => binding.maps_enabled = true,
++                2 => binding.glass.subsurface = Some(solidcraft_engine::render::transmission::subsurface::Subsurface { scattering_per_mm:0.1,anisotropy:0.0 }),
++                _ => binding.glass.ior = 1.7,
++            }
++            let before = format!("{:?}", h.app.render_workspace.view.materials);
++            assert!(library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").is_err());
++            assert_eq!(format!("{:?}", h.app.render_workspace.view.materials), before);
++        }
++    }
++
++    #[test]
++    fn library_bridge_exact_repeat_preserves_existing_cpu_permission_disabled_state_and_values() {
++        let mut h = fixture();
++        library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").unwrap();
++        h.app.render_workspace.view.materials.bindings[0].cpu_optics = true;
++        h.app.render_workspace.view.materials.bindings[0].enabled = false;
++        h.app.render_workspace.view.materials.enabled = false;
++        let before = format!("{:?}", h.app.render_workspace.view.materials);
++        library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").unwrap();
++        assert_eq!(format!("{:?}", h.app.render_workspace.view.materials), before);
++        assert_eq!(h.app.render_workspace.view.materials.bindings.len(), 1);
++    }
++
++    #[test]
++    fn library_bridge_respects_authoring_and_cpu_target_caps_without_activating_other_bindings() {
++        for (method, count, active) in [(ImageMethod::GpuRaytrace,128,false),(ImageMethod::CpuRaytrace,8,true)] {
++            let mut h = fixture();
++            h.app.render_workspace.view.method = method;
++            let target = materials::read_targets(&mut h.app).unwrap().into_iter().find(|t| t.name == "Optics").unwrap();
++            for i in 0..count {
++                let mut other = target.clone();
++                other.name = format!("Other{i}");
++                let mut binding = materials::Binding::new(other, &h.app);
++                binding.glass_enabled = active;
++                h.app.render_workspace.view.materials.bindings.push(binding);
++            }
++            let before = format!("{:?}", h.app.render_workspace.view.materials);
++            assert!(library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").is_err());
++            assert_eq!(format!("{:?}", h.app.render_workspace.view.materials), before);
++        }
++    }
++
++    #[test]
++    fn library_bridge_keeps_closed_thin_and_strict_cpu_choices_explicit_without_a_transport_claim() {
++        let mut h = fixture();
++        h.app.render_workspace.view.raytrace.dielectric_transport = solidcraft_engine::render::job::CpuDielectricTransport::StrictTir;
++        h.app.render_workspace.view.draft.exposure_ev = 1.25;
++        h.app.render_workspace.view.cpu.environment = cpu::Environment::Constant;
++        h.app.render_workspace.view.cpu.color = [0.25,0.5,0.75];
++        h.app.render_workspace.view.cpu.intensity = 2.0;
++        library::stage_glass(&mut h.app, "starter.glass.low-iron-clear").unwrap();
++        assert!(runtime_image_request(&h.app, false).is_err());
++        h.app.render_workspace.view.materials.bindings[0].cpu_optics = true;
++        assert!(runtime_image_request(&h.app, false).is_err(), "Closed is not silently certified Box");
++        h.app.render_workspace.view.materials.bindings[0].glass.boundary = materials::Boundary::Box;
++        let wire = runtime_image_request(&h.app, false).unwrap();
++        assert_eq!(wire["raytrace"]["dielectric_transport"], "strict_tir");
++        assert_eq!(wire["raytrace"]["dielectrics"][0]["ior"], 1.5);
++        assert_eq!(wire["raytrace"]["dielectrics"][0]["boundary"], "closed_box");
++        assert_eq!(wire["raytrace"]["exposure_ev"], 1.25);
++        assert_eq!(wire["settings"]["exposure_ev"], 0.0);
++        assert_eq!(wire["raytrace"]["environment"]["color"], json!([0.25,0.5,0.75]));
++        assert_eq!(wire["raytrace"]["environment"]["intensity"], 2.0);
++        assert!(setups::snapshot(&h.app).is_err(), "transient staging never becomes saved CPU optics");
++        // This checks routing only. A real StrictTir LimitExceeded remains FAIL for G02-C.
++    }
++
++    #[test]
++    fn clicked_library_glass_action_reaches_existing_body_editor_and_never_reports_applied() {
++        let mut h = fixture();
++        h.call("ui.resize", json!({"width":1600,"height":1800}));
++        let mut view = std::mem::take(&mut h.app.render_workspace.view.library);
++        library::choose(&mut h.app, &mut view, "appearances", "starter.glass.low-iron-clear").unwrap();
++        h.app.render_workspace.view.library = view;
++        h.frames(3);
++        let doc = h.app.session.doc.clone();
++        h.step(&json!({"click":{"handle":"render:library:prepare-glass"}})).unwrap();
++        assert_eq!(h.app.render_workspace.view.materials.bindings.len(), 1);
++        assert!(!h.app.render_workspace.view.materials.bindings[0].cpu_optics);
++        assert_eq!(h.app.render_workspace.view.materials.bindings[0].glass.boundary, materials::Boundary::Closed);
++        assert_eq!(h.app.render_workspace.view.inspector.page, inspector::Page::Appearance);
++        assert!(matches!(&h.app.render_workspace.view.selection, RenderSelection::Object(items) if matches!(items.as_slice(), [Sel::Body {name}] if name == "Optics")));
++        assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
++        assert_eq!(h.app.status.as_ref().unwrap().0, h.app.tr("render.glass_library_prepared"));
++        assert_ne!(h.app.status.as_ref().unwrap().0, h.app.tr("render.library_applied"));
++    }
++
++    #[test]
++    fn library_bridge_messages_cover_every_current_delivered_locale() {
++        let messages: Value = serde_json::from_str(include_str!("../../../assets/locales/pending/render-glass-library-route.json")).unwrap();
++        for locale in ["en","es","de","ko","ar","he","ja","vi","zh"] {
++            for id in ["render.glass_library_conflict","render.glass_library_edit","render.glass_library_help","render.glass_library_method","render.glass_library_prepared"] {
++                assert!(messages[locale][id].as_str().is_some_and(|s| !s.is_empty()), "{locale}/{id}");
++            }
++        }
++    }
++}
+--- /dev/null
++++ b/assets/locales/pending/render-glass-library-route.json
+@@ -0,0 +1,65 @@
++{
++  "en": {
++    "render.glass_library_conflict": "This body already has optical settings. Edit or remove them before preparing a different recipe.",
++    "render.glass_library_edit": "Prepare physical glass",
++    "render.glass_library_help": "Prepares the recipe in the existing editor without assigning an appearance or rendering. CPU needs explicit optical permission and a Thin sheet or Box that passes actual certification. Closed-mesh and shadow settings stay unchanged.",
++    "render.glass_library_method": "Choose CPU or GPU rendering to prepare physical glass. Raster has no physical-glass route.",
++    "render.glass_library_prepared": "Physical glass recipe prepared for editing; review its boundary and optical settings before rendering."
++  },
++  "es": {
++    "render.glass_library_conflict": "Este cuerpo ya tiene ajustes ópticos. Edítalos o elimínalos antes de preparar otra receta.",
++    "render.glass_library_edit": "Preparar vidrio físico",
++    "render.glass_library_help": "Prepara la receta en el editor existente sin asignar un aspecto ni renderizar. CPU necesita permiso óptico explícito y una lámina o caja que supere la certificación real. No cambia los ajustes de malla cerrada ni de sombras.",
++    "render.glass_library_method": "Elige renderizado CPU o GPU para preparar vidrio físico. Raster no tiene una ruta de vidrio físico.",
++    "render.glass_library_prepared": "Receta de vidrio físico preparada para editar; revisa su frontera y sus ajustes ópticos antes de renderizar."
++  },
++  "de": {
++    "render.glass_library_conflict": "Dieser Körper hat bereits optische Einstellungen. Bearbeite oder entferne sie, bevor du ein anderes Rezept vorbereitest.",
++    "render.glass_library_edit": "Physikalisches Glas vorbereiten",
++    "render.glass_library_help": "Bereitet das Rezept im vorhandenen Editor vor, ohne ein Aussehen zuzuweisen oder zu rendern. CPU benötigt eine ausdrückliche Freigabe der Optik und eine dünne Scheibe oder einen Quader mit tatsächlicher Zertifizierung. Einstellungen für geschlossene Netze und Schatten bleiben unverändert.",
++    "render.glass_library_method": "Wähle CPU- oder GPU-Rendering, um physikalisches Glas vorzubereiten. Raster unterstützt kein physikalisches Glas.",
++    "render.glass_library_prepared": "Glasrezept zur Bearbeitung vorbereitet; prüfe vor dem Rendern seine Begrenzung und optischen Einstellungen."
++  },
++  "ko": {
++    "render.glass_library_conflict": "이 바디에는 이미 광학 설정이 있습니다. 다른 레시피를 준비하기 전에 기존 설정을 편집하거나 제거하세요.",
++    "render.glass_library_edit": "물리 기반 유리 준비",
++    "render.glass_library_help": "모양을 지정하거나 렌더링하지 않고 기존 편집기에서 레시피를 준비합니다. CPU에는 명시적인 광학 허용과 실제 검증을 통과하는 얇은 판 또는 상자가 필요합니다. 닫힌 메시와 그림자 설정은 변경하지 않습니다.",
++    "render.glass_library_method": "물리 기반 유리를 준비하려면 CPU 또는 GPU 렌더링을 선택하세요. Raster는 물리 기반 유리를 지원하지 않습니다.",
++    "render.glass_library_prepared": "편집할 유리 레시피를 준비했습니다. 렌더링 전에 경계와 광학 설정을 검토하세요."
++  },
++  "ar": {
++    "render.glass_library_conflict": "لهذا الجسم إعدادات بصرية بالفعل. عدّلها أو أزلها قبل تجهيز وصفة مختلفة.",
++    "render.glass_library_edit": "تجهيز زجاج فيزيائي",
++    "render.glass_library_help": "يجهّز الوصفة في المحرر الحالي دون تعيين مظهر أو تصيير. يتطلب CPU إذنًا بصريًا صريحًا وصفيحة رقيقة أو صندوقًا يجتاز التحقق الفعلي. تبقى إعدادات الشبكة المغلقة والظلال دون تغيير.",
++    "render.glass_library_method": "اختر التصيير عبر CPU أو GPU لتجهيز زجاج فيزيائي. لا يدعم Raster الزجاج الفيزيائي.",
++    "render.glass_library_prepared": "جُهّزت وصفة الزجاج للتحرير؛ راجع حدودها وإعداداتها البصرية قبل التصيير."
++  },
++  "he": {
++    "render.glass_library_conflict": "לגוף הזה כבר יש הגדרות אופטיות. יש לערוך או להסיר אותן לפני הכנת מתכון אחר.",
++    "render.glass_library_edit": "הכנת זכוכית פיזיקלית",
++    "render.glass_library_help": "מכין את המתכון בעורך הקיים בלי להקצות מראה או לרנדר. CPU דורש אישור אופטי מפורש ולוח דק או תיבה שעוברים אימות בפועל. הגדרות רשת סגורה וצללים אינן משתנות.",
++    "render.glass_library_method": "יש לבחור רינדור CPU או GPU כדי להכין זכוכית פיזיקלית. Raster אינו תומך בזכוכית פיזיקלית.",
++    "render.glass_library_prepared": "מתכון הזכוכית הוכן לעריכה; יש לבדוק את הגבול ואת ההגדרות האופטיות לפני הרינדור."
++  },
++  "ja": {
++    "render.glass_library_conflict": "このボディには既に光学設定があります。別のレシピを準備する前に、既存の設定を編集または削除してください。",
++    "render.glass_library_edit": "物理ガラスを準備",
++    "render.glass_library_help": "外観の割り当てやレンダリングを行わず、既存のエディターでレシピを準備します。CPU では光学処理の明示的な許可と、実際の認証に合格する薄板またはボックスが必要です。閉じたメッシュと影の設定は変更しません。",
++    "render.glass_library_method": "物理ガラスを準備するには CPU または GPU レンダリングを選択してください。Raster は物理ガラスに対応していません。",
++    "render.glass_library_prepared": "編集用のガラスレシピを準備しました。レンダリング前に境界と光学設定を確認してください。"
++  },
++  "vi": {
++    "render.glass_library_conflict": "Thân này đã có thiết lập quang học. Hãy sửa hoặc xóa chúng trước khi chuẩn bị công thức khác.",
++    "render.glass_library_edit": "Chuẩn bị kính vật lý",
++    "render.glass_library_help": "Chuẩn bị công thức trong trình chỉnh sửa hiện có mà không gán diện mạo hay kết xuất. CPU cần cho phép quang học rõ ràng và tấm mỏng hoặc hộp vượt qua kiểm chứng thực tế. Không đổi thiết lập lưới kín và bóng đổ.",
++    "render.glass_library_method": "Chọn kết xuất CPU hoặc GPU để chuẩn bị kính vật lý. Raster không hỗ trợ kính vật lý.",
++    "render.glass_library_prepared": "Đã chuẩn bị công thức kính để chỉnh sửa; hãy kiểm tra biên và thiết lập quang học trước khi kết xuất."
++  },
++  "zh": {
++    "render.glass_library_conflict": "此实体已有光学设置。准备其他配方前，请编辑或移除现有设置。",
++    "render.glass_library_edit": "准备物理玻璃",
++    "render.glass_library_help": "在现有编辑器中准备配方，不分配外观，也不进行渲染。CPU 需要明确启用光学处理，并使用通过实际认证的薄片或盒体。封闭网格和阴影设置保持不变。",
++    "render.glass_library_method": "请选择 CPU 或 GPU 渲染来准备物理玻璃。Raster 不支持物理玻璃。",
++    "render.glass_library_prepared": "玻璃配方已准备好供编辑；渲染前请检查边界和光学设置。"
++  }
++}

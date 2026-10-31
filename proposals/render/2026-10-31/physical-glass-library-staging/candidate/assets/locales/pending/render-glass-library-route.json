@@ -1,0 +1,65 @@
+{
+  "en": {
+    "render.glass_library_conflict": "This body already has optical settings. Edit or remove them before preparing a different recipe.",
+    "render.glass_library_edit": "Prepare physical glass",
+    "render.glass_library_help": "Prepares the recipe in the existing editor without assigning an appearance or rendering. CPU needs explicit optical permission and a Thin sheet or Box that passes actual certification. Closed-mesh and shadow settings stay unchanged.",
+    "render.glass_library_method": "Choose CPU or GPU rendering to prepare physical glass. Raster has no physical-glass route.",
+    "render.glass_library_prepared": "Physical glass recipe prepared for editing; review its boundary and optical settings before rendering."
+  },
+  "es": {
+    "render.glass_library_conflict": "Este cuerpo ya tiene ajustes ópticos. Edítalos o elimínalos antes de preparar otra receta.",
+    "render.glass_library_edit": "Preparar vidrio físico",
+    "render.glass_library_help": "Prepara la receta en el editor existente sin asignar un aspecto ni renderizar. CPU necesita permiso óptico explícito y una lámina o caja que supere la certificación real. No cambia los ajustes de malla cerrada ni de sombras.",
+    "render.glass_library_method": "Elige renderizado CPU o GPU para preparar vidrio físico. Raster no tiene una ruta de vidrio físico.",
+    "render.glass_library_prepared": "Receta de vidrio físico preparada para editar; revisa su frontera y sus ajustes ópticos antes de renderizar."
+  },
+  "de": {
+    "render.glass_library_conflict": "Dieser Körper hat bereits optische Einstellungen. Bearbeite oder entferne sie, bevor du ein anderes Rezept vorbereitest.",
+    "render.glass_library_edit": "Physikalisches Glas vorbereiten",
+    "render.glass_library_help": "Bereitet das Rezept im vorhandenen Editor vor, ohne ein Aussehen zuzuweisen oder zu rendern. CPU benötigt eine ausdrückliche Freigabe der Optik und eine dünne Scheibe oder einen Quader mit tatsächlicher Zertifizierung. Einstellungen für geschlossene Netze und Schatten bleiben unverändert.",
+    "render.glass_library_method": "Wähle CPU- oder GPU-Rendering, um physikalisches Glas vorzubereiten. Raster unterstützt kein physikalisches Glas.",
+    "render.glass_library_prepared": "Glasrezept zur Bearbeitung vorbereitet; prüfe vor dem Rendern seine Begrenzung und optischen Einstellungen."
+  },
+  "ko": {
+    "render.glass_library_conflict": "이 바디에는 이미 광학 설정이 있습니다. 다른 레시피를 준비하기 전에 기존 설정을 편집하거나 제거하세요.",
+    "render.glass_library_edit": "물리 기반 유리 준비",
+    "render.glass_library_help": "모양을 지정하거나 렌더링하지 않고 기존 편집기에서 레시피를 준비합니다. CPU에는 명시적인 광학 허용과 실제 검증을 통과하는 얇은 판 또는 상자가 필요합니다. 닫힌 메시와 그림자 설정은 변경하지 않습니다.",
+    "render.glass_library_method": "물리 기반 유리를 준비하려면 CPU 또는 GPU 렌더링을 선택하세요. Raster는 물리 기반 유리를 지원하지 않습니다.",
+    "render.glass_library_prepared": "편집할 유리 레시피를 준비했습니다. 렌더링 전에 경계와 광학 설정을 검토하세요."
+  },
+  "ar": {
+    "render.glass_library_conflict": "لهذا الجسم إعدادات بصرية بالفعل. عدّلها أو أزلها قبل تجهيز وصفة مختلفة.",
+    "render.glass_library_edit": "تجهيز زجاج فيزيائي",
+    "render.glass_library_help": "يجهّز الوصفة في المحرر الحالي دون تعيين مظهر أو تصيير. يتطلب CPU إذنًا بصريًا صريحًا وصفيحة رقيقة أو صندوقًا يجتاز التحقق الفعلي. تبقى إعدادات الشبكة المغلقة والظلال دون تغيير.",
+    "render.glass_library_method": "اختر التصيير عبر CPU أو GPU لتجهيز زجاج فيزيائي. لا يدعم Raster الزجاج الفيزيائي.",
+    "render.glass_library_prepared": "جُهّزت وصفة الزجاج للتحرير؛ راجع حدودها وإعداداتها البصرية قبل التصيير."
+  },
+  "he": {
+    "render.glass_library_conflict": "לגוף הזה כבר יש הגדרות אופטיות. יש לערוך או להסיר אותן לפני הכנת מתכון אחר.",
+    "render.glass_library_edit": "הכנת זכוכית פיזיקלית",
+    "render.glass_library_help": "מכין את המתכון בעורך הקיים בלי להקצות מראה או לרנדר. CPU דורש אישור אופטי מפורש ולוח דק או תיבה שעוברים אימות בפועל. הגדרות רשת סגורה וצללים אינן משתנות.",
+    "render.glass_library_method": "יש לבחור רינדור CPU או GPU כדי להכין זכוכית פיזיקלית. Raster אינו תומך בזכוכית פיזיקלית.",
+    "render.glass_library_prepared": "מתכון הזכוכית הוכן לעריכה; יש לבדוק את הגבול ואת ההגדרות האופטיות לפני הרינדור."
+  },
+  "ja": {
+    "render.glass_library_conflict": "このボディには既に光学設定があります。別のレシピを準備する前に、既存の設定を編集または削除してください。",
+    "render.glass_library_edit": "物理ガラスを準備",
+    "render.glass_library_help": "外観の割り当てやレンダリングを行わず、既存のエディターでレシピを準備します。CPU では光学処理の明示的な許可と、実際の認証に合格する薄板またはボックスが必要です。閉じたメッシュと影の設定は変更しません。",
+    "render.glass_library_method": "物理ガラスを準備するには CPU または GPU レンダリングを選択してください。Raster は物理ガラスに対応していません。",
+    "render.glass_library_prepared": "編集用のガラスレシピを準備しました。レンダリング前に境界と光学設定を確認してください。"
+  },
+  "vi": {
+    "render.glass_library_conflict": "Thân này đã có thiết lập quang học. Hãy sửa hoặc xóa chúng trước khi chuẩn bị công thức khác.",
+    "render.glass_library_edit": "Chuẩn bị kính vật lý",
+    "render.glass_library_help": "Chuẩn bị công thức trong trình chỉnh sửa hiện có mà không gán diện mạo hay kết xuất. CPU cần cho phép quang học rõ ràng và tấm mỏng hoặc hộp vượt qua kiểm chứng thực tế. Không đổi thiết lập lưới kín và bóng đổ.",
+    "render.glass_library_method": "Chọn kết xuất CPU hoặc GPU để chuẩn bị kính vật lý. Raster không hỗ trợ kính vật lý.",
+    "render.glass_library_prepared": "Đã chuẩn bị công thức kính để chỉnh sửa; hãy kiểm tra biên và thiết lập quang học trước khi kết xuất."
+  },
+  "zh": {
+    "render.glass_library_conflict": "此实体已有光学设置。准备其他配方前，请编辑或移除现有设置。",
+    "render.glass_library_edit": "准备物理玻璃",
+    "render.glass_library_help": "在现有编辑器中准备配方，不分配外观，也不进行渲染。CPU 需要明确启用光学处理，并使用通过实际认证的薄片或盒体。封闭网格和阴影设置保持不变。",
+    "render.glass_library_method": "请选择 CPU 或 GPU 渲染来准备物理玻璃。Raster 不支持物理玻璃。",
+    "render.glass_library_prepared": "玻璃配方已准备好供编辑；渲染前请检查边界和光学设置。"
+  }
+}

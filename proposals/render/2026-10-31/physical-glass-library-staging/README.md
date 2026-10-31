@@ -1,0 +1,11 @@
+# Explicit physical-glass catalogue staging
+
+Source-only proposal: a separate Prepare physical glass action for an existing stable-ID typed Glass recipe stages its values in the existing whole-body material editor. It uses current authoritative body targets and refuses unsupported selection, stale/conflicting bindings and limits. It does not assign a scalar appearance, enable CPU optics, change renderer, infer Box from Closed, clear Thin shadows/subsurface, certify geometry, submit rendering or persist CPU optics. Repeated preparation preserves explicit permissions and disabled state. Values remain unsaved transient editor state, not applied CPU optics or persistent stable recipe IDs.
+
+Three existing UI sources have before/candidate versions; one pending locale is NEW with no before file. bindings.json explicitly marks it ABSENT/null; delta.patch uses /dev/null for addition. Do not create an empty tracked before locale. Original production bytes are recoverable by removing the added helpers/footer call. All267prior test declarations remain a literal prefix;10tests added, allUNRUN for this candidate. Source comparison and exact replay do not establish compilation/typecheck/lint/tests/native click visibility/accessibility or optical correctness.
+
+The source action routes to the existing object Appearance editor and reports prepared for editing rather than applied. The blocked scalar glass tile remains unchanged and may still show its prior blocked status before the explicit action. Actual native presentation and existing interaction must be checked separately. Five complete new messages are supplied in nine delivered languages.
+
+Apply only against exact before hashes; re-pin and compose other later changes without replacing an earlier whole tree. No public command/schema, dependency/asset, second panel, layout, gizmo, transport limit/oracle or kernel flag is added. Explicit CPU permission, supported boundary and actual certification/admission are still required. A transport LimitExceeded remains failure when observed; payload routing tests cannot qualify optical completion. Separate integration, repository gates, tests and native evidence are required. This is not a release or execution grant.
+
+Original contribution under repository MIT OR Apache-2.0 terms, without third-party code/assets.

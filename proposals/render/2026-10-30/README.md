@@ -176,3 +176,7 @@ explicit. Source review and replay are not compilation, full CI or GPU parity.
 ## 2026-10-31: CPU RGB light-transmission shading — source-only prerequisite
 
 [RGB direct-light shading helper](../2026-10-31/cpu-rgb-lighting/README.md) preserves the existing boolean lighting API and eight original test bodies, adding a separate per-light RGB-transmission method and seven analytic/boundary cases. The complete 15-case source set is unrun. It applies finite admitted channel values once without exposure or tone-map changes; invalid values/errors are refused. There is no ImageTask consumer, mode flag, UI, saved-format or render result, and this helper is outside C21. The owned-cursor and RGB proposals remain separate prerequisites for a later coherently reviewed consumer.
+
+## 2026-10-31: physical-glass library to existing editor — source proposal
+
+[Explicit physical-recipe staging](../2026-10-31/physical-glass-library-staging/README.md) adds a bounded action from the six typed starter glass entries to the existing whole-body optical editor. It preserves scalar assignment refusals, authored Closed/Thin choices, current target identity and existing permissions; staging is not Applied, CPU opt-in, certification or persistence. Four paths include one new pending-locale file. The 267 existing test bodies remain and ten original source cases are unrun. No new panel, renderer switch, GPU-guard removal, TIR convergence change or native acceptance is claimed. The new locale's absent before-state is explicit, with no fabricated empty before file.

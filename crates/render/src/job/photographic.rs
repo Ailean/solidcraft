@@ -98,6 +98,14 @@ impl Photographic {
         }
         count.checked_mul(8).and_then(|n| n.checked_add(16_384)).ok_or_else(|| invalid("photographic scratch size overflow"))
     }
+    pub(crate) fn scratch_bytes_with_limits(self, width: u32, height: u32, limits: crate::RenderLimits) -> Result<u64> {
+        self.validate()?;
+        let count = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
+        if !self.active() {
+            return Ok(0);
+        }
+        super::linear_exr::checked_stage_bytes(count, 8, 16_384, limits)
+    }
 }
 #[derive(Clone, Copy, Debug, Default)]
 struct Highlight {
@@ -114,6 +122,39 @@ pub struct PhotographicTask {
 impl PhotographicTask {
     pub fn new(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken) -> Result<Self> {
         options.scratch_bytes(width, height)?;
+        Self::create(width, height, source, linear, options, cancel, GPU_PATH_LIMITS)
+    }
+    pub(crate) fn new_with_limits(
+        width: u32,
+        height: u32,
+        source: Vec<u8>,
+        linear: Vec<[f32; 4]>,
+        options: Photographic,
+        cancel: CancelToken,
+        limits: crate::RenderLimits,
+    ) -> Result<Self> {
+        options.scratch_bytes_with_limits(width, height, limits)?;
+        cancel.check()?;
+        let count = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
+        if usize::try_from(count).ok() != Some(linear.len()) || linear.len().checked_mul(4) != Some(source.len()) || !options.active() {
+            return Err(invalid("photographic stage requires an admitted opaque image, matching source pixels and an active effect"));
+        }
+        let raw_bytes = super::linear_exr::checked_output_bytes(linear.capacity() as u64, 16, 0, limits)? as u64;
+        let source_bytes = super::linear_exr::checked_output_bytes(source.capacity() as u64, 1, 0, limits)? as u64;
+        let retained =
+            raw_bytes.checked_add(source_bytes).and_then(|n| n.checked_add(16_384)).ok_or_else(|| invalid("photographic retained byte overflow"))?;
+        super::linear_exr::checked_stage_bytes(count, 4, retained, limits)?;
+        Self::create(width, height, source, linear, options, cancel, limits)
+    }
+    fn create(
+        width: u32,
+        height: u32,
+        source: Vec<u8>,
+        linear: Vec<[f32; 4]>,
+        options: Photographic,
+        cancel: CancelToken,
+        limits: crate::RenderLimits,
+    ) -> Result<Self> {
         if std::mem::size_of::<PhotographicState>() > 16_384 {
             return Err(invalid("photographic metadata exceeds its admitted allowance"));
         }
@@ -122,7 +163,7 @@ impl PhotographicTask {
         if state.capacity() != 1 {
             return Err(invalid("photographic state exceeds bounded capacity"));
         }
-        state.push(PhotographicState::new(width, height, source, linear, options, cancel)?);
+        state.push(PhotographicState::new(width, height, source, linear, options, cancel, limits)?);
         Ok(Self { state })
     }
     pub fn step(&mut self, units: usize) -> Result<bool> {
@@ -153,21 +194,32 @@ struct PhotographicState {
     ready: bool,
 }
 impl PhotographicState {
-    pub fn new(width: u32, height: u32, source: Vec<u8>, linear: Vec<[f32; 4]>, options: Photographic, cancel: CancelToken) -> Result<Self> {
+    pub fn new(
+        width: u32,
+        height: u32,
+        source: Vec<u8>,
+        linear: Vec<[f32; 4]>,
+        options: Photographic,
+        cancel: CancelToken,
+        limits: crate::RenderLimits,
+    ) -> Result<Self> {
         options.validate()?;
         cancel.check()?;
         let count = u64::from(width) * u64::from(height);
         if width == 0
             || height == 0
-            || u64::from(width) > GPU_PATH_LIMITS.max_dimension
-            || u64::from(height) > GPU_PATH_LIMITS.max_dimension
-            || count > GPU_PATH_LIMITS.max_pixels
+            || super::linear_exr::output_pixels_with_limits(width, height, limits).is_err()
             || usize::try_from(count).ok() != Some(linear.len())
             || linear.len().checked_mul(4) != Some(source.len())
             || !options.active()
         {
             return Err(invalid("photographic stage requires an admitted opaque image, matching source pixels and an active effect"));
         }
+        let raw_bytes = super::linear_exr::checked_output_bytes(linear.capacity() as u64, 16, 0, limits)? as u64;
+        let source_bytes = super::linear_exr::checked_output_bytes(source.capacity() as u64, 1, 0, limits)? as u64;
+        let retained =
+            raw_bytes.checked_add(source_bytes).and_then(|n| n.checked_add(16_384)).ok_or_else(|| invalid("photographic retained byte overflow"))?;
+        super::linear_exr::checked_stage_bytes(count, 4, retained, limits)?;
         let mut output = Vec::new();
         output.try_reserve_exact(source.len()).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "photographic output allocation failed"))?;
         if output.capacity() != source.len() {
@@ -373,9 +425,15 @@ impl PhotographicState {
             }
             self.output.push(255);
         }
-        self.pixel = end;
+        self.commit_pixels(end)
+    }
+    // Output bytes are provisional until the final cancellation check succeeds.
+    // Keep the old cursor on failure so finish cannot return an unacknowledged
+    // terminal batch. Cancellation after an acknowledged completion is unchanged.
+    fn commit_pixels(&mut self, end: usize) -> Result<bool> {
         self.cancel.check()?;
-        Ok(end == count)
+        self.pixel = end;
+        Ok(end == self.width * self.height)
     }
     pub fn progress(&self) -> (u64, u64) {
         (self.scanned as u64 + self.pixel as u64, (self.width * self.height * if self.options.flare.strength > 0.0 { 2 } else { 1 }) as u64)
@@ -448,5 +506,88 @@ mod tests {
         assert!(!task.step(1).unwrap());
         assert!(task.step(1).is_err());
         assert!(serde_json::from_str::<Photographic>(r#"{"physical_lens":true}"#).is_err());
+    }
+
+    #[test]
+    fn explicit_wide_photographic_keeps_constants_and_legacy_refusal() {
+        let wide = super::super::CpuBudget::Workstation.image_limits(false);
+        let options = Photographic { radial_distortion: 0.1, chromatic_pixels: 2.0, soft_focus: 0.3, sharpening: 0.2, ..Default::default() };
+        assert!(PhotographicTask::new(8193, 1, vec![], vec![], options, CancelToken::default()).is_err());
+        let rgba = [128, 128, 128, 255].repeat(8193);
+        let mut task =
+            PhotographicTask::new_with_limits(8193, 1, rgba.clone(), vec![[0.25, 0.25, 0.25, 1.0]; 8193], options, CancelToken::default(), wide)
+                .unwrap();
+        while !task.step(256).unwrap() {}
+        assert_eq!(task.finish().unwrap(), rgba);
+        let cancel = CancelToken::default();
+        cancel.cancel();
+        assert_eq!(Photographic::default().scratch_bytes(0, u32::MAX).unwrap(), 0);
+        assert_eq!(PhotographicTask::new(0, 1, vec![], vec![], options, cancel.clone()).err().unwrap().code, ErrorCode::InvalidRequest);
+        assert_eq!(PhotographicTask::new(0, 1, vec![], vec![], Photographic::default(), cancel).err().unwrap().code, ErrorCode::Cancelled);
+    }
+
+    #[test]
+    fn explicit_gpu_photographic_matches_legacy_and_cancel_never_finishes() {
+        let options = Photographic { grain: 0.03, seed: 37, ..Default::default() };
+        let rgba = [64, 128, 192, 255].repeat(6);
+        let linear = vec![[0.1, 0.5, 2.0, 1.0]; 6];
+        let mut legacy = PhotographicTask::new(3, 2, rgba.clone(), linear.clone(), options, CancelToken::default()).unwrap();
+        let mut explicit =
+            PhotographicTask::new_with_limits(3, 2, rgba.clone(), linear.clone(), options, CancelToken::default(), GPU_PATH_LIMITS).unwrap();
+        while !legacy.step(1).unwrap() {}
+        while !explicit.step(16).unwrap() {}
+        assert_eq!(legacy.finish().unwrap(), explicit.finish().unwrap());
+        // A pre-cancelled request is independently valid: matching 3x2 opaque
+        // buffers, finite samples and an active in-range effect. Cancellation
+        // is the constructor's refusal, not invalid fixture data.
+        let pre_cancelled = CancelToken::default();
+        pre_cancelled.cancel();
+        assert_eq!(
+            PhotographicTask::new_with_limits(3, 2, rgba.clone(), linear.clone(), options, pre_cancelled, GPU_PATH_LIMITS).err().unwrap().code,
+            ErrorCode::Cancelled,
+        );
+        let cancel = CancelToken::default();
+        let mut task = PhotographicTask::new_with_limits(3, 2, rgba, linear, options, cancel.clone(), GPU_PATH_LIMITS).unwrap();
+        assert!(!task.step(1).unwrap());
+        let before_cancel = task.progress();
+        assert!(before_cancel.0 > 0 && before_cancel.0 < before_cancel.1, "cancel real in-flight work");
+        cancel.cancel();
+        assert_eq!(task.step(1).unwrap_err().code, ErrorCode::Cancelled);
+        assert_eq!(task.progress(), before_cancel, "cancelled work must not advance");
+        // The historical finish contract rejects an incomplete image; it does
+        // not promise Cancelled precedence over that completeness guard.
+        assert!(task.finish().is_err(), "a cancelled incomplete image must never be returned");
+    }
+
+    #[test]
+    fn cancelled_photographic_cursor_commit_keeps_written_output_provisional() {
+        let cancel = CancelToken::default();
+        let options = Photographic { soft_focus: 0.5, ..Default::default() };
+        let rgba = vec![64, 128, 192, 255];
+        let mut state = PhotographicState::new(1, 1, rgba.clone(), vec![[0.1, 0.5, 2.0, 1.0]], options, cancel.clone(), GPU_PATH_LIMITS).unwrap();
+        let before_commit = state.progress();
+        assert_eq!(before_commit, (0, 1));
+        // Local commit-seam unit: valid bytes stand for the completed final
+        // batch, but its cursor has not been acknowledged. No scheduling race
+        // or end-to-end rendering is simulated or claimed by this fixture.
+        state.output.extend_from_slice(&rgba);
+        assert_eq!(state.output.len(), 4);
+        cancel.cancel();
+        assert_eq!(state.commit_pixels(1).unwrap_err().code, ErrorCode::Cancelled);
+        assert_eq!(state.progress(), before_commit);
+        assert!(state.finish().is_err(), "unacknowledged bytes cannot become a finished image");
+    }
+
+    #[test]
+    fn photographic_finish_after_acknowledged_completion_survives_later_cancel() {
+        let cancel = CancelToken::default();
+        let options = Photographic { soft_focus: 0.5, ..Default::default() };
+        let rgba = vec![64, 128, 192, 255];
+        let mut task =
+            PhotographicTask::new_with_limits(1, 1, rgba.clone(), vec![[0.1, 0.5, 2.0, 1.0]], options, cancel.clone(), GPU_PATH_LIMITS).unwrap();
+        assert!(task.step(1).unwrap(), "the real step must acknowledge completion first");
+        assert_eq!(task.progress(), (1, 1));
+        cancel.cancel();
+        assert_eq!(task.finish().unwrap(), rgba, "later cancellation preserves the historical completed finish contract");
     }
 }

@@ -21,7 +21,11 @@ The native host's `descriptor_for(Raytrace)` advertises `refraction` in its
 Preview / Image / PNG profile, and CPU requests containing dielectric overrides
 require that capability during both preflight and host submission. This is the
 bounded `thin_sheet` / `closed_box` contract below: it does not advertise general
-closed-mesh transmission, final-quality rendering or progressive CPU images.
+closed-mesh transmission or final-quality rendering. Fixed and CPU progressive
+sampling can retain this smooth-boundary intent; progressive sampling still
+requires one primary and one selected reflection attempt per camera sample.
+Interactive retains the same intent for capture-time certification, not as a
+guarantee that a scene or job will be admitted.
 Raster and the cooperative CPU host do not advertise this capability. The
 `render.backends` registry publishes the additional `cpu-raytrace` descriptor only
 for an installed native CPU worker with the build feature enabled. Raster remains
@@ -56,6 +60,15 @@ positions determine distance. The original outward geometric normal and front
 face flag select the interface; interpolated shading normals do not bend rays.
 Parallel slab entry/exit produces the Snell lateral displacement within this
 certified subset. This does not certify arbitrary CAD tessellations.
+
+Successful request lowering is not a geometry certificate. Existing captured
+identity, body/face opacity, camera, medium, work and selected transport-policy
+checks remain authoritative. A dielectric boundary cannot also select opaque
+reflection, anisotropy, surface emission or nonidentity surface effects on that
+same body. Retaining the original selectors never removes those incompatible
+effects to make admission succeed. The transport details below retain the
+legacy bounded-preview qualifications; explicit transport options keep their
+existing separate validation and limits.
 
 `thin_sheet` accepts one nondegenerate planar triangle or two consistently wound,
 coplanar triangles sharing one unique edge and lying on opposite sides of it.

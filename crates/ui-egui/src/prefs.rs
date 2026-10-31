@@ -940,6 +940,8 @@ preference_settings! {
     vertex_markers: bool = false => check("Vertex markers", "Show a small dot at every vertex wherever edges are drawn");
     /// Restore the previous platform-specific fixed Render preview geometry budget.
     render_previous_geometry_budget: bool = false, PAGE_GRAPHICS => check_id("prefs.render_previous_geometry_budget");
+    /// Open Result once after a successful GUI Start; false preserves the selected view.
+    render_open_result_on_start: bool = true, PAGE_GRAPHICS => check_id("prefs.render_open_result_on_start");
     /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
     /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
     display_quality: String = "normal".into(), PAGE_GRAPHICS;
@@ -3331,6 +3333,24 @@ pub(crate) fn reveal_preference(h: &mut crate::scenario::Harness, handle: &str) 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn render_open_result_on_start_defaults_persists_validates_and_resets() {
+        assert!(Prefs::default().render_open_result_on_start);
+        assert!(serde_json::from_value::<Prefs>(json!({})).unwrap().render_open_result_on_start);
+        let mut app = SolveApp::new(Default::default(), Default::default());
+        let reply = super::set(&mut app, &json!({"render_open_result_on_start":false})).unwrap();
+        assert_eq!(reply["render_open_result_on_start"], false);
+        for invalid in [json!("false"), json!(0), json!(null)] {
+            assert!(super::set(&mut app, &json!({"render_open_result_on_start":invalid})).is_err());
+            assert!(!app.preferences.render_open_result_on_start);
+        }
+        let mut restored = SolveApp::new(Default::default(), Default::default());
+        restored.load_prefs(&app.prefs());
+        assert!(!restored.preferences.render_open_result_on_start);
+        super::defaults(&mut restored, super::PAGE_GRAPHICS);
+        assert!(restored.preferences.render_open_result_on_start);
+    }
+
     #[test]
     fn trackpad_zoom_modifier_roundtrips_and_validates_control_values() {
         assert_eq!(Prefs::default().trackpad_zoom_modifier, TrackpadZoomModifier::Off);

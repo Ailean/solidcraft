@@ -185,6 +185,8 @@ pub(crate) fn overlays(app: &mut SolveApp, ui: &mut egui::Ui) {
     if !free.is_positive() {
         return;
     }
+    crate::render_workspace::assign::selection_bar(app, ui, free);
+    crate::shell::register_panel(app, "render:interactive-card", None, None);
     if crate::render_workspace::job_busy(app) {
         let pill = Container::navigation_card(ui.ctx(), egui::Id::new("sc_render_progress"), free.center_top(), egui::Align2::CENTER_TOP, |ui| {
             crate::render_workspace::progress_pill(app, ui);
@@ -193,9 +195,9 @@ pub(crate) fn overlays(app: &mut SolveApp, ui: &mut egui::Ui) {
         crate::scenario::publish_rect("render:progress-pill", pill.response.rect);
     } else {
         crate::shell::register_panel(app, "render:progress-pill", None, None);
+        crate::render_workspace::interactive::overlay(app, ui, free);
     }
     crate::render_workspace::environment_overlay(app, ui, viewport);
-    crate::render_workspace::assign::selection_bar(app, ui, free);
     crate::render_workspace::assign::replacement_dialog(app, ui.ctx());
     crate::navigation_bar_view::show(app, ui, viewport);
     if !focused(app) {

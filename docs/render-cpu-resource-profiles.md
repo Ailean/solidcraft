@@ -1,6 +1,6 @@
 # Explicit CPU resource profiles
 
-**Implementation batch: source prepared; consolidated compilation and large-scene runtime acceptance are pending.** These envelopes are admission limits, not measured performance or a final-quality certification.
+**Composed-source proposal: integration, consolidated validation and large-scene native acceptance are pending.** The raised Workstation target requires the coordinated CPU accumulation, publication and UI adapters. These envelopes are admission limits, not measured performance or a final-quality certification.
 
 ## Intent
 
@@ -13,7 +13,7 @@ A CPU image must not inherit a small interactive-preview ceiling when the owner 
 | Maximum side | 4,096 px | 8,192 px | 16,384 px |
 | Fixed-sampling pixels | 4,194,304 | 16,777,216 | 67,108,864 |
 | Progressive pixels | 1,048,576 | 16,777,216 | 67,108,864 |
-| Progressive samples/pixel | 64 | 1,024 | 4,096 |
+| Progressive samples/pixel | 64 | 1,024 | 1,048,576 |
 | Total camera samples | 16,777,216 | 4,294,967,296 | 68,719,476,736 |
 | Captured triangles | 262,144 | 2,000,000 | 8,000,000 |
 | Visible bodies | 16,384 | 65,536 | 262,144 |
@@ -21,7 +21,7 @@ A CPU image must not inherit a small interactive-preview ceiling when the owner 
 | Complete job admission | 384 MiB | 3 GiB | 12 GiB |
 | Cumulative work units | 1,000,000,000 | 1,000,000,000,000 | 16,000,000,000,000 |
 
-Every column is an intersection of limits: a scene that fits the triangle count may still exceed its complete byte estimate. Similarly, a sample count within the per-pixel limit may exceed the total camera-sample or cumulative traversal-work limit. No claim is made that all maxima can be reached simultaneously or within a particular time.
+Every column is an intersection of limits: a scene that fits the triangle count may still exceed its complete byte estimate. Similarly, a sample count within the per-pixel limit may exceed the total camera-sample or cumulative traversal-work limit. At 1,048,576 SPP, 256 × 256 already reaches Workstation's unchanged 68,719,476,736 camera-sample ceiling; the high target is not permission to use every resolution. Compact 64 and Studio 1024 remain unchanged. No claim is made that all maxima can be reached simultaneously or within a particular time.
 
 Examples of cardinality admission, before geometry and memory are considered: Studio permits 3840 × 2160 at 128 samples/pixel; Workstation permits 7680 × 4320 at 128 samples/pixel. Compact rejects both instead of silently resizing them.
 
@@ -55,7 +55,9 @@ The source-capture gate, dimensions, camera-sample bound, BVH construction, film
 
 The native CPU host has a finite 16 GiB logical reservation pool on 64-bit platforms, including retained results and previews. It does not allocate that amount at startup, promise that physical RAM is available, or account for the rest of the CAD application or other processes. Per-job profiles remain smaller. Cooperative and registered GPU host pools retain their original 512 MiB limit; this change is not a GPU-memory expansion.
 
-Fallible allocation, actual vector-capacity checks, checked arithmetic, bounded work quanta, cancellation checks and final-only publication remain required. A failed or cancelled job must release its working reservations and preserve the previous completed result. Every retained progressive checkpoint is still conservatively charged; this increment does not implement tiled/out-of-core rendering or unbounded preview retention.
+Fallible allocation, actual vector-capacity checks, checked arithmetic, bounded work quanta, cancellation checks and final-only publication remain required. A failed or cancelled job must release its working reservations and preserve the previous completed result. Progressive publication prepays two reusable snapshot slots plus existing working codec/final capacity, not one PNG per pass. Externally held snapshots keep their leases charged; if both slots are pinned, a diagnosed boundary can be skipped without blocking or failing final work. See [CPU progressive sampling](render-cpu-progressive.md#allocation-and-retained-snapshots).
+
+Ordinary cumulative work caps remain exactly 1e9 / 1e12 / 16e12 for Compact / Studio / Workstation. The presentation allowance is separate and finite: with P output pixels and target H, at most min(P−1,64)+(H−1) early/uniform opportunities are precharged, each at 14 × preview_pixels + 65,538 units, with preview_pixels at most 1024². This allowance is not extra ordinary traversal work, an admission promise, or a display-latency guarantee. This increment does not implement tiled/out-of-core rendering or unbounded preview retention.
 
 ## Compatibility and limits
 

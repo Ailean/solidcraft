@@ -24,6 +24,7 @@ pub mod occurrences;
 pub mod params;
 pub mod product_scene;
 pub mod recovery;
+pub mod render_interactive;
 pub mod render_jobs;
 pub mod render_lights;
 pub mod sample;

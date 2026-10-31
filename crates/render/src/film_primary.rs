@@ -12,6 +12,23 @@ struct Pixel {
     covered: u32,
 }
 
+/// Observed scanline frontier; metadata only, never a caller-supplied authority.
+/// Every pixel before updated_prefix has one more sample than completed_passes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PartialFrontier {
+    pub completed_passes: u32,
+    pub updated_prefix: usize,
+    pub pixels: usize,
+}
+
+/// A partial view never invents a zero sample for a pixel not yet observed.
+/// Sampled linear radiance includes zero contributions from primary misses.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum PartialPixel {
+    Unknown,
+    Sampled { linear_premultiplied: [f64; 3], covered: u32, count: u32 },
+}
+
 pub(crate) struct PrimaryFilm {
     pixels: Vec<Pixel>,
     count: usize,
@@ -112,13 +129,51 @@ impl PrimaryFilm {
 
     /// A display consumer can only read a fully completed, immutable pass. The
     /// returned radiance is premultiplied by coverage; background is kept separate.
-    pub(crate) fn pixel(&self, index: usize) -> Result<([f64; 3], u16, u16)> {
+    pub(crate) fn pixel(&self, index: usize) -> Result<([f64; 3], u32, u32)> {
         if !self.ready() || self.next_pixel != 0 || self.samples == 0 {
             return Err(invalid("primary film has no uniform complete pass"));
         }
         let pixel = self.pixels.get(index).ok_or_else(|| invalid("primary film resolve index out of range"))?;
-        let covered = u16::try_from(pixel.covered).map_err(|_| limit("primary coverage exceeds resolve representation"))?;
-        let samples = u16::try_from(self.samples).map_err(|_| limit("primary sample count exceeds resolve representation"))?;
-        Ok((pixel.sum.map(|sum| sum / f64::from(self.samples)), covered, samples))
+        Ok((pixel.sum.map(|sum| sum / f64::from(self.samples)), pixel.covered, self.samples))
+    }
+    /// Inspect only the real committed state. This value does not freeze the film
+    /// or authorize a snapshot. A caller resolving several pixels must keep the
+    /// film immutably borrowed at one completed-pixel frontier, and must charge
+    /// reads/copies and check cancellation against its existing job budget.
+    pub(crate) fn partial_frontier(&self) -> Result<PartialFrontier> {
+        if !self.ready()
+            || self.next_pixel >= self.count
+            || self.samples > self.sample_limit
+            || (self.samples == self.sample_limit && self.next_pixel != 0)
+        {
+            return Err(invalid("primary film has no initialized partial frontier"));
+        }
+        Ok(PartialFrontier { completed_passes: self.samples, updated_prefix: self.next_pixel, pixels: self.count })
+    }
+
+    /// Bounded allocation-free read, separate from the strict complete-pass pixel().
+    /// Counts come from this film, never from a supplied frontier or sample count.
+    /// Unknown means count0/covered0; a sampled miss has count>0 and covered0.
+    /// No exposure, tone mapping, background, work lease or publication occurs here.
+    /// The caller owes cancellation checks and work charges for each read/copy;
+    /// this accessor creates no independent budget and never advances an ordinal.
+    pub(crate) fn partial_pixel(&self, index: usize) -> Result<PartialPixel> {
+        let frontier = self.partial_frontier()?;
+        let pixel = self.pixels.get(index).ok_or_else(|| invalid("primary film partial index out of range"))?;
+        let count = frontier
+            .completed_passes
+            .checked_add(u32::from(index < frontier.updated_prefix))
+            .filter(|count| *count <= self.sample_limit)
+            .ok_or_else(|| limit("primary partial sample count exceeded"))?;
+        if pixel.covered > count {
+            return Err(invalid("primary partial coverage exceeds its committed count"));
+        }
+        if count == 0 {
+            if pixel.covered != 0 || pixel.sum != [0.0; 3] {
+                return Err(invalid("unobserved primary pixel has accumulated data"));
+            }
+            return Ok(PartialPixel::Unknown);
+        }
+        Ok(PartialPixel::Sampled { linear_premultiplied: pixel.sum.map(|sum| sum / f64::from(count)), covered: pixel.covered, count })
     }
 }

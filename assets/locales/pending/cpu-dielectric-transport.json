@@ -1,0 +1,56 @@
+{
+  "en": {
+    "render.cpu_glass_continue": "Continue reflections",
+    "render.cpu_glass_help": "Standard uses bounded paths and may darken reflective glass. Continue reflections stops with an error if a supported optical limit is reached. Selected opaque reflections and unsupported glass shapes remain unavailable.",
+    "render.cpu_glass_label": "Glass rendering",
+    "render.cpu_glass_standard": "Standard"
+  },
+  "ar": {
+    "render.cpu_glass_continue": "متابعة الانعكاسات",
+    "render.cpu_glass_help": "يستخدم الوضع القياسي مسارات ضوء محدودة، وقد يجعل الزجاج العاكس أغمق. يوقف خيار «متابعة الانعكاسات» التصيير مع ظهور خطأ عند بلوغ أحد الحدود البصرية المدعومة. تظل الانعكاسات المحددة على الأجسام المعتمة وأشكال الزجاج غير المدعومة غير متاحة.",
+    "render.cpu_glass_label": "تصيير الزجاج",
+    "render.cpu_glass_standard": "قياسي"
+  },
+  "de": {
+    "render.cpu_glass_continue": "Reflexionen fortsetzen",
+    "render.cpu_glass_help": "Standard begrenzt die Lichtwege und kann reflektierendes Glas abdunkeln. Reflexionen fortsetzen stoppt das Rendering mit einem Fehler, wenn eine unterstützte optische Grenze erreicht wird. Ausgewählte opake Reflexionen und nicht unterstützte Glasformen bleiben nicht verfügbar.",
+    "render.cpu_glass_label": "Glasdarstellung",
+    "render.cpu_glass_standard": "Standard"
+  },
+  "es": {
+    "render.cpu_glass_continue": "Continuar reflejos",
+    "render.cpu_glass_help": "Estándar limita los recorridos y puede oscurecer el vidrio reflectante. Continuar reflejos detiene el render con un error si alcanza un límite óptico admitido. Los reflejos opacos seleccionados y las formas de vidrio no compatibles siguen sin estar disponibles.",
+    "render.cpu_glass_label": "Render de vidrio",
+    "render.cpu_glass_standard": "Estándar"
+  },
+  "he": {
+    "render.cpu_glass_continue": "המשך השתקפויות",
+    "render.cpu_glass_help": "המצב הרגיל מגביל את מסלולי האור ועלול להכהות זכוכית מחזירת אור. האפשרות «המשך השתקפויות» עוצרת את הרינדור עם שגיאה כאשר מגיעים לאחת המגבלות האופטיות הנתמכות. השתקפויות נבחרות על גופים אטומים וצורות זכוכית שאינן נתמכות נשארות לא זמינות.",
+    "render.cpu_glass_label": "רינדור זכוכית",
+    "render.cpu_glass_standard": "רגיל"
+  },
+  "ja": {
+    "render.cpu_glass_continue": "反射を継続",
+    "render.cpu_glass_help": "標準では光路を制限するため、反射するガラスが暗くなる場合があります。反射を継続する設定では、対応する光学的な上限に達するとエラーでレンダリングを停止します。選択された不透明面の反射や未対応のガラス形状は引き続き使用できません。",
+    "render.cpu_glass_label": "ガラスの描画",
+    "render.cpu_glass_standard": "標準"
+  },
+  "ko": {
+    "render.cpu_glass_continue": "반사 계속",
+    "render.cpu_glass_help": "표준은 광선 경로를 제한하므로 반사 유리가 어둡게 보일 수 있습니다. 반사 계속은 지원되는 광학 한계에 도달하면 오류와 함께 렌더링을 중지합니다. 선택한 불투명 표면 반사와 지원되지 않는 유리 형상은 계속 사용할 수 없습니다.",
+    "render.cpu_glass_label": "유리 렌더링",
+    "render.cpu_glass_standard": "표준"
+  },
+  "vi": {
+    "render.cpu_glass_continue": "Tiếp tục phản xạ",
+    "render.cpu_glass_help": "Chế độ tiêu chuẩn giới hạn đường truyền ánh sáng và có thể làm kính phản xạ trông tối hơn. Tùy chọn Tiếp tục phản xạ dừng kết xuất kèm lỗi khi đạt một giới hạn quang học được hỗ trợ. Các phản xạ đã chọn trên vật thể đục và các hình dạng kính không được hỗ trợ vẫn không khả dụng.",
+    "render.cpu_glass_label": "Kết xuất kính",
+    "render.cpu_glass_standard": "Tiêu chuẩn"
+  },
+  "zh": {
+    "render.cpu_glass_continue": "继续反射",
+    "render.cpu_glass_help": "标准模式限制光线路径，可能使反射玻璃变暗。继续反射模式在达到支持的光学限制时会报错并停止渲染。所选不透明表面反射和不支持的玻璃形状仍不可用。",
+    "render.cpu_glass_label": "玻璃渲染",
+    "render.cpu_glass_standard": "标准"
+  }
+}

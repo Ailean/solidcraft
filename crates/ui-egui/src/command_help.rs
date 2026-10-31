@@ -15,6 +15,7 @@ pub const DOCUMENTED: &[&str] = &[
     "occurrence.move",
     "parameters.change",
     "pointcloud.insert",
+    "render.interactive",
     "solid.align",
     "solid.chamfer",
     "solid.combine",

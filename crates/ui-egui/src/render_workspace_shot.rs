@@ -413,12 +413,8 @@ fn lens(app: &mut SolveApp, ui: &mut egui::Ui, shot: &str, saved: &RenderSetup) 
 }
 
 fn exposure(app: &mut SolveApp, ui: &mut egui::Ui, shot: &str, saved: &RenderSetup) {
-    let limit = if matches!(saved.job, Some(solidcraft_engine::doc::render_settings::RenderJob::CpuRaytrace { .. })) { 16.0 } else { 32.0 };
-    let enabled = !matches!(saved.job, None | Some(solidcraft_engine::doc::render_settings::RenderJob::Raster { .. }));
-    if !enabled {
-        ui_kit::text(ui, app.tr("render.shot_exposure_reason"), ui_kit::Text::Note("render.shot_exposure_reason"));
-    }
-    ui.add_enabled_ui(enabled, |ui| {
+    let limit = 32.0;
+    ui.add_enabled_ui(true, |ui| {
         if app.render_workspace.view.frame.exposure.as_ref().is_none_or(|(name, observed, _)| name != shot || *observed != saved.exposure_ev) {
             app.render_workspace.view.frame.exposure = Some((shot.into(), saved.exposure_ev, saved.exposure_ev));
         }
@@ -426,6 +422,11 @@ fn exposure(app: &mut SolveApp, ui: &mut egui::Ui, shot: &str, saved: &RenderSet
         let response = ui_kit::row(ui, app.tr("render.frame_exposure"), |ui| {
             ui_kit::slider(ui, &mut exposure, -limit..=limit, ui_kit::Slider { format: |v| format!("{v:+.1} EV"), ..Default::default() })
         });
+        let response = if matches!(saved.job, None | Some(solidcraft_engine::doc::render_settings::RenderJob::Raster { .. })) {
+            response.on_hover_text(app.tr("render.raster_exposure_help"))
+        } else {
+            response
+        };
         crate::scenario::publish_target("render:shot:exposure", response.rect);
         app.render_workspace.view.frame.exposure = Some((shot.into(), saved.exposure_ev, exposure));
         if exposure != saved.exposure_ev && !ui.input(|i| i.pointer.primary_down()) {

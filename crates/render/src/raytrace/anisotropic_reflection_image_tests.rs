@@ -64,6 +64,10 @@ fn request(orientation: AnisotropicOrientation, reflect: bool) -> ImageRequest {
         ..Default::default()
     };
     ImageRequest {
+        raster_punctual_lights: None,
+        raster_area_lights: None,
+        raster_exposure_ev: 0.0,
+        raster_lights: None,
         studio_weights: None,
         environment: None,
         textures: None,

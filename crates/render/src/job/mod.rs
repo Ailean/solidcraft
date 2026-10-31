@@ -32,6 +32,7 @@ pub mod photographic;
 mod png;
 pub mod presentation;
 mod punctual;
+mod raster_lights;
 mod regrade;
 #[cfg(test)]
 mod rt2_tests;
@@ -44,13 +45,18 @@ pub(crate) use host::FRAME_METADATA_BYTES;
 pub(crate) use host::Reservation;
 pub use host::{
     CpuHost, HostKind, ImageHost, JobEnvironmentInfo, JobHandle, JobStatus, LinearAlphaConvention, LinearColourEncoding, LinearMasterInfo,
-    PreviewInfo, RenderFrame, RenderPreview,
+    PartialPreviewInfo, PartialPreviewProjection, PreviewInfo, RenderFrame, RenderPartialPreview, RenderPreview,
 };
 pub use image::{Admission, ImageTask, TaskPoll, admit, admit_geometry, admit_geometry_with_limits};
 pub use lens::ThinLens;
 pub use lighting::{AreaLight, AreaLights, MAX_AREA_LIGHTS, StudioLighting, Sun, ToneMap};
 pub use png::PngTask;
 pub use punctual::{PunctualDiagnostics, PunctualLightOptions, SpotConeOptions};
+pub use raster_lights::{
+    deserialize as deserialize_raster_lights, deserialize_areas as deserialize_raster_area_lights,
+    deserialize_punctual as deserialize_raster_punctual_lights, validate as validate_raster_lights, validate_areas as validate_raster_area_lights,
+    validate_punctual as validate_raster_punctual_lights,
+};
 
 /// Native path-tracing ceilings, further restricted by the actual device.
 /// Kept in the device-independent layer so saved intent and UI agree with execution.
@@ -427,6 +433,38 @@ pub struct RectangleLightOptions {
     pub intensity: f64,
 }
 
+impl RectangleLightOptions {
+    /// Canonical numerical domain shared by CPU transport and schematic Raster.
+    pub(crate) fn validate(&self) -> Result<()> {
+        use solidcraft_geom::Vec3;
+        let vec = |v: [f64; 3]| Vec3::new(v[0], v[1], v[2]);
+        let c = vec(self.center_mm);
+        let u = vec(self.edge_u_mm);
+        let v = vec(self.edge_v_mm);
+        if !c.is_finite()
+            || !u.is_finite()
+            || !v.is_finite()
+            || !self.color.iter().all(|x| x.is_finite() && (0.0..=1.0).contains(x))
+            || !self.intensity.is_finite()
+            || !(0.0..=64.0).contains(&self.intensity)
+            || !(1e-6..=1e6).contains(&u.len())
+            || !(1e-6..=1e6).contains(&v.len())
+            || (u.dot(v) / (u.len() * v.len())).abs() > 1e-10
+        {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "invalid finite rectangular light"));
+        }
+        for a in [-0.5, 0.5] {
+            for b in [-0.5, 0.5] {
+                let p = c + u * a + v * b;
+                if !p.is_finite() || [p.x, p.y, p.z].into_iter().any(|x| x.abs() > 1e9) {
+                    return Err(JobError::new(ErrorCode::InvalidRequest, "rectangular light corner exceeds world bounds"));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Explicit visual rotation about a certified planar face's outward normal.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -656,16 +694,38 @@ impl CpuProgressiveOptions {
         budget.validate_image(width, height, Some(*self))
     }
 
-    /// Nonfinal checkpoints whose PNG allocations may remain externally retained.
+    /// At most two reusable checkpoint reservations. A pinned consumer keeps its
+    /// slot charged; it does not authorize a new allocation per pass.
     #[cfg(feature = "raytrace-cpu")]
-    pub(crate) fn preview_count(&self) -> u32 {
-        if self.samples_per_pixel <= 1 { 0 } else { (self.samples_per_pixel - 1).ilog2() + 1 }
+    pub(crate) fn checkpoint_slots(&self) -> u32 {
+        self.samples_per_pixel.saturating_sub(1).min(2)
+    }
+}
+
+/// Runtime CPU dielectric transport policy, independent of resource and preview budgets.
+/// StrictTir preserves deterministic TIR and refuses positive dielectric-depth tails.
+/// It does not promise convergence or general physical glass support.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpuDielectricTransport {
+    #[default]
+    LegacyBounded,
+    StrictTir,
+}
+
+impl CpuDielectricTransport {
+    pub fn is_legacy(&self) -> bool {
+        *self == Self::LegacyBounded
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RaytraceOptions {
+    #[serde(skip_serializing_if = "CpuDielectricTransport::is_legacy")]
+    pub dielectric_transport: CpuDielectricTransport,
+    #[serde(skip_serializing_if = "directional_shadow_disabled")]
+    pub directional_shadow_transmission: bool,
     #[serde(skip_serializing_if = "CpuBudget::is_compact")]
     pub budget: CpuBudget,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -701,6 +761,8 @@ pub struct RaytraceOptions {
 impl Default for RaytraceOptions {
     fn default() -> Self {
         Self {
+            dielectric_transport: CpuDielectricTransport::LegacyBounded,
+            directional_shadow_transmission: false,
             budget: CpuBudget::Compact,
             progressive: None,
             punctual_lights: None,
@@ -720,6 +782,10 @@ impl Default for RaytraceOptions {
             shadows: true,
         }
     }
+}
+
+fn directional_shadow_disabled(value: &bool) -> bool {
+    !*value
 }
 
 fn single_primary_sample(samples: &u8) -> bool {
@@ -759,6 +825,12 @@ fn bounded_area_lights<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std
             while let Some(light) = seq.next_element()? {
                 if lights.len() == 4 {
                     return Err(serde::de::Error::custom("at most four rectangular lights"));
+                }
+                if lights.is_empty() {
+                    lights.try_reserve_exact(4).map_err(serde::de::Error::custom)?;
+                    if lights.capacity() > 4 {
+                        return Err(serde::de::Error::custom("rectangular light capacity exceeds four"));
+                    }
                 }
                 lights.push(light);
             }
@@ -884,6 +956,11 @@ impl RaytraceOptions {
         Ok(())
     }
     pub fn validate(&self) -> Result<()> {
+        // Opaque reflection has a separate bounded continuation policy. Do not
+        // advertise strict dielectric tails across that unqualified consumer.
+        if self.dielectric_transport == CpuDielectricTransport::StrictTir && self.reflections.as_ref().is_some_and(|r| !r.bodies.is_empty()) {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "strict CPU dielectric transport does not support selected opaque reflections yet"));
+        }
         if let Some(progressive) = self.progressive {
             self.budget.validate_samples(progressive.samples_per_pixel)?;
             if self.primary_samples != 1 || self.reflections.as_ref().is_some_and(|r| !r.bodies.is_empty() && r.samples != 1) {
@@ -892,14 +969,11 @@ impl RaytraceOptions {
                     "CPU progressive requires primary_samples: 1 and one reflection attempt per camera sample",
                 ));
             }
-            if !self.dielectrics.is_empty()
-                || self.anisotropic_faces.iter().any(Option::is_some)
-                || self.area_lights.as_ref().is_some_and(|lights| !lights.is_empty())
-            {
-                return Err(JobError::new(
-                    ErrorCode::InvalidRequest,
-                    "CPU progressive currently supports isotropic opaque surfaces and directional/point/spot lights; use fixed sampling for dielectric, anisotropic or area/LED inputs",
-                ));
+            // Smooth certified dielectric trees now complete one real camera
+            // sample before film accumulation. Anisotropic progressive transport
+            // remains unsupported; geometry/identity certificates run at capture.
+            if self.anisotropic_faces.iter().any(Option::is_some) {
+                return Err(JobError::new(ErrorCode::InvalidRequest, "CPU progressive does not support anisotropic inputs; use fixed sampling"));
             }
         }
         if self.environment.is_some_and(|environment| {
@@ -964,31 +1038,7 @@ impl RaytraceOptions {
         }
         if let Some(lights) = &self.area_lights {
             for light in lights {
-                use solidcraft_geom::Vec3;
-                let vec = |v: [f64; 3]| Vec3::new(v[0], v[1], v[2]);
-                let c = vec(light.center_mm);
-                let u = vec(light.edge_u_mm);
-                let v = vec(light.edge_v_mm);
-                if !c.is_finite()
-                    || !u.is_finite()
-                    || !v.is_finite()
-                    || !light.color.iter().all(|x| x.is_finite() && (0.0..=1.0).contains(x))
-                    || !light.intensity.is_finite()
-                    || !(0.0..=64.0).contains(&light.intensity)
-                    || !(1e-6..=1e6).contains(&u.len())
-                    || !(1e-6..=1e6).contains(&v.len())
-                    || (u.dot(v) / (u.len() * v.len())).abs() > 1e-10
-                {
-                    return Err(JobError::new(ErrorCode::InvalidRequest, "invalid finite rectangular light"));
-                }
-                for a in [-0.5, 0.5] {
-                    for b in [-0.5, 0.5] {
-                        let p = c + u * a + v * b;
-                        if !p.is_finite() || [p.x, p.y, p.z].into_iter().any(|x| x.abs() > 1e9) {
-                            return Err(JobError::new(ErrorCode::InvalidRequest, "rectangular light corner exceeds world bounds"));
-                        }
-                    }
-                }
+                light.validate()?;
             }
         }
         if let Some(lights) = &self.punctual_lights {
@@ -1028,8 +1078,8 @@ impl RaytraceOptions {
         if self.preset.is_some() && self.lights.is_some() {
             return Err(JobError::new(ErrorCode::InvalidRequest, "choose either a lighting preset or custom lights"));
         }
-        if !self.exposure_ev.is_finite() || !(-16.0..=16.0).contains(&self.exposure_ev) {
-            return Err(JobError::new(ErrorCode::InvalidRequest, "raytrace exposure_ev must be finite and within -16..16"));
+        if !self.exposure_ev.is_finite() || !(-32.0..=32.0).contains(&self.exposure_ev) {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "raytrace exposure_ev must be finite and within -32..32"));
         }
         if let Some(lights) = &self.lights {
             if lights.len() > 8 || lights.capacity() > 8 {
@@ -1046,6 +1096,20 @@ impl RaytraceOptions {
                 }
             }
         }
+        if self.directional_shadow_transmission
+            && (!self.shadows
+                || self.dielectrics.is_empty()
+                || self.reflections.is_some()
+                || self.anisotropic_faces.iter().any(Option::is_some)
+                || self.environment.is_some()
+                || self.punctual_lights.as_ref().is_some_and(|lights| !lights.is_empty())
+                || self.area_lights.as_ref().is_some_and(|lights| !lights.is_empty()))
+        {
+            return Err(JobError::new(
+                ErrorCode::InvalidRequest,
+                "directional shadow transmission requires shadows and selected dielectrics without reflections, anisotropy, environment or local lights",
+            ));
+        }
         Ok(())
     }
 }
@@ -1054,6 +1118,17 @@ impl RaytraceOptions {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImageRequest {
+    /// Resolved Raster-only capture of RenderSetup.exposure_ev, never a second authority.
+    #[serde(default, skip_serializing_if = "zero_raster_exposure")]
+    pub raster_exposure_ev: f64,
+    /// Explicit transient opaque Raster rig; None keeps the original implicit studio.
+    #[serde(default, deserialize_with = "deserialize_raster_lights", skip_serializing_if = "Option::is_none")]
+    pub raster_lights: Option<Vec<DirectionalLightOptions>>,
+    /// Runtime-only local rig. Any explicit local collection suppresses implicit studio lights.
+    #[serde(default, deserialize_with = "deserialize_raster_punctual_lights", skip_serializing_if = "Option::is_none")]
+    pub raster_punctual_lights: Option<Vec<PunctualLightOptions>>,
+    #[serde(default, deserialize_with = "deserialize_raster_area_lights", skip_serializing_if = "Option::is_none")]
+    pub raster_area_lights: Option<Vec<RectangleLightOptions>>,
     /// Transient visibility of the three implicit studio lights; never saved in a design.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub studio_weights: Option<[f64; 3]>,
@@ -1086,6 +1161,95 @@ pub enum AlphaConvention {
 }
 
 impl ImageRequest {
+    pub fn has_local_raster_lights(&self) -> bool {
+        self.raster_punctual_lights.is_some() || self.raster_area_lights.is_some()
+    }
+
+    pub fn has_explicit_raster_lights(&self) -> bool {
+        self.raster_lights.is_some() || self.has_local_raster_lights()
+    }
+
+    /// Only the new local-rig route charges each bounded light evaluation.
+    /// Existing directional and implicit routes retain their original pixel budget.
+    pub(super) fn raster_light_work_factor(&self) -> Result<u64> {
+        if !self.has_local_raster_lights() {
+            return Ok(1);
+        }
+        self.validate_raster_request()?;
+        let count = self
+            .raster_lights
+            .as_ref()
+            .map_or(0, Vec::len)
+            .checked_add(self.raster_punctual_lights.as_ref().map_or(0, Vec::len))
+            .and_then(|n| n.checked_add(self.raster_area_lights.as_ref().map_or(0, Vec::len)))
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "Raster light work overflow"))?;
+        u64::try_from(count.max(1)).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "Raster light work overflow"))
+    }
+
+    /// Reject explicit Raster intent before allocating or entering another producer.
+    pub fn validate_raster_request(&self) -> Result<()> {
+        if !self.raster_exposure_ev.is_finite() || !(-32.0..=32.0).contains(&self.raster_exposure_ev) {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "Raster exposure must be finite and within -32..32 EV"));
+        }
+        if self.raster_exposure_ev != 0.0
+            && (self.integrator != Integrator::Raster || self.raytrace.is_some() || self.environment.is_some() || self.textures.is_some())
+        {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "Raster exposure cannot enter another integrator or captured GPU resources"));
+        }
+        raster_lights::validate(&self.raster_lights)?;
+        raster_lights::validate_punctual(&self.raster_punctual_lights)?;
+        raster_lights::validate_areas(&self.raster_area_lights)?;
+        if self.has_explicit_raster_lights()
+            && (self.integrator != Integrator::Raster
+                || self.raytrace.is_some()
+                || self.studio_weights.is_some()
+                || self.environment.is_some()
+                || self.textures.is_some())
+        {
+            return Err(JobError::new(
+                ErrorCode::InvalidRequest,
+                "explicit Raster lights require Raster without raytrace, GPU resources or studio_weights",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn raster_lights_retained_bytes(&self) -> Result<u64> {
+        raster_lights::retained_bytes(&self.raster_lights)?
+            .checked_add(raster_lights::local_retained_bytes(&self.raster_punctual_lights, &self.raster_area_lights)?)
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "Raster light retained size overflow"))
+    }
+
+    pub(super) fn raster_lights_task_bytes(&self) -> Result<u64> {
+        raster_lights::task_bytes(&self.raster_lights)?
+            .checked_add(raster_lights::local_task_bytes(&self.raster_punctual_lights, &self.raster_area_lights)?)
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "Raster task light size overflow"))
+    }
+
+    /// Internal status/task copy: the new Vec allocation is bounded and fallible.
+    pub(super) fn try_clone_for_host(&self) -> Result<Self> {
+        self.validate_raster_request()?;
+        // Preserve the old path, including existing unrelated payload semantics.
+        if !self.has_explicit_raster_lights() {
+            return Ok(self.clone());
+        }
+        Ok(Self {
+            raster_exposure_ev: self.raster_exposure_ev,
+            raster_lights: raster_lights::try_copy(&self.raster_lights)?,
+            raster_punctual_lights: raster_lights::try_copy_punctual(&self.raster_punctual_lights)?,
+            raster_area_lights: raster_lights::try_copy_areas(&self.raster_area_lights)?,
+            studio_weights: self.studio_weights,
+            environment: self.environment.clone(),
+            textures: self.textures.clone(),
+            integrator: self.integrator,
+            raytrace: None, // validated absent above, never clone-then-clear
+            camera: self.camera,
+            width: self.width,
+            height: self.height,
+            background: self.background,
+            transparent_background: self.transparent_background,
+        })
+    }
     pub fn cpu_budget(&self) -> CpuBudget {
         if self.integrator == Integrator::Raytrace {
             self.raytrace.as_ref().map_or(CpuBudget::Compact, |options| options.budget)
@@ -1102,6 +1266,10 @@ impl ImageRequest {
             .map_or(0, |source| (std::mem::size_of::<crate::lighting::environment::EnvironmentInfo>() + source.info().source_sha256.len()) as u64);
         environment + if self.textures.is_some() { std::mem::size_of::<textures::TextureSummary>() as u64 } else { 0 }
     }
+}
+
+fn zero_raster_exposure(value: &f64) -> bool {
+    *value == 0.0
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1121,7 +1289,224 @@ pub struct FrameInfo {
 }
 #[cfg(test)]
 mod runtime_request_roundtrip_tests {
+
+    fn raster_local_test_request() -> ImageRequest {
+        serde_json::from_value(
+            serde_json::json!({"camera":crate::Camera::default(),"width":8,"height":8,"background":[0,0,0],"transparent_background":false}),
+        )
+        .unwrap()
+    }
+
+    fn raster_local_test_point() -> PunctualLightOptions {
+        PunctualLightOptions {
+            position_mm: [0.0, 0.0, 10.0],
+            color: [1.0; 3],
+            intensity: 2.0,
+            reference_distance_mm: 10.0,
+            minimum_distance_mm: 0.001,
+            cone: None,
+        }
+    }
+
+    fn raster_local_test_rectangle() -> RectangleLightOptions {
+        RectangleLightOptions {
+            center_mm: [0.0, 0.0, 10.0],
+            edge_u_mm: [2.0, 0.0, 0.0],
+            edge_v_mm: [0.0, -2.0, 0.0],
+            color: [1.0; 3],
+            intensity: 2.0,
+        }
+    }
+
+    #[test]
+    fn raster_local_wire_omission_null_empty_and_host_copy_keep_distinct_intent() {
+        let legacy = raster_local_test_request();
+        let wire = serde_json::to_value(&legacy).unwrap();
+        assert!(wire.get("raster_punctual_lights").is_none());
+        assert!(wire.get("raster_area_lights").is_none());
+        assert!(!legacy.has_explicit_raster_lights());
+        let mut null = wire.clone();
+        null["raster_punctual_lights"] = serde_json::Value::Null;
+        null["raster_area_lights"] = serde_json::Value::Null;
+        let decoded: ImageRequest = serde_json::from_value(null).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), wire);
+        for key in ["raster_punctual_lights", "raster_area_lights"] {
+            let mut explicit = wire.clone();
+            explicit[key] = serde_json::json!([]);
+            let input: ImageRequest = serde_json::from_value(explicit).unwrap();
+            assert!(input.has_explicit_raster_lights() && input.has_local_raster_lights());
+            assert!(input.raster_lights.is_none(), "no implicit directional materialisation");
+            assert_eq!(input.raster_light_work_factor().unwrap(), 1);
+            let copy = input.try_clone_for_host().unwrap();
+            assert_eq!(serde_json::to_value(copy).unwrap(), serde_json::to_value(input).unwrap());
+        }
+    }
+
+    #[test]
+    fn raster_local_eight_shared_point_spot_four_areas_and_directional_caps_are_independent() {
+        let mut input = raster_local_test_request();
+        let point = raster_local_test_point();
+        let mut spot = point;
+        spot.cone = Some(SpotConeOptions { emitted_axis: [0.0, 0.0, -1.0], inner_half_angle_radians: 0.2, outer_half_angle_radians: 0.5 });
+        input.raster_lights = Some(vec![DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 1.0 }; 8]);
+        assert_eq!(input.raster_light_work_factor().unwrap(), 1, "old directional work path unchanged");
+        input.raster_punctual_lights = Some(vec![point, spot, point, spot, point, spot, point, spot]);
+        input.raster_area_lights = Some(vec![raster_local_test_rectangle(); 4]);
+        input.validate_raster_request().unwrap();
+        assert_eq!(input.raster_light_work_factor().unwrap(), 20);
+        input.raster_punctual_lights.as_mut().unwrap().push(point);
+        assert_eq!(input.validate_raster_request().unwrap_err().code, ErrorCode::InvalidRequest);
+        assert!(serde_json::from_value::<ImageRequest>(serde_json::to_value(&input).unwrap()).is_err());
+        input.raster_punctual_lights = Some(vec![point]);
+        input.raster_area_lights.as_mut().unwrap().push(raster_local_test_rectangle());
+        assert!(input.validate_raster_request().is_err());
+        assert!(serde_json::from_value::<ImageRequest>(serde_json::to_value(input).unwrap()).is_err());
+    }
+
+    #[test]
+    fn raster_local_spare_capacities_refuse_before_copy_or_task_reservation() {
+        let mut input = raster_local_test_request();
+        input.raster_punctual_lights = Some(Vec::with_capacity(9));
+        assert!(input.try_clone_for_host().is_err());
+        assert!(input.raster_lights_retained_bytes().is_err());
+        assert!(input.raster_lights_task_bytes().is_err());
+        input.raster_punctual_lights = None;
+        input.raster_area_lights = Some(Vec::with_capacity(5));
+        assert!(input.try_clone_for_host().is_err());
+        assert!(input.raster_lights_retained_bytes().is_err());
+        assert!(input.raster_lights_task_bytes().is_err());
+    }
+
+    #[test]
+    fn raster_local_fallible_fixed_dto_copy_preserves_values_and_accounts_both_families() {
+        let mut input = raster_local_test_request();
+        input.raster_punctual_lights = Some(vec![raster_local_test_point()]);
+        input.raster_area_lights = Some(vec![raster_local_test_rectangle()]);
+        let expected = (input.raster_punctual_lights.as_ref().unwrap().capacity() * std::mem::size_of::<PunctualLightOptions>()
+            + input.raster_area_lights.as_ref().unwrap().capacity() * std::mem::size_of::<RectangleLightOptions>()) as u64;
+        assert_eq!(input.raster_lights_retained_bytes().unwrap(), expected);
+        let task_fee = (8 * std::mem::size_of::<PunctualLightOptions>() + 4 * std::mem::size_of::<RectangleLightOptions>()) as u64;
+        assert_eq!(input.raster_lights_task_bytes().unwrap(), task_fee);
+        let copy = input.try_clone_for_host().unwrap();
+        assert_eq!(copy.raster_punctual_lights, input.raster_punctual_lights);
+        assert_eq!(copy.raster_area_lights, input.raster_area_lights);
+        assert!(copy.raster_lights_retained_bytes().unwrap() <= task_fee);
+        input.raster_punctual_lights.as_mut().unwrap()[0].intensity = 0.0;
+        input.raster_area_lights.as_mut().unwrap()[0].intensity = 0.0;
+        assert_eq!(copy.raster_punctual_lights.as_ref().unwrap()[0].intensity, 2.0);
+        assert_eq!(copy.raster_area_lights.as_ref().unwrap()[0].intensity, 2.0);
+    }
+
+    #[test]
+    fn raster_local_empty_intent_still_refuses_other_producers_and_implicit_weights() {
+        for family in [0, 1] {
+            let mut input = raster_local_test_request();
+            if family == 0 {
+                input.raster_punctual_lights = Some(Vec::new());
+            } else {
+                input.raster_area_lights = Some(Vec::new());
+            }
+            input.studio_weights = Some([0.0; 3]);
+            assert!(input.validate_raster_request().is_err());
+            input.studio_weights = None;
+            input.raytrace = Some(Default::default());
+            assert!(input.validate_raster_request().is_err());
+            input.raytrace = None;
+            input.integrator = Integrator::Raytrace;
+            assert!(input.validate_raster_request().is_err());
+            assert!(super::interactive::cpu_request(&input).is_err());
+        }
+    }
+
+    #[test]
+    fn raster_local_shared_rectangle_validator_preserves_canonical_bounds_and_error_order() {
+        let mut rectangle = raster_local_test_rectangle();
+        rectangle.color = [0.0; 3];
+        rectangle.intensity = 0.0;
+        rectangle.edge_u_mm = [1.0, 1.0, 0.0];
+        assert_eq!(rectangle.validate().unwrap_err().message, "invalid finite rectangular light");
+        rectangle = raster_local_test_rectangle();
+        rectangle.center_mm = [1e9, 0.0, 0.0];
+        assert_eq!(rectangle.validate().unwrap_err().message, "rectangular light corner exceeds world bounds");
+        let mut input = raster_local_test_request();
+        input.raster_area_lights = Some(vec![rectangle.clone()]);
+        assert!(input.validate_raster_request().is_err());
+        let options = RaytraceOptions { area_lights: Some(vec![rectangle]), ..Default::default() };
+        assert_eq!(options.validate().unwrap_err().message, "rectangular light corner exceeds world bounds");
+    }
+
+    #[test]
+    fn raster_light_wire_is_nullable_bounded_strict_and_fallibly_copied() {
+        #[derive(Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Rig {
+            #[serde(default, deserialize_with = "super::raster_lights::deserialize", skip_serializing_if = "Option::is_none")]
+            raster_lights: Option<Vec<DirectionalLightOptions>>,
+        }
+        use serde_json::json;
+        for value in [json!({}), json!({"raster_lights":null})] {
+            let rig: Rig = serde_json::from_value(value).unwrap();
+            assert!(rig.raster_lights.is_none());
+            assert_eq!(serde_json::to_value(rig).unwrap(), json!({}));
+        }
+        let light = json!({"direction":[0.0,0.0,1.0],"color":[0.25,0.5,1.0],"intensity":2.0});
+        for count in [0, 1, 8] {
+            let rig: Rig = serde_json::from_value(json!({"raster_lights":vec![light.clone();count]})).unwrap();
+            assert_eq!(rig.raster_lights.as_ref().unwrap().len(), count);
+            assert!(rig.raster_lights.as_ref().unwrap().capacity() <= 8);
+            let copy = super::raster_lights::try_copy(&rig.raster_lights).unwrap();
+            assert_eq!(copy, rig.raster_lights);
+            assert!(copy.as_ref().unwrap().capacity() <= 8);
+            assert_eq!(serde_json::to_value(rig).unwrap(), json!({"raster_lights":vec![light.clone();count]}));
+        }
+        assert!(serde_json::from_value::<Rig>(json!({"raster_lights":vec![light.clone();9]})).is_err());
+        for value in [
+            json!(true),
+            json!({}),
+            json!([{"direction":[0,0,0],"color":[1,1,1],"intensity":0}]),
+            json!([{"direction":[0,0,1],"color":[1,1,1],"intensity":1,"shadows":true}]),
+        ] {
+            assert!(serde_json::from_value::<Rig>(json!({"raster_lights":value})).is_err());
+        }
+        let mut excessive = Vec::with_capacity(9);
+        excessive.push(DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 1.0 });
+        assert!(super::raster_lights::try_copy(&Some(excessive)).is_err());
+        for intensity in [f64::NAN, f64::INFINITY, -1.0, 65.0] {
+            let invalid = Some(vec![DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity }]);
+            assert!(super::raster_lights::try_copy(&invalid).is_err());
+        }
+    }
+
     use super::*;
+
+    #[test]
+    fn dielectric_transport_wire_policy_preserves_legacy_and_rejects_hostile_values() {
+        let legacy: RaytraceOptions = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(legacy.dielectric_transport, CpuDielectricTransport::LegacyBounded);
+        assert!(serde_json::to_value(&legacy).unwrap().get("dielectric_transport").is_none());
+        let strict: RaytraceOptions = serde_json::from_value(serde_json::json!({"dielectric_transport":"strict_tir"})).unwrap();
+        strict.validate().unwrap();
+        assert_eq!(serde_json::to_value(&strict).unwrap()["dielectric_transport"], "strict_tir");
+        for value in [serde_json::json!(null), serde_json::json!(true), serde_json::json!(7), serde_json::json!("unlimited"), serde_json::json!({})] {
+            assert!(serde_json::from_value::<RaytraceOptions>(serde_json::json!({"dielectric_transport":value})).is_err());
+        }
+    }
+
+    #[test]
+    fn strict_dielectric_policy_refuses_unqualified_opaque_continuations_without_mutation() {
+        let options = RaytraceOptions {
+            dielectric_transport: CpuDielectricTransport::StrictTir,
+            reflections: Some(ReflectionOptions {
+                bodies: vec![ReflectionBody { body: "Body".into(), mode: ReflectionMode::Mirror }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let before = options.clone();
+        assert_eq!(options.validate().unwrap_err().code, ErrorCode::InvalidRequest);
+        assert_eq!(options, before);
+        RaytraceOptions { dielectric_transport: CpuDielectricTransport::LegacyBounded, ..options }.validate().unwrap();
+    }
     #[test]
     fn default_preset_and_empty_lights_requests_roundtrip_without_invalid_null_sequence() {
         for options in [
@@ -1187,7 +1572,7 @@ mod runtime_request_roundtrip_tests {
             color: [1.0; 3],
             intensity: 1.0,
         };
-        assert!(RaytraceOptions { progressive, area_lights: Some(vec![area]), ..Default::default() }.validate().is_err());
+        RaytraceOptions { progressive, area_lights: Some(vec![area]), ..Default::default() }.validate().unwrap();
         let dielectric = DielectricOptions {
             body_index: 0,
             body_name: "Body".into(),
@@ -1196,7 +1581,9 @@ mod runtime_request_roundtrip_tests {
             absorption_per_mm: [0.0; 3],
             thickness_mm: 1.0,
         };
-        assert!(RaytraceOptions { progressive, dielectrics: vec![dielectric], ..Default::default() }.validate().is_err());
+        // Superseded global rejection: smooth optical trees are implemented per
+        // camera sample; capture-time certification remains separately required.
+        RaytraceOptions { progressive, dielectrics: vec![dielectric], ..Default::default() }.validate().unwrap();
         let face = AnisotropicFaceOptions {
             body_index: 0,
             body_name: "Body".into(),
@@ -1209,4 +1596,308 @@ mod runtime_request_roundtrip_tests {
         assert!(RaytraceOptions { progressive, anisotropic_faces: [Some(face), None], ..Default::default() }.validate().is_err());
         RaytraceOptions { progressive, area_lights: Some(Vec::new()), ..Default::default() }.validate().unwrap();
     }
+
+    #[test]
+    fn progressive_rectangle_and_led_admission_preserves_source_limits_and_atomic_rejection() {
+        let strip = led_strip::LedStripOptions {
+            center_mm: [0.0, 0.0, 10.0],
+            length_mm: 2.0,
+            width_mm: 2.0,
+            length_axis: [1.0, 0.0, 0.0],
+            width_axis: [0.0, -1.0, 0.0],
+            color: [1.0, 0.5, 0.25],
+            intensity: 2.0,
+        };
+        for samples in [1, 4, 16, 64] {
+            let mut options = RaytraceOptions {
+                progressive: Some(CpuProgressiveOptions { samples_per_pixel: 3, seed: 97 }),
+                lights: Some(Vec::new()),
+                ..Default::default()
+            };
+            for count in 1..=4 {
+                strip.append_to(&mut options, samples).unwrap();
+                options.validate().unwrap();
+                assert_eq!(options.area_lights.as_ref().unwrap().len(), count);
+                assert_eq!(
+                    options.retained_bytes().unwrap(),
+                    (options.area_lights.as_ref().unwrap().capacity() * std::mem::size_of::<RectangleLightOptions>()) as u64
+                );
+            }
+            let before = options.clone();
+            let capacity = options.area_lights.as_ref().unwrap().capacity();
+            assert!(strip.append_to(&mut options, samples).is_err());
+            assert_eq!(options, before);
+            assert_eq!(options.area_lights.as_ref().unwrap().capacity(), capacity);
+            options.area_lights.as_mut().unwrap().pop();
+            let before = options.clone();
+            let conflicting = if samples == 1 { 4 } else { 1 };
+            assert!(strip.append_to(&mut options, conflicting).is_err());
+            assert_eq!(options, before);
+            for invalid in [0, 2, 65, u32::MAX] {
+                let mut hostile = options.clone();
+                hostile.area_samples = Some(invalid);
+                assert!(hostile.validate().is_err());
+            }
+            let mut hostile = options.clone();
+            hostile.area_lights.as_mut().unwrap()[0].intensity = f64::NAN;
+            assert!(hostile.validate().is_err());
+        }
+        let mut maximum = RaytraceOptions {
+            progressive: Some(CpuProgressiveOptions::default()),
+            lights: Some(vec![DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 1.0 }; 8]),
+            punctual_lights: Some(vec![
+                PunctualLightOptions {
+                    position_mm: [0.0, 0.0, 10.0],
+                    color: [1.0; 3],
+                    intensity: 1.0,
+                    reference_distance_mm: 10.0,
+                    minimum_distance_mm: 0.001,
+                    cone: None,
+                };
+                8
+            ]),
+            ..Default::default()
+        };
+        for _ in 0..4 {
+            strip.append_to(&mut maximum, 16).unwrap();
+        }
+        maximum.validate().unwrap();
+        maximum.area_lights.as_mut().unwrap().push(strip.rectangle().unwrap());
+        assert!(maximum.validate().is_err());
+        for options in [
+            RaytraceOptions { progressive: Some(CpuProgressiveOptions::default()), area_samples: Some(16), ..Default::default() },
+            RaytraceOptions { progressive: Some(CpuProgressiveOptions::default()), seed: Some(7), ..Default::default() },
+        ] {
+            assert!(options.validate().is_err());
+        }
+    }
+}
+
+/// Fixed representative presentation plan; fitting never grants source admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PartialPreviewPlan {
+    source_width: u32,
+    source_height: u32,
+    width: u32,
+    height: u32,
+}
+impl PartialPreviewPlan {
+    pub fn source_width(&self) -> u32 {
+        self.source_width
+    }
+    pub fn source_height(&self) -> u32 {
+        self.source_height
+    }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+    pub fn new(source_width: u32, source_height: u32) -> Result<Self> {
+        if source_width == 0 || source_height == 0 {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview source dimensions must be positive"));
+        }
+        let edge = source_width.max(source_height);
+        let fit = |side: u32| {
+            if edge <= 1024 { side } else { ((u64::from(side) * 1024 + u64::from(edge) / 2) / u64::from(edge)).max(1) as u32 }
+        };
+        Ok(Self { source_width, source_height, width: fit(source_width), height: fit(source_height) })
+    }
+    pub fn validate(&self) -> Result<()> {
+        if *self != Self::new(self.source_width, self.source_height)? {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview dimensions differ from the fixed plan"));
+        }
+        Ok(())
+    }
+    pub fn pixels(&self) -> u64 {
+        u64::from(self.width) * u64::from(self.height)
+    }
+    pub fn source_index(&self, preview_index: usize) -> Result<usize> {
+        self.validate()?;
+        let index = u64::try_from(preview_index).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "partial preview index overflow"))?;
+        if index >= self.pixels() {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview index outside its plan"));
+        }
+        let x = (index % u64::from(self.width)) * u64::from(self.source_width) / u64::from(self.width);
+        let y = (index / u64::from(self.width)) * u64::from(self.source_height) / u64::from(self.height);
+        let source = y
+            .checked_mul(u64::from(self.source_width))
+            .and_then(|v| v.checked_add(x))
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial source index overflow"))?;
+        usize::try_from(source).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "partial source index exceeds address space"))
+    }
+    pub fn encoded_limit(&self) -> Result<u64> {
+        self.validate()?;
+        self.pixels()
+            .checked_mul(8)
+            .and_then(|v| v.checked_add(65_536))
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial PNG capacity overflow"))
+    }
+    pub fn covered_bytes(&self) -> Result<u64> {
+        self.validate()?;
+        self.pixels().checked_mul(4).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial coverage capacity overflow"))
+    }
+    pub fn snapshot_work(&self) -> Result<u64> {
+        self.validate()?;
+        self.pixels()
+            .checked_mul(14)
+            .and_then(|v| v.checked_add(65_538))
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial work bound overflow"))
+    }
+    /// Two retained payload slots; existing admitted RGBA/encoder scratch is reused.
+    #[cfg(feature = "raytrace-cpu")]
+    pub(crate) fn additional_bytes(&self) -> Result<u64> {
+        self.slot_bytes()?
+            .checked_mul(2)
+            .and_then(|v| v.checked_add(1024))
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial preview admission overflow"))
+    }
+    pub(crate) fn slot_bytes(&self) -> Result<u64> {
+        self.encoded_limit()?
+            .checked_add(self.covered_bytes()?)
+            .and_then(|v| v.checked_add(2048))
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "partial retained slot overflow"))
+    }
+}
+
+/// Explicit protected-feedback aggregate ceiling; the ordinary MAX_CPU_WORK is unchanged.
+// At most 1024² representatives: 14 work units each plus 65,538 codec/hash
+// overhead. At most 64 early milestones and MAX_SPP-1 complete-pass snapshots.
+// This Cartesian upper bound is deliberately conservative; ordinary work is unchanged.
+pub const MAX_PROTECTED_CPU_WORK: u64 = MAX_CPU_WORK + 14_745_602 * (MAX_CPU_SAMPLES_PER_PIXEL as u64 + 63);
+
+/// Checked per-job feedback policy, not an admission token or an arbitrary work envelope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProtectedPreviewPlan {
+    preview: PartialPreviewPlan,
+    samples_per_pixel: u32,
+    budget: CpuBudget,
+    total_commits: u64,
+    quota_limit: u32,
+}
+impl ProtectedPreviewPlan {
+    pub fn new(source_width: u32, source_height: u32, samples_per_pixel: u32, budget: CpuBudget) -> Result<Self> {
+        budget.validate_image(source_width, source_height, Some(CpuProgressiveOptions { samples_per_pixel, seed: 0 }))?;
+        let preview = PartialPreviewPlan::new(source_width, source_height)?;
+        let total_commits = u64::from(source_width)
+            .checked_mul(u64::from(source_height))
+            .and_then(|v| v.checked_mul(u64::from(samples_per_pixel)))
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected camera-commit count overflow"))?;
+        let pixels = u64::from(source_width) * u64::from(source_height);
+        let early =
+            u32::try_from(pixels.saturating_sub(1).min(64)).map_err(|_| JobError::new(ErrorCode::LimitExceeded, "protected early quota overflow"))?;
+        let quota_limit =
+            early.checked_add(samples_per_pixel - 1).ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected quota overflow"))?;
+        let plan = Self { preview, samples_per_pixel, budget, total_commits, quota_limit };
+        plan.aggregate_limit()?;
+        Ok(plan)
+    }
+    pub fn validate(&self) -> Result<()> {
+        if *self != Self::new(self.preview.source_width(), self.preview.source_height(), self.samples_per_pixel, self.budget)? {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "protected feedback plan differs from its canonical policy"));
+        }
+        Ok(())
+    }
+    pub fn preview_plan(&self) -> PartialPreviewPlan {
+        self.preview
+    }
+    pub fn samples_per_pixel(&self) -> u32 {
+        self.samples_per_pixel
+    }
+    pub fn budget(&self) -> CpuBudget {
+        self.budget
+    }
+    pub fn total_commits(&self) -> u64 {
+        self.total_commits
+    }
+    pub fn ordinary_limit(&self) -> u64 {
+        self.budget.limits().max_work_units
+    }
+    pub fn quota_limit(&self) -> u32 {
+        self.quota_limit
+    }
+    pub fn snapshot_work(&self) -> Result<u64> {
+        self.preview.snapshot_work()
+    }
+    pub fn presentation_limit(&self) -> Result<u64> {
+        self.snapshot_work()?
+            .checked_mul(u64::from(self.quota_limit))
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected presentation allowance overflow"))
+    }
+    pub fn aggregate_limit(&self) -> Result<u64> {
+        self.ordinary_limit()
+            .checked_add(self.presentation_limit()?)
+            .filter(|v| *v <= MAX_PROTECTED_CPU_WORK)
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected aggregate work exceeds its explicit ceiling"))
+    }
+    /// Number of reached milestones in O(1), including a final sentinel without
+    /// adding a final-image snapshot. A delayed consumer cannot create a long
+    /// uninterruptible coalescing loop in the worker.
+    #[cfg(feature = "raytrace-cpu")]
+    pub(crate) fn reached_milestones(&self, committed: u64) -> Result<u32> {
+        if committed > self.total_commits {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "protected frontier exceeds its final target"));
+        }
+        let pixels = u64::from(self.preview.source_width()) * u64::from(self.preview.source_height());
+        let early = pixels.saturating_sub(1).min(64);
+        let reached_early = if committed == 0 || early == 0 {
+            0
+        } else if committed >= pixels - 1 {
+            early
+        } else if early == 1 {
+            1
+        } else {
+            committed
+                .checked_mul(early - 1)
+                .map(|n| n.div_ceil(pixels - 2))
+                .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected reached milestone overflow"))?
+        };
+        let passes = (committed / pixels).min(u64::from(self.samples_per_pixel - 1));
+        reached_early
+            .checked_add(passes)
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| *n <= self.quota_limit)
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected reached quota overflow"))
+    }
+
+    /// Zero-based, strictly increasing milestones below the final target.
+    pub fn milestone(&self, index: u32) -> Result<u64> {
+        if index >= self.quota_limit {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "protected milestone index outside its quota"));
+        }
+        let pixels = u64::from(self.preview.source_width()) * u64::from(self.preview.source_height());
+        let early = u32::try_from(pixels.saturating_sub(1).min(64))
+            .map_err(|_| JobError::new(ErrorCode::LimitExceeded, "protected early milestone overflow"))?;
+        if index < early {
+            if early == 1 {
+                return Ok(1);
+            }
+            return pixels
+                .checked_sub(2)
+                .and_then(|n| n.checked_mul(u64::from(index)))
+                .and_then(|n| n.checked_div(u64::from(early - 1)))
+                .and_then(|n| n.checked_add(1))
+                .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected early milestone arithmetic overflow"));
+        }
+        u64::from(index - early + 1)
+            .checked_mul(pixels)
+            .ok_or_else(|| JobError::new(ErrorCode::LimitExceeded, "protected pass milestone arithmetic overflow"))
+    }
+}
+
+/// Actual admitted policy and monotonic producer usage; never a saved design field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct ProtectedPreviewReport {
+    pub policy_version: u32,
+    pub ordinary_limit: u64,
+    pub presentation_limit: u64,
+    pub aggregate_limit: u64,
+    pub ordinary_used: u64,
+    pub presentation_used: u64,
+    pub accepted_snapshots: u32,
+    pub quota_limit: u32,
+    pub next_milestone_index: u32,
+    pub quota_exhausted: bool,
+    pub milestones_complete: bool,
 }

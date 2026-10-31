@@ -64,6 +64,10 @@ fn task(samples: u8, selected: bool, face_override: bool, shadows: bool) -> Imag
         ..Default::default()
     };
     let request = ImageRequest {
+        raster_punctual_lights: None,
+        raster_area_lights: None,
+        raster_exposure_ev: 0.0,
+        raster_lights: None,
         studio_weights: None,
         environment: None,
         textures: None,
@@ -204,9 +208,9 @@ fn reused_shading_preserves_original_per_add_radiance_bound() {
 fn request_admission_and_task_slot_caps_are_not_expanded() {
     let fast = task(64, false, false, false);
     let legacy = task(64, false, false, false);
-    assert_eq!(fast.options, legacy.options);
+    assert_eq!(*fast.visibility_owner.options(), *legacy.visibility_owner.options());
     assert_eq!(fast.admission.estimated_total_bytes, legacy.admission.estimated_total_bytes);
-    assert_eq!(fast.options.reflections.as_ref().unwrap().samples, 64);
+    assert_eq!(fast.visibility_owner.options().reflections.as_ref().unwrap().samples, 64);
     assert!(std::mem::size_of::<ImageTask>() <= 4096);
     assert_eq!(crate::raytrace::MAX_WORK, 1_000_000_000);
     assert_eq!(job::image::MAX_JOB_BYTES, 384 * 1024 * 1024);
@@ -229,6 +233,10 @@ fn spatial_reuse_fixture(s: u8, r: u8, selected: bool, face_override: bool, shad
         ..Default::default()
     };
     let request = ImageRequest {
+        raster_punctual_lights: None,
+        raster_area_lights: None,
+        raster_exposure_ev: 0.0,
+        raster_lights: None,
         studio_weights: None,
         environment: None,
         textures: None,
@@ -350,7 +358,7 @@ fn completed_spatial_reuse_checks_cancel_and_work_limit_before_any_mutation() {
 fn spatial_lights_fixture(config: (u8, u8, u32, u32, bool), mask: u8, width: u32, partial: bool) -> ImageTask {
     let (s, r, n, seed, shadows) = config;
     let previous = spatial_reuse_fixture(s, r, false, false, shadows);
-    let mut options = previous.options;
+    let (fixture_scene, mut options) = previous.visibility_owner.into_capture();
     options.exposure_ev = 1.0;
     options.lights = Some(if mask & 1 != 0 {
         vec![job::DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [0.25, 0.5, 1.0], intensity: 2.0 }]
@@ -403,7 +411,7 @@ fn spatial_lights_fixture(config: (u8, u8, u32, u32, bool), mask: u8, width: u32
     if options.area_lights.is_some() {
         options.seed = Some(seed);
     }
-    let mut scene = previous.scene;
+    let mut scene = fixture_scene;
     if partial {
         let mesh = Arc::get_mut(&mut scene.meshes[0].mesh).unwrap();
         mesh.positions[0].x = 0.0;
@@ -510,12 +518,16 @@ fn completed_marker_refuses_malformed_proof_sample_bounce_hit_and_shading_state(
             6 => task.pending.as_mut().unwrap().area_ready = true,
             7 => task.pending.as_mut().unwrap().environment_sample = 0,
             8 => task.pending.as_mut().unwrap().area_light = 1,
-            9 => task.options.reflections.as_mut().unwrap().bodies[0].body = "Visible".into(),
+            9 => {
+                let (fixture_scene, mut fixture_options) = task.visibility_owner.into_capture();
+                fixture_options.reflections.as_mut().unwrap().bodies[0].body = "Visible".into();
+                task.visibility_owner = dielectric::DirectVisibilityOwner::new(fixture_scene, fixture_options);
+            }
             10 => task.sample = task.sample_count() + 1,
             11 => task.pending.as_mut().unwrap().light = task.lights.lights().len() + 2,
             12 => task.finish_spatial = true,
             13 => task.emit_spatial_pixel = true,
-            14 => task.spatial = task.options.primary_samples,
+            14 => task.spatial = task.visibility_owner.options().primary_samples,
             15 => task.pending.as_mut().unwrap().emission_cursor = 1,
             16 => task.pending.as_mut().unwrap().surface_cursor = 1,
             17 => task.pending.as_mut().unwrap().surface_ready = false,
@@ -580,7 +592,7 @@ fn spatial_reuse_quantum_partitions_preserve_complete_png_and_public_work_bound(
 
 fn spatial_surface_fixture(s: u8, r: u8, selected: bool) -> ImageTask {
     let previous = spatial_lights_fixture((s, r, 4, 7, true), 63, 2, true);
-    let mut options = previous.options;
+    let (fixture_scene, mut options) = previous.visibility_owner.into_capture();
     options.surface_effects = Some(vec![crate::surface_patterns::SurfaceEffect {
         body: "Visible".into(),
         frame: Default::default(),
@@ -592,7 +604,7 @@ fn spatial_surface_fixture(s: u8, r: u8, selected: bool) -> ImageTask {
         options.reflections.as_mut().unwrap().bodies[0].body = "Visible".into();
     }
     let request = ImageRequest { raytrace: Some(options.clone()), ..previous.request };
-    ImageTask::new_with_environment(previous.scene, request, previous.cancel, options, Some(environment())).unwrap()
+    ImageTask::new_with_environment(fixture_scene, request, previous.cancel, options, Some(environment())).unwrap()
 }
 
 #[test]

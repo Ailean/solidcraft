@@ -100,7 +100,10 @@ pub fn host_on_adapter(adapter: &wgpu::Adapter) -> Result<ImageHost> {
     let policy = crate::select::Policy::from_env().map_err(gpu)?;
     let info = adapter.get_info();
     if !viewport_path_backends(info.backend, cfg!(target_os = "windows")).intersects(crate::select::path_backends()) {
-        return Err(gpu(format!("{VULKAN_ONLY}; the viewport uses {:?}", info.backend)));
+        return Err(gpu(format!(
+            "GPU path tracing is unavailable in this {:?} viewport session; Vulkan has not been tested; select a CPU image method",
+            info.backend
+        )));
     }
     if !policy.admits(crate::select::tier_of(info.device_type)) {
         return Err(gpu(format!("viewport adapter does not satisfy SOLIDCRAFT_GPU={}", policy.name())));
@@ -315,6 +318,9 @@ fn descriptor() -> Result<ExecutorDescriptor> {
 }
 
 fn admission(scene: &ProductScene, request: &ImageRequest, options: JobOptions) -> Result<Admission> {
+    if request.has_explicit_raster_lights() || request.raster_exposure_ev != 0.0 {
+        return Err(JobError::new(ErrorCode::InvalidRequest, "GPU path rendering does not accept Raster lights or Raster exposure"));
+    }
     if request.integrator != solidcraft_render::job::Integrator::Raster || request.raytrace.is_some() {
         return Err(JobError::new(ErrorCode::InvalidRequest, "GPU path rendering does not accept CPU raytrace options"));
     }
@@ -471,6 +477,9 @@ impl ImageExecutor for Executor {
         Ok(value)
     }
     fn admit(&self, scene: &ProductScene, request: &ImageRequest, options: JobOptions) -> Result<Admission> {
+        if request.has_explicit_raster_lights() || request.raster_exposure_ev != 0.0 {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "GPU path rendering does not accept Raster lights or Raster exposure"));
+        }
         self.context.ensure_available()?;
         let a = admission(scene, request, options)?;
         let limit = self.context.device.limits().max_storage_buffer_binding_size;

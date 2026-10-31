@@ -12,7 +12,9 @@ pub const MAX_LIGHTS: usize = 8;
 pub const MAX_LIGHT_INTENSITY: f64 = 64.0;
 /// Refuse unrepresentable or excessive output rather than silently clip the transport.
 pub const MAX_LINEAR_RADIANCE: f64 = 1.0e12;
-pub const MAX_EXPOSURE_EV: f64 = 16.0;
+// With admitted radiance <=1e12, exposure <=2^32 remains below2^73 in f64.
+// This output-only range does not change the transport or film bounds.
+pub const MAX_EXPOSURE_EV: f64 = 32.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DirectionalLight {
@@ -135,6 +137,43 @@ impl Lighting {
         }
         Ok(sum)
     }
+    /// Sum direct lighting with independently completed RGB transmittance.
+    /// Ineligible lights never call `transmittance`. Each returned channel must
+    /// be finite in [0, 1]; errors propagate without clipping or a fallback.
+    /// No exposure, tone mapping, display encoding or indirect transport here.
+    pub(super) fn shade_linear_transmitted(
+        &self,
+        surface: OpaqueSurface,
+        normal: Vec3,
+        view: Vec3,
+        mut transmittance: impl FnMut(usize, Vec3) -> Result<Vec3>,
+    ) -> Result<Vec3> {
+        let n = unit_direction(normal).map_err(|_| TraceError::InvalidInput("finite nonzero shading normal required"))?;
+        let v = unit_direction(view).map_err(|_| TraceError::InvalidInput("finite nonzero shading view required"))?;
+        let mut sum = Vec3::ZERO;
+        if n.dot(v) <= 0.0 {
+            return Ok(sum);
+        }
+        for (index, light) in self.lights.iter().enumerate() {
+            let cosine = n.dot(light.direction).max(0.0);
+            if cosine == 0.0 || light.intensity == 0.0 || light.color == Vec3::ZERO {
+                continue;
+            }
+            let transmission = transmittance(index, light.direction)?;
+            if !transmission.is_finite() || !channels(transmission).into_iter().all(|c| (0.0..=1.0).contains(&c)) {
+                return Err(TraceError::InvalidInput("direct transmittance must be finite RGB in [0, 1]"));
+            }
+            if transmission == Vec3::ZERO {
+                continue;
+            }
+            let brdf = surface.brdf(n, v, light.direction).map_err(|_| TraceError::InvalidInput("invalid opaque surface lighting directions"))?;
+            let weight = light.intensity * cosine;
+            let incident = Vec3::new(brdf.x * light.color.x, brdf.y * light.color.y, brdf.z * light.color.z) * weight;
+            sum += Vec3::new(incident.x * transmission.x, incident.y * transmission.y, incident.z * transmission.z);
+            validate_radiance(sum)?;
+        }
+        Ok(sum)
+    }
 }
 
 fn channels(v: Vec3) -> [f64; 3] {
@@ -154,7 +193,7 @@ pub(super) fn validate_radiance(radiance: Vec3) -> Result<()> {
 pub fn map_to_display(radiance: Vec3, exposure_ev: f64) -> Result<Vec3> {
     validate_radiance(radiance)?;
     if !exposure_ev.is_finite() || !(-MAX_EXPOSURE_EV..=MAX_EXPOSURE_EV).contains(&exposure_ev) {
-        return Err(TraceError::InvalidInput("RT2 exposure must be finite and in [-16, 16] EV"));
+        return Err(TraceError::InvalidInput("RT2 exposure must be finite and in [-32, 32] EV"));
     }
     crate::studio::tone_map(radiance * exposure_ev.exp2()).map_err(|_| TraceError::InvalidInput("invalid exposed radiance"))
 }

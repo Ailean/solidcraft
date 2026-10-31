@@ -85,6 +85,7 @@ fn fs_pbr(i: PbrOut) -> @location(0) vec4<f32> {
         let sample=product_light_sample(k,i.wp);
         radiance += pbr_brdf(i.base,i.parameters,n,v,sample[0])*sample[1]*max(dot(n,sample[0]),0.0);
     }
+    if (u.product_lights_meta.z != 0.0) { radiance = product_exposed_radiance(radiance); }
     let mapped = radiance / (vec3<f32>(1.0) + radiance);
     if (u.back.w > 0.5) { return vec4<f32>(mapped, 1.0); }
     return vec4<f32>(pbr_encode(mapped), 1.0);

@@ -49,6 +49,7 @@ fn add_bytes(sum: &mut u64, count: usize, size: usize, maximum: u64) -> Result<(
 /// counted even when another owner already holds them. Allocator and codec internals are estimates.
 /// Includes the CPU raster work estimate and its 384 MiB per-job check.
 pub fn admit(scene: &ProductScene, request: &ImageRequest) -> Result<Admission> {
+    request.validate_raster_request()?;
     if request.environment.is_some() || request.textures.is_some() {
         return Err(JobError::new(ErrorCode::InvalidRequest, "captured GPU environments and textures require a registered image executor"));
     }
@@ -79,7 +80,7 @@ pub fn admit(scene: &ProductScene, request: &ImageRequest) -> Result<Admission> 
 }
 
 pub(crate) fn admit_base(scene: &ProductScene, request: &ImageRequest) -> Result<Admission> {
-    admit_raster(admit_source(scene, request, MAX_TRIANGLES)?)
+    admit_raster(admit_source(scene, request, MAX_TRIANGLES)?, request)
 }
 
 /// Common camera, dimension and source admission for registered executors, without any CPU
@@ -107,6 +108,9 @@ fn admit_source(scene: &ProductScene, request: &ImageRequest, max_triangles: u64
 /// pixel/codec allowance, then let the ray tracer charge its actual BVH and film.
 #[cfg(feature = "raytrace-cpu")]
 pub(crate) fn admit_raytrace_source(scene: &ProductScene, request: &ImageRequest, budget: super::CpuBudget) -> Result<Admission> {
+    if request.has_explicit_raster_lights() || request.raster_exposure_ev != 0.0 {
+        return Err(invalid("Raster-only lighting and exposure cannot enter CPU ray tracing"));
+    }
     budget.validate_execution()?;
     budget.validate_image(request.width, request.height, request.raytrace.as_ref().and_then(|o| o.progressive))?;
     let source = admit_source_with_budget(scene, request, budget.limits().max_triangles, budget)?;
@@ -162,6 +166,10 @@ fn admit_source_with_limits(
     max_geometry_bytes: u64,
     image_limits: crate::RenderLimits,
 ) -> Result<Source> {
+    request.validate_raster_request()?;
+    if request.has_explicit_raster_lights() && scene.has_transmission() {
+        return Err(invalid("explicit Raster lights do not implement physical transmission"));
+    }
     if !request.camera.is_valid() {
         return Err(JobError::new(ErrorCode::InvalidRequest, "invalid image camera"));
     }
@@ -243,14 +251,16 @@ fn admit_source_with_limits(
 }
 
 /// The CPU raster scratch/preparation estimate and its 384 MiB per-job check.
-fn admit_raster(source: Source) -> Result<Admission> {
+fn admit_raster(source: Source, request: &ImageRequest) -> Result<Admission> {
     let mut a = source.admission;
+    let task_light_bytes = request.raster_lights_task_bytes()?;
     // Three bounded 16-byte lists, a conservative map-node allowance, and codec overhead.
     let preparation = a
         .triangles
         .checked_mul(48)
         .and_then(|n| a.face_appearances.checked_mul(160).and_then(|f| n.checked_add(f)))
         .and_then(|n| n.checked_add(source.bodies * 128 + 262_144))
+        .and_then(|n| n.checked_add(task_light_bytes))
         .ok_or_else(|| limit("work list size overflow"))?;
     let total = a
         .geometry_bytes
@@ -346,7 +356,10 @@ pub struct ImageTask {
     sort_dst: usize,
     pixels: Vec<[u8; 4]>,
     depth: Vec<f32>,
+    // Weighted projected light work for the existing work ceiling.
     pixel_tests: u64,
+    // Unweighted bounding-box pixel visits, matching pixel_done Running units.
+    pixel_progress_tests: u64,
     pixel_done: u64,
     draw: usize,
     triangle: Option<Triangle>,
@@ -399,6 +412,7 @@ impl ImageTask {
             pixels,
             depth,
             pixel_tests: 0,
+            pixel_progress_tests: 0,
             pixel_done: 0,
             draw: 0,
             triangle: None,
@@ -417,7 +431,7 @@ impl ImageTask {
             Stage::Clear | Stage::Opaque | Stage::Glass | Stage::Downsample => Progress {
                 phase: Phase::Running,
                 done: self.pixel_done,
-                total: self.pixel_tests + (self.sw * self.sh) as u64 + u64::from(self.request.width) * u64::from(self.request.height),
+                total: self.pixel_progress_tests + (self.sw * self.sh) as u64 + u64::from(self.request.width) * u64::from(self.request.height),
             },
             Stage::Encode => Progress {
                 phase: Phase::Encoding,
@@ -573,10 +587,12 @@ impl ImageTask {
         if let Some(triangle) = self.project(draw)? {
             let [x0, x1, y0, y1] = triangle.bounds;
             let tests = ((x1 - x0 + 1) as u64).checked_mul((y1 - y0 + 1) as u64).ok_or_else(|| limit("pixel work overflow"))?;
-            self.pixel_tests = self.pixel_tests.checked_add(tests).ok_or_else(|| limit("pixel work overflow"))?;
+            let weighted_tests = tests.checked_mul(self.request.raster_light_work_factor()?).ok_or_else(|| limit("pixel work overflow"))?;
+            self.pixel_tests = self.pixel_tests.checked_add(weighted_tests).ok_or_else(|| limit("pixel work overflow"))?;
             if self.pixel_tests > MAX_PIXEL_TESTS {
                 return Err(limit("projected product exceeds 128000000 pixel tests"));
             }
+            self.pixel_progress_tests = self.pixel_progress_tests.checked_add(tests).ok_or_else(|| limit("pixel progress overflow"))?;
             draw.depth = triangle.centre_depth;
             if triangle.opacity >= 1.0 {
                 self.opaque.push(draw);
@@ -664,7 +680,7 @@ impl ImageTask {
         }
         let triangle = self.triangle.as_mut().ok_or_else(|| invalid("missing raster triangle"))?;
         let eye = (self.request.camera.fov > 0.0).then(|| self.request.camera.eye());
-        raster_pixel(triangle, self.sw, self.back, eye, self.request.studio_weights, &mut self.pixels, &mut self.depth)?;
+        raster_pixel(triangle, self.sw, self.back, eye, &self.request, &mut self.pixels, &mut self.depth)?;
         triangle.x += 1;
         if triangle.x > triangle.bounds[1] {
             triangle.x = triangle.bounds[0];
@@ -723,16 +739,18 @@ impl ImageTask {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn raster_pixel(
     t: &Triangle,
     width: usize,
     back: Vec3,
     eye: Option<Vec3>,
-    studio_weights: Option<[f64; 3]>,
+    request: &ImageRequest,
     pixels: &mut [[u8; 4]],
     depth: &mut [f32],
 ) -> Result<()> {
+    let studio_weights = request.studio_weights;
+    let raster_lights = request.raster_lights.as_deref();
+    let raster_exposure_ev = request.raster_exposure_ev;
     let [a, b, c] = t.points;
     let (x, y) = (t.x as f64 + 0.5, t.y as f64 + 0.5);
     let w0 = ((b[0] - x) * (c[1] - y) - (b[1] - y) * (c[0] - x)) / t.area;
@@ -765,20 +783,59 @@ fn raster_pixel(
         return Ok(());
     }
     let n = t.normals.iter().zip(weights).fold(Vec3::ZERO, |v, (n, w)| v + *n * (w / sum)).normalized().unwrap_or(Vec3::Z);
-    let colour = if let Some(surface) = t.surface {
+    let colour = if request.has_explicit_raster_lights() {
+        let lights = raster_lights.unwrap_or(&[]);
+        let surface = if let Some(surface) = t.surface {
+            surface
+        } else {
+            let [r, g, b] = t.colour;
+            crate::surface::OpaqueSurface::new(Vec3::new(r, g, b), 0.0, 1.0, 1.5).map_err(|e| invalid(&e.to_string()))?
+        };
+        let world = t.world.iter().zip(weights).fold(Vec3::ZERO, |p, (v, w)| p + *v * (w / sum));
+        let view = eye.map_or(back, |eye| eye - world);
+        let radiance = if request.has_local_raster_lights() {
+            crate::studio::shade_schematic(
+                surface,
+                n,
+                view,
+                world,
+                lights,
+                request.raster_punctual_lights.as_deref().unwrap_or(&[]),
+                request.raster_area_lights.as_deref().unwrap_or(&[]),
+            )
+        } else {
+            crate::studio::shade_directional(surface, n, view, lights)
+        }
+        .map_err(|e| invalid(&e.to_string()))?;
+        let mapped = crate::studio::tone_map(expose_raster(radiance, raster_exposure_ev)?).map_err(|e| invalid(&e.to_string()))?;
+        [mapped.x, mapped.y, mapped.z]
+    } else if let Some(surface) = t.surface {
         let world = t.world.iter().zip(weights).fold(Vec3::ZERO, |p, (v, w)| p + *v * (w / sum));
         let view = eye.map_or(back, |eye| eye - world);
         let radiance = crate::studio::shade_weighted(surface, n, view, studio_weights.unwrap_or([1.0; 3])).map_err(|e| invalid(&e.to_string()))?;
-        let mapped = crate::studio::tone_map(radiance).map_err(|e| invalid(&e.to_string()))?;
+        let mapped = crate::studio::tone_map(expose_raster(radiance, raster_exposure_ev)?).map_err(|e| invalid(&e.to_string()))?;
         [mapped.x, mapped.y, mapped.z]
-    } else if let Some(weights) = studio_weights {
+    } else if let Some(light_weights) = studio_weights {
         let [r, g, b] = t.colour;
         let surface = crate::surface::OpaqueSurface::new(Vec3::new(r, g, b), 0.0, 1.0, 1.5).map_err(|e| invalid(&e.to_string()))?;
-        let radiance = crate::studio::shade_weighted(surface, n, back, weights).map_err(|e| invalid(&e.to_string()))?;
-        let mapped = crate::studio::tone_map(radiance).map_err(|e| invalid(&e.to_string()))?;
+        let view = eye.map_or(back, |eye| {
+            let world = t.world.iter().zip(weights).fold(Vec3::ZERO, |p, (v, w)| p + *v * (w / sum));
+            eye - world
+        });
+        let radiance = crate::studio::shade_weighted(surface, n, view, light_weights).map_err(|e| invalid(&e.to_string()))?;
+        let mapped = crate::studio::tone_map(expose_raster(radiance, raster_exposure_ev)?).map_err(|e| invalid(&e.to_string()))?;
         [mapped.x, mapped.y, mapped.z]
     } else {
-        crate::raster::shade(n, back, t.colour)
+        // t.colour was already decoded. This historical schematic shade is
+        // clamped display-linear, not recoverable HDR radiance. Preserve it at
+        // zero; nonzero EV scales it without adding a new tone map or decode.
+        let legacy = crate::raster::shade(n, back, t.colour);
+        if raster_exposure_ev == 0.0 {
+            legacy
+        } else {
+            let exposed = expose_raster(Vec3::new(legacy[0], legacy[1], legacy[2]), raster_exposure_ev)?;
+            [exposed.x, exposed.y, exposed.z]
+        }
     };
     if colour.iter().any(|v| !v.is_finite()) {
         return Err(invalid("non-finite shaded colour"));
@@ -796,6 +853,17 @@ fn raster_pixel(
         pixel[3] = (alpha * 255.0).round() as u8;
     }
     Ok(())
+}
+
+fn expose_raster(value: Vec3, ev: f64) -> Result<Vec3> {
+    if ev == 0.0 {
+        return Ok(value);
+    }
+    let exposed = value * ev.exp2();
+    if !exposed.is_finite() || exposed.x < 0.0 || exposed.y < 0.0 || exposed.z < 0.0 {
+        return Err(invalid("invalid exposed Raster colour"));
+    }
+    Ok(exposed)
 }
 
 fn decode(v: u8) -> f64 {

@@ -6,6 +6,10 @@ use solidcraft_geom::Aabb3;
 
 fn request(integrator: Integrator) -> ImageRequest {
     ImageRequest {
+        raster_punctual_lights: None,
+        raster_area_lights: None,
+        raster_exposure_ev: 0.0,
+        raster_lights: None,
         studio_weights: None,
         environment: None,
         textures: None,
@@ -52,11 +56,14 @@ fn options_preserve_the_eight_light_boundary_and_refuse_the_ninth() {
 
 #[test]
 fn exposure_refuses_nonfinite_and_out_of_range_values() {
-    for exposure_ev in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -16.01, 16.01] {
+    for exposure_ev in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -33.0, 33.0, -32.01, 32.01] {
         let options = RaytraceOptions { exposure_ev, ..Default::default() };
         assert_eq!(options.validate().unwrap_err().code, ErrorCode::InvalidRequest);
     }
-    for exposure_ev in [-16.0, 16.0] {
+    // CPU exposure now shares the saved/UI range; the old +/-16 refusal
+    // is superseded, not a reason to change any transport oracle.
+    assert_eq!(RaytraceOptions::default().exposure_ev, 0.0);
+    for exposure_ev in [-32.0, -17.0, -16.0, 0.0, 16.0, 17.0, 32.0] {
         assert!(RaytraceOptions { exposure_ev, ..Default::default() }.validate().is_ok());
     }
 }
@@ -172,4 +179,90 @@ fn emission_runtime_json_is_bounded_explicit_and_roundtrips() {
     );
     assert_eq!(serde_json::from_str::<RaytraceOptions>("{}").unwrap().emissions, None);
     assert_eq!(serde_json::from_str::<RaytraceOptions>("{\"emissions\":[]}").unwrap().emissions, Some(Vec::new()));
+}
+
+fn directional_options() -> RaytraceOptions {
+    RaytraceOptions {
+        directional_shadow_transmission: true,
+        dielectrics: vec![DielectricOptions {
+            body_index: 0,
+            body_name: "directional glass".into(),
+            boundary: DielectricBoundary::ThinSheet,
+            ior: 1.0,
+            absorption_per_mm: [0.0; 3],
+            thickness_mm: 1.0,
+        }],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn directional_mode_is_explicit_false_omitted_and_true_roundtrips() {
+    let old_default = serde_json::json!({"reflections":null,"anisotropic_faces":[null,null],"preset":null,"exposure_ev":0.0,"shadows":true});
+    let decoded: RaytraceOptions = serde_json::from_value(old_default.clone()).unwrap();
+    assert!(!decoded.directional_shadow_transmission);
+    assert_eq!(serde_json::to_value(&decoded).unwrap(), old_default);
+    let mut explicit = old_default.clone();
+    explicit["directional_shadow_transmission"] = serde_json::json!(false);
+    assert_eq!(serde_json::to_value(serde_json::from_value::<RaytraceOptions>(explicit).unwrap()).unwrap(), old_default);
+    let enabled = directional_options();
+    enabled.validate().unwrap();
+    let wire = serde_json::to_value(&enabled).unwrap();
+    assert_eq!(wire["directional_shadow_transmission"], serde_json::json!(true));
+    assert_eq!(serde_json::from_value::<RaytraceOptions>(wire).unwrap(), enabled);
+    for bad in [serde_json::json!(null), serde_json::json!(1), serde_json::json!("true")] {
+        let mut wire = old_default.clone();
+        wire["directional_shadow_transmission"] = bad;
+        assert!(serde_json::from_value::<RaytraceOptions>(wire).is_err());
+    }
+}
+
+#[test]
+fn directional_mode_refuses_incompatible_inputs_without_rewriting_legacy() {
+    for case in 0..7 {
+        let mut options = directional_options();
+        match case {
+            0 => options.shadows = false,
+            1 => options.dielectrics = Vec::new(),
+            2 => options.reflections = Some(ReflectionOptions { bodies: Vec::new(), max_bounces: 1, samples: 1 }),
+            3 => {
+                options.anisotropic_faces[0] = Some(AnisotropicFaceOptions {
+                    body_index: 0,
+                    body_name: "directional glass".into(),
+                    face: 0,
+                    tangent: [1.0, 0.0, 0.0],
+                    orientation: AnisotropicOrientation::QuarterTurn,
+                    roughness_x: 0.2,
+                    roughness_y: 0.5,
+                })
+            }
+            4 => options.environment = Some(RaytraceEnvironmentOptions { color: [1.0; 3], intensity: 1.0 }),
+            5 => {
+                options.punctual_lights = Some(vec![PunctualLightOptions {
+                    position_mm: [0.0, 0.0, 10.0],
+                    color: [1.0; 3],
+                    intensity: 1.0,
+                    reference_distance_mm: 10.0,
+                    minimum_distance_mm: 0.001,
+                    cone: None,
+                }])
+            }
+            _ => {
+                options.area_lights = Some(vec![RectangleLightOptions {
+                    center_mm: [0.0, 0.0, 10.0],
+                    edge_u_mm: [1.0, 0.0, 0.0],
+                    edge_v_mm: [0.0, -1.0, 0.0],
+                    color: [1.0; 3],
+                    intensity: 1.0,
+                }])
+            }
+        }
+        assert_eq!(options.validate().unwrap_err().code, ErrorCode::InvalidRequest);
+        options.directional_shadow_transmission = false;
+        options.validate().unwrap();
+    }
+    let mut empty_locals = directional_options();
+    empty_locals.punctual_lights = Some(Vec::new());
+    empty_locals.area_lights = Some(Vec::new());
+    empty_locals.validate().unwrap();
 }

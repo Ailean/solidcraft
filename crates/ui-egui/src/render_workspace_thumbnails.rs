@@ -138,6 +138,10 @@ pub(super) fn refresh(app: &mut SolveApp, ctx: &egui::Context) {
         let permit = WorkerPermit;
         let Some(setup) = app.session.doc.render.setups.get(&key.name) else { return };
         let request = solidcraft_engine::render::job::ImageRequest {
+            raster_punctual_lights: None,
+            raster_area_lights: None,
+            raster_exposure_ev: 0.0,
+            raster_lights: None,
             studio_weights: None,
             camera: setup.camera,
             width: SIZE[0],

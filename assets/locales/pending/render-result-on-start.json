@@ -1,0 +1,38 @@
+{
+  "ar": {
+    "prefs.render_open_result_on_start": "فتح النتيجة عند بدء التصيير",
+    "prefs.render_open_result_on_start_help": "افتح النتيجة مرة واحدة بعد بدء التصيير بنجاح. عطّل هذا الخيار للاحتفاظ بالعرض المحدد. يمكنك العودة إلى النموذج أثناء التصيير."
+  },
+  "de": {
+    "prefs.render_open_result_on_start": "Ergebnis beim Renderstart öffnen",
+    "prefs.render_open_result_on_start_help": "Nach erfolgreichem Renderstart einmal das Ergebnis öffnen. Deaktivieren, um die gewählte Ansicht beizubehalten. Während des Renderns können Sie zum Modell zurückkehren."
+  },
+  "en": {
+    "prefs.render_open_result_on_start": "Open Result when rendering starts",
+    "prefs.render_open_result_on_start_help": "After starting a render successfully, open Result once. Turn off to keep your selected view. You can return to Model while rendering."
+  },
+  "es": {
+    "prefs.render_open_result_on_start": "Abrir Resultado al iniciar el renderizado",
+    "prefs.render_open_result_on_start_help": "Abre Resultado una vez tras iniciar correctamente el renderizado. Desactiva esta opción para conservar la vista seleccionada. Puedes volver a Modelo durante el renderizado."
+  },
+  "he": {
+    "prefs.render_open_result_on_start": "פתיחת התוצאה עם תחילת הרינדור",
+    "prefs.render_open_result_on_start_help": "פתיחת התוצאה פעם אחת לאחר התחלת רינדור בהצלחה. יש לבטל אפשרות זו כדי לשמור על התצוגה שנבחרה. אפשר לחזור למודל בזמן הרינדור."
+  },
+  "ja": {
+    "prefs.render_open_result_on_start": "レンダリング開始時に結果を開く",
+    "prefs.render_open_result_on_start_help": "レンダリングの開始に成功したら、結果を一度だけ開きます。無効にすると、選択中の表示を維持します。レンダリング中でもモデルに戻れます。"
+  },
+  "ko": {
+    "prefs.render_open_result_on_start": "렌더링 시작 시 결과 열기",
+    "prefs.render_open_result_on_start_help": "렌더링이 성공적으로 시작되면 결과를 한 번 엽니다. 끄면 선택한 보기가 유지됩니다. 렌더링 중에도 모델로 돌아갈 수 있습니다."
+  },
+  "vi": {
+    "prefs.render_open_result_on_start": "Mở Kết quả khi bắt đầu kết xuất",
+    "prefs.render_open_result_on_start_help": "Mở Kết quả một lần sau khi bắt đầu kết xuất thành công. Tắt để giữ chế độ xem đã chọn. Bạn có thể quay lại Mô hình trong khi kết xuất."
+  },
+  "zh": {
+    "prefs.render_open_result_on_start": "开始渲染时打开结果",
+    "prefs.render_open_result_on_start_help": "成功开始渲染后打开结果一次。关闭此选项可保留当前选中的视图。渲染期间也可以返回模型视图。"
+  }
+}

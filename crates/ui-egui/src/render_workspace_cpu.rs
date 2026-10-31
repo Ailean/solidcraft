@@ -1,6 +1,6 @@
 //! Transient CPU image controls; engine commands own file capture and admission.
 use serde_json::{Value, json};
-use solidcraft_engine::render::job::{CpuBudget, RaytraceEnvironmentOptions, ReflectionBody, ReflectionMode};
+use solidcraft_engine::render::job::{CpuBudget, CpuDielectricTransport, RaytraceEnvironmentOptions, ReflectionBody, ReflectionMode};
 
 use super::hdr;
 use crate::{SolveApp, ui_kit};
@@ -85,8 +85,37 @@ fn set_progressive(app: &mut SolveApp, enabled: bool) {
     app.render_workspace.view.dirty = true;
 }
 
+/// The saved CPU choice is independent of sampling, profiles and material bindings.
+fn set_dielectric_transport(app: &mut SolveApp, policy: CpuDielectricTransport) -> bool {
+    let view = &mut app.render_workspace.view;
+    if view.raytrace.dielectric_transport == policy {
+        return false;
+    }
+    view.raytrace.dielectric_transport = policy;
+    view.dirty = true;
+    true
+}
+
+fn dielectric_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let mut selected = usize::from(app.render_workspace.view.raytrace.dielectric_transport == CpuDielectricTransport::StrictTir);
+    let labels = [app.tr("render.cpu_glass_standard").to_string(), app.tr("render.cpu_glass_continue").to_string()];
+    let label = app.tr("render.cpu_glass_label").to_string();
+    if ui_kit::row(ui, &label, |ui| {
+        ui_kit::segmented(
+            ui,
+            &mut selected,
+            &labels.iter().map(String::as_str).collect::<Vec<_>>(),
+            ui_kit::Segments { compact: true, targets: &["render:cpu-glass-standard", "render:cpu-glass-continue"], ..Default::default() },
+        )
+    }) {
+        set_dielectric_transport(app, if selected == 1 { CpuDielectricTransport::StrictTir } else { CpuDielectricTransport::LegacyBounded });
+    }
+    ui_kit::text(ui, app.tr("render.cpu_glass_help"), ui_kit::Text::Note("render.cpu_glass_help"));
+}
+
 pub(super) fn progressive_controls(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     budget_controls(app, ui);
+    dielectric_controls(app, ui);
     let mut selected = usize::from(app.render_workspace.view.raytrace.progressive.is_some());
     let labels = [app.tr("render.children.single_image").to_string(), app.tr("render.cpu_progressive").to_string()];
     let response = ui.scope(|ui| {
@@ -109,8 +138,9 @@ pub(super) fn progressive_controls(app: &mut SolveApp, ui: &mut egui::Ui) -> boo
         ui_kit::text(ui, app.tr("render.children.progressive_reason"), ui_kit::Text::Note("render.children.progressive_reason"));
     }
     ui.add_enabled_ui(enabled, |ui| {
-        let response =
-            ui_kit::row(ui, app.tr("render.cpu_progressive_spp"), |ui| ui_kit::number_field(ui, &mut options.samples_per_pixel, 1..=4096, 1.0, ""));
+        let response = ui_kit::row(ui, app.tr("render.cpu_progressive_spp"), |ui| {
+            ui_kit::number_field(ui, &mut options.samples_per_pixel, 1..=solidcraft_engine::render::job::MAX_CPU_SAMPLES_PER_PIXEL, 1.0, "")
+        });
         app.render_workspace.view.dirty |= response.changed();
         crate::scenario::publish_target("render:cpu-spp", response.rect);
         let response =
@@ -145,6 +175,8 @@ pub(super) struct View {
     pub samples: u32,
     pub color: [f64; 3],
     pub checked: Option<Checked>,
+    /// Request-local, explicitly selected certified-box nesting; never inferred from GPU state.
+    pub nested_media: bool,
     bindings: std::collections::BTreeMap<String, Binding>,
 }
 
@@ -160,6 +192,11 @@ struct Binding {
     target: Target,
     revision: u64,
     document: std::sync::Weak<solidcraft_engine::doc::Document>,
+    // Interactive may follow appearance/render-only edits only while this exact
+    // evaluated world survives in the same open document. Weak ownership avoids
+    // retaining old geometry and prevents pointer reuse after the world drops.
+    session_uid: u64,
+    world: std::sync::Weak<solidcraft_engine::doc::ModelState>,
 }
 
 #[derive(Clone, Debug)]
@@ -184,6 +221,7 @@ impl Default for View {
             samples: 16,
             color: [1.0; 3],
             checked: None,
+            nested_media: false,
             bindings: Default::default(),
         }
     }
@@ -218,6 +256,25 @@ fn binding_current(app: &SolveApp, name: &str) -> bool {
     })
 }
 
+// Unlike final Check/Start, Interactive may refresh harmless appearance/render
+// edits. The engine retains the exact world Arc for those edits (refresh_render).
+// No geometry extraction, cold meshing, name-only rebinding or revision stamping.
+fn binding_interactive_world_current(app: &SolveApp, name: &str) -> bool {
+    app.render_workspace.view.cpu.bindings.get(name).is_some_and(|binding| {
+        binding.session_uid == app.session.uid
+            && !app.session.model.is_stale()
+            && app
+                .session
+                .interactive_cached_world_state()
+                .is_some_and(|world| std::sync::Weak::ptr_eq(&binding.world, &std::sync::Arc::downgrade(&world)))
+    })
+}
+
+fn binding_interactive_current(app: &SolveApp, name: &str) -> bool {
+    binding_interactive_world_current(app, name)
+        && app.render_workspace.view.cpu.bindings.get(name).is_some_and(|binding| target(app, name).as_ref() == Some(&binding.target))
+}
+
 pub(super) fn revalidate(app: &mut SolveApp, name: &str) -> Result<(), String> {
     let current = target(app, name).ok_or_else(|| app.tr("render.cpu_body_missing").to_string())?;
     if app.render_workspace.view.cpu.bindings.get(name).is_none_or(|binding| binding.target != current) {
@@ -225,9 +282,13 @@ pub(super) fn revalidate(app: &mut SolveApp, name: &str) -> Result<(), String> {
     }
     let revision = app.session.revision;
     let document = std::sync::Arc::downgrade(&app.session.doc);
+    let world = std::sync::Arc::downgrade(&app.session.world_state());
+    let session_uid = app.session.uid;
     if let Some(binding) = app.render_workspace.view.cpu.bindings.get_mut(name) {
         binding.revision = revision;
         binding.document = document;
+        binding.session_uid = session_uid;
+        binding.world = world;
     }
     Ok(())
 }
@@ -268,11 +329,16 @@ pub(super) fn set_reflection(app: &mut SolveApp, name: &str, mode: Option<Reflec
         }
     }
     if let Some(target) = selected {
-        app.render_workspace
-            .view
-            .cpu
-            .bindings
-            .insert(name.to_string(), Binding { target, revision: app.session.revision, document: std::sync::Arc::downgrade(&app.session.doc) });
+        app.render_workspace.view.cpu.bindings.insert(
+            name.to_string(),
+            Binding {
+                target,
+                revision: app.session.revision,
+                document: std::sync::Arc::downgrade(&app.session.doc),
+                session_uid: app.session.uid,
+                world: std::sync::Arc::downgrade(&app.session.world_state()),
+            },
+        );
     } else {
         app.render_workspace.view.cpu.bindings.remove(name);
     }
@@ -281,6 +347,32 @@ pub(super) fn set_reflection(app: &mut SolveApp, name: &str, mode: Option<Reflec
 
 /// Shared by the parent Check and Start builder. This does not read an HDR file.
 pub(super) fn params(app: &SolveApp, params: &mut Value) -> Result<(), String> {
+    params_with_binding_policy(app, params, binding_current)
+}
+
+/// Interactive-only wire lowering. This does not requalify final Check/Start,
+/// change a stored binding or read an HDR file; the engine still captures and admits it.
+pub(super) fn params_interactive(app: &SolveApp, params: &mut Value) -> Result<(), String> {
+    // runtime_image_request composes the explicit material DTO immediately
+    // after these numerical controls, exactly once. The engine then converts
+    // the separate Interactive request to progressive sampling and admits its
+    // complete optics; a Fixed editor never licenses dropping that intent.
+    // Refuse unproved bound worlds before shared lowering checks visibility via
+    // target()/world_state(). Empty reflections never require a warm world.
+    if app
+        .render_workspace
+        .view
+        .raytrace
+        .reflections
+        .as_ref()
+        .is_some_and(|r| r.bodies.iter().any(|entry| !binding_interactive_world_current(app, &entry.body)))
+    {
+        return Err(app.tr("render.cpu_binding_stale").to_string());
+    }
+    params_with_binding_policy(app, params, binding_interactive_current)
+}
+
+fn params_with_binding_policy(app: &SolveApp, params: &mut Value, current: fn(&SolveApp, &str) -> bool) -> Result<(), String> {
     let base = &app.render_workspace.view.raytrace;
     if base.anisotropic_faces.iter().any(Option::is_some)
         || !base.dielectrics.is_empty()
@@ -293,7 +385,7 @@ pub(super) fn params(app: &SolveApp, params: &mut Value) -> Result<(), String> {
     if base.reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|entry| !unique_visible_body(app, &entry.body))) {
         return Err(app.tr("render.cpu_body_missing").to_string());
     }
-    if base.reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|entry| !binding_current(app, &entry.body))) {
+    if base.reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|entry| !current(app, &entry.body))) {
         return Err(app.tr("render.cpu_binding_stale").to_string());
     }
     let view = &app.render_workspace.view.cpu;
@@ -557,5 +649,209 @@ pub(super) fn captured_status(app: &SolveApp, ui: &mut egui::Ui, status: &Value)
     if status["request"]["integrator"] == "raytrace" && status["environment"]["source_sha256"].is_array() {
         let title = app.tr("render.cpu_captured_hdr").to_string();
         ui_kit::section(ui, "cpu_captured_hdr", &title, false, |ui| metadata(app, ui, &status["environment"]));
+    }
+}
+
+#[cfg(test)]
+fn dielectric_policy_harness() -> crate::scenario::Harness {
+    let mut h = crate::scenario::Harness::new();
+    h.app.ui.tab = "RENDER".into();
+    h.app.render_workspace.view.method = super::ImageMethod::CpuRaytrace;
+    h.app.render_workspace.view.result = false;
+    h.app.render_workspace.view.name = "Policy".into();
+    h.app.render_workspace.view.draft.width = 1;
+    h.app.render_workspace.view.draft.height = 1;
+    h.app.render_workspace.view.draft.exposure_ev = 0.0;
+    h.app.render_workspace.view.raytrace = Default::default();
+    h.app.render_workspace.view.cpu = View::default();
+    h
+}
+
+#[cfg(test)]
+#[test]
+fn cpu_glass_policy_no_binding_ui_snapshot_save_reopen_load_preserves_portable_choice() {
+    use solidcraft_engine::doc::render_settings::RenderJob;
+    let mut h = dielectric_policy_harness();
+    assert!(!set_dielectric_transport(&mut h.app, CpuDielectricTransport::LegacyBounded));
+    assert!(set_dielectric_transport(&mut h.app, CpuDielectricTransport::StrictTir));
+    assert!(h.app.render_workspace.view.dirty);
+    assert!(!super::setups::has_runtime_inputs(&h.app), "the choice itself is portable");
+    let saved = super::setups::snapshot(&h.app).unwrap();
+    let Some(RenderJob::CpuRaytrace { options }) = &saved.job else { panic!("CPU draft changed method") };
+    assert_eq!(options.dielectric_transport, CpuDielectricTransport::StrictTir);
+    let wire = super::image_request(&h.app).unwrap();
+    assert_eq!(wire["settings"]["job"]["options"]["dielectric_transport"], "strict_tir");
+    super::setups::save(&mut h.app).unwrap();
+    let document = solidcraft_engine::doc::Document::from_json(&h.app.session.doc.to_json()).unwrap();
+    h.app.session = solidcraft_engine::Session::new(document);
+    h.app.render_workspace.view.raytrace.dielectric_transport = CpuDielectricTransport::LegacyBounded;
+    super::setups::load(&mut h.app);
+    assert_eq!(h.app.render_workspace.view.raytrace.dielectric_transport, CpuDielectricTransport::StrictTir);
+    assert_eq!(super::setups::snapshot(&h.app).unwrap(), saved);
+    assert_eq!(super::image_request(&h.app).unwrap()["settings"]["job"]["options"]["dielectric_transport"], "strict_tir");
+    assert!(set_dielectric_transport(&mut h.app, CpuDielectricTransport::LegacyBounded));
+    assert!(serde_json::to_value(super::setups::snapshot(&h.app).unwrap()).unwrap()["job"]["options"].get("dielectric_transport").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn cpu_glass_policy_numeric_lowering_and_active_light_filter_preserve_the_exact_choice() {
+    use solidcraft_engine::render::job::DirectionalLightOptions;
+    let mut h = dielectric_policy_harness();
+    h.app.render_workspace.view.raytrace.lights = Some(vec![DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 2.0 }]);
+    h.app.render_workspace.view.lights.visibility.muted.insert("directional:0".into());
+    for policy in [CpuDielectricTransport::LegacyBounded, CpuDielectricTransport::StrictTir] {
+        set_dielectric_transport(&mut h.app, policy);
+        let source = h.app.render_workspace.view.raytrace.clone();
+        for interactive in [false, true] {
+            let mut wire = json!({"settings":{"job":null}});
+            if interactive {
+                params_interactive(&h.app, &mut wire).unwrap();
+            } else {
+                params(&h.app, &mut wire).unwrap();
+            }
+            super::materials::params(&h.app, &mut wire).unwrap();
+            let wire = super::light::filter_request(&h.app, wire).unwrap();
+            let options: solidcraft_engine::render::job::RaytraceOptions = serde_json::from_value(wire["raytrace"].clone()).unwrap();
+            assert_eq!(options.dielectric_transport, policy);
+            assert_eq!(options.lights.as_ref().unwrap()[0].intensity, 0.0);
+            assert_eq!(h.app.render_workspace.view.raytrace, source, "transient visibility must not rewrite authored input");
+        }
+        let portable = super::image_request(&h.app).unwrap();
+        let options: solidcraft_engine::doc::render_settings::CpuJob =
+            serde_json::from_value(portable["settings"]["job"]["options"].clone()).unwrap();
+        assert_eq!(options.dielectric_transport, policy);
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn cpu_glass_policy_selection_preserves_unsupported_opaque_reflection_and_advanced_intent() {
+    use solidcraft_engine::render::job::{EmissionSides, SurfaceEmission};
+    let mut h = dielectric_policy_harness();
+    h.app.session.execute("solid.box", &json!({"length":20,"width":20,"height":10})).unwrap();
+    h.app.session.execute("render.scene", &json!({})).unwrap();
+    let target = super::materials::read_targets(&mut h.app).unwrap().remove(0);
+    set_reflection(&mut h.app, &target.name, Some(ReflectionMode::Mirror)).unwrap();
+    let authored = h.app.render_workspace.view.raytrace.clone();
+    set_dielectric_transport(&mut h.app, CpuDielectricTransport::StrictTir);
+    assert_eq!(h.app.render_workspace.view.raytrace.reflections, authored.reflections);
+    assert!(super::image_request(&h.app).is_err());
+    assert!(super::interactive_request(&h.app).is_err());
+    assert_eq!(h.app.render_workspace.view.raytrace.reflections, authored.reflections);
+    assert_eq!(h.app.render_workspace.view.raytrace.dielectric_transport, CpuDielectricTransport::StrictTir);
+    h.app.render_workspace.view.raytrace.reflections = None;
+    h.app.render_workspace.view.raytrace.emissions = Some(vec![SurfaceEmission {
+        body_index: target.ordinal,
+        body: target.name,
+        color: [1.0, 0.5, 0.25],
+        strength: 1.0,
+        sides: EmissionSides::Front,
+    }]);
+    let authored = h.app.render_workspace.view.raytrace.clone();
+    assert!(super::image_request(&h.app).is_err());
+    assert!(super::interactive_request(&h.app).is_err());
+    assert_eq!(h.app.render_workspace.view.raytrace, authored);
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn native_cpu_glass_policy_public_ui_check_start_and_interactive_preserve_real_material_and_visibility() {
+    use solidcraft_engine::render::job::interactive::VisualRevision;
+    use solidcraft_engine::render::job::{CpuHost, CpuProgressiveOptions, DirectionalLightOptions, HostKind, Integrator, JobId, Phase};
+    use solidcraft_engine::schema::render_ui::Action;
+    use std::time::Duration;
+    let host = CpuHost::for_platform().unwrap();
+    assert_eq!(host.kind(), HostKind::NativeWorker);
+    host.validate_integrator(Integrator::Raytrace).unwrap();
+    eprintln!("CPU_GLASS_POLICY_UI_BRANCH cpu_supported=true");
+    for policy in [CpuDielectricTransport::LegacyBounded, CpuDielectricTransport::StrictTir] {
+        let mut h = dielectric_policy_harness();
+        h.app.session.set_render_job_host(Some(host.clone())).unwrap();
+        h.app.session.execute("solid.box", &json!({"length":20,"width":20,"height":10})).unwrap();
+        h.app.session.execute("render.scene", &json!({})).unwrap();
+        set_dielectric_transport(&mut h.app, policy);
+        h.app.render_workspace.view.raytrace.lights =
+            Some(vec![DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 2.0 }]);
+        h.app.render_workspace.view.lights.visibility.muted.insert("directional:0".into());
+        let target = super::materials::read_targets(&mut h.app).unwrap().remove(0);
+        let mut binding = super::materials::Binding::new(target, &h.app);
+        binding.glass_enabled = true;
+        binding.cpu_optics = true;
+        // Explicit index-matched certified box: this is capture/consumer
+        // acceptance, not a new oracle for general reflective glass quality.
+        binding.glass.ior = 1.0;
+        binding.glass.boundary = super::materials::Boundary::Box;
+        binding.glass.thickness = 0.0;
+        h.app.render_workspace.view.materials.enabled = true;
+        h.app.render_workspace.view.materials.bindings.push(binding);
+        assert!(super::setups::snapshot(&h.app).is_err(), "captured body bindings remain runtime-only");
+        for progressive in [false, true] {
+            h.app.render_workspace.view.raytrace.progressive = progressive.then_some(CpuProgressiveOptions { samples_per_pixel: 3, seed: 411 });
+            let wire = super::image_request(&h.app).unwrap();
+            assert_eq!(wire["raytrace"]["dielectrics"].as_array().unwrap().len(), 1);
+            let checked = h.app.session.execute("render.preflight", &wire).unwrap();
+            record_checked(&mut h.app, &wire, &checked);
+            let revision = h.app.session.revision;
+            let other =
+                if policy == CpuDielectricTransport::StrictTir { CpuDielectricTransport::LegacyBounded } else { CpuDielectricTransport::StrictTir };
+            set_dielectric_transport(&mut h.app, other);
+            assert_ne!(Some(&super::image_request(&h.app).unwrap()), h.app.render_workspace.view.cpu.checked.as_ref().map(|c| &c.request));
+            assert_eq!(h.app.session.revision, revision);
+            set_dielectric_transport(&mut h.app, policy);
+            let started = h.app.session.execute("render.start", &wire).unwrap();
+            let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
+            let final_handle = h.app.session.render_job_handle(id).unwrap();
+            let final_status = final_handle.wait_timeout(Duration::from_secs(60)).unwrap();
+            assert_eq!(final_status.progress.phase, Phase::Completed, "{:?}", final_status.error);
+            assert_eq!(json!(final_status.request), checked["request"]);
+            assert_eq!(final_status.request.raytrace.as_ref().unwrap().dielectric_transport, policy);
+            assert!(final_handle.frame().unwrap().is_some());
+            let preview_wire = super::interactive_request(&h.app).unwrap();
+            let context = h.app.session.interactive_render().unwrap();
+            context.enable(VisualRevision { scene_generation: revision, visual_revision: 1 }, Duration::ZERO).unwrap();
+            let ticket = context.capture(Duration::from_millis(201)).unwrap().unwrap();
+            assert!(context.snapshot(&h.app.session, ticket, &preview_wire).unwrap().run().unwrap());
+            let preview_handle = context.current().unwrap().unwrap();
+            let status = preview_handle.wait_timeout(Duration::from_secs(60)).unwrap();
+            assert_eq!(status.progress.phase, Phase::Completed, "{:?}", status.error);
+            let captured = status.request.raytrace.as_ref().unwrap();
+            assert_eq!(captured.dielectric_transport, policy);
+            assert_eq!(captured.dielectrics, final_status.request.raytrace.as_ref().unwrap().dielectrics);
+            assert_eq!(captured.lights.as_ref().unwrap()[0].intensity, 0.0);
+            assert_ne!(status.job, final_status.job);
+            assert!(final_handle.frame().unwrap().is_some(), "Interactive cannot replace the final source");
+            context.disable().unwrap();
+        }
+        // Exercise actual UI intent observation while paused, without a fake
+        // receiver or a second capture worker. No timer result is asserted.
+        super::interactive::apply_command(&mut h.app, Action::On).unwrap();
+        let before = super::interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap();
+        super::interactive::apply_command(&mut h.app, Action::Pause).unwrap();
+        let revision = h.app.session.revision;
+        set_dielectric_transport(
+            &mut h.app,
+            if policy == CpuDielectricTransport::StrictTir { CpuDielectricTransport::LegacyBounded } else { CpuDielectricTransport::StrictTir },
+        );
+        super::interactive::apply_command(&mut h.app, Action::Resume).unwrap();
+        assert!(super::interactive::inspect(&h.app)["visual_revision"].as_u64().unwrap() > before);
+        assert_eq!(h.app.session.revision, revision);
+        super::interactive::apply_command(&mut h.app, Action::Off).unwrap();
+        h.app.render_workspace.view.materials.bindings[0].glass.shadows = true;
+        let shadow_wire = super::image_request(&h.app).unwrap();
+        let shadow_options: solidcraft_engine::render::job::RaytraceOptions = serde_json::from_value(shadow_wire["raytrace"].clone()).unwrap();
+        assert!(shadow_options.directional_shadow_transmission);
+        assert!(shadow_options.shadows);
+        assert_eq!(shadow_options.dielectric_transport, h.app.render_workspace.view.raytrace.dielectric_transport);
+        assert_eq!(shadow_options.dielectrics[0].ior, 1.0);
+        let shadow_check = h.app.session.execute("render.preflight", &shadow_wire).unwrap();
+        let shadow_request: solidcraft_engine::render::job::ImageRequest = serde_json::from_value(shadow_check["request"].clone()).unwrap();
+        assert_eq!(shadow_request.raytrace.as_ref(), Some(&shadow_options));
+        assert!(!h.app.render_workspace.view.raytrace.directional_shadow_transmission, "the bridge is request-local");
+        assert!(h.app.render_workspace.view.materials.bindings[0].glass.shadows);
+        h.app.render_workspace.view.materials.bindings[0].glass.shadows = false;
+        h.app.render_workspace.view.materials.bindings[0].maps_enabled = true;
+        assert!(super::interactive_request(&h.app).is_err());
+        assert!(h.app.render_workspace.view.materials.bindings[0].maps_enabled);
     }
 }

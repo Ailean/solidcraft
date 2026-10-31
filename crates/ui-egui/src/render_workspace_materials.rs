@@ -1,4 +1,4 @@
-//! Transient body-level optical overrides for the captured GPU image request.
+//! Transient body-level optical overrides for explicitly selected image transports.
 //! The model's appearances, physical material cards and saved setups are not changed.
 use std::sync::{Arc, Weak};
 
@@ -129,6 +129,8 @@ pub(super) struct Binding {
     pub enabled: bool,
     pub glass_enabled: bool,
     pub glass: Glass,
+    /// Explicit request-local CPU authorisation; old GPU bindings keep their refusal.
+    pub cpu_optics: bool,
     pub coat_enabled: bool,
     pub coat: Coat,
     pub maps_enabled: bool,
@@ -144,6 +146,7 @@ impl Binding {
             enabled: true,
             glass_enabled: false,
             glass: Glass::default(),
+            cpu_optics: false,
             coat_enabled: false,
             coat: Coat::default(),
             maps_enabled: false,
@@ -214,6 +217,12 @@ pub(super) fn params(app: &SolveApp, params: &mut Value) -> Result<(), String> {
     let view = &app.render_workspace.view.materials;
     if !view.enabled || !view.bindings.iter().any(Binding::active) {
         return Ok(());
+    }
+    if app.render_workspace.view.method == super::ImageMethod::CpuRaytrace {
+        if !cpu_optics_active(app) {
+            return Err(app.tr("render.cpu_optics_explicit").into());
+        }
+        return cpu_params(app, params);
     }
     if app.render_workspace.view.method != super::ImageMethod::GpuRaytrace {
         return Err(app.tr("render.material_gpu_required").to_string());
@@ -311,6 +320,121 @@ pub(super) fn params(app: &SolveApp, params: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
+/// CPU has a distinct typed wire contract. Selecting its route never changes
+/// authored optics, scalar appearances, geometry or sampling to make them fit.
+pub(super) fn cpu_optics_active(app: &SolveApp) -> bool {
+    let view = &app.render_workspace.view.materials;
+    view.enabled && view.bindings.iter().any(|binding| binding.active() && binding.cpu_optics)
+}
+
+fn cpu_params(app: &SolveApp, params: &mut Value) -> Result<(), String> {
+    use solidcraft_engine::render::job::{DielectricBoundary, DielectricOptions, RaytraceOptions};
+    let view = &app.render_workspace.view;
+    if view.materials.bindings.len() > MAX_BINDINGS {
+        return Err(app.tr("render.material_limits").into());
+    }
+    if !view.draft.optics.is_empty() {
+        return Err(app.tr("render.cpu_optics_saved").into());
+    }
+    let mut options: RaytraceOptions =
+        serde_json::from_value(params.get("raytrace").cloned().ok_or_else(|| app.tr("render.cpu_optics_request").to_string())?)
+            .map_err(|error| error.to_string())?;
+    if !options.dielectrics.is_empty() {
+        return Err(app.tr("render.cpu_optics_conflict").into());
+    }
+    let count = view.materials.bindings.iter().filter(|binding| binding.active()).count();
+    if count > 8 {
+        return Err(app.tr("render.cpu_optics_limit").into());
+    }
+    let mut shadow_transmission = None;
+    for binding in view.materials.bindings.iter().filter(|binding| binding.active()) {
+        if !binding.cpu_optics {
+            return Err(app.tr("render.cpu_optics_explicit").into());
+        }
+        if !binding.current(app) {
+            return Err(app.tr("render.material_revalidate_needed").into());
+        }
+        if shadow_transmission.is_some_and(|selected| selected != binding.glass.shadows) {
+            return Err(app.tr("render.cpu_shadow_mixed").into());
+        }
+        shadow_transmission = Some(binding.glass.shadows);
+    }
+    // The current producer has one global directional switch, not a per-body mask.
+    // Never erase an OFF assignment or change the separate global shadows control.
+    let shadow_transmission = shadow_transmission.unwrap_or(false);
+    if options.directional_shadow_transmission && !shadow_transmission {
+        return Err(app.tr("render.cpu_shadow_conflict").into());
+    }
+    if shadow_transmission
+        && (!options.shadows
+            || options.environment.is_some()
+            || params.get("environment").is_some_and(|value| !value.is_null())
+            || view.cpu.nested_media)
+    {
+        return Err(app.tr("render.cpu_optics_unsupported").into());
+    }
+    // Match the same placement identity that render.scene used for selection.
+    // No mesh extraction/certificate/proxy is performed on the UI thread.
+    let state = app.session.model.state();
+    let frames = app.session.doc.body_frames_with_source(&state);
+    let world = app.session.world_state();
+    let mut dielectrics = Vec::new();
+    dielectrics.try_reserve_exact(count).map_err(|_| app.tr("render.material_limits").to_string())?;
+    for binding in view.materials.bindings.iter().filter(|binding| binding.active()) {
+        let target = &binding.target;
+        let stable = target.stable_target.as_ref().ok_or_else(|| app.tr("render.material_target_missing").to_string())?;
+        stable.validate().map_err(|error| error.to_string())?;
+        let mut bodies =
+            world.bodies.iter().filter(|body| app.session.body_visible(&body.name)).enumerate().filter(|(_, body)| body.name == target.name);
+        let (ordinal, body) = bodies.next().ok_or_else(|| app.tr("render.material_target_missing").to_string())?;
+        let matching_frames = frames
+            .iter()
+            .filter(|(name, definition, component, path, _)| {
+                name == &target.name && definition == &stable.definition && component == &stable.component && path == &stable.occurrence_path
+            })
+            .count();
+        if bodies.next().is_some()
+            || ordinal != target.ordinal
+            || body.feature != stable.feature
+            || body.definition_name() != stable.definition
+            || matching_frames != 1
+            || target.name.is_empty()
+            || target.name.len() > 1024
+            || target.name.chars().any(char::is_control)
+        {
+            return Err(app.tr("render.material_target_missing").into());
+        }
+        if !binding.glass_enabled || binding.coat_enabled || binding.maps_enabled || binding.glass.subsurface.is_some() {
+            return Err(app.tr("render.cpu_optics_unsupported").into());
+        }
+        let boundary = match binding.glass.boundary {
+            Boundary::Thin => DielectricBoundary::ThinSheet,
+            Boundary::Box => DielectricBoundary::ClosedBox,
+            Boundary::Closed => return Err(app.tr("render.cpu_optics_boundary").into()),
+        };
+        dielectrics.push(DielectricOptions {
+            body_index: ordinal,
+            body_name: target.name.clone(),
+            boundary,
+            ior: binding.glass.ior,
+            absorption_per_mm: binding.glass.absorption,
+            thickness_mm: if boundary == DielectricBoundary::ThinSheet { binding.glass.thickness } else { 0.0 },
+        });
+    }
+    options.dielectrics = dielectrics;
+    options.directional_shadow_transmission = shadow_transmission;
+    // The composed typed request, not the editor's sampling label, decides
+    // sampling compatibility. Progressive optics requires the separately
+    // reviewed producer; geometry and installed capability still need admission.
+    options.validate().map_err(|error| error.to_string())?;
+    // Commit only the fully validated composition. Capture/admission still owns
+    // opacity, triangle certification, nesting and all resource/capability gates.
+    let wire = serde_json::to_value(options).map_err(|error| error.to_string())?;
+    params["raytrace"] = wire;
+    params["nested_media"] = json!(view.cpu.nested_media);
+    Ok(())
+}
+
 fn vector(app: &SolveApp, ui: &mut egui::Ui, key: &str, values: &mut [f64; 3], range: std::ops::RangeInclusive<f64>, suffix: &str) -> bool {
     ui_kit::row(ui, app.tr(key), |ui| ui_kit::vector3_field(ui, values, range, suffix))
 }
@@ -321,7 +445,7 @@ pub(super) fn controls(app: &mut SolveApp, ui: &mut egui::Ui) {
         let mut view = std::mem::take(&mut app.render_workspace.view.materials);
         ui.small(app.tr("render.material_transient"));
         ui_kit::checkbox(ui, app.tr("render.material_enable"), &mut view.enabled);
-        if app.render_workspace.view.method != super::ImageMethod::GpuRaytrace && view.enabled && view.bindings.iter().any(Binding::active) {
+        if app.render_workspace.view.method == super::ImageMethod::Raster && view.enabled && view.bindings.iter().any(Binding::active) {
             ui.colored_label(Tokens::get().warning, app.tr("render.material_gpu_required"));
         }
         if ui_kit::button(ui, app.tr("render.material_refresh"), ui_kit::Button::Normal).clicked() {
@@ -429,7 +553,7 @@ fn glass_controls(app: &mut SolveApp, ui: &mut egui::Ui, binding: &mut Binding) 
         binding.glass.recipe.and_then(appearance_pack::find).map_or_else(|| app.tr("render.material_custom").to_owned(), |p| p.name.to_owned());
     let recipe_label = app.tr("render.appearance_editor.recipe").to_owned();
     ui_kit::row(ui, &recipe_label, |ui| {
-        ui_kit::dropdown_menu(ui, "render_glass_recipe", &name, |ui| {
+        let response = ui_kit::dropdown_menu(ui, "render_glass_recipe", &name, |ui| {
             for preset in recipes {
                 let response = ui_kit::list_picker(ui, preset.id, preset.name, binding.glass.recipe == Some(preset.id));
                 crate::scenario::publish_target(&format!("render:glass:{}", preset.id), response.rect);
@@ -447,6 +571,7 @@ fn glass_controls(app: &mut SolveApp, ui: &mut egui::Ui, binding: &mut Binding) 
                 }
             }
         });
+        crate::scenario::publish_target("render:glass-recipe-select", response.rect);
     });
     let glass = &mut binding.glass;
     let mut changed = false;
@@ -458,15 +583,29 @@ fn glass_controls(app: &mut SolveApp, ui: &mut egui::Ui, binding: &mut Binding) 
         };
         ui_kit::row(ui, app.tr("render.appearance_editor.boundary"), |ui| {
             let labels = ["render.appearance_editor.closed", "render.appearance_editor.thin", "render.appearance_editor.box"].map(|key| app.tr(key));
-            if ui_kit::segmented(ui, &mut boundary, &labels, ui_kit::Segments { compact: true, small: true, ..Default::default() }) {
+            if ui_kit::segmented(
+                ui,
+                &mut boundary,
+                &labels,
+                ui_kit::Segments {
+                    compact: true,
+                    small: true,
+                    targets: &["render:optics-boundary-closed", "render:optics-boundary-thin", "render:optics-boundary-box"],
+                    ..Default::default()
+                },
+            ) {
                 glass.boundary = match boundary {
                     1 => Boundary::Thin,
                     2 => Boundary::Box,
                     _ => Boundary::Closed,
                 };
-                glass.shadows = glass.boundary == Boundary::Thin;
-                if glass.boundary == Boundary::Thin {
-                    glass.subsurface = None;
+                // Preserve CPU-incompatible intent until its own explicit edit.
+                // The existing GPU boundary defaults remain unchanged.
+                if app.render_workspace.view.method != super::ImageMethod::CpuRaytrace {
+                    glass.shadows = glass.boundary == Boundary::Thin;
+                    if glass.boundary == Boundary::Thin {
+                        glass.subsurface = None;
+                    }
                 }
                 changed = true;
             }
@@ -509,8 +648,20 @@ fn glass_controls(app: &mut SolveApp, ui: &mut egui::Ui, binding: &mut Binding) 
     if changed {
         glass.recipe = None;
     }
+    if app.render_workspace.view.method == super::ImageMethod::CpuRaytrace {
+        let response = ui_kit::checkbox(ui, app.tr("render.cpu_optics_enable"), &mut binding.cpu_optics);
+        crate::scenario::publish_target("render:cpu-optics-enable", response.rect);
+        let nested_label = app.tr("render.children.nested").to_owned();
+        let response = ui_kit::checkbox(ui, &nested_label, &mut app.render_workspace.view.cpu.nested_media);
+        crate::scenario::publish_target("render:cpu-optics-nested", response.rect);
+        note(app, ui, "render.cpu_directional_shadow_help");
+    }
     note(app, ui, "render.appearance_editor.glass_note");
-    note(app, ui, "render.material_certification");
+    if app.render_workspace.view.method == super::ImageMethod::CpuRaytrace {
+        note(app, ui, "render.cpu_optics_certification");
+    } else {
+        note(app, ui, "render.material_certification");
+    }
 }
 
 fn coat_controls(app: &SolveApp, ui: &mut egui::Ui, binding: &mut Binding) {
@@ -575,6 +726,120 @@ fn choose_map(app: &mut SolveApp, binding: &Binding, slot: MapSlot) {
 
 /// Prepare through the engine, then install only a request-local binding. No
 /// authored material may silently remove a glass override or switch executor.
+/// Read-only eligibility for an explicit catalogue action, not a certificate.
+pub(super) fn library_glass_ready(app: &SolveApp, id: &str) -> Result<(), String> {
+    if !matches!(app.render_workspace.view.method, super::ImageMethod::CpuRaytrace | super::ImageMethod::GpuRaytrace) {
+        return Err(app.tr("render.glass_library_method").into());
+    }
+    if id.is_empty() || id.len() > 128 {
+        return Err(app.tr("render.error_glass_recipe").into());
+    }
+    let preset = appearance_pack::find(id).filter(|preset| preset.id == id).ok_or_else(|| app.tr("render.error_glass_recipe").to_string())?;
+    if !matches!(preset.recipe, Recipe::Glass(_)) {
+        return Err(app.tr("render.error_physical_glass").into());
+    }
+    let [solidcraft_engine::Sel::Body { name }] = app.session.selection.as_slice() else {
+        return Err(app.tr("render.appearance_editor.body_reason").into());
+    };
+    if name.is_empty() || name.len() > 1024 || name.chars().any(char::is_control) || !app.session.body_visible(name) {
+        return Err(app.tr("render.material_target_missing").into());
+    }
+    if app.session.model.is_stale() {
+        return Err(app.tr("render.material_revalidate_needed").into());
+    }
+    let bindings = &app.render_workspace.view.materials.bindings;
+    let mut matching = bindings.iter().filter(|binding| binding.target.name == *name);
+    let existing = matching.next();
+    if matching.next().is_some() {
+        return Err(app.tr("render.glass_library_conflict").into());
+    }
+    if bindings.len() > MAX_BINDINGS || (existing.is_none() && bindings.len() == MAX_BINDINGS) {
+        return Err(app.tr("render.material_limits").into());
+    }
+    if app.render_workspace.view.method == super::ImageMethod::CpuRaytrace
+        && existing.is_none_or(|binding| !binding.active())
+        && bindings.iter().filter(|binding| binding.active()).count() >= 8
+    {
+        return Err(app.tr("render.cpu_optics_limit").into());
+    }
+    Ok(())
+}
+
+fn same_library_glass(a: &Glass, b: &Glass) -> bool {
+    a.recipe == b.recipe
+        && a.ior == b.ior
+        && a.absorption == b.absorption
+        && a.boundary == b.boundary
+        && a.thickness == b.thickness
+        && a.shadows == b.shadows
+        && a.subsurface.is_none()
+        && b.subsurface.is_none()
+}
+
+/// Stage authored values in the existing editor. No appearance assignment,
+/// implicit CPU permission, boundary inference, geometry certification or save.
+pub(super) fn stage_library_glass(app: &mut SolveApp, id: &str) -> Result<(), String> {
+    library_glass_ready(app, id)?;
+    let glass = Glass::recipe(id)?; // The one existing validated conversion.
+    let [solidcraft_engine::Sel::Body { name }] = app.session.selection.as_slice() else {
+        return Err(app.tr("render.appearance_editor.body_reason").into());
+    };
+    let name = name.clone();
+    let revision = app.session.revision;
+    let document = Arc::downgrade(&app.session.doc);
+    let targets = read_targets(app)?;
+    if revision != app.session.revision || !Weak::ptr_eq(&document, &Arc::downgrade(&app.session.doc)) || app.session.model.is_stale() {
+        return Err(app.tr("render.material_revalidate_needed").into());
+    }
+    let mut matching = targets.into_iter().filter(|target| target.name == name);
+    let target = matching.next().ok_or_else(|| app.tr("render.material_target_missing").to_string())?;
+    if matching.next().is_some() {
+        return Err(app.tr("render.material_target_missing").into());
+    }
+    target
+        .stable_target
+        .as_ref()
+        .ok_or_else(|| app.tr("render.material_target_missing").to_string())?
+        .validate()
+        .map_err(|error| error.to_string())?;
+    let existing = app.render_workspace.view.materials.bindings.iter().position(|binding| binding.target.name == name);
+    let binding = if let Some(index) = existing {
+        let old = app.render_workspace.view.materials.bindings.get(index).ok_or_else(|| app.tr("render.error_material_binding").to_string())?;
+        if old.target != target || !old.current(app) {
+            return Err(app.tr("render.material_revalidate_needed").into());
+        }
+        if old.coat_enabled || old.maps_enabled {
+            return Err(app.tr("render.glass_library_conflict").into());
+        }
+        if same_library_glass(&old.glass, &glass) {
+            return Ok(()); // An exact repeat preserves ALL existing opt-ins and disabled state.
+        }
+        if old.glass_enabled || !same_library_glass(&old.glass, &Glass::default()) {
+            return Err(app.tr("render.glass_library_conflict").into());
+        }
+        old.clone() // An empty existing slot retains its other authored fields/permission.
+    } else {
+        Binding::new(target, app) // New CPU permission remains false.
+    };
+    let mut binding = binding;
+    binding.glass = glass;
+    binding.glass_enabled = true;
+    let view = &mut app.render_workspace.view.materials;
+    if let Some(index) = existing {
+        let slot = view.bindings.get_mut(index).ok_or_else(|| crate::i18n::tr("render.error_material_binding").to_string())?;
+        *slot = binding;
+    } else {
+        let was_empty = view.bindings.is_empty();
+        view.bindings.try_reserve_exact(1).map_err(|_| crate::i18n::tr("render.material_limits").to_string())?;
+        view.bindings.push(binding);
+        if was_empty {
+            view.enabled = true;
+        }
+        // A previously disabled nonempty group is never reactivated by staging.
+    }
+    Ok(())
+}
+
 pub(super) fn install_library_surface(app: &mut SolveApp, id: &str, target: Target, plane: &str, scale: f64) -> Result<(), String> {
     if app.render_workspace.view.method != super::ImageMethod::GpuRaytrace {
         return Err(app.tr("render.material_gpu_required").into());
@@ -707,8 +972,10 @@ fn editor_sections(app: &mut SolveApp, ui: &mut egui::Ui, binding: Option<&mut B
     } else {
         None
     };
+    let glass_reason = if supported && app.render_workspace.view.method == super::ImageMethod::CpuRaytrace { None } else { reason.clone() };
+    let glass_method = if app.render_workspace.view.method == super::ImageMethod::CpuRaytrace { "CPU" } else { "GPU" };
     let title = app.tr("render.appearance_editor.glass").to_owned();
-    ui_kit::method_section(ui, "render:appearance:glass", &title, "GPU", reason.as_deref(), |ui| glass_controls(app, ui, binding));
+    ui_kit::method_section(ui, "render:appearance:glass", &title, glass_method, glass_reason.as_deref(), |ui| glass_controls(app, ui, binding));
     let opaque_reason = reason.clone().or_else(|| binding.glass_enabled.then(|| app.tr("render.material_glass_exclusive").to_owned()));
     let title = app.tr("render.appearance_editor.coat").to_owned();
     ui_kit::method_section(ui, "render:appearance:coat", &title, "GPU", opaque_reason.as_deref(), |ui| coat_controls(app, ui, binding));

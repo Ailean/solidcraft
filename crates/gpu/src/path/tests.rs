@@ -21,6 +21,10 @@ fn request(size: u32) -> ImageRequest {
     let mut camera = Camera { distance: 4.0, ..Default::default() };
     camera.set_view(StandardView::Top);
     ImageRequest {
+        raster_punctual_lights: None,
+        raster_area_lights: None,
+        raster_exposure_ev: 0.0,
+        raster_lights: None,
         studio_weights: None,
         integrator: Default::default(),
         raytrace: None,
@@ -430,6 +434,10 @@ fn glass_transport_evidence() {
     let bounds = meshes.iter().fold(Aabb3::EMPTY, |a, m| a.union(&m.mesh.bounds()));
     let camera = Camera { target: Vec3::new(0.0, 0.0, 1.0), yaw: -0.45, pitch: 0.5, distance: 13.0, fov: 0.65, ..Default::default() };
     let request = ImageRequest {
+        raster_punctual_lights: None,
+        raster_area_lights: None,
+        raster_exposure_ev: 0.0,
+        raster_lights: None,
         studio_weights: None,
         integrator: Default::default(),
         raytrace: None,
@@ -3325,4 +3333,23 @@ fn real_device_loss_retires_the_executor_and_the_sessions_cached_availability() 
     assert_eq!(host.admit(&scene, &request(1), JobOptions::default()).unwrap_err().code, ErrorCode::HostUnavailable);
     let backend = session.render_backend();
     assert!(backend.executors.iter().any(|d| d.id.as_str() == "gpu-path" && matches!(d.availability, Availability::Unavailable { .. })));
+}
+#[test]
+fn direct_gpu_admission_refuses_explicit_raster_rigs_even_when_empty() {
+    let mut input = request(16);
+    input.raster_lights = Some(Vec::new());
+    let error = admission(&sphere(white()), &input, JobOptions::default()).unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(error.message.contains("Raster lights"));
+}
+
+#[test]
+fn direct_gpu_admission_refuses_raster_only_exposure_without_opening_a_device() {
+    for ev in [-1.0, 1.0, f64::NAN] {
+        let mut input = request(16);
+        input.raster_exposure_ev = ev;
+        let error = admission(&sphere(white()), &input, JobOptions::default()).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(error.message.contains("Raster exposure"));
+    }
 }

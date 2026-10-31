@@ -944,6 +944,40 @@ fn applicable(entry: &Value, selected: &[Value], used: &[Value]) -> bool {
         })
 }
 
+/// Explicit staging is separate from scalar Apply and the blocked glass tile.
+pub(super) fn stage_glass(app: &mut SolveApp, id: &str) -> Result<(), String> {
+    materials::stage_library_glass(app, id)?;
+    app.render_workspace.view.selection = super::RenderSelection::Object(app.session.selection.clone());
+    app.render_workspace.view.inspector.page = super::inspector::Page::Appearance;
+    app.render_workspace.view.dirty = true;
+    app.set_status(app.tr("render.glass_library_prepared").to_string(), false);
+    Ok(())
+}
+
+fn glass_route_controls(app: &mut SolveApp, ui: &mut egui::Ui, view: &View) {
+    if view.kind != "appearances" {
+        return;
+    }
+    let Some(id) = view.selected.as_deref().filter(|id| {
+        solidcraft_engine::doc::appearance_pack::find(id)
+            .is_some_and(|preset| preset.id == *id && matches!(preset.recipe, solidcraft_engine::doc::appearance_pack::Recipe::Glass(_)))
+    }) else {
+        return;
+    };
+    ui_kit::text(ui, app.tr("render.glass_library_help"), ui_kit::Text::Note("render:library:glass-help"));
+    let ready = materials::library_glass_ready(app, id);
+    let action = ui_kit::button(ui, app.tr("render.glass_library_edit"), ui_kit::Button::Enabled(ready.is_ok()));
+    crate::scenario::publish_target("render:library:prepare-glass", action.rect);
+    if let Err(reason) = &ready {
+        ui_kit::text(ui, reason, ui_kit::Text::Note("render:library:glass-reason"));
+    }
+    if action.clicked()
+        && let Err(error) = stage_glass(app, id)
+    {
+        app.set_status(error, true);
+    }
+}
+
 fn browse_contents(app: &mut SolveApp, ui: &mut egui::Ui, stage_card: bool) {
     let mut view = std::mem::take(&mut app.render_workspace.view.library);
     let document_changed =
@@ -1246,6 +1280,7 @@ fn browse_contents(app: &mut SolveApp, ui: &mut egui::Ui, stage_card: bool) {
             }
         }
         if stage_card {
+            glass_route_controls(app, ui, &view);
             ui_kit::catalog_footer_with_tip(ui, app.tr("render.stage_layout.appearance_note"), app.tr("render.assign_help"));
             if view.kind == "materials" {
                 ui_kit::text(ui, app.tr("render.library_specification_only"), ui_kit::Text::Note("appearance:reference:reason"));

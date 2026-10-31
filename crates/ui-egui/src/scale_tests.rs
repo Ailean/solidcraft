@@ -267,6 +267,7 @@ pub(crate) fn view_frame(
     crate::gpu::Frame {
         product: false,
         product_lights: None,
+        product_exposure_ev: Default::default(),
         upload_error: None,
         key: model.0,
         slot: model.1.clone(),

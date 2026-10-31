@@ -17,13 +17,24 @@ pub(super) struct Decoder {
 impl Decoder {
     pub(super) fn new(bytes: &[u8], width: u32, height: u32, cancel: &CancelToken) -> Result<Self> {
         cancel.check()?;
-        let limit = super::linear_exr::encoded_limit(width, height)?;
-        let expected = super::linear_exr::header(width, height)?;
+        super::linear_exr::encoded_limit(width, height)?;
+        Self::new_with_limits(bytes, width, height, cancel, super::GPU_PATH_LIMITS)
+    }
+    pub(crate) fn new_with_limits(bytes: &[u8], width: u32, height: u32, cancel: &CancelToken, limits: crate::RenderLimits) -> Result<Self> {
+        cancel.check()?;
+        let limit = super::linear_exr::encoded_limit_with_limits(width, height, limits)?;
+        let count = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
+        super::linear_exr::checked_output_bytes(count, 16, 0, limits)?;
+        super::linear_exr::checked_stage_bytes(count, 16, 4096, limits)?;
+        let expected = if limits == super::GPU_PATH_LIMITS {
+            super::linear_exr::header(width, height)?
+        } else {
+            super::linear_exr::header_with_limits(width, height, limits)?
+        };
         if bytes.len() as u64 > limit || !bytes.starts_with(&expected) {
             return Err(invalid("master is not the retained native FLOAT32 linear-sRGB/D65 profile"));
         }
-        let first = expected.len() + height as usize * 8;
-        let length = first + height as usize * (width as usize * 16 + 8);
+        let (first, length) = super::linear_exr::scanline_layout(width, height, expected.len(), limits)?;
         if bytes.len() != length {
             return Err(invalid("native master has missing or trailing scanline bytes"));
         }
@@ -79,7 +90,8 @@ impl Decoder {
     }
 }
 fn word(bytes: &[u8], offset: usize) -> Result<u32> {
-    bytes.get(offset..offset + 4).and_then(|s| s.try_into().ok()).map(u32::from_le_bytes).ok_or_else(|| invalid("truncated native master word"))
+    let end = offset.checked_add(4).ok_or_else(|| invalid("native master word offset overflow"))?;
+    bytes.get(offset..end).and_then(|s| s.try_into().ok()).map(u32::from_le_bytes).ok_or_else(|| invalid("truncated native master word"))
 }
 
 #[cfg(test)]
@@ -116,5 +128,23 @@ mod tests {
         cancel.cancel();
         assert!(decoder.step(&bytes, &cancel).is_err());
         assert_eq!(decoder.rows(), 0);
+    }
+
+    #[test]
+    fn explicit_wide_native_roundtrip_retains_raw_bits_and_legacy_limits() {
+        let wide = super::super::CpuBudget::Workstation.image_limits(false);
+        let raw = vec![[4.0, 1.0, 0.25, 1.0]; 8193];
+        let cancel = CancelToken::default();
+        let mut task = super::super::linear_exr::ExrTask::new_with_limits(8193, 1, raw.clone(), cancel.clone(), wide).unwrap();
+        assert!(task.step(1).unwrap());
+        let (bytes, unchanged) = task.finish().unwrap();
+        assert_eq!(unchanged, raw);
+        assert!(Decoder::new(&bytes, 8193, 1, &cancel).is_err());
+        let mut decoder = Decoder::new_with_limits(&bytes, 8193, 1, &cancel, wide).unwrap();
+        assert!(decoder.step(&bytes, &cancel).unwrap());
+        assert_eq!(decoder.finish().unwrap(), raw);
+        cancel.cancel();
+        assert_eq!(Decoder::new(&[], 0, 0, &cancel).err().unwrap().code, ErrorCode::Cancelled);
+        assert_eq!(Decoder::new_with_limits(&[], 0, 0, &cancel, wide).err().unwrap().code, ErrorCode::Cancelled);
     }
 }

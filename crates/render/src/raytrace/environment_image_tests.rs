@@ -35,6 +35,10 @@ fn request() -> ImageRequest {
     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
     camera.set_view(crate::StandardView::Top);
     ImageRequest {
+        raster_punctual_lights: None,
+        raster_area_lights: None,
+        raster_exposure_ev: 0.0,
+        raster_lights: None,
         studio_weights: None,
         environment: None,
         textures: None,
@@ -129,7 +133,7 @@ fn centre(png: &[u8]) -> [u8; 4] {
 
 #[test]
 fn progressive_hdr_and_rough_reflections_keep_the_same_absolute_prefix_at_every_quantum() {
-    for (target, checkpoints) in [(3, vec![1, 2]), (7, vec![1, 2, 4])] {
+    for (target, checkpoints) in [(3, vec![1, 2]), (7, vec![1, 2, 3, 4, 5, 6])] {
         let result = progressive_hdr_png(target, 82, 1, Some(input()));
         assert_eq!(result.previews.iter().map(|(n, _)| *n).collect::<Vec<_>>(), checkpoints);
         let other = progressive_hdr_png(target, 82, 16384, Some(input()));

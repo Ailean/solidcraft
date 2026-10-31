@@ -13,9 +13,16 @@ remain available in **Single image** sampling mode.
 ## Progressive CPU sampling
 
 **CPU sampling mode → CPU progressive** accumulates samples of the existing CPU
-integrator. Set **samples per pixel** from 1 to 64 and the separate CPU sampling
-seed. Selecting the mode explicitly chooses one primary sample per pass; returning
-to **Single image** restores the AA selector without discarding lights or HDR controls.
+integrator. In the coordinated source proposal, **samples per pixel** is bounded
+by the selected profile: Compact 64, Studio 1024 or Workstation 1,048,576, together
+with the unchanged pixel/camera-sample and other admission intersections. The
+separate CPU sampling seed and explicit target are preserved on save/reopen;
+Interactive uses those captured values rather than forcing every request to
+16/0. The fallback 16/0 applies only without explicit progressive intent. These
+changes require integration, validation and native acceptance.
+
+Selecting the mode explicitly chooses one primary sample per pass; returning to
+**Single image** restores the AA selector without discarding lights or HDR controls.
 This is camera sampling of the existing integrator, not diffuse global illumination,
 adaptive sampling or CPU denoising.
 
@@ -25,20 +32,32 @@ sample. Area lights, LEDs, dielectric overrides and anisotropy must use Single i
 switching modes never silently removes these inputs. Check and Start report an
 incompatible combination through the same request validation.
 
-Admission allows at most 1,048,576 pixels, dimensions up to 4096, and
-16,777,216 pixel × sample evaluations. For example, 1024 × 1024 supports 16 SPP,
-whereas 64 SPP requires at most 262,144 pixels. Increasing SPP or loading a setup
-never changes its dimensions automatically. If needed, the panel displays a
+The compatibility Compact profile allows at most 1,048,576 progressive pixels,
+dimensions up to 4096, and 16,777,216 pixel × sample evaluations. For example,
+1024 × 1024 supports 16 SPP, whereas 64 SPP requires at most 262,144 pixels.
+Explicit larger profiles retain their own intersecting limits; see
+[CPU resource profiles](render-cpu-resource-profiles.md). Increasing SPP or loading
+a setup never changes its dimensions automatically. If needed, the panel displays a
 **Use the largest size at this aspect: W × H** action; only clicking it resizes
 the draft. Save applies the same numeric limits without requiring a renderer and
 leaves invalid drafts intact. Traversal, sampling and image encoding also share
 the backend's cumulative work budget.
 
-The result canvas shows provisional PNG checkpoints after 1, 2, 4, … samples,
-before the requested final count. A provisional label includes its SPP and checkpoint
-sequence; the job identity and captured revision remain unchanged. Checkpoint updates
-reuse the current pan/zoom. Completion replaces the preview with its final image;
-cancellation or failure removes the preview and returns to the previous completed
+Normal source publication attempts a provisional snapshot at every complete
+nonfinal pass 1, 2, 3, …, followed by the unique final at the requested target. Two
+reusable snapshot slots bound retention. If both are externally pinned, the
+actual runtime `cpu_preview_retention_skips` counter diagnoses that skipped
+boundary while final work continues; it does not fabricate an image or sample.
+The current-handle inspection diagnostic uses a real count, including zero, or
+null when unavailable/failed; lookup errors are not included, and other reported errors are independent.
+
+Publication is distinct from physical canvas repaint: a fast worker and slower
+client can coalesce visible images. A provisional label includes actual SPP and
+publication sequence; these need not be equal after a diagnosed skip. Job identity
+and captured revision remain unchanged. Checkpoint updates reuse current pan/zoom.
+Neither a counter nor the source change proves native 1→2→3→4 display or a latency
+bound. Completion replaces the preview with its final image; cancellation or
+failure removes the preview and returns to the previous completed
 result with the same framing. **Export final PNG** always exports a completed frame,
 even while a different provisional image is visible. With no completed frame, export
 remains disabled. The UI keeps one decoded provisional texture and metadata, not

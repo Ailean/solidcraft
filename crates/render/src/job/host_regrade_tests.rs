@@ -47,6 +47,10 @@ fn fixture(raw: bool) -> (ImageHost, JobHandle, Arc<AtomicUsize>, Presentation) 
     let begins = Arc::new(AtomicUsize::new(0));
     let host = ImageHost::cooperative_with(Arc::new(FixtureExecutor(begins.clone())));
     let request = ImageRequest {
+        raster_punctual_lights: None,
+        raster_area_lights: None,
+        raster_exposure_ev: 0.0,
+        raster_lights: None,
         studio_weights: None,
         width: 16,
         height: 16,

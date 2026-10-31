@@ -1,0 +1,29 @@
+{
+  "ar": {
+    "render.product_exposure_invalid": "يجب أن يكون تعريض معاينة النموذج قيمة محدودة بين ‎−32 و32 EV."
+  },
+  "de": {
+    "render.product_exposure_invalid": "Die Belichtung der Modellvorschau muss endlich sein und zwischen −32 und 32 EV liegen."
+  },
+  "en": {
+    "render.product_exposure_invalid": "Model Preview exposure must be finite and between −32 and 32 EV."
+  },
+  "es": {
+    "render.product_exposure_invalid": "La exposición de la vista previa del modelo debe ser finita y estar entre −32 y 32 EV."
+  },
+  "he": {
+    "render.product_exposure_invalid": "חשיפת תצוגת המודל המקדימה חייבת להיות סופית ובטווח שבין ‎−32 ל־32 EV."
+  },
+  "ja": {
+    "render.product_exposure_invalid": "モデルプレビューの露出は −32～32 EV の有限値にしてください。"
+  },
+  "ko": {
+    "render.product_exposure_invalid": "모델 미리보기 노출은 −32~32 EV 범위의 유한한 값이어야 합니다."
+  },
+  "vi": {
+    "render.product_exposure_invalid": "Phơi sáng xem trước Mô hình phải là số hữu hạn trong khoảng −32 đến 32 EV."
+  },
+  "zh": {
+    "render.product_exposure_invalid": "模型预览曝光必须是 −32 到 32 EV 之间的有限值。"
+  }
+}

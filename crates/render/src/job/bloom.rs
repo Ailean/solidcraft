@@ -40,6 +40,15 @@ impl Bloom {
         }
         u64::from(width).checked_mul(u64::from(height)).and_then(|n| n.checked_mul(24)).ok_or_else(|| invalid("bloom scratch overflow"))
     }
+    pub(crate) fn scratch_bytes_with_limits(self, width: u32, height: u32, limits: crate::RenderLimits) -> Result<u64> {
+        self.validate()?;
+        let count = super::linear_exr::output_pixels_with_limits(width, height, limits)?;
+        if !self.active() {
+            return Ok(0);
+        }
+        super::linear_exr::checked_output_bytes(count, 12, 0, limits)?;
+        super::linear_exr::checked_stage_bytes(count, 24, 0, limits)
+    }
 }
 fn invalid(message: &str) -> JobError {
     JobError::new(ErrorCode::InvalidRequest, message)
@@ -64,21 +73,37 @@ pub struct BloomTask {
 }
 impl BloomTask {
     pub fn new(width: u32, height: u32, pixels: Vec<[f32; 4]>, options: Bloom, cancel: CancelToken) -> Result<Self> {
+        Self::new_with_limits(width, height, pixels, options, cancel, GPU_PATH_LIMITS)
+    }
+    pub(crate) fn new_with_limits(
+        width: u32,
+        height: u32,
+        pixels: Vec<[f32; 4]>,
+        options: Bloom,
+        cancel: CancelToken,
+        limits: crate::RenderLimits,
+    ) -> Result<Self> {
         options.validate()?;
         cancel.check()?;
         let count = u64::from(width).checked_mul(u64::from(height)).ok_or_else(|| invalid("bloom dimensions overflow"))?;
         if width == 0
             || height == 0
-            || u64::from(width) > GPU_PATH_LIMITS.max_dimension
-            || u64::from(height) > GPU_PATH_LIMITS.max_dimension
-            || count > GPU_PATH_LIMITS.max_pixels
+            || super::linear_exr::output_pixels_with_limits(width, height, limits).is_err()
             || usize::try_from(count).ok() != Some(pixels.len())
             || !options.active()
         {
             return Err(invalid("bloom requires an admitted nonempty image and positive strength"));
         }
+        options.scratch_bytes_with_limits(width, height, limits)?;
+        let retained = super::linear_exr::checked_output_bytes(pixels.capacity() as u64, 16, 0, limits)? as u64;
+        super::linear_exr::checked_stage_bytes(count, 24, retained, limits)?;
         let horizontal = allocate(pixels.len())?;
+        let horizontal_bytes = super::linear_exr::checked_output_bytes(horizontal.capacity() as u64, 12, 0, limits)? as u64;
+        let retained = retained.checked_add(horizontal_bytes).ok_or_else(|| invalid("bloom retained byte overflow"))?;
+        super::linear_exr::checked_stage_bytes(count, 12, retained, limits)?;
         let vertical = allocate(pixels.len())?;
+        super::linear_exr::checked_output_bytes(vertical.capacity() as u64, 12, 0, limits)?;
+        super::linear_exr::checked_stage_bytes(vertical.capacity() as u64, 12, retained, limits)?;
         Ok(Self { pixels, horizontal, vertical, width: width as usize, height: height as usize, options, cancel, phase: 0, line: 0 })
     }
     pub fn total_lines(&self) -> u64 {
@@ -246,5 +271,40 @@ mod tests {
         cancel.cancel();
         assert!(task.step(1).is_err());
         assert!(task.finish().is_err());
+    }
+
+    #[test]
+    fn explicit_bloom_preserves_independent_three_box_kernel_and_quantum() {
+        let mut pixels = vec![[0.0, 0.0, 0.0, 1.0]; 121];
+        pixels[60][0] = 1.0;
+        let options = Bloom { strength: 1.0, threshold: 0.0, radius: 1 };
+        let mut work = BloomTask::new_with_limits(11, 11, pixels.clone(), options, CancelToken::default(), GPU_PATH_LIMITS).unwrap();
+        while !work.step(1).unwrap() {}
+        let (retained, glow) = work.finish().unwrap();
+        assert_eq!(retained, pixels);
+        let kernel = [1.0, 3.0, 6.0, 7.0, 6.0, 3.0, 1.0];
+        for y in 0..11 {
+            for x in 0..11 {
+                let expected = if (2..=8).contains(&x) && (2..=8).contains(&y) { kernel[x - 2] * kernel[y - 2] / 729.0 } else { 0.0 };
+                assert!((f64::from(glow[y * 11 + x][0]) - expected).abs() < 2e-7);
+                assert_eq!(&glow[y * 11 + x][1..], &[0.0, 0.0]);
+            }
+        }
+        assert_eq!(glow, run(pixels, 11, 11, 1, 32));
+    }
+
+    #[test]
+    fn wide_bloom_is_explicit_and_legacy_inactive_and_cancel_order_stay_intact() {
+        let wide = super::super::CpuBudget::Workstation.image_limits(false);
+        let options = Bloom { strength: 1.0, ..Default::default() };
+        assert!(BloomTask::new(8193, 1, vec![], options, CancelToken::default()).is_err());
+        let cancel = CancelToken::default();
+        let mut task = BloomTask::new_with_limits(8193, 1, vec![[0.0, 0.0, 0.0, 1.0]; 8193], options, cancel.clone(), wide).unwrap();
+        cancel.cancel();
+        assert_eq!(task.step(1).unwrap_err().code, ErrorCode::Cancelled);
+        assert_eq!(Bloom::default().scratch_bytes(0, u32::MAX).unwrap(), 0);
+        assert_eq!(options.scratch_bytes(8193, 1).unwrap(), 8193 * 24, "legacy estimate remains arithmetic-only");
+        assert_eq!(BloomTask::new(0, 1, vec![], options, cancel.clone()).err().unwrap().code, ErrorCode::Cancelled);
+        assert_eq!(BloomTask::new(0, 1, vec![], Bloom { strength: f64::NAN, ..options }, cancel).err().unwrap().code, ErrorCode::InvalidRequest);
     }
 }

@@ -2603,3 +2603,201 @@ fn output_children_focus_survives_clearing_an_object_pick() {
         assert!(Arc::ptr_eq(&document, &h.app.session.doc));
     }
 }
+
+// U10: existing fixed-budget review, never admission or full-quality certification.
+mod quality_button_contract {
+    use super::*;
+
+    fn gpu_fixture() -> Harness {
+        let mut h = fixture();
+        super::super::super::select_image_method(&mut h.app, ImageMethod::GpuRaytrace);
+        h.app.cam.fov = 0.6;
+        h.app.run("view.render_select", json!({"kind":"output"})).unwrap();
+        h.frames(3);
+        h
+    }
+
+    #[test]
+    fn quality_buttons_review_all_three_actual_catalog_budgets_before_any_edit() {
+        for (index, id, width, height, samples, depth, denoise) in
+            [(0, "Q-001", 960, 540, 64, 4, false), (1, "Q-002", 1600, 900, 512, 8, true), (2, "Q-003", 2560, 1440, 2048, 12, true)]
+        {
+            let mut h = gpu_fixture();
+            let before = setups::snapshot(&h.app).unwrap();
+            let doc = h.app.session.doc.clone();
+            let history = (h.app.session.revision, h.app.session.undo.len());
+            choose_quality(&mut h.app, index).unwrap();
+            let review = h.app.render_workspace.view.library.review.as_ref().unwrap();
+            assert!(!review.acknowledged);
+            assert_eq!(review.plan["id"], id);
+            assert_eq!(review.plan["status"], "fixed_budget_projection_not_full_quality_profile");
+            assert_eq!(review.plan["settings"], json!({"width":width,"height":height}));
+            assert_eq!(review.plan["gpu_options"], json!({"samples":samples,"max_depth":depth,"seed":21026,"denoise":denoise}));
+            assert!(review.plan["omitted"].as_array().unwrap().iter().any(|v| v == "convergence_certification"));
+            assert_eq!(serde_json::to_value(setups::snapshot(&h.app).unwrap()).unwrap(), serde_json::to_value(before).unwrap());
+            assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
+            assert_eq!(history, (h.app.session.revision, h.app.session.undo.len()));
+        }
+    }
+
+    #[test]
+    fn quality_button_click_and_acknowledgement_save_one_current_shot_action() {
+        let mut h = gpu_fixture();
+        h.app.render_workspace.view.studio.intensity = 0.42;
+        h.app.render_workspace.view.draft.exposure_ev = 1.23;
+        h.app.render_workspace.view.studio.ambient = [0.11, 0.22, 0.33];
+        let camera = h.app.cam;
+        let shot = h.app.render_workspace.view.name.clone();
+        let stage = h.app.render_workspace.view.stage;
+        let history = (h.app.session.revision, h.app.session.undo.len());
+        let doc = h.app.session.doc.to_json();
+        h.step(&json!({"click":{"handle":"render:quality:balanced"}})).unwrap();
+        assert_eq!(h.app.session.doc.to_json(), doc);
+        assert_eq!(history, (h.app.session.revision, h.app.session.undo.len()));
+        assert!(!h.app.render_workspace.view.library.review.as_ref().unwrap().acknowledged);
+        h.step(&json!({"click":{"handle":"render:review:acknowledge"}})).unwrap();
+        h.step(&json!({"click":{"handle":"dialog:ok"}})).unwrap();
+        assert!(h.app.render_workspace.view.library.review.is_none());
+        assert_eq!(h.app.session.revision, history.0 + 1);
+        assert_eq!(h.app.session.undo.len(), history.1 + 1);
+        assert_eq!((h.app.render_workspace.view.draft.width, h.app.render_workspace.view.draft.height), (1600, 900));
+        assert_eq!((h.app.render_workspace.view.samples, h.app.render_workspace.view.max_depth, h.app.render_workspace.view.seed), (512, 8, 21026));
+        assert!(h.app.render_workspace.view.studio.denoise);
+        assert_eq!(h.app.render_workspace.view.name, shot);
+        assert_eq!(h.app.render_workspace.view.stage, stage);
+        assert_eq!(h.app.render_workspace.view.method, ImageMethod::GpuRaytrace);
+        assert_eq!(h.app.cam, camera);
+        assert_eq!(h.app.render_workspace.view.studio.intensity, 0.42);
+        assert_eq!(h.app.render_workspace.view.studio.ambient, [0.11, 0.22, 0.33]);
+        assert_eq!(h.app.render_workspace.view.draft.exposure_ev, 1.23);
+        assert_eq!(h.app.session.doc.render.setups[&shot].width, 1600);
+        assert_eq!(quality_selection(&h.app), 1);
+        assert!(h.app.render_workspace.view.job.is_none(), "choosing quality never starts a renderer");
+    }
+
+    #[test]
+    fn quality_highlight_derives_every_projected_field_and_returns_to_custom() {
+        let mut h = gpu_fixture();
+        for index in 0..3 {
+            let plan = h
+                .app
+                .run(
+                    "render.quality.prepare",
+                    json!({"id":(["Q-001","Q-002","Q-003"][index]),"variant":"fixed_samples_png","acknowledge_omissions":true}),
+                )
+                .unwrap();
+            apply_quality(&mut h.app, &plan).unwrap();
+            assert_eq!(quality_selection(&h.app), index);
+            for field in 0..6 {
+                let original = (
+                    h.app.render_workspace.view.draft.width,
+                    h.app.render_workspace.view.draft.height,
+                    h.app.render_workspace.view.samples,
+                    h.app.render_workspace.view.max_depth,
+                    h.app.render_workspace.view.seed,
+                    h.app.render_workspace.view.studio.denoise,
+                );
+                match field {
+                    0 => h.app.render_workspace.view.draft.width += 1,
+                    1 => h.app.render_workspace.view.draft.height += 1,
+                    2 => h.app.render_workspace.view.samples += 1,
+                    3 => h.app.render_workspace.view.max_depth += 1,
+                    4 => h.app.render_workspace.view.seed += 1,
+                    _ => h.app.render_workspace.view.studio.denoise = !original.5,
+                }
+                assert_eq!(quality_selection(&h.app), 3, "changed projected field {field}");
+                (
+                    h.app.render_workspace.view.draft.width,
+                    h.app.render_workspace.view.draft.height,
+                    h.app.render_workspace.view.samples,
+                    h.app.render_workspace.view.max_depth,
+                    h.app.render_workspace.view.seed,
+                    h.app.render_workspace.view.studio.denoise,
+                ) = original;
+            }
+            h.app.render_workspace.view.draft.exposure_ev = 0.37;
+            assert_eq!(quality_selection(&h.app), index, "highlight describes the budget, not a complete scene-quality tier");
+        }
+    }
+
+    #[test]
+    fn quality_buttons_refuse_other_methods_and_invalid_choices_without_mutation() {
+        let mut h = gpu_fixture();
+        for method in [ImageMethod::CpuRaytrace, ImageMethod::Raster] {
+            h.app.render_workspace.view.method = method;
+            let before = format!("{:?}", h.app.render_workspace.view.draft);
+            let doc = h.app.session.doc.to_json();
+            for index in 0..3 {
+                assert!(choose_quality(&mut h.app, index).is_err());
+                assert!(quality_reason(&h.app, index).is_some());
+            }
+            assert_eq!(quality_selection(&h.app), 3);
+            assert_eq!(h.app.render_workspace.view.method, method);
+            assert_eq!(format!("{:?}", h.app.render_workspace.view.draft), before);
+            assert_eq!(h.app.session.doc.to_json(), doc);
+            assert!(h.app.render_workspace.view.library.review.is_none());
+        }
+        h.app.render_workspace.view.method = ImageMethod::GpuRaytrace;
+        assert!(choose_quality(&mut h.app, usize::MAX).is_err());
+        assert!(h.app.render_workspace.view.library.review.is_none());
+    }
+
+    #[test]
+    fn quality_review_stays_bound_to_captured_draft_shot_method_and_document() {
+        for change in 0..4 {
+            let mut h = gpu_fixture();
+            choose_quality(&mut h.app, 0).unwrap();
+            h.frames(3);
+            h.step(&json!({"click":{"handle":"render:review:acknowledge"}})).unwrap();
+            match change {
+                0 => h.app.render_workspace.view.draft.width = 333,
+                1 => h.app.render_workspace.view.name = "Different shot".into(),
+                2 => h.app.render_workspace.view.method = ImageMethod::CpuRaytrace,
+                _ => h.app.session.doc = Arc::new((*h.app.session.doc).clone()),
+            }
+            let doc = h.app.session.doc.to_json();
+            let width = h.app.render_workspace.view.draft.width;
+            let history = (h.app.session.revision, h.app.session.undo.len());
+            h.frames(3);
+            assert!(crate::scenario::rect_of("dialog:report:review:stale").is_some());
+            let ok = crate::scenario::rect_of("dialog:ok").unwrap().center();
+            h.step(&json!({"click":[ok.x,ok.y]})).unwrap();
+            assert_eq!(h.app.session.doc.to_json(), doc);
+            assert_eq!(h.app.render_workspace.view.draft.width, width);
+            assert_eq!(history, (h.app.session.revision, h.app.session.undo.len()));
+            assert!(h.app.render_workspace.view.library.review.is_some());
+        }
+    }
+
+    #[test]
+    fn quality_custom_keeps_existing_sampling_navigation_on_all_methods() {
+        let mut h = gpu_fixture();
+        for method in [ImageMethod::GpuRaytrace, ImageMethod::CpuRaytrace, ImageMethod::Raster] {
+            h.app.render_workspace.view.method = method;
+            let doc = h.app.session.doc.to_json();
+            choose_quality(&mut h.app, 3).unwrap();
+            assert_eq!(h.app.render_workspace.view.selection, super::super::super::RenderSelection::Sampling);
+            assert_eq!(h.app.render_workspace.view.method, method);
+            assert_eq!(h.app.session.doc.to_json(), doc);
+        }
+    }
+
+    #[test]
+    fn quality_button_repaint_and_cancel_preserve_unsaved_draft_and_design() {
+        let mut h = gpu_fixture();
+        h.app.render_workspace.view.draft.width = 777;
+        h.app.render_workspace.view.samples = 99;
+        let draft = serde_json::to_value(setups::snapshot(&h.app).unwrap()).unwrap();
+        let doc = h.app.session.doc.to_json();
+        let history = (h.app.session.revision, h.app.session.undo.len());
+        h.frames(3);
+        assert_eq!(quality_selection(&h.app), 3);
+        choose_quality(&mut h.app, 2).unwrap();
+        h.frames(3);
+        h.step(&json!({"click":{"handle":"dialog:cancel"}})).unwrap();
+        assert!(h.app.render_workspace.view.library.review.is_none());
+        assert_eq!(serde_json::to_value(setups::snapshot(&h.app).unwrap()).unwrap(), draft);
+        assert_eq!(h.app.session.doc.to_json(), doc);
+        assert_eq!(history, (h.app.session.revision, h.app.session.undo.len()));
+    }
+}

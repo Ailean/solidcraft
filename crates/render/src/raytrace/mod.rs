@@ -66,6 +66,20 @@ fn check_cancel(cancel: &CancelToken) -> Result<()> {
 pub struct WorkBudget {
     limit: u64,
     used: u64,
+    protected: Option<ProtectedWork>,
+}
+
+/// One owned ledger, not another spendable budget. Keeping the policy and actual
+/// counters here preserves the final report after the image task drops its film.
+#[derive(Debug)]
+struct ProtectedWork {
+    plan: crate::job::ProtectedPreviewPlan,
+    ordinary_used: u64,
+    presentation_used: u64,
+    presentation_limit: u64,
+    aggregate_limit: u64,
+    accepted_snapshots: u32,
+    next_milestone_index: u32,
 }
 
 impl WorkBudget {
@@ -73,22 +87,138 @@ impl WorkBudget {
         if limit == 0 || limit > crate::job::MAX_CPU_WORK {
             return Err(TraceError::InvalidInput("work limit outside 1..=MAX_WORK"));
         }
-        Ok(Self { limit, used: 0 })
+        Ok(Self { limit, used: 0, protected: None })
     }
+
+    pub(crate) fn new_protected(plan: crate::job::ProtectedPreviewPlan) -> Result<Self> {
+        plan.validate().map_err(|_| TraceError::InvalidInput("invalid protected feedback plan"))?;
+        let presentation_limit = plan.presentation_limit().map_err(|_| TraceError::WorkLimit)?;
+        let aggregate_limit = plan.aggregate_limit().map_err(|_| TraceError::WorkLimit)?;
+        if aggregate_limit > crate::job::MAX_PROTECTED_CPU_WORK {
+            return Err(TraceError::WorkLimit);
+        }
+        Ok(Self {
+            limit: plan.ordinary_limit(),
+            used: 0,
+            protected: Some(ProtectedWork {
+                plan,
+                ordinary_used: 0,
+                presentation_used: 0,
+                presentation_limit,
+                aggregate_limit,
+                accepted_snapshots: 0,
+                next_milestone_index: 0,
+            }),
+        })
+    }
+
     pub fn used(&self) -> u64 {
         self.used
     }
+
+    /// Legacy meaning is unchanged. Protected ordinary callers retain B-O;
+    /// presentation and aggregate capacity have separate, explicit getters.
     pub fn remaining(&self) -> u64 {
-        self.limit - self.used
+        self.ordinary_remaining()
     }
+
+    pub(crate) fn ordinary_remaining(&self) -> u64 {
+        self.limit - self.protected.as_ref().map_or(self.used, |state| state.ordinary_used)
+    }
+
+    pub(crate) fn presentation_remaining(&self) -> u64 {
+        self.protected.as_ref().map_or(0, |state| state.presentation_limit - state.presentation_used)
+    }
+
+    pub(crate) fn aggregate_remaining(&self) -> u64 {
+        self.protected.as_ref().map_or(self.limit, |state| state.aggregate_limit) - self.used
+    }
+
+    pub(crate) fn protected_report(&self) -> Option<crate::job::ProtectedPreviewReport> {
+        let state = self.protected.as_ref()?;
+        let quota_limit = state.plan.quota_limit();
+        Some(crate::job::ProtectedPreviewReport {
+            policy_version: 1,
+            ordinary_limit: self.limit,
+            presentation_limit: state.presentation_limit,
+            aggregate_limit: state.aggregate_limit,
+            ordinary_used: state.ordinary_used,
+            presentation_used: state.presentation_used,
+            accepted_snapshots: state.accepted_snapshots,
+            quota_limit,
+            next_milestone_index: state.next_milestone_index,
+            quota_exhausted: state.accepted_snapshots == quota_limit,
+            milestones_complete: state.next_milestone_index == quota_limit,
+        })
+    }
+
+    /// Read-only eligibility at a real committed camera frontier. Source progress
+    /// is not a work credit: it selects a milestone, never reserves ordinary work.
+    fn protected_ready(&self, committed: u64) -> Result<bool> {
+        let state = self.protected.as_ref().ok_or(TraceError::InvalidInput("protected feedback policy missing"))?;
+        if committed >= state.plan.total_commits()
+            || state.accepted_snapshots >= state.plan.quota_limit()
+            || state.next_milestone_index >= state.plan.quota_limit()
+        {
+            return Ok(false);
+        }
+        let milestone = state.plan.milestone(state.next_milestone_index).map_err(|_| TraceError::Internal("invalid protected milestone"))?;
+        let cost = state.plan.snapshot_work().map_err(|_| TraceError::WorkLimit)?;
+        Ok(committed >= milestone && self.presentation_remaining() >= cost && self.aggregate_remaining() >= cost)
+    }
+
+    /// Debit ONE W and coalesce all reached milestones in the same transaction.
+    /// A wait/refusal changes no counters. Cancellation after a debit is not a refund.
+    fn charge_presentation(&mut self, committed: u64, cancel: &CancelToken) -> Result<bool> {
+        check_cancel(cancel)?;
+        if !self.protected_ready(committed)? {
+            return Ok(false);
+        }
+        let state = self.protected.as_ref().ok_or(TraceError::InvalidInput("protected feedback policy missing"))?;
+        let cost = state.plan.snapshot_work().map_err(|_| TraceError::WorkLimit)?;
+        let presentation_used = state.presentation_used.checked_add(cost).filter(|v| *v <= state.presentation_limit).ok_or(TraceError::WorkLimit)?;
+        let used = self.used.checked_add(cost).filter(|v| *v <= state.aggregate_limit).ok_or(TraceError::WorkLimit)?;
+        let accepted = state.accepted_snapshots.checked_add(1).filter(|n| *n <= state.plan.quota_limit()).ok_or(TraceError::WorkLimit)?;
+        let next = state.plan.reached_milestones(committed).map_err(|_| TraceError::Internal("invalid protected reached frontier"))?;
+        check_cancel(cancel)?;
+        let state = self.protected.as_mut().ok_or(TraceError::Internal("protected ledger disappeared"))?;
+        state.presentation_used = presentation_used;
+        state.accepted_snapshots = accepted;
+        state.next_milestone_index = next;
+        self.used = used;
+        Ok(true)
+    }
+
     fn tick(&mut self, cancel: &CancelToken) -> Result<()> {
         self.charge(1, cancel)
     }
 
     fn charge(&mut self, units: u64, cancel: &CancelToken) -> Result<()> {
         check_cancel(cancel)?;
-        self.used = self.used.checked_add(units).filter(|used| *used <= self.limit).ok_or(TraceError::WorkLimit)?;
+        if let Some(state) = &mut self.protected {
+            let ordinary = state.ordinary_used.checked_add(units).filter(|v| *v <= self.limit).ok_or(TraceError::WorkLimit)?;
+            let used = self.used.checked_add(units).filter(|v| *v <= state.aggregate_limit).ok_or(TraceError::WorkLimit)?;
+            state.ordinary_used = ordinary;
+            self.used = used;
+        } else {
+            self.used = self.used.checked_add(units).filter(|used| *used <= self.limit).ok_or(TraceError::WorkLimit)?;
+        }
         Ok(())
+    }
+
+    /// Private test boundary only: the ordinary allowance is fixed before any
+    /// real task work, preserving Q and the same O/V ledger. No production caller.
+    #[cfg(test)]
+    fn new_protected_for_test(plan: crate::job::ProtectedPreviewPlan, ordinary: u64) -> Result<Self> {
+        let mut work = Self::new_protected(plan)?;
+        if ordinary == 0 || ordinary > work.limit {
+            return Err(TraceError::InvalidInput("test ordinary limit outside profile"));
+        }
+        let state = work.protected.as_mut().ok_or(TraceError::Internal("test protected policy missing"))?;
+        state.aggregate_limit =
+            ordinary.checked_add(state.presentation_limit).filter(|v| *v <= crate::job::MAX_PROTECTED_CPU_WORK).ok_or(TraceError::WorkLimit)?;
+        work.limit = ordinary;
+        Ok(work)
     }
 }
 

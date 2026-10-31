@@ -1,0 +1,47 @@
+{
+  "en": {
+    "render.cpu_directional_shadow_help": "CPU optics are temporary and require certified sheets or axis-aligned boxes with opaque body and face appearances. Directional transmitted shadows require global shadows on and all active assignments to agree. Mixed choices, nesting, environment lighting and local lights are unsupported in that mode. This is straight RGB visibility, not refracted shadows or caustics. Subsurface, coats and maps remain unsupported; fixed and progressive sampling retain finite-depth limits.",
+    "render.cpu_shadow_conflict": "The global directional transmission option conflicts with an optical assignment whose transmitted shadows are off. No authored option was changed.",
+    "render.cpu_shadow_mixed": "CPU uses one transmitted-shadow switch for all active optical assignments. Mixed on/off choices cannot be represented and have been preserved."
+  },
+  "es": {
+    "render.cpu_directional_shadow_help": "La óptica CPU es temporal y requiere láminas o cajas alineadas con los ejes certificadas, con aspectos opacos de cuerpo y caras. Las sombras transmitidas direccionales requieren sombras globales activadas y que todas las asignaciones activas coincidan. Ese modo no admite mezclas, nesting, iluminación de entorno ni luces locales. Es visibilidad RGB recta, sin sombras refractadas ni cáusticas. La dispersión subsuperficial, las capas y los mapas siguen sin admitirse; el muestreo fijo y progresivo conserva los límites de profundidad.",
+    "render.cpu_shadow_conflict": "La opción global de transmisión direccional contradice una asignación óptica con sombras transmitidas desactivadas. No se ha cambiado ninguna opción definida.",
+    "render.cpu_shadow_mixed": "CPU usa un único control de sombras transmitidas para todas las asignaciones ópticas activas. No puede representar opciones activadas y desactivadas mezcladas; se han conservado."
+  },
+  "de": {
+    "render.cpu_directional_shadow_help": "CPU-Optik ist temporär und erfordert zertifizierte Scheiben oder achsenparallele Quader mit opaken Körper- und Flächenerscheinungen. Gerichtete durchgelassene Schatten erfordern globale Schatten und übereinstimmende aktive Zuweisungen. Gemischte Optionen, Verschachtelung, Umgebungslicht und lokale Lichter sind in diesem Modus nicht unterstützt. Dies ist geradlinige RGB-Sichtbarkeit, keine gebrochenen Schatten oder Kaustiken. Subsurface-Streuung, Beschichtungen und Maps bleiben nicht unterstützt; feste und progressive Abtastung behalten die endliche Tiefengrenze.",
+    "render.cpu_shadow_conflict": "Die globale gerichtete Transmission widerspricht einer optischen Zuweisung mit ausgeschalteten durchgelassenen Schatten. Keine festgelegte Option wurde geändert.",
+    "render.cpu_shadow_mixed": "CPU verwendet einen Schalter für durchgelassene Schatten aller aktiven optischen Zuweisungen. Gemischte Ein-/Aus-Werte sind nicht darstellbar und wurden beibehalten."
+  },
+  "ko": {
+    "render.cpu_directional_shadow_help": "CPU 광학은 임시 설정이며 불투명한 바디와 면 외관을 가진 인증된 판 또는 축 정렬 상자가 필요합니다. 방향성 투과 그림자는 전역 그림자가 켜져 있고 모든 활성 할당의 설정이 같아야 합니다. 이 모드는 혼합 설정, 중첩, 환경 조명 및 로컬 광원을 지원하지 않습니다. 이는 직선 RGB 가시성이며 굴절 그림자나 코스틱이 아닙니다. 표면하 산란, 코팅 및 맵은 계속 지원하지 않으며 고정 및 점진적 샘플링은 유한 깊이 제한을 유지합니다.",
+    "render.cpu_shadow_conflict": "전역 방향성 투과 옵션이 투과 그림자가 꺼진 광학 할당과 충돌합니다. 작성된 옵션은 변경되지 않았습니다.",
+    "render.cpu_shadow_mixed": "CPU는 모든 활성 광학 할당에 하나의 투과 그림자 스위치를 사용합니다. 켜짐과 꺼짐이 섞인 설정은 표현할 수 없으며 그대로 보존되었습니다."
+  },
+  "ar": {
+    "render.cpu_directional_shadow_help": "بصريات CPU مؤقتة وتتطلب صفائح أو صناديق محاذية للمحاور اجتازت التحقق، بمظاهر معتمة للجسم والأوجه. تتطلب الظلال النافذة الاتجاهية تفعيل الظلال العامة وتطابق كل التعيينات النشطة. لا يدعم هذا الوضع الخيارات المختلطة أو التداخل أو إضاءة البيئة أو الأضواء المحلية. هذه رؤية RGB مستقيمة وليست ظلالًا منكسرة أو كاوستيك. يبقى التشتت تحت السطحي والطلاءات والخرائط غير مدعوم، وتبقى حدود العمق المحدودة لأخذ العينات الثابت والتدريجي.",
+    "render.cpu_shadow_conflict": "يتعارض خيار النفاذ الاتجاهي العام مع تعيين بصري تكون ظلاله النافذة معطلة. لم يتغير أي خيار محدد.",
+    "render.cpu_shadow_mixed": "يستخدم CPU مفتاح ظلال نافذة واحدًا لجميع التعيينات البصرية النشطة. لا يمكن تمثيل خليط من التفعيل والتعطيل، وقد تم الاحتفاظ بالخيارات."
+  },
+  "he": {
+    "render.cpu_directional_shadow_help": "אופטיקת CPU היא זמנית ודורשת יריעות או תיבות מיושרות לצירים שעברו אימות, עם מראה אטום של הגוף והפאות. צללים מועברים כיווניים דורשים צללים כלליים פעילים ואחידות בכל ההקצאות הפעילות. מצב זה אינו תומך בערכים מעורבים, קינון, תאורת סביבה או אורות מקומיים. זו נראות RGB בקו ישר, ללא צללים נשברים או קאוסטיקה. פיזור תת-משטחי, ציפויים ומפות עדיין אינם נתמכים; דגימה קבועה והדרגתית שומרות על מגבלות העומק הסופי.",
+    "render.cpu_shadow_conflict": "אפשרות ההעברה הכיוונית הכללית סותרת הקצאה אופטית שהצללים המועברים שלה כבויים. שום אפשרות שנקבעה לא שונתה.",
+    "render.cpu_shadow_mixed": "CPU משתמש במתג צללים מועברים אחד לכל ההקצאות האופטיות הפעילות. לא ניתן לייצג ערכים מעורבים של פעיל וכבוי, והם נשמרו."
+  },
+  "ja": {
+    "render.cpu_directional_shadow_help": "CPU 光学設定は一時的で、不透明なボディと面の外観を持つ認証済みの薄板または軸に平行なボックスが必要です。平行光源の透過シャドウには全体のシャドウを有効にし、すべての有効な割り当ての設定を一致させる必要があります。このモードでは混在設定、入れ子、環境光、ローカルライトは非対応です。これは直線上の RGB 可視性であり、屈折シャドウやコースティクスではありません。表面下散乱、コート、マップは引き続き非対応で、固定およびプログレッシブサンプリングでも有限深度制限は残ります。",
+    "render.cpu_shadow_conflict": "全体の平行光透過オプションが、透過シャドウを無効にした光学割り当てと競合しています。設定したオプションは変更されていません。",
+    "render.cpu_shadow_mixed": "CPU はすべての有効な光学割り当てに単一の透過シャドウスイッチを使用します。有効と無効の混在は表現できないため、その設定を保持しています。"
+  },
+  "vi": {
+    "render.cpu_directional_shadow_help": "Quang học CPU là tạm thời và cần tấm hoặc hộp song song các trục đã được kiểm chứng, với diện mạo thân và mặt đục. Bóng truyền qua từ đèn định hướng cần bật bóng toàn cục và mọi phép gán đang bật phải cùng lựa chọn. Chế độ này không hỗ trợ lựa chọn lẫn bật/tắt, lồng nhau, ánh sáng môi trường hoặc đèn cục bộ. Đây là độ nhìn thấy RGB theo đường thẳng, không phải bóng khúc xạ hay caustic. Tán xạ dưới bề mặt, lớp phủ và bản đồ vẫn không được hỗ trợ; lấy mẫu cố định và lũy tiến vẫn có giới hạn độ sâu hữu hạn.",
+    "render.cpu_shadow_conflict": "Tùy chọn truyền sáng định hướng toàn cục xung đột với phép gán quang học có bóng truyền qua đang tắt. Không thay đổi tùy chọn đã soạn nào.",
+    "render.cpu_shadow_mixed": "CPU dùng một công tắc bóng truyền qua cho tất cả phép gán quang học đang bật. Không thể biểu diễn lựa chọn lẫn bật và tắt; các lựa chọn đã được giữ nguyên."
+  },
+  "zh": {
+    "render.cpu_directional_shadow_help": "CPU 光学设置是临时的，需要通过认证的薄片或轴对齐盒体，以及不透明的实体和面外观。方向光透射阴影要求开启全局阴影，并且所有启用的分配采用相同设置。此模式不支持混合开关、嵌套、环境照明或局部光源。这是直线 RGB 可见性，并非折射阴影或焦散。次表面散射、涂层和贴图仍不支持；固定和渐进采样仍保留有限深度限制。",
+    "render.cpu_shadow_conflict": "全局方向光透射选项与关闭透射阴影的光学分配冲突。未更改任何已设置的选项。",
+    "render.cpu_shadow_mixed": "CPU 对所有启用的光学分配使用一个透射阴影开关。无法表示开启和关闭混合的设置，已保留这些设置。"
+  }
+}

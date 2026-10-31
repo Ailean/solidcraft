@@ -1,7 +1,10 @@
 //! Planned Render interactions, with explicit non-mutating refusals.
 use super::CommandSpec;
 use crate::schema::render_lights::{MuteParams, SoloParams};
-use crate::schema::{TypedContract, output_schema_for, render_ui::CheckReport};
+use crate::schema::{
+    TypedContract, output_schema_for,
+    render_ui::{CheckReport, InteractiveParams},
+};
 use crate::{Result, Session, params::bad};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -48,8 +51,16 @@ macro_rules! waiting {
 }
 
 const CHECK_REPORT: TypedContract<CheckReport> = TypedContract::new();
+const INTERACTIVE: TypedContract<InteractiveParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec::new("render.interactive", "Interactive Render", crate::checked!("render.interactive", interactive))
+        .icon("render_image")
+        .contract(&INTERACTIVE)
+        .output(output_schema_for::<InteractiveParams>)
+        .noundo()
+        .doc_only()
+        .params("action: on|off|pause|resume. Validates and echoes an explicit CPU Interactive preview request for the UI adapter. Headless calls never start, pause or cancel a render job, open UI, or change the design, final render settings or exportable images."),
     CommandSpec::new("render.preflight.copy", "Copy Render Check Report", crate::checked!("render.preflight.copy", copy_check))
         .icon("copy")
         .contract(&CHECK_REPORT)
@@ -209,4 +220,119 @@ fn output_sections_copy_report_validates_without_design_history_or_job_changes()
     }
     assert!(std::sync::Arc::ptr_eq(&doc, &s.doc));
     assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations, s.is_dirty()));
+}
+
+/// The UI adapter owns provisional preview actions; headless execution only echoes.
+fn interactive(_: &mut Session, params: &Value) -> Result<Value> {
+    let command = "render.interactive";
+    if !params.is_object() {
+        return Err(bad(command, "expected an object"));
+    }
+    let request: InteractiveParams = serde_json::from_value(params.clone()).map_err(|error| bad(command, error.to_string()))?;
+    serde_json::to_value(request).map_err(|error| bad(command, error.to_string()))
+}
+
+#[cfg(test)]
+#[test]
+fn interactive_contract_describes_exact_actions_and_a_nonmutating_echo() {
+    use crate::schema::{input_schema_for, render_ui::Action};
+    let command = super::find_command("render.interactive").unwrap();
+    assert!(!command.undoable);
+    assert!(!command.reads_model);
+    assert!(command.planned.is_none());
+    assert_eq!(command.icon, "render_image");
+    let contract = command.contract.unwrap();
+    assert_eq!(contract.allowed_keys().iter().map(String::as_str).collect::<Vec<_>>(), ["action"]);
+    assert!(command.output.is_some());
+    let action_schema = serde_json::to_value(input_schema_for::<Action>()).unwrap();
+    assert_eq!(action_schema["enum"], json!(["on", "off", "pause", "resume"]));
+    let request_schema = serde_json::to_value(input_schema_for::<InteractiveParams>()).unwrap();
+    assert_eq!(request_schema["additionalProperties"], false);
+    assert_eq!(request_schema["required"], json!(["action"]));
+    let reply_schema = serde_json::to_value(output_schema_for::<InteractiveParams>()).unwrap();
+    assert_eq!(reply_schema["required"], json!(["action"]));
+    assert_eq!(reply_schema["properties"].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["action"]);
+}
+
+#[cfg(test)]
+#[test]
+fn interactive_valid_and_hostile_requests_preserve_headless_document_history_and_host() {
+    use crate::schema::ParamCheck;
+    let mut session = Session::default();
+    session.execute("render.settings.set", &json!({"name":"Original","set":{"width":800}})).unwrap();
+    session.execute("render.settings.set", &json!({"name":"Original","set":{"width":900}})).unwrap();
+    session.execute("edit.undo", &json!({})).unwrap();
+    let document = session.doc.clone();
+    let before = (session.revision, session.undo.len(), session.redo.len(), session.evaluations, session.is_dirty());
+    assert!(session.render_job_host().is_none());
+    for level in [ParamCheck::Off, ParamCheck::Warn, ParamCheck::Strict] {
+        session.param_check = level;
+        for action in ["on", "off", "pause", "resume"] {
+            let params = json!({"action":action});
+            assert_eq!(session.execute("render.interactive", &params).unwrap(), params);
+        }
+        for hostile in [
+            json!(null),
+            json!(true),
+            json!(0),
+            json!("on"),
+            json!([]),
+            json!(["on"]),
+            json!({}),
+            json!({"action":null}),
+            json!({"action":true}),
+            json!({"action":1e300}),
+            json!({"action":["on"]}),
+            json!({"action":{"on":true}}),
+            json!({"action":"start"}),
+            json!({"action":"On"}),
+            json!({"action":" on"}),
+            json!({"action":"on\n"}),
+            json!({"action":"x".repeat(65536)}),
+            json!({"action":"on","slot":0}),
+            json!({"action":"off","job":{"session":1,"serial":1,"generation":1}}),
+            json!({"action":"pause","replace":true}),
+            json!({"action":"resume","settings":{}}),
+            json!({"action":"on","path":"must-not-be-read.hdr"}),
+        ] {
+            assert!(session.execute("render.interactive", &hostile).is_err(), "{level:?}: {hostile}");
+        }
+        assert!(std::sync::Arc::ptr_eq(&document, &session.doc));
+        assert_eq!(before, (session.revision, session.undo.len(), session.redo.len(), session.evaluations, session.is_dirty()));
+        assert!(session.render_job_host().is_none());
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn interactive_echo_preserves_a_queued_final_job_and_its_resource_lease() {
+    use solidcraft_render::job::{CpuHost, JobId};
+    let host = CpuHost::cooperative();
+    let mut session = Session::default();
+    session.set_render_job_host(Some(host.clone())).unwrap();
+    // Queue a tiny raster job without pumping the cooperative host or opening a device.
+    let started = session.execute("render.start", &json!({"settings":{"width":16,"height":16}})).unwrap();
+    let first_id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
+    let first = session.render_job_handle(first_id).unwrap();
+    let status = serde_json::to_value(first.status().unwrap()).unwrap();
+    let admitted = host.admitted_bytes();
+    assert!(admitted > 0);
+    let document = session.doc.clone();
+    let before = (session.revision, session.undo.len(), session.redo.len(), session.evaluations, session.is_dirty());
+    for action in ["on", "pause", "resume", "off"] {
+        let params = json!({"action":action});
+        assert_eq!(session.execute("render.interactive", &params).unwrap(), params);
+        assert_eq!(serde_json::to_value(first.status().unwrap()).unwrap(), status);
+        assert_eq!(host.admitted_bytes(), admitted);
+        assert!(session.render_job_host().unwrap().same_host(&host));
+        assert!(std::sync::Arc::ptr_eq(&document, &session.doc));
+        assert_eq!(before, (session.revision, session.undo.len(), session.redo.len(), session.evaluations, session.is_dirty()));
+    }
+    assert!(session.execute("render.interactive", &json!({"action":"off","job":first_id})).is_err());
+    assert_eq!(serde_json::to_value(first.status().unwrap()).unwrap(), status);
+    assert_eq!(host.admitted_bytes(), admitted);
+    let next = session.execute("render.start", &json!({"settings":{"width":16,"height":16}})).unwrap();
+    let next_id: JobId = serde_json::from_value(next["job"].clone()).unwrap();
+    assert_eq!(next_id.session, first_id.session);
+    assert_eq!(next_id.serial, first_id.serial + 1, "echo actions must not allocate or replace final job identities");
 }

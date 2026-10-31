@@ -80,22 +80,16 @@ fn lighting(options: &RaytraceOptions) -> job::Result<Lighting> {
 }
 type Look = PreparedPrimitive;
 
-fn certificates(scene: &ProductScene, options: &RaytraceOptions) -> job::Result<[Option<Certificate>; MAX_OVERRIDES]> {
+fn certificates(
+    scene: &ProductScene,
+    options: &RaytraceOptions,
+    nested: bool,
+) -> job::Result<([Option<Certificate>; MAX_OVERRIDES], [Option<usize>; MAX_OVERRIDES])> {
     let mut result = [None; MAX_OVERRIDES];
     for (slot, input) in result.iter_mut().zip(&options.dielectrics) {
         *slot = Some(dielectric::certify(scene, input).map_err(error)?);
     }
-    for (i, left) in result.iter().enumerate() {
-        if let Some(Certificate::ClosedBox(a)) = left {
-            for right in result.iter().skip(i + 1) {
-                if let Some(Certificate::ClosedBox(b)) = right
-                    && dielectric::overlaps(*a, *b)
-                {
-                    return Err(invalid("nested, touching or overlapping dielectric volumes are unsupported"));
-                }
-            }
-        }
-    }
+    let parents = dielectric::parents(&result, nested).map_err(error)?;
     // Sheets within volumes are unsupported. Conservatively use the admitted
     // tiny sheet's bounds, rather than pretending to resolve medium nesting.
     for (i, certificate) in result.iter().enumerate() {
@@ -112,11 +106,91 @@ fn certificates(scene: &ProductScene, options: &RaytraceOptions) -> job::Result<
             }
         }
     }
-    Ok(result)
+    Ok((result, parents))
+}
+
+/// Private construction policy; protected admission is selected before allocations.
+#[derive(Clone, Copy)]
+enum PreviewPolicy {
+    Legacy,
+    Shared(job::PartialPreviewPlan),
+    Protected(job::ProtectedPreviewPlan),
+}
+impl PreviewPolicy {
+    fn partial_plan(self) -> Option<job::PartialPreviewPlan> {
+        match self {
+            Self::Legacy => None,
+            Self::Shared(plan) => Some(plan),
+            Self::Protected(plan) => Some(plan.preview_plan()),
+        }
+    }
+}
+
+fn committed_frontier(frontier: crate::film::primary::PartialFrontier) -> job::Result<u64> {
+    let pixels = u64::try_from(frontier.pixels).map_err(|_| error(TraceError::MemoryLimit))?;
+    let prefix = u64::try_from(frontier.updated_prefix).map_err(|_| error(TraceError::MemoryLimit))?;
+    u64::from(frontier.completed_passes).checked_mul(pixels).and_then(|n| n.checked_add(prefix)).ok_or_else(|| error(TraceError::WorkLimit))
 }
 
 pub fn admit(scene: &ProductScene, request: &ImageRequest, options: &RaytraceOptions) -> job::Result<Admission> {
+    admit_with_nested(scene, request, options, false)
+}
+
+pub(crate) fn admit_with_nested(scene: &ProductScene, request: &ImageRequest, options: &RaytraceOptions, nested: bool) -> job::Result<Admission> {
+    admit_with_policy(scene, request, options, nested, PreviewPolicy::Legacy)
+}
+
+pub(crate) fn admit_with_partial_preview(
+    scene: &ProductScene,
+    request: &ImageRequest,
+    options: &RaytraceOptions,
+    nested: bool,
+    plan: job::PartialPreviewPlan,
+) -> job::Result<Admission> {
+    admit_with_policy(scene, request, options, nested, PreviewPolicy::Shared(plan))
+}
+
+pub(crate) fn admit_with_protected_partial_preview(
+    scene: &ProductScene,
+    request: &ImageRequest,
+    options: &RaytraceOptions,
+    nested: bool,
+    plan: job::ProtectedPreviewPlan,
+) -> job::Result<Admission> {
+    admit_with_policy(scene, request, options, nested, PreviewPolicy::Protected(plan))
+}
+
+fn admit_with_policy(
+    scene: &ProductScene,
+    request: &ImageRequest,
+    options: &RaytraceOptions,
+    nested: bool,
+    policy: PreviewPolicy,
+) -> job::Result<Admission> {
+    if let PreviewPolicy::Protected(plan) = policy {
+        plan.validate()?;
+        let progressive =
+            options.progressive.ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "protected feedback requires progressive CPU sampling"))?;
+        if plan != job::ProtectedPreviewPlan::new(request.width, request.height, progressive.samples_per_pixel, options.budget)? {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "protected feedback plan differs from actual source sampling or budget"));
+        }
+    }
+    let partial = policy.partial_plan();
+    if let Some(plan) = partial {
+        plan.validate()?;
+        if plan != job::PartialPreviewPlan::new(request.width, request.height)?
+            || options.progressive.is_none()
+            || request.environment.is_some()
+            || request.textures.is_some()
+            || scene.has_transmission()
+        {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview requires the exact CPU progressive source plan"));
+        }
+    }
     options.validate()?;
+    if options.directional_shadow_transmission && nested {
+        return Err(invalid("directional shadow transmission does not support nested media"));
+    }
     if let Some(original) = &request.raytrace {
         original.validate()?;
     }
@@ -161,7 +235,7 @@ pub fn admit(scene: &ProductScene, request: &ImageRequest, options: &RaytraceOpt
         }
     }
     anisotropic_faces::prepare(scene, options, || Ok(()))?;
-    certificates(scene, options)?;
+    certificates(scene, options, nested)?;
     for input in &options.dielectrics {
         if options.reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|v| v.body == input.body_name))
             || options.anisotropic_faces.iter().flatten().any(|v| v.body_index == input.body_index)
@@ -225,8 +299,16 @@ pub fn admit(scene: &ProductScene, request: &ImageRequest, options: &RaytraceOpt
     let n = usize::try_from(a.triangles).map_err(|_| error(TraceError::MemoryLimit))?;
     let film_bytes = if let Some(progressive) = options.progressive {
         let checkpoint = a.encoded_limit.checked_add(job::FRAME_METADATA_BYTES).ok_or_else(|| error(TraceError::MemoryLimit))?;
+        let previews = if let Some(plan) = partial {
+            plan.additional_bytes()?
+        } else {
+            u64::from(progressive.checkpoint_slots())
+                .checked_mul(checkpoint)
+                .and_then(|bytes| bytes.checked_add(if progressive.checkpoint_slots() == 0 { 0 } else { 1024 }))
+                .ok_or_else(|| error(TraceError::MemoryLimit))?
+        };
         PrimaryFilm::required_bytes(request.width, request.height, progressive, options.budget)?
-            .checked_add(u64::from(progressive.preview_count()).checked_mul(checkpoint).ok_or_else(|| error(TraceError::MemoryLimit))?)
+            .checked_add(previews)
             .and_then(|v| v.checked_add(std::mem::size_of::<Progressive>() as u64))
             .ok_or_else(|| error(TraceError::MemoryLimit))?
     } else {
@@ -287,10 +369,46 @@ struct PendingPixel {
     cursor: TraceCursor,
     hit: Option<super::Hit>,
     visibility: [bool; 8],
+    directional_transmittance: [Vec3; 8],
+    directional_complete: u8,
+    directional_active: bool,
+    directional_required: bool,
     light: usize,
     bounce: u8,
     throughput: Vec3,
     radiance: Vec3,
+}
+
+/// A commit/reset may abandon neither an active connection nor an unfinished rig.
+fn ensure_directional_drained(pending: Option<&PendingPixel>, lights: usize) -> job::Result<()> {
+    if lights > super::lighting::MAX_LIGHTS {
+        return Err(invalid("directional light count exceeds fixed visibility storage"));
+    }
+    let required = ((1u16 << lights) - 1) as u8;
+    if pending.is_some_and(|pending| pending.directional_active || (pending.directional_required && pending.directional_complete != required)) {
+        return Err(invalid("directional visibility connection has not drained"));
+    }
+    Ok(())
+}
+
+fn begin_directional_shadow(
+    owner: &mut dielectric::DirectVisibilityOwner,
+    pending: &mut PendingPixel,
+    ray: Ray,
+    work: &mut WorkBudget,
+    cancel: &CancelToken,
+) -> job::Result<()> {
+    if pending.light >= super::lighting::MAX_LIGHTS || pending.directional_active {
+        return Err(invalid("invalid directional connection start"));
+    }
+    let bit = 1u8 << pending.light;
+    if pending.directional_complete & bit != 0 {
+        return Err(invalid("directional connection already completed"));
+    }
+    pending.directional_required = true;
+    owner.begin(ray, dielectric::MAX_DIRECT_CROSSINGS, work, cancel).map_err(error)?;
+    pending.directional_active = true;
+    Ok(())
 }
 
 /// One reusable, fallibly allocated continuation. The Vec header stays in the
@@ -362,6 +480,9 @@ struct OpticalPath {
 }
 
 struct DielectricPixel {
+    /// A whole Fresnel tree belongs to one absolute camera sample. Fixed paths
+    /// keep None; work quanta and presentation never enter this identity.
+    camera_sample: Option<(usize, u32)>,
     path: OpticalPath,
     stack: [Option<OpticalPath>; MAX_BOUNDARIES as usize + 1],
     stack_len: usize,
@@ -372,10 +493,42 @@ struct DielectricPixel {
     ready: bool,
 }
 
+/// At most2 crossings per certified convex box and1 per certified planar sheet
+/// on a single straight camera segment. Equal indices preserve direction; no
+/// selected opaque reflector may generate another segment. Certificates and
+/// strict parent validation precede this bounded, allocation-free policy.
+fn straight_boundary_limit(options: &RaytraceOptions, certificates: &[Option<Certificate>; MAX_OVERRIDES]) -> job::Result<Option<u8>> {
+    if options.dielectrics.is_empty()
+        || options.dielectrics.iter().any(|input| input.ior != 1.0)
+        || options.reflections.as_ref().is_some_and(|r| !r.bodies.is_empty())
+    {
+        return Ok(None);
+    }
+    let mut limit = 0_u8;
+    for (index, input) in options.dielectrics.iter().enumerate() {
+        let certificate = certificates.get(index).copied().flatten().ok_or_else(|| invalid("missing straight optical certificate"))?;
+        let crossings = match (input.boundary, certificate) {
+            (job::DielectricBoundary::ClosedBox, Certificate::ClosedBox(_)) => 2,
+            (job::DielectricBoundary::ThinSheet, Certificate::ThinSheet) => 1,
+            _ => return Err(invalid("straight optical certificate disagrees with boundary")),
+        };
+        limit = limit.checked_add(crossings).filter(|n| *n <= 16).ok_or_else(|| invalid("straight optical crossing bound exceeds sixteen"))?;
+    }
+    Ok(Some(limit))
+}
+
 /// One fallibly reserved optional slot. Branches do not copy PendingPixel, own
 /// lighting state, encode pixels, or allocate outside the existing job reservation.
 struct OpticalTask {
+    /// None retains the original eight-event branching model unchanged.
+    straight_limit: Option<u8>,
+    /// Captured runtime dielectric policy; fixed and progressive use the same transport.
+    deterministic_tir: bool,
+    /// Actual deterministic continuations CREATED, not completed rays or paths.
+    tir_continuations: u64,
     certificates: [Option<Certificate>; MAX_OVERRIDES],
+    parents: [Option<usize>; MAX_OVERRIDES],
+    nested: bool,
     pending: Option<DielectricPixel>,
 }
 
@@ -383,6 +536,7 @@ impl DielectricPixel {
     fn new(ray: Ray) -> Self {
         Self {
             path: OpticalPath { ray, throughput: Vec3::new(1.0, 1.0, 1.0), medium: None, segment_start: ray.origin(), boundaries: 0, bounce: 0 },
+            camera_sample: None,
             stack: [None; MAX_BOUNDARIES as usize + 1],
             stack_len: 0,
             paths: 1,
@@ -391,6 +545,13 @@ impl DielectricPixel {
             selected: None,
             ready: false,
         }
+    }
+
+    fn check_camera_sample(&self, actual: Option<(usize, u32)>) -> job::Result<()> {
+        if self.camera_sample != actual {
+            return Err(invalid("optical tree differs from its absolute camera sample"));
+        }
+        Ok(())
     }
 
     fn push(&mut self, path: OpticalPath) -> job::Result<()> {
@@ -423,7 +584,8 @@ impl DielectricPixel {
 }
 
 /// Reset only per-hit transport state; retain the shared sum across Fresnel leaves.
-fn resume_optical_path(pending: &mut PendingPixel, path: OpticalPath) {
+fn resume_optical_path(pending: &mut PendingPixel, path: OpticalPath, lights: usize) -> job::Result<()> {
+    ensure_directional_drained(Some(pending), lights)?;
     pending.ray = path.ray;
     pending.throughput = path.throughput;
     pending.bounce = path.bounce;
@@ -436,6 +598,10 @@ fn resume_optical_path(pending: &mut PendingPixel, path: OpticalPath) {
     pending.emission_cursor = 0;
     pending.light = 0;
     pending.visibility = [true; 8];
+    pending.directional_transmittance = [Vec3::ZERO; 8];
+    pending.directional_complete = 0;
+    pending.directional_active = false;
+    pending.directional_required = false;
     pending.punctual_index = 0;
     pending.punctual_shadow = false;
     pending.punctual_ready = false;
@@ -449,17 +615,18 @@ fn resume_optical_path(pending: &mut PendingPixel, path: OpticalPath) {
     pending.environment_sum = Vec3::ZERO;
     pending.environment_cursor = None;
     pending.environment_value = Vec3::ZERO;
+    Ok(())
 }
 
 pub struct ImageTask {
     punctual_diagnostics: job::PunctualDiagnostics,
     progressive: Option<Progressive>,
+    last_pass_boundary: u32,
     optical: Vec<OpticalTask>,
     anisotropic_targets: [Option<PlanarTarget>; 2],
     environment: Option<crate::lighting::environment_input::EnvironmentState>,
-    scene: ProductScene,
+    visibility_owner: dielectric::DirectVisibilityOwner,
     request: ImageRequest,
-    options: RaytraceOptions,
     cancel: CancelToken,
     admission: Admission,
     lights: Lighting,
@@ -500,6 +667,23 @@ pub enum ImagePoll {
     Complete(Vec<u8>),
 }
 
+/// Additive host-only poll; the public legacy ImagePoll contract is unchanged.
+pub(crate) enum PartialImagePoll {
+    Pending(Progress),
+    Complete(Vec<u8>),
+    Preview { png: Vec<u8>, covered: Vec<u32>, completed_passes: u32, updated_prefix: u64 },
+}
+
+pub(crate) enum PartialBegin {
+    Started,
+    Exhausted,
+}
+
+enum ImageAdvance {
+    Legacy(ImagePoll),
+    Partial { png: Vec<u8>, covered: Vec<u32>, completed_passes: u32, updated_prefix: u64 },
+}
+
 impl ImageTask {
     pub fn punctual_diagnostics(&self) -> Option<job::PunctualDiagnostics> {
         (!self.punctual_diagnostics.is_empty()).then_some(self.punctual_diagnostics)
@@ -515,16 +699,93 @@ impl ImageTask {
         options: RaytraceOptions,
         input: Option<crate::lighting::environment_input::EnvironmentInput>,
     ) -> job::Result<Self> {
+        Self::new_with_environment_and_nested(scene, request, cancel, options, input, false)
+    }
+
+    pub(crate) fn new_with_environment_and_nested(
+        scene: ProductScene,
+        request: ImageRequest,
+        cancel: CancelToken,
+        options: RaytraceOptions,
+        input: Option<crate::lighting::environment_input::EnvironmentInput>,
+        nested: bool,
+    ) -> job::Result<Self> {
+        Self::new_with_policy(scene, request, cancel, options, input, nested, PreviewPolicy::Legacy)
+    }
+
+    /// Compatibility helper for the original five regression sources. Activate
+    /// the real serialized production policy before ordinary admission/construction.
+    #[cfg(test)]
+    fn new_with_deterministic_tir(
+        scene: ProductScene,
+        request: ImageRequest,
+        cancel: CancelToken,
+        options: RaytraceOptions,
+        nested: bool,
+    ) -> job::Result<Self> {
+        let mut options = options;
+        options.dielectric_transport = job::CpuDielectricTransport::StrictTir;
+        let mut request = request;
+        request.raytrace = Some(options.clone());
+        Self::new_with_environment_and_nested(scene, request, cancel, options, None, nested)
+    }
+
+    pub(crate) fn new_with_environment_and_nested_and_partial(
+        scene: ProductScene,
+        request: ImageRequest,
+        cancel: CancelToken,
+        options: RaytraceOptions,
+        input: Option<crate::lighting::environment_input::EnvironmentInput>,
+        nested: bool,
+        plan: job::PartialPreviewPlan,
+    ) -> job::Result<Self> {
+        Self::new_with_policy(scene, request, cancel, options, input, nested, PreviewPolicy::Shared(plan))
+    }
+
+    pub(crate) fn new_with_environment_and_nested_and_protected_partial(
+        scene: ProductScene,
+        request: ImageRequest,
+        cancel: CancelToken,
+        options: RaytraceOptions,
+        input: Option<crate::lighting::environment_input::EnvironmentInput>,
+        nested: bool,
+        plan: job::ProtectedPreviewPlan,
+    ) -> job::Result<Self> {
+        Self::new_with_policy(scene, request, cancel, options, input, nested, PreviewPolicy::Protected(plan))
+    }
+
+    fn new_with_policy(
+        scene: ProductScene,
+        request: ImageRequest,
+        cancel: CancelToken,
+        options: RaytraceOptions,
+        input: Option<crate::lighting::environment_input::EnvironmentInput>,
+        nested: bool,
+        policy: PreviewPolicy,
+    ) -> job::Result<Self> {
         cancel.check()?;
-        let mut admission = admit(&scene, &request, &options)?;
+        if options.directional_shadow_transmission && input.is_some() {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "directional shadow transmission does not support HDR environments"));
+        }
+        let mut admission = admit_with_policy(&scene, &request, &options, nested, policy)?;
+        let partial = policy.partial_plan();
         let mut optical = Vec::new();
         if !options.dielectrics.is_empty() {
-            let certificates = certificates(&scene, &options)?;
+            let (certificates, parents) = certificates(&scene, &options, nested)?;
+            let straight_limit = straight_boundary_limit(&options, &certificates)?;
             optical.try_reserve_exact(1).map_err(|_| error(TraceError::AllocationFailed))?;
             if optical.capacity() != 1 {
                 return Err(error(TraceError::MemoryLimit));
             }
-            optical.push(OpticalTask { certificates, pending: None });
+            optical.push(OpticalTask {
+                straight_limit,
+                deterministic_tir: options.dielectric_transport == job::CpuDielectricTransport::StrictTir,
+                tir_continuations: 0,
+                certificates,
+                parents,
+                nested,
+                pending: None,
+            });
         }
         if input.is_some() {
             options.validate_environment_reflections(&scene)?;
@@ -538,7 +799,11 @@ impl ImageTask {
         admission.preparation_bytes = admission.preparation_bytes.checked_add(extra).ok_or_else(|| error(TraceError::MemoryLimit))?;
         let environment = input.map(|e| e.begin()).transpose().map_err(environment_error)?;
         let lights = lighting(&options)?;
-        let mut work = WorkBudget::new(options.budget.limits().max_work_units).map_err(error)?;
+        let mut work = match policy {
+            PreviewPolicy::Protected(plan) => WorkBudget::new_protected(plan),
+            PreviewPolicy::Legacy | PreviewPolicy::Shared(_) => WorkBudget::new(options.budget.limits().max_work_units),
+        }
+        .map_err(error)?;
         let anisotropic_targets = anisotropic_faces::prepare(&scene, &options, || work.tick(&cancel).map_err(error))?;
         let mut effects = Vec::new();
         if let Some(values) = &options.surface_effects {
@@ -601,18 +866,18 @@ impl ImageTask {
             .map(|options| -> job::Result<Progressive> {
                 let bytes = PrimaryFilm::required_bytes(request.width, request.height, options, budget)?;
                 let film = PrimaryFilm::new(request.width, request.height, options, bytes, &cancel, budget)?;
-                Ok(Progressive { film, options, resolving: false, resolve_pixel: 0 })
+                Ok(Progressive { film, options, resolving: false, resolve_pixel: 0, partial_plan: partial, partial: None, last_partial: None })
             })
             .transpose()?;
         Ok(Self {
             punctual_diagnostics: Default::default(),
             progressive,
+            last_pass_boundary: 0,
             optical,
             anisotropic_targets,
             environment,
-            scene,
+            visibility_owner: dielectric::DirectVisibilityOwner::new(scene, options),
             request,
-            options,
             cancel,
             admission,
             lights,
@@ -646,6 +911,12 @@ impl ImageTask {
     pub fn progress(&self) -> Progress {
         let (phase, done, total) = if self.done {
             (Phase::Completed, 1, 1)
+        } else if let Some(partial) = self.progressive.as_ref().and_then(|p| p.partial.as_ref()) {
+            if let Some(encoder) = &self.encoder {
+                (Phase::Encoding, encoder.row() as u64, u64::from(partial.plan.height()))
+            } else {
+                (Phase::Encoding, partial.next as u64, partial.plan.pixels())
+            }
         } else if let Some(e) = &self.encoder {
             (Phase::Encoding, e.row() as u64, self.request.height as u64)
         } else if let Some(progressive) = &self.progressive {
@@ -669,10 +940,11 @@ impl ImageTask {
     }
     fn prepare_one(&mut self) -> job::Result<()> {
         self.work.tick(&self.cancel).map_err(error)?;
-        let Some(body) = self.scene.meshes.get(self.body) else {
+        let Some(body) = self.visibility_owner.source().meshes.get(self.body) else {
             let triangles = std::mem::take(&mut self.triangles);
-            let expected = BvhBuilder::required_bytes(triangles.len(), triangles.capacity(), limits(self.options.budget)).map_err(error)?;
-            let builder = BvhBuilder::new(triangles, limits(self.options.budget), &self.cancel).map_err(error)?;
+            let expected =
+                BvhBuilder::required_bytes(triangles.len(), triangles.capacity(), limits(self.visibility_owner.options().budget)).map_err(error)?;
+            let builder = BvhBuilder::new(triangles, limits(self.visibility_owner.options().budget), &self.cancel).map_err(error)?;
             if builder.admitted_bytes() > expected {
                 return Err(error(TraceError::MemoryLimit));
             }
@@ -718,9 +990,16 @@ impl ImageTask {
         Ok(())
     }
     fn sample_count(&self) -> u8 {
-        self.options.reflections.as_ref().filter(|r| !r.bodies.is_empty()).map_or(1, |r| r.samples)
+        self.visibility_owner.options().reflections.as_ref().filter(|r| !r.bodies.is_empty()).map_or(1, |r| r.samples)
     }
     fn finish_sample(&mut self, radiance: Vec3) -> job::Result<()> {
+        ensure_directional_drained(self.pending.as_ref(), self.lights.lights().len())?;
+        // A Fresnel leaf is not a camera observation. The existing transport
+        // drains every reflected/transmitted branch into one linear sum first.
+        // Reject a premature commit rather than averaging branches into film.
+        if self.progressive.is_some() && self.optical.first().is_some_and(|o| o.pending.is_some()) {
+            return Err(invalid("progressive film cannot commit an undrained optical tree"));
+        }
         if let Some(progressive) = &mut self.progressive {
             if self.primary_coverage > 1 {
                 return Err(invalid("progressive camera sample has duplicate primary coverage"));
@@ -734,7 +1013,7 @@ impl ImageTask {
             self.pixel += 1;
             return Ok(());
         }
-        if self.options.primary_samples != 1 {
+        if self.visibility_owner.options().primary_samples != 1 {
             return self.finish_spatial_sample(radiance);
         }
         // Only the current fixed-centre, nonselected primary path is identical
@@ -757,7 +1036,7 @@ impl ImageTask {
         }
         self.pending.clear();
         if self.sample == self.sample_count() {
-            let display = map_to_display(self.pixel_radiance / self.sample as f64, self.options.exposure_ev).map_err(error)?;
+            let display = map_to_display(self.pixel_radiance / self.sample as f64, self.visibility_owner.options().exposure_ev).map_err(error)?;
             self.pixels.extend_from_slice(&[encode8(display.x), encode8(display.y), encode8(display.z), 255]);
             self.pixel += 1;
             self.sample = 0;
@@ -766,6 +1045,7 @@ impl ImageTask {
         Ok(())
     }
     fn finish_spatial_sample(&mut self, radiance: Vec3) -> job::Result<()> {
+        ensure_directional_drained(self.pending.as_ref(), self.lights.lights().len())?;
         // Same per-R-add finite bound and denominator, including zero/null events.
         self.pixel_radiance += radiance;
         if !bounded_radiance(self.pixel_radiance) {
@@ -789,8 +1069,10 @@ impl ImageTask {
     }
     fn spatial_transition(&mut self) -> job::Result<bool> {
         if self.finish_spatial {
+            ensure_directional_drained(self.pending.as_ref(), self.lights.lights().len())?;
             self.work.tick(&self.cancel).map_err(error)?;
-            self.spatial_radiance += self.pixel_radiance / f64::from(self.sample_count()) / f64::from(self.options.primary_samples);
+            self.spatial_radiance +=
+                self.pixel_radiance / f64::from(self.sample_count()) / f64::from(self.visibility_owner.options().primary_samples);
             if !bounded_radiance(self.spatial_radiance) {
                 return Err(invalid("spatial radiance exceeds finite transport bound"));
             }
@@ -798,16 +1080,23 @@ impl ImageTask {
             self.sample = 0;
             self.spatial = self.spatial.checked_add(1).ok_or_else(|| invalid("spatial sample overflow"))?;
             self.finish_spatial = false;
-            self.emit_spatial_pixel = self.spatial == self.options.primary_samples;
+            self.emit_spatial_pixel = self.spatial == self.visibility_owner.options().primary_samples;
             return Ok(true);
         }
         if self.emit_spatial_pixel {
+            ensure_directional_drained(self.pending.as_ref(), self.lights.lights().len())?;
             self.work.tick(&self.cancel).map_err(error)?;
-            let attempts = u16::from(self.options.primary_samples)
+            let attempts = u16::from(self.visibility_owner.options().primary_samples)
                 .checked_mul(u16::from(self.sample_count()))
                 .filter(|n| *n <= 1024)
                 .ok_or_else(|| invalid("spatial coverage bound"))?;
-            let rgba = composite_spatial(self.spatial_radiance, self.primary_coverage, attempts, self.request.background, self.options.exposure_ev)?;
+            let rgba = composite_spatial(
+                self.spatial_radiance,
+                u32::from(self.primary_coverage),
+                u32::from(attempts),
+                self.request.background,
+                self.visibility_owner.options().exposure_ev,
+            )?;
             self.cancel.check()?;
             self.pixels.extend_from_slice(&rgba);
             self.pixel += 1;
@@ -820,15 +1109,16 @@ impl ImageTask {
         Ok(false)
     }
     fn pixel_one(&mut self) -> job::Result<()> {
-        if self.options.primary_samples != 1 && self.pending.as_ref().is_some_and(|p| p.light > self.lights.lights().len()) {
+        if self.visibility_owner.options().primary_samples != 1 && self.pending.as_ref().is_some_and(|p| p.light > self.lights.lights().len()) {
             let pending = self.pending.as_ref().ok_or_else(|| invalid("missing reusable primary"))?;
             if pending.light != self.lights.lights().len() + 1
                 || !pending.repeatable_primary
+                || pending.directional_active
                 || pending.bounce != 0
                 || pending.hit.is_none()
                 || self.sample == 0
                 || self.sample >= self.sample_count()
-                || self.spatial >= self.options.primary_samples
+                || self.spatial >= self.visibility_owner.options().primary_samples
                 || self.finish_spatial
                 || self.emit_spatial_pixel
             {
@@ -837,8 +1127,8 @@ impl ImageTask {
             if !pending.surface_ready
                 || pending.surface_cursor != self.effects.len()
                 || pending.emission_cursor != self.emissions.len()
-                || pending.punctual_index != self.options.punctual_lights.as_ref().map_or(0, Vec::len)
-                || pending.area_light != self.options.area_lights.as_ref().map_or(0, Vec::len)
+                || pending.punctual_index != self.visibility_owner.options().punctual_lights.as_ref().map_or(0, Vec::len)
+                || pending.area_light != self.visibility_owner.options().area_lights.as_ref().map_or(0, Vec::len)
                 || pending.punctual_shadow
                 || pending.punctual_ready
                 || pending.area_shadow
@@ -853,20 +1143,25 @@ impl ImageTask {
             // fabricated traversal debit. Check cancel/limit before mutations.
             self.work.tick(&self.cancel).map_err(error)?;
             let bvh = self.bvh.as_ref().ok_or_else(|| invalid("missing reusable primary BVH"))?;
-            let shared = resolved_surface_hit(&PreparedScene { bvh, primitives: &self.looks, source: &self.scene }, pending, &self.effects)?;
+            ensure_directional_drained(Some(pending), self.lights.lights().len())?;
+            let shared = resolved_surface_hit(
+                &PreparedScene { bvh, primitives: &self.looks, source: self.visibility_owner.source() },
+                pending,
+                &self.effects,
+            )?;
             if self.optical.first().is_some_and(|o| o.pending.is_some())
-                || self.options.dielectrics.iter().any(|input| input.body_index == shared.body_index)
+                || self.visibility_owner.options().dielectrics.iter().any(|input| input.body_index == shared.body_index)
             {
                 return Err(invalid("optical primary cannot reuse shading"));
             }
-            if self.options.reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|entry| entry.body == shared.body_name)) {
+            if self.visibility_owner.options().reflections.as_ref().is_some_and(|r| r.bodies.iter().any(|entry| entry.body == shared.body_name)) {
                 return Err(invalid("selected primary cannot reuse shading"));
             }
             self.primary_coverage =
                 self.primary_coverage.checked_add(1).filter(|n| *n <= 1024).ok_or_else(|| invalid("spatial coverage overflow"))?;
             return self.finish_spatial_sample(radiance);
         }
-        if self.options.primary_samples != 1 && self.spatial_transition()? {
+        if self.visibility_owner.options().primary_samples != 1 && self.spatial_transition()? {
             return Ok(());
         }
         let bvh = self.bvh.as_ref().ok_or_else(|| invalid("missing image BVH"))?;
@@ -878,18 +1173,20 @@ impl ImageTask {
             let (ray, repeatable_primary) = if let Some(progressive) = &self.progressive {
                 let [dx, dy] = progressive::variates(progressive.options.seed, self.pixel as u64, progressive.film.samples(), 0);
                 (primary_ray(&self.request, (self.pixel % width) as f64 + dx, (self.pixel / width) as f64 + dy, self.clip).map_err(error)?, false)
-            } else if self.options.primary_samples == 1 {
+            } else if self.visibility_owner.options().primary_samples == 1 {
                 // Preserve the exact legacy centre path, including its reuse proof.
                 (primary_ray(&self.request, (self.pixel % width) as f64 + 0.5, (self.pixel / width) as f64 + 0.5, self.clip).map_err(error)?, true)
             } else {
-                let [dx, dy] = primary_offset(self.options.primary_samples, self.spatial)?;
+                let [dx, dy] = primary_offset(self.visibility_owner.options().primary_samples, self.spatial)?;
                 (primary_ray(&self.request, (self.pixel % width) as f64 + dx, (self.pixel / width) as f64 + dy, self.clip).map_err(error)?, true)
             };
             if let Some(optical) = self.optical.first_mut() {
                 if optical.pending.is_some() {
                     return Err(invalid("previous optical sample was not drained"));
                 }
-                optical.pending = Some(DielectricPixel::new(ray));
+                let mut state = DielectricPixel::new(ray);
+                state.camera_sample = self.progressive.as_ref().map(|p| (self.pixel, p.film.samples()));
+                optical.pending = Some(state);
             }
             self.pending.insert(PendingPixel {
                 surface_cursor: 0,
@@ -915,6 +1212,10 @@ impl ImageTask {
                 cursor: TraceCursor::new(ray, false),
                 hit: None,
                 visibility: [true; 8],
+                directional_transmittance: [Vec3::ZERO; 8],
+                directional_complete: 0,
+                directional_active: false,
+                directional_required: false,
                 light: 0,
                 bounce: 0,
                 throughput: Vec3::new(1.0, 1.0, 1.0),
@@ -924,7 +1225,8 @@ impl ImageTask {
         }
         if let Some(optical) = self.optical.first_mut() {
             let state = optical.pending.as_mut().ok_or_else(|| invalid("missing optical primary state"))?;
-            if state.primary_check < self.options.dielectrics.len() {
+            state.check_camera_sample(self.progressive.as_ref().map(|p| (self.pixel, p.film.samples())))?;
+            if state.primary_check < self.visibility_owner.options().dielectrics.len() {
                 self.work.tick(&self.cancel).map_err(error)?;
                 if let Some(Certificate::ClosedBox(bounds)) = optical.certificates.get(state.primary_check).copied().flatten()
                     && (dielectric::contains(bounds, state.path.ray.origin()) || dielectric::contains(bounds, self.request.camera.eye()))
@@ -934,11 +1236,29 @@ impl ImageTask {
                 state.primary_check += 1;
                 return Ok(());
             }
-            if state.primary_check != self.options.dielectrics.len() {
+            if state.primary_check != self.visibility_owner.options().dielectrics.len() {
                 return Err(invalid("invalid primary certificate cursor"));
             }
         }
-        let scene = PreparedScene { bvh, primitives: &self.looks, source: &self.scene };
+        if self.pending.as_ref().is_some_and(|pending| pending.directional_active) {
+            if !self.visibility_owner.options().directional_shadow_transmission {
+                return Err(invalid("directional cursor active without its runtime mode"));
+            }
+            let result = self.visibility_owner.step(&mut self.work, &self.cancel).map_err(error)?;
+            if let Some(transmittance) = result {
+                let pending = self.pending.as_mut().ok_or_else(|| invalid("missing directional pixel state"))?;
+                if pending.light >= super::lighting::MAX_LIGHTS {
+                    return Err(invalid("directional visibility light index"));
+                }
+                *pending.directional_transmittance.get_mut(pending.light).ok_or_else(|| invalid("directional visibility result index"))? =
+                    transmittance;
+                pending.directional_complete |= 1u8 << pending.light;
+                pending.directional_active = false;
+                pending.light += 1;
+            }
+            return Ok(());
+        }
+        let scene = PreparedScene { bvh, primitives: &self.looks, source: self.visibility_owner.source() };
         let pending = self.pending.as_mut().ok_or_else(|| invalid("missing pixel state"))?;
         let primary_segment =
             pending.bounce == 0 && self.optical.first().and_then(|o| o.pending.as_ref()).is_none_or(|state| state.path.boundaries == 0);
@@ -954,7 +1274,7 @@ impl ImageTask {
                     if let Some(optical) = self.optical.first_mut() {
                         optical.pending = None;
                     }
-                    if self.options.primary_samples != 1 || self.progressive.is_some() {
+                    if self.visibility_owner.options().primary_samples != 1 || self.progressive.is_some() {
                         // A miss is one of S*R attempts, never the completed pixel.
                         return self.finish_sample(Vec3::ZERO);
                     }
@@ -972,7 +1292,7 @@ impl ImageTask {
                     pending.radiance += multiply(pending.throughput, emitted);
                 }
                 if self.environment.is_none()
-                    && let Some(environment) = self.options.environment
+                    && let Some(environment) = self.visibility_owner.options().environment
                 {
                     let [r, g, b] = environment.color;
                     pending.radiance += multiply(pending.throughput, Vec3::new(r, g, b) * environment.intensity);
@@ -983,15 +1303,19 @@ impl ImageTask {
                 }
                 return self.finish_transport_path(radiance);
             };
-            if primary_segment && (self.options.primary_samples != 1 || self.progressive.is_some()) {
+            if primary_segment && (self.visibility_owner.options().primary_samples != 1 || self.progressive.is_some()) {
                 self.primary_coverage =
                     self.primary_coverage.checked_add(1).filter(|n| *n <= 1024).ok_or_else(|| invalid("spatial coverage overflow"))?;
             }
             pending.hit = Some(hit);
             pending.light = 0;
             let shared = scene.resolve_hit(pending.ray, hit).map_err(error)?;
-            let mode =
-                self.options.reflections.as_ref().and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
+            let mode = self
+                .visibility_owner
+                .options()
+                .reflections
+                .as_ref()
+                .and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
             pending.repeatable_primary &= primary_segment && mode.is_none();
             if let Some(optical) = self.optical.first_mut() {
                 let state = optical.pending.as_mut().ok_or_else(|| invalid("missing optical hit state"))?;
@@ -1007,9 +1331,14 @@ impl ImageTask {
                 // effect per following call, before beginning any lighting stage.
                 return Ok(());
             }
-            if self.options.shadows && !self.lights.lights().is_empty() && mode != Some(job::ReflectionMode::Mirror) {
+            if self.visibility_owner.options().shadows && !self.lights.lights().is_empty() && mode != Some(job::ReflectionMode::Mirror) {
                 let light = self.lights.lights().first().ok_or_else(|| invalid("missing first light"))?;
-                pending.cursor = TraceCursor::new(shared.spawn(light.direction()).map_err(error)?, true);
+                let ray = shared.spawn(light.direction()).map_err(error)?;
+                if self.visibility_owner.options().directional_shadow_transmission {
+                    begin_directional_shadow(&mut self.visibility_owner, pending, ray, &mut self.work, &self.cancel)?;
+                } else {
+                    pending.cursor = TraceCursor::new(ray, true);
+                }
                 return Ok(());
             }
             pending.light = self.lights.lights().len();
@@ -1034,16 +1363,32 @@ impl ImageTask {
             }
             pending.surface_ready = true;
             let shared = resolved_surface_hit(&scene, pending, &self.effects)?;
-            let mode =
-                self.options.reflections.as_ref().and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
-            if self.options.shadows && !self.lights.lights().is_empty() && mode != Some(job::ReflectionMode::Mirror) {
+            let mode = self
+                .visibility_owner
+                .options()
+                .reflections
+                .as_ref()
+                .and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
+            if self.visibility_owner.options().shadows && !self.lights.lights().is_empty() && mode != Some(job::ReflectionMode::Mirror) {
                 let light = self.lights.lights().first().ok_or_else(|| invalid("missing first surface light"))?;
-                pending.cursor = TraceCursor::new(shared.spawn(light.direction()).map_err(error)?, true);
+                let ray = shared.spawn(light.direction()).map_err(error)?;
+                if self.visibility_owner.options().directional_shadow_transmission {
+                    begin_directional_shadow(&mut self.visibility_owner, pending, ray, &mut self.work, &self.cancel)?;
+                } else {
+                    pending.cursor = TraceCursor::new(ray, true);
+                }
             } else {
                 pending.light = self.lights.lights().len();
             }
             return Ok(());
         } else if pending.light < self.lights.lights().len() {
+            if self.visibility_owner.options().directional_shadow_transmission {
+                let light = self.lights.lights().get(pending.light).ok_or_else(|| invalid("missing directional light"))?;
+                let shared = resolved_surface_hit(&scene, pending, &self.effects)?;
+                let ray = shared.spawn(light.direction()).map_err(error)?;
+                begin_directional_shadow(&mut self.visibility_owner, pending, ray, &mut self.work, &self.cancel)?;
+                return Ok(());
+            }
             let Some(shadow) = pending.cursor.step(bvh, &mut self.work, &self.cancel).map_err(error)? else {
                 return Ok(());
             };
@@ -1071,28 +1416,44 @@ impl ImageTask {
             }
             return Ok(());
         }
-        if pending.punctual_index < self.options.punctual_lights.as_ref().map_or(0, Vec::len) {
+        if pending.punctual_index < self.visibility_owner.options().punctual_lights.as_ref().map_or(0, Vec::len) {
             let shared = resolved_surface_hit(&scene, pending, &self.effects)?;
-            let mode =
-                self.options.reflections.as_ref().and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
+            let mode = self
+                .visibility_owner
+                .options()
+                .reflections
+                .as_ref()
+                .and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
             let face = self.looks.get(shared.primitive_index).ok_or_else(|| invalid("punctual face missing"))?.face;
-            let target = anisotropic_faces::target_index(&self.options, shared.body_index, face)
+            let target = anisotropic_faces::target_index(self.visibility_owner.options(), shared.body_index, face)
                 .map(|i| self.anisotropic_targets.get(i).copied().flatten().ok_or_else(|| invalid("punctual anisotropic target missing")))
                 .transpose()?;
-            punctual_one(pending, &self.options, bvh, (shared, target, mode), &mut self.work, &self.cancel, &mut self.punctual_diagnostics)?;
+            punctual_one(
+                pending,
+                self.visibility_owner.options(),
+                bvh,
+                (shared, target, mode),
+                &mut self.work,
+                &self.cancel,
+                &mut self.punctual_diagnostics,
+            )?;
             return Ok(());
         }
-        if pending.area_light < self.options.area_lights.as_ref().map_or(0, Vec::len) {
+        if pending.area_light < self.visibility_owner.options().area_lights.as_ref().map_or(0, Vec::len) {
             let shared = resolved_surface_hit(&scene, pending, &self.effects)?;
-            let mode =
-                self.options.reflections.as_ref().and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
+            let mode = self
+                .visibility_owner
+                .options()
+                .reflections
+                .as_ref()
+                .and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
             let face = self.looks.get(shared.primitive_index).ok_or_else(|| invalid("area face missing"))?.face;
-            let target = anisotropic_faces::target_index(&self.options, shared.body_index, face)
+            let target = anisotropic_faces::target_index(self.visibility_owner.options(), shared.body_index, face)
                 .map(|i| self.anisotropic_targets.get(i).copied().flatten().ok_or_else(|| invalid("area anisotropic target missing")))
                 .transpose()?;
             area_one(
                 pending,
-                &self.options,
+                self.visibility_owner.options(),
                 bvh,
                 (shared, target, mode),
                 &mut self.work,
@@ -1100,7 +1461,7 @@ impl ImageTask {
                 area_sample_key(
                     self.pixel as u64,
                     self.spatial,
-                    self.options.primary_samples,
+                    self.visibility_owner.options().primary_samples,
                     self.progressive.as_ref().map_or(0, |progress| progress.film.samples()),
                 )?,
             )?;
@@ -1120,8 +1481,12 @@ impl ImageTask {
         if pending.light == self.lights.lights().len() {
             self.work.tick(&self.cancel).map_err(error)?;
             let shared = resolved_surface_hit(&scene, pending, &self.effects)?;
-            let mode =
-                self.options.reflections.as_ref().and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
+            let mode = self
+                .visibility_owner
+                .options()
+                .reflections
+                .as_ref()
+                .and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
             let view = -pending.ray.direction();
             let geometric = shared.oriented_geometric_normal();
             // Disjoint estimators: selected reflectors use BSDF transport to the environment;
@@ -1156,7 +1521,7 @@ impl ImageTask {
                         .direct_sample_linear_srgb(u, shared.surface, shared.shading_normal, geometric, view)
                         .map_err(environment_error)?;
                     pending.environment_value = sample.contribution_linear_srgb;
-                    if self.options.shadows && sample.contribution_linear_srgb.len2() > 0.0 {
+                    if self.visibility_owner.options().shadows && sample.contribution_linear_srgb.len2() > 0.0 {
                         pending.environment_cursor = Some(TraceCursor::new(shared.spawn(sample.direction).map_err(error)?, true));
                     } else {
                         pending.environment_sum += pending.environment_value;
@@ -1167,33 +1532,49 @@ impl ImageTask {
                 pending.radiance += multiply(pending.throughput, pending.environment_sum / f64::from(environment.samples));
             }
             let face = self.looks.get(shared.primitive_index).ok_or_else(|| invalid("missing captured face"))?.face;
-            let target_index = anisotropic_faces::target_index(&self.options, shared.body_index, face);
+            let target_index = anisotropic_faces::target_index(self.visibility_owner.options(), shared.body_index, face);
             if mode != Some(job::ReflectionMode::Mirror) {
-                let visible = |index: usize, light: Vec3| {
-                    Ok(geometric.dot(light) > 0.0 && *pending.visibility.get(index).ok_or(TraceError::Internal("light visibility"))?)
-                };
-                let direct = if let Some(index) = target_index {
-                    self.anisotropic_targets
-                        .get(index)
-                        .copied()
-                        .flatten()
-                        .ok_or_else(|| invalid("missing certified anisotropic face"))?
-                        .shade(&self.lights, shared.surface, geometric, view, visible)
+                let direct = if self.visibility_owner.options().directional_shadow_transmission {
+                    pending.directional_required = true;
+                    ensure_directional_drained(Some(pending), self.lights.lights().len())?;
+                    self.lights
+                        .shade_linear_transmitted(shared.surface, shared.shading_normal, view, |index, light| {
+                            if geometric.dot(light) <= 0.0 {
+                                return Ok(Vec3::ZERO);
+                            }
+                            if index >= super::lighting::MAX_LIGHTS || pending.directional_complete & (1u8 << index) == 0 {
+                                return Err(TraceError::Internal("directional visibility result is incomplete"));
+                            }
+                            pending.directional_transmittance.get(index).copied().ok_or(TraceError::Internal("directional visibility result index"))
+                        })
                         .map_err(error)?
                 } else {
-                    self.lights.shade_linear(shared.surface, shared.shading_normal, view, visible).map_err(error)?
+                    let visible = |index: usize, light: Vec3| {
+                        Ok(geometric.dot(light) > 0.0 && *pending.visibility.get(index).ok_or(TraceError::Internal("light visibility"))?)
+                    };
+                    if let Some(index) = target_index {
+                        self.anisotropic_targets
+                            .get(index)
+                            .copied()
+                            .flatten()
+                            .ok_or_else(|| invalid("missing certified anisotropic face"))?
+                            .shade(&self.lights, shared.surface, geometric, view, visible)
+                            .map_err(error)?
+                    } else {
+                        self.lights.shade_linear(shared.surface, shared.shading_normal, view, visible).map_err(error)?
+                    }
                 };
                 pending.radiance += multiply(pending.throughput, direct);
             }
-            let max_bounces = self.options.reflections.as_ref().map_or(0, |r| r.max_bounces);
+            let max_bounces = self.visibility_owner.options().reflections.as_ref().map_or(0, |r| r.max_bounces);
             if let Some(mode) = mode.filter(|_| pending.bounce < max_bounces) {
-                let samples = self.options.reflections.as_ref().map_or(1, |r| u64::from(r.samples));
+                let samples = self.visibility_owner.options().reflections.as_ref().map_or(1, |r| u64::from(r.samples));
                 let u = if let Some(progressive) = &self.progressive {
                     progressive::variates(progressive.options.seed, self.pixel as u64, progressive.film.samples(), 0x100 + u64::from(pending.bounce))
-                } else if self.options.primary_samples == 1 {
+                } else if self.visibility_owner.options().primary_samples == 1 {
                     reflection::variates(self.pixel as u64, self.sample as u64, pending.bounce as u64, samples).map_err(error)?
                 } else {
-                    let key = spatial_key(self.pixel as u64, self.spatial, self.options.primary_samples)?;
+                    let key = spatial_key(self.pixel as u64, self.spatial, self.visibility_owner.options().primary_samples)?;
                     reflection::variates(key, self.sample as u64, pending.bounce as u64, samples).map_err(error)?
                 };
                 let sampled = match (mode, target_index) {
@@ -1223,6 +1604,10 @@ impl ImageTask {
                         pending.emission_cursor = 0;
                         pending.light = 0;
                         pending.visibility = [true; 8];
+                        pending.directional_transmittance = [Vec3::ZERO; 8];
+                        pending.directional_complete = 0;
+                        pending.directional_active = false;
+                        pending.directional_required = false;
                         pending.punctual_index = 0;
                         pending.punctual_shadow = false;
                         pending.punctual_ready = false;
@@ -1259,11 +1644,13 @@ impl ImageTask {
     }
     /// Complete a transport branch. Only a drained optical stack completes one R sample.
     fn finish_transport_path(&mut self, radiance: Vec3) -> job::Result<()> {
+        ensure_directional_drained(self.pending.as_ref(), self.lights.lights().len())?;
         if let Some(optical) = self.optical.first_mut() {
             let state = optical.pending.as_mut().ok_or_else(|| invalid("missing optical sample"))?;
+            state.check_camera_sample(self.progressive.as_ref().map(|p| (self.pixel, p.film.samples())))?;
             if state.advance()? {
                 let pending = self.pending.as_mut().ok_or_else(|| invalid("missing optical continuation"))?;
-                resume_optical_path(pending, state.path);
+                resume_optical_path(pending, state.path, self.lights.lights().len())?;
                 return Ok(());
             }
             optical.pending = None;
@@ -1274,6 +1661,7 @@ impl ImageTask {
     /// Each selector and each interface is a separate charged continuation. Traversal has
     /// already yielded with the captured hit, and opaque hits rejoin the shared light stages.
     fn dielectric_hit_one(&mut self) -> job::Result<()> {
+        ensure_directional_drained(self.pending.as_ref(), self.lights.lights().len())?;
         self.work.tick(&self.cancel).map_err(error)?;
         let optical = self.optical.first_mut().ok_or_else(|| invalid("missing optical task"))?;
         let state = optical.pending.as_mut().ok_or_else(|| invalid("missing optical sample"))?;
@@ -1283,25 +1671,38 @@ impl ImageTask {
         }
         let hit = pending.hit.ok_or_else(|| invalid("missing captured optical hit"))?;
         let look = self.looks.get(hit.primitive_index).ok_or_else(|| invalid("missing optical appearance"))?;
-        if let Some(input) = self.options.dielectrics.get(state.selector) {
+        if let Some(input) = self.visibility_owner.options().dielectrics.get(state.selector) {
             let index = state.selector;
             state.selector += 1;
             if input.body_index == look.body_index {
                 state.selected = Some(index);
-                state.selector = self.options.dielectrics.len();
+                state.selector = self.visibility_owner.options().dielectrics.len();
             }
             return Ok(());
         }
-        if state.selector != self.options.dielectrics.len() {
+        if state.selector != self.visibility_owner.options().dielectrics.len() {
             return Err(invalid("invalid optical selector state"));
         }
         let bvh = self.bvh.as_ref().ok_or_else(|| invalid("missing optical BVH"))?;
-        let scene = PreparedScene { bvh, primitives: &self.looks, source: &self.scene };
+        let scene = PreparedScene { bvh, primitives: &self.looks, source: self.visibility_owner.source() };
         // Optics always uses the certified geometric boundary, before optional opaque
         // shading-normal effects. Distance starts before the numerical spawn offset.
-        let shared = scene.resolve_hit(pending.ray, hit).map_err(error)?;
+        let mut shared = scene.resolve_hit(pending.ray, hit).map_err(error)?;
+        let exact_face = if optical.nested {
+            match state.selected.and_then(|index| optical.certificates.get(index).copied().flatten()) {
+                Some(Certificate::ClosedBox(bounds)) => {
+                    let face =
+                        dielectric::exact_box_face(bounds, shared.vertices, shared.geometric_normal, shared.position, pending.ray).map_err(error)?;
+                    shared.position = face.point;
+                    Some(face)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
         if let Some(index) = state.path.medium {
-            let medium = self.options.dielectrics.get(index).ok_or_else(|| invalid("active dielectric medium"))?;
+            let medium = self.visibility_owner.options().dielectrics.get(index).ok_or_else(|| invalid("active dielectric medium"))?;
             let distance = shared.position.dist(state.path.segment_start);
             pending.throughput = multiply(pending.throughput, dielectric::attenuation(medium.absorption_per_mm, distance).map_err(error)?);
             if !bounded_radiance(pending.throughput) {
@@ -1314,17 +1715,26 @@ impl ImageTask {
             if !pending.surface_ready {
                 return Ok(());
             }
-            let mode =
-                self.options.reflections.as_ref().and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
-            if self.options.shadows && !self.lights.lights().is_empty() && mode != Some(job::ReflectionMode::Mirror) {
+            let mode = self
+                .visibility_owner
+                .options()
+                .reflections
+                .as_ref()
+                .and_then(|r| r.bodies.iter().find(|entry| entry.body == shared.body_name).map(|entry| entry.mode));
+            if self.visibility_owner.options().shadows && !self.lights.lights().is_empty() && mode != Some(job::ReflectionMode::Mirror) {
                 let light = self.lights.lights().first().ok_or_else(|| invalid("missing optical opaque light"))?;
-                pending.cursor = TraceCursor::new(shared.spawn(light.direction()).map_err(error)?, true);
+                let ray = shared.spawn(light.direction()).map_err(error)?;
+                if self.visibility_owner.options().directional_shadow_transmission {
+                    begin_directional_shadow(&mut self.visibility_owner, pending, ray, &mut self.work, &self.cancel)?;
+                } else {
+                    pending.cursor = TraceCursor::new(ray, true);
+                }
             } else {
                 pending.light = self.lights.lights().len();
             }
             return Ok(());
         };
-        let medium = self.options.dielectrics.get(index).ok_or_else(|| invalid("selected dielectric medium"))?;
+        let medium = self.visibility_owner.options().dielectrics.get(index).ok_or_else(|| invalid("selected dielectric medium"))?;
         if medium.body_index != shared.body_index || medium.body_name != shared.body_name {
             return Err(invalid("optical captured identity changed"));
         }
@@ -1332,16 +1742,28 @@ impl ImageTask {
         state.path.ray = pending.ray;
         state.path.throughput = pending.throughput;
         state.path.bounce = pending.bounce;
-        if state.path.boundaries == MAX_BOUNDARIES {
-            // Explicit finite-depth preview: unresolved continuation is black, while
-            // already accumulated terms and the other bounded branches remain intact.
-            let radiance = pending.radiance;
-            return self.finish_transport_path(radiance);
+        if let Some(limit) = optical.straight_limit {
+            // The active transmitted path was popped immediately; a nonzero
+            // stack or opaque bounce would invalidate the one-segment proof.
+            // Preserve all real interfaces/Beer/parent checks below. No tint or
+            // environment shortcut and no expansion of the branching stack.
+            if state.path.bounce != 0 || state.stack_len != 0 || state.paths != u16::from(state.path.boundaries) + 1 {
+                return Err(invalid("unexpected branch in certified straight optical transport"));
+            }
+            if state.path.boundaries >= limit {
+                return Err(invalid("certified straight optical crossing bound exceeded"));
+            }
+        } else {
+            if state.path.boundaries == MAX_BOUNDARIES && !optical.deterministic_tir {
+                // Unchanged legacy policy; strict mode must first
+                // distinguish a deterministic TIR from another real split.
+                let radiance = pending.radiance;
+                return self.finish_transport_path(radiance);
+            }
+            if state.path.boundaries > MAX_BOUNDARIES {
+                return Err(invalid("invalid dielectric boundary depth"));
+            }
         }
-        if state.path.boundaries > MAX_BOUNDARIES {
-            return Err(invalid("invalid dielectric boundary depth"));
-        }
-        let next_depth = state.path.boundaries + 1;
         let normal = shared.oriented_geometric_normal();
         let direction = state.path.ray.direction();
         let certificate = optical.certificates.get(index).copied().flatten().ok_or_else(|| invalid("missing dielectric certificate"))?;
@@ -1363,16 +1785,23 @@ impl ImageTask {
                 if boundary_axes > 1 {
                     return Err(invalid("dielectric box edge or corner has an ambiguous interface normal"));
                 }
-                let (incident, transmitted, next_medium) = if shared.front_face {
-                    if state.path.medium.is_some() {
-                        return Err(invalid("nested dielectric entry"));
+                let parent = optical.parents.get(index).copied().ok_or_else(|| invalid("missing dielectric parent"))?;
+                let parent_ior = match parent {
+                    Some(parent) => {
+                        self.visibility_owner.options().dielectrics.get(parent).ok_or_else(|| invalid("missing parent optical material"))?.ior
                     }
-                    (1.0, medium.ior, Some(index))
+                    None => 1.0,
+                };
+                let (incident, transmitted, next_medium) = if shared.front_face {
+                    if state.path.medium != parent {
+                        return Err(invalid("dielectric entry does not match certified parent"));
+                    }
+                    (parent_ior, medium.ior, Some(index))
                 } else {
                     if state.path.medium != Some(index) {
                         return Err(invalid("dielectric exit without matching entry"));
                     }
-                    (medium.ior, 1.0, None)
+                    (medium.ior, parent_ior, parent)
                 };
                 let optics = dielectric::interface(direction, normal, incident, transmitted).map_err(error)?;
                 let f = optics.reflectance;
@@ -1380,8 +1809,48 @@ impl ImageTask {
                 (optics, Vec3::new(f, f, f), Vec3::new(t, t, t), next_medium)
             }
         };
+        let spawn = |direction, reflected| match exact_face {
+            Some(face) => face.spawn(direction, reflected).map_err(error),
+            None => shared.spawn(direction).map_err(error),
+        };
+        if optical.deterministic_tir && state.path.throughput == Vec3::ZERO {
+            // Exact zero after real Beer attenuation owes no outgoing ray or
+            // positive residual; retain all previously accumulated branches.
+            let radiance = pending.radiance;
+            return self.finish_transport_path(radiance);
+        }
+        if optical.deterministic_tir && optics.transmitted.is_none() {
+            if optical.straight_limit.is_some() || optics.reflectance != 1.0 || reflected_weight != Vec3::new(1.0, 1.0, 1.0) {
+                return Err(invalid("strict deterministic TIR disagrees with its interface"));
+            }
+            // REAL ray, normal-aware spawn and next traversal, with the same
+            // already-paid interface tick. Do not push/pop a one-child tree,
+            // consume branch depth/paths511, clear the shared radiance sum or
+            // reset ordinary work. The waiting Fresnel branches remain intact.
+            let path = OpticalPath {
+                ray: spawn(optics.reflected, true)?,
+                throughput: dielectric::multiply(state.path.throughput, reflected_weight),
+                medium: state.path.medium,
+                segment_start: shared.position,
+                boundaries: state.path.boundaries,
+                bounce: pending.bounce,
+            };
+            optical.tir_continuations = optical.tir_continuations.checked_add(1).ok_or_else(|| error(TraceError::WorkLimit))?;
+            state.path = path;
+            state.selector = 0;
+            state.selected = None;
+            state.ready = false;
+            // This creates the real new TraceCursor; its following steps pay
+            // every original BVH/triangle operation and check cancellation.
+            resume_optical_path(pending, path, self.lights.lights().len())?;
+            return Ok(());
+        }
+        if optical.deterministic_tir && optical.straight_limit.is_none() && state.path.boundaries == MAX_BOUNDARIES {
+            return Err(JobError::new(ErrorCode::LimitExceeded, "strict optical non-TIR branch-depth budget exhausted with positive continuation"));
+        }
+        let next_depth = state.path.boundaries + 1;
         state.push(OpticalPath {
-            ray: shared.spawn(optics.reflected).map_err(error)?,
+            ray: spawn(optics.reflected, true)?,
             throughput: dielectric::multiply(state.path.throughput, reflected_weight),
             medium: state.path.medium,
             segment_start: shared.position,
@@ -1390,7 +1859,7 @@ impl ImageTask {
         })?;
         if let Some(direction) = optics.transmitted {
             state.push(OpticalPath {
-                ray: shared.spawn(direction).map_err(error)?,
+                ray: spawn(direction, false)?,
                 throughput: dielectric::multiply(state.path.throughput, transmitted_weight),
                 medium: next_medium,
                 segment_start: shared.position,
@@ -1417,12 +1886,27 @@ impl ImageTask {
     }
 
     fn release_completed_work(&mut self) -> job::Result<()> {
+        ensure_directional_drained(self.pending.as_ref(), self.lights.lights().len())?;
+        let bounds = self.visibility_owner.source().bounds;
+        let old = self.visibility_owner.options();
+        let options = RaytraceOptions {
+            dielectric_transport: old.dielectric_transport,
+            directional_shadow_transmission: old.directional_shadow_transmission,
+            budget: old.budget,
+            progressive: old.progressive,
+            primary_samples: old.primary_samples,
+            area_samples: old.area_samples,
+            seed: old.seed,
+            preset: old.preset,
+            exposure_ev: old.exposure_ev,
+            shadows: old.shadows,
+            ..Default::default()
+        };
+        self.visibility_owner = dielectric::DirectVisibilityOwner::new(ProductScene { meshes: Vec::new(), bounds }, options);
         self.done = true;
         self.progressive = None;
         self.anisotropic_targets = [None, None];
-        self.options.anisotropic_faces = [None, None];
         self.environment = None;
-        self.scene.meshes = Vec::new();
         self.looks = Vec::new();
         self.bvh = None;
         self.builder = None;
@@ -1430,20 +1914,181 @@ impl ImageTask {
         self.pixels = Vec::new();
         self.pending.release();
         self.request.raytrace = None;
-        self.options.lights = None;
-        self.options.emissions = None;
         self.emissions = Vec::new();
-        self.options.surface_effects = None;
-        self.options.dielectrics = Vec::new();
-        self.options.environment = None;
         self.optical = Vec::new();
         self.effects = Vec::new();
-        self.options.punctual_lights = None;
-        self.options.area_lights = None;
-        self.options.reflections = None;
         self.lights = Lighting::new(Vec::new()).map_err(error)?;
         self.encoder = None;
         Ok(())
+    }
+
+    pub(crate) fn protected_preview_report(&self) -> Option<job::ProtectedPreviewReport> {
+        self.work.protected_report()
+    }
+
+    pub(crate) fn partial_preview_ready(&self, plan: job::PartialPreviewPlan) -> job::Result<bool> {
+        self.cancel.check()?;
+        plan.validate()?;
+        if (plan.source_width(), plan.source_height()) != (self.request.width, self.request.height) {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview source dimensions changed"));
+        }
+        let Some(progressive) = &self.progressive else { return Ok(false) };
+        if progressive.partial_plan != Some(plan) {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview plan differs from the task policy"));
+        }
+        if self.done
+            || !progressive.film.ready()
+            || !self.pending.is_none()
+            || self.optical.first().is_some_and(|o| o.pending.is_some())
+            || self.encoder.is_some()
+            || progressive.partial.is_some()
+            || progressive.resolving
+            || !self.pixels.is_empty()
+        {
+            return Ok(false);
+        }
+        let frontier = progressive.film.partial_frontier()?;
+        if frontier.completed_passes >= progressive.options.samples_per_pixel {
+            return Ok(false);
+        }
+        let safe = if frontier.updated_prefix == 0 {
+            frontier.completed_passes > 0 && self.pixel == frontier.pixels
+        } else {
+            self.pixel == frontier.updated_prefix
+        };
+        if !safe {
+            return Ok(false);
+        }
+        if self.work.protected.is_some() && !self.work.protected_ready(committed_frontier(frontier)?).map_err(error)? {
+            return Ok(false);
+        }
+        progressive::represented_changed(plan, progressive.last_partial, frontier)
+    }
+
+    pub(crate) fn completed_pass_preview_ready(&self, plan: job::PartialPreviewPlan) -> job::Result<Option<u32>> {
+        if self.work.protected.is_none() || !self.partial_preview_ready(plan)? {
+            return Ok(None);
+        }
+        let frontier = self.progressive.as_ref().ok_or_else(|| invalid("missing progressive film"))?.film.partial_frontier()?;
+        Ok((frontier.updated_prefix == 0 && frontier.completed_passes > 0).then_some(frontier.completed_passes))
+    }
+
+    /// Host must already hold its one in-flight credit. No host lease or clock
+    /// lives here; an insufficient optional debit does not mutate trace state.
+    pub(crate) fn begin_partial_preview(&mut self, plan: job::PartialPreviewPlan) -> job::Result<PartialBegin> {
+        if !self.partial_preview_ready(plan)? {
+            if self.protected_preview_report().is_some_and(|report| report.quota_exhausted) {
+                return Ok(PartialBegin::Exhausted);
+            }
+            return Err(JobError::new(ErrorCode::InvalidRequest, "partial preview requires a fresh safe completed pixel"));
+        }
+        let frontier = self.progressive.as_ref().ok_or_else(|| invalid("missing progressive film"))?.film.partial_frontier()?;
+        if self.work.protected.is_some() {
+            if !self.work.charge_presentation(committed_frontier(frontier)?, &self.cancel).map_err(error)? {
+                return Err(JobError::new(ErrorCode::InvalidRequest, "protected snapshot has no reached unconsumed milestone"));
+            }
+        } else {
+            let units = plan.snapshot_work()?;
+            if self.work.remaining() < units {
+                return Ok(PartialBegin::Exhausted);
+            }
+            self.work.charge(units, &self.cancel).map_err(error)?;
+        }
+        let count = usize::try_from(plan.pixels()).map_err(|_| error(TraceError::MemoryLimit))?;
+        let mut covered = Vec::new();
+        covered.try_reserve_exact(count).map_err(|_| error(TraceError::AllocationFailed))?;
+        if covered.capacity() != count {
+            return Err(error(TraceError::MemoryLimit));
+        }
+        self.cancel.check()?;
+        let progressive = self.progressive.as_mut().ok_or_else(|| invalid("missing progressive film"))?;
+        progressive.partial = Some(progressive::PartialResolve { plan, frontier, resume_pixel: self.pixel, next: 0, covered });
+        Ok(PartialBegin::Started)
+    }
+
+    /// One prepaid representative resolve, encoder setup, or encoding row.
+    /// Work was debited before allocation; cancel/continuation bounds remain real.
+    fn partial_preview_one(&mut self) -> job::Result<Option<ImageAdvance>> {
+        self.cancel.check()?;
+        let (plan, frontier, resume_pixel, next) = {
+            let partial = self.progressive.as_ref().and_then(|p| p.partial.as_ref()).ok_or_else(|| invalid("missing partial resolve state"))?;
+            (partial.plan, partial.frontier, partial.resume_pixel, partial.next)
+        };
+        let count = usize::try_from(plan.pixels()).map_err(|_| error(TraceError::MemoryLimit))?;
+        if next < count {
+            let index = plan.source_index(next)?;
+            let value = self.progressive.as_ref().ok_or_else(|| invalid("missing partial film"))?.film.partial_pixel(index)?;
+            let (rgba, covered) = match value {
+                crate::film::primary::PartialPixel::Unknown => ([0; 4], 0),
+                crate::film::primary::PartialPixel::Sampled { linear_premultiplied, covered, count } => {
+                    let [r, g, b] = linear_premultiplied;
+                    (
+                        composite_spatial(Vec3::new(r, g, b), covered, count, self.request.background, self.visibility_owner.options().exposure_ev)?,
+                        covered,
+                    )
+                }
+            };
+            if next.checked_mul(4) != Some(self.pixels.len()) {
+                return Err(invalid("partial RGBA cursor mismatch"));
+            }
+            self.cancel.check()?;
+            let partial = self.progressive.as_mut().and_then(|p| p.partial.as_mut()).ok_or_else(|| invalid("missing partial cell state"))?;
+            if partial.covered.len() != next || partial.covered.capacity() != count {
+                return Err(invalid("partial coverage cursor or capacity mismatch"));
+            }
+            self.pixels.extend_from_slice(&rgba);
+            partial.covered.push(covered);
+            partial.next += 1;
+            return Ok(None);
+        }
+        if next != count {
+            return Err(invalid("partial display cursor exceeded its plan"));
+        }
+        if self.encoder.is_none() {
+            let limit = plan.encoded_limit()?;
+            let capacity = usize::try_from(limit).map_err(|_| error(TraceError::MemoryLimit))?;
+            let mut output = Vec::new();
+            output.try_reserve_exact(capacity).map_err(|_| error(TraceError::AllocationFailed))?;
+            if output.capacity() != capacity {
+                return Err(error(TraceError::MemoryLimit));
+            }
+            self.cancel.check()?;
+            self.encoder = Some(job::encoding::PngEncoding::with_output(plan.width(), plan.height(), limit, self.cancel.clone(), output)?);
+            return Ok(None);
+        }
+        let png = self.encoder.as_mut().ok_or_else(|| invalid("missing partial encoder"))?.step(&self.pixels)?;
+        let Some(png) = png else { return Ok(None) };
+        self.cancel.check()?;
+        let progressive = self.progressive.as_mut().ok_or_else(|| invalid("missing completed partial film"))?;
+        if progressive.film.partial_frontier()? != frontier || self.pixel != resume_pixel || !self.pending.is_none() {
+            return Err(invalid("partial snapshot changed its captured sample frontier"));
+        }
+        let partial = progressive.partial.take().ok_or_else(|| invalid("missing completed partial output"))?;
+        if partial.covered.len() != count || partial.covered.capacity() != count {
+            return Err(invalid("partial covered output differs from its plan"));
+        }
+        let updated_prefix = u64::try_from(frontier.updated_prefix).map_err(|_| error(TraceError::MemoryLimit))?;
+        progressive.last_partial = Some(frontier);
+        self.encoder = None;
+        self.pixels.clear();
+        // Preserve the complete-pass sentinel too: after host hashing, the
+        // ordinary continuation must still charge its tick before P -> 0.
+        self.pixel = resume_pixel;
+        Ok(Some(ImageAdvance::Partial { png, covered: partial.covered, completed_passes: frontier.completed_passes, updated_prefix }))
+    }
+
+    pub(crate) fn step_with_partial_previews(&mut self, units: usize) -> job::Result<PartialImagePoll> {
+        if self.progressive.as_ref().is_none_or(|p| p.partial_plan.is_none()) {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "partial polling requires the CPU partial policy"));
+        }
+        match self.advance_image(units)? {
+            ImageAdvance::Legacy(ImagePoll::Pending(progress)) => Ok(PartialImagePoll::Pending(progress)),
+            ImageAdvance::Legacy(ImagePoll::Complete(png)) => Ok(PartialImagePoll::Complete(png)),
+            ImageAdvance::Partial { png, covered, completed_passes, updated_prefix } => {
+                Ok(PartialImagePoll::Preview { png, covered, completed_passes, updated_prefix })
+            }
+            ImageAdvance::Legacy(ImagePoll::Preview { .. }) => Err(invalid("partial policy produced a legacy checkpoint")),
+        }
     }
 
     fn resolve_progressive_one(&mut self) -> job::Result<()> {
@@ -1452,7 +2097,13 @@ impl ImageTask {
         let count = self.request.width as usize * self.request.height as usize;
         if progressive.resolve_pixel < count {
             let (rgb, covered, samples) = progressive.film.pixel(progressive.resolve_pixel)?;
-            let rgba = composite_spatial(Vec3::new(rgb[0], rgb[1], rgb[2]), covered, samples, self.request.background, self.options.exposure_ev)?;
+            let rgba = composite_spatial(
+                Vec3::new(rgb[0], rgb[1], rgb[2]),
+                covered,
+                samples,
+                self.request.background,
+                self.visibility_owner.options().exposure_ev,
+            )?;
             self.cancel.check()?;
             self.pixels.extend_from_slice(&rgba);
             progressive.resolve_pixel += 1;
@@ -1478,12 +2129,26 @@ impl ImageTask {
     /// At most four continuations/encoding rows. One cumulative work budget spans
     /// geometry preparation, every absolute camera sample and every checkpoint.
     pub fn step_with_previews(&mut self, units: usize) -> job::Result<ImagePoll> {
+        if self.progressive.as_ref().is_some_and(|p| p.partial_plan.is_some()) {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "partial CPU tasks require their additive internal poll"));
+        }
+        match self.advance_image(units)? {
+            ImageAdvance::Legacy(poll) => Ok(poll),
+            ImageAdvance::Partial { .. } => Err(invalid("legacy policy produced a partial snapshot")),
+        }
+    }
+
+    fn advance_image(&mut self, units: usize) -> job::Result<ImageAdvance> {
         self.cancel.check()?;
         if units == 0 || units > 16384 || self.done {
             return Err(JobError::new(ErrorCode::InvalidRequest, "invalid raytrace step or completed task"));
         }
         for _ in 0..units.min(4) {
-            if self.progressive.as_ref().is_some_and(|p| !p.film.ready()) {
+            if self.progressive.as_ref().is_some_and(|p| p.partial.is_some()) {
+                if let Some(preview) = self.partial_preview_one()? {
+                    return Ok(preview);
+                }
+            } else if self.progressive.as_ref().is_some_and(|p| !p.film.ready()) {
                 self.progressive
                     .as_mut()
                     .ok_or_else(|| invalid("missing progressive initialization"))?
@@ -1508,11 +2173,11 @@ impl ImageTask {
                             self.encoder = None;
                             self.pixels.clear();
                             self.pixel = 0;
-                            return Ok(ImagePoll::Preview { png, samples_per_pixel });
+                            return Ok(ImageAdvance::Legacy(ImagePoll::Preview { png, samples_per_pixel }));
                         }
                     }
                     self.release_completed_work()?;
-                    return Ok(ImagePoll::Complete(png));
+                    return Ok(ImageAdvance::Legacy(ImagePoll::Complete(png)));
                 }
             } else if self.progressive.as_ref().is_some_and(|p| p.resolving) {
                 self.resolve_progressive_one()?;
@@ -1526,9 +2191,14 @@ impl ImageTask {
             } else if self.bvh.is_some() {
                 if self.pixel == self.request.width as usize * self.request.height as usize {
                     if let Some(progressive) = &mut self.progressive {
-                        self.work.tick(&self.cancel).map_err(error)?;
                         let samples = progressive.film.samples();
-                        if samples == progressive.options.samples_per_pixel || samples.is_power_of_two() {
+                        if progressive.partial_plan.is_some() && samples < progressive.options.samples_per_pixel && samples > self.last_pass_boundary
+                        {
+                            self.last_pass_boundary = samples;
+                            return Ok(ImageAdvance::Legacy(ImagePoll::Pending(self.progress())));
+                        }
+                        self.work.tick(&self.cancel).map_err(error)?;
+                        if samples == progressive.options.samples_per_pixel || progressive.partial_plan.is_none() {
                             progressive.resolving = true;
                         } else {
                             self.pixel = 0;
@@ -1557,7 +2227,7 @@ impl ImageTask {
                 self.prepare_one()?;
             }
         }
-        Ok(ImagePoll::Pending(self.progress()))
+        Ok(ImageAdvance::Legacy(ImagePoll::Pending(self.progress())))
     }
 }
 /// Apply the already selected deterministic effect to the shared opaque hit.
@@ -1616,15 +2286,30 @@ fn area_sample_key(pixel: u64, spatial: u8, spatial_samples: u8, film_sample: u3
     if spatial_samples == 1 && film_sample == 0 {
         return Ok(pixel);
     }
-    pixel
-        .checked_mul(u64::from(job::MAX_CPU_SAMPLES_PER_PIXEL) * 16)
-        .and_then(|key| key.checked_add(u64::from(film_sample) * 16 + u64::from(spatial)))
-        .map(|key| key ^ 0x4152_4541_5341_4d50)
-        .ok_or_else(|| invalid("area-light sample identity overflow"))
+    if film_sample < 4096 {
+        // Preserve every historical ordinal and fixed-primary key exactly.
+        return pixel
+            .checked_mul(4096 * 16)
+            .and_then(|key| key.checked_add(u64::from(film_sample) * 16 + u64::from(spatial)))
+            .map(|key| key ^ 0x4152_4541_5341_4d50)
+            .ok_or_else(|| invalid("area-light sample identity overflow"));
+    }
+    if pixel >= (1_u64 << 26) || film_sample >= (1_u32 << 20) {
+        return Err(invalid("area-light extended sample identity exceeds its fields"));
+    }
+    let mode = match spatial_samples {
+        1 => 0_u64,
+        4 => 1,
+        16 => 2,
+        _ => return Err(invalid("area-light primary mode")),
+    };
+    // Separate extended ordinals from old keys and reserve ten low bits for
+    // the existing light/emitter RNG offsets. No target/budget/cadence key.
+    Ok((1_u64 << 63) | (pixel << 36) | (u64::from(film_sample) << 16) | (mode << 14) | (u64::from(spatial) << 10))
 }
 
-fn composite_spatial(premultiplied: Vec3, covered: u16, attempts: u16, background: [u8; 3], exposure: f64) -> job::Result<[u8; 4]> {
-    if attempts == 0 || u32::from(attempts) > job::MAX_CPU_SAMPLES_PER_PIXEL || covered > attempts || !bounded_radiance(premultiplied) {
+fn composite_spatial(premultiplied: Vec3, covered: u32, attempts: u32, background: [u8; 3], exposure: f64) -> job::Result<[u8; 4]> {
+    if attempts == 0 || attempts > job::MAX_CPU_SAMPLES_PER_PIXEL || covered > attempts || !bounded_radiance(premultiplied) {
         return Err(invalid("invalid spatial coverage/radiance"));
     }
     if covered == 0 {

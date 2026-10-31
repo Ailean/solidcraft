@@ -398,3 +398,7 @@ pub(super) fn reversed_param(p: &Value, key: &str, cmd: &str) -> Result<bool> {
         serde_json::from_value(value.clone()).map_err(|_| crate::params::bad(cmd, format!("`{key}` must be true or false")))
     })
 }
+
+pub(crate) fn prepare_interactive(s: &crate::Session, params: &serde_json::Value) -> crate::Result<crate::render_interactive::Prepared> {
+    render::prepare_interactive(s, params)
+}

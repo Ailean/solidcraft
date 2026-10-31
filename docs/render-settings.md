@@ -117,7 +117,7 @@ and full emitter sampling remain the image renderer's responsibility.
 | `camera` | Existing `Camera::default()` | Snapshot of target, yaw, pitch, roll, distance, fov and up; mm/radians, existing Z-up default |
 | `width`, `height` | 1024, 768 | Positive, each at most 4096; product at most 4,194,304 pixels |
 | `format` | `png` | R1 output format (`png` / `exr`); saving EXR does not add an encoder |
-| `exposure_ev` | 0 | One exposure authority: raster requires 0; CPU raytrace accepts -16 through 16; GPU path accepts -32 through 32. Legacy setups retain -32 through 32. |
+| `exposure_ev` | 0 | One exposure authority: Raster accepts -32 through 32; CPU raytrace accepts -32 through 32; GPU path accepts -32 through 32. Legacy setups retain -32 through 32. |
 | `environment_rotation` | 0 | Legacy finite radians, magnitude at most 1,000,000. A typed `job` requires 0. |
 | `environment_intensity` | 1 | Legacy finite value, 0 through 100. A typed `job` requires 1. |
 | `background` | [236, 240, 245] | Three sRGB byte values; display backplate, independent of illumination |
@@ -130,10 +130,15 @@ are trimmed, nonempty, at most 128 UTF-8 bytes, without control characters. A do
 has at most 32 setups. Validation also runs during document deserialization.
 
 The raster product-image executor (`render.preflight` / `render.start` without `progressive`)
-doesn't apply exposure or the environment controls. A setup that sets them still renders there;
-the reply's `ignored_controls` lists the ones that render leaves out (for example
-`["exposure_ev"]`). A raytrace request with them is refused; progressive rendering applies the
-exposure, and a saved job passes it to its executor.
+applies the existing `exposure_ev` to shaded product colour, preserving EV0 exactly.
+PBR and explicit/weighted studio paths scale linear radiance by 2^EV before their
+single Reinhard map and sRGB encoding. The plain historical scalar shader already
+returns clamped display-linear shading here: it is scaled before its original
+encoding without adding Reinhard or recovering clipped highlights. Backplate,
+alpha, framing and geometry remain unchanged. `ignored_controls` still reports
+unsupported legacy environment controls, but never lists applied exposure.
+CPU and GPU keep their existing exposure authorities; the Raster-only resolved
+request scalar refuses other producers. Model preview is a separate UI/GPU path.
 
 ## Complete numerical job intent
 
@@ -143,9 +148,24 @@ are millimetres, angles are radians and light colours/radiances are linear RGB.
 
 | Method | Saved fields | Main limits and defaults |
 |---|---|---|
-| `raster` | `transparent_background` | Defaults to false; no nonzero exposure or raytrace controls |
+| `raster` | `transparent_background`, optional `lights` | Transparency defaults to false. Omitted/null lights retain the original fixed studio; `lights: []` is explicitly dark. At most eight hard directional sources; exposure uses the existing common field and raytrace controls remain unsupported. |
 | `cpu_raytrace` | `options`: optional `progressive`, `primary_samples`, `preset`, `lights`, `punctual_lights`, `area_lights`, `area_samples`, `seed`, `shadows`, constant `environment`, embedded `hdr` | Primary samples 1/4/16 (default 1); shadows true; optional progressive/lists/preset/environment/HDR absent. At most 8 directional, 8 point/spot and 4 rectangular lights; progressive has the narrower contract below. |
 | `gpu_path` | `transparent_background`, `options`: `samples`, `max_depth`, `seed`, `tone_map`, `denoise`, `lens`, `lighting`, sky `environment`, embedded `hdr` | Samples 1..4096 (default 64), depth 1..16 (default 8), seed u32 (default 0), Reinhard tone map, denoise false, optional values absent |
+
+Raster sources use `{direction:[x,y,z], color:[linear r,g,b], intensity:number}`.
+Directions point towards the source, are finite/nonzero and bounded by 1e9 per
+component; linear RGB is 0..1 and relative intensity is 0..64. Saved values are
+not normalized or display-encoded. Existing `render.lights.*` editing commands
+persist directional edits in the Raster job. Point/spot/area and finite-disk sun
+controls remain unsupported, including softness, position, falloff and radiance
+edits. This is schematic opaque direct lighting and scalar alpha blending, with
+no shadows, HDRI, physical glass or indirect transport.
+
+A saved explicit Raster rig is authoritative: a simultaneous runtime
+`raster_lights` key, including null, refuses instead of overriding saved intent.
+Visibility filters a rendering copy; saving/reopening retains the authored rig.
+The new saved field uses a pending design-format marker, without manual changes
+to shared format numbers. Legacy Raster jobs omit the field unchanged.
 
 CPU `preset` and explicit `lights` are mutually exclusive. An omitted/null light
 list remains unspecified; `lights: []` explicitly removes the default directional
@@ -159,12 +179,21 @@ validation contracts.
 
 CPU `progressive: {samples_per_pixel, seed}` stores bounded camera accumulation
 using the existing CPU transport. An absent/null value preserves fixed AA; an
-empty object defaults to 16 samples and seed 0. Samples are 1..64 and the seed is
-u32. `primary_samples` must be 1, output is at most 1,048,576 pixels, and
-`width × height × samples_per_pixel` is at most 16,777,216. Saving checks these
-limits without a render host. Area/LED lights, dielectric and anisotropic-face
-overrides are refused in this mode; the fixed CPU route retains them. Embedded
-HDR and one setup exposure remain compatible. See
+empty object defaults to 16 samples and seed 0. The seed is u32 and
+`primary_samples` must be 1. In the coordinated source proposal, per-pixel targets
+are 1..64 for omitted/explicit Compact, 1..1024 for Studio and 1..1,048,576 for
+explicit Workstation. Each remains subject to its profile's unchanged dimensions,
+pixels, total camera-sample and other admission limits; see
+[CPU resource profiles](render-cpu-resource-profiles.md). The compatibility
+Compact limits remain 1,048,576 progressive pixels and 16,777,216 total camera
+samples. Saving validates the selected intersection without a render host;
+reopen preserves the explicit target, seed and budget rather than clamping intent.
+Snapshots, checkpoint leases and the runtime retention-skip counter are not
+saved fields. These source changes await integrated validation/native acceptance.
+Area/LED direct lights retain the existing four
+shared rectangle slots, emitter-sample counts and power normalization. Dielectric
+and anisotropic-face overrides remain refused; the fixed CPU route retains them.
+Embedded HDR and one setup exposure remain compatible. See
 [CPU progressive sampling](render-cpu-progressive.md) for reflection limits,
 work admission and provisional/final publication. The top-level runtime
 `progressive: true` continues to select GPU.
@@ -274,3 +303,18 @@ the setup stores image configuration, not material assignments.
 
 No new third-party dependency or asset is introduced. `doc` depends on the existing
 pure `render` crate for its shared camera and R1 identifiers, within the L2 → L1 rule.
+
+### Saved CPU dielectric policy
+
+CPU `job.options.dielectric_transport` accepts `legacy_bounded` or `strict_tir`.
+Missing/default values retain Legacy and are omitted on serialization. The UI
+edits that CPU field and preserves it on Save, reopen, load and request capture;
+there is no common RenderSetup policy field or implicit renderer/profile change.
+The format records this new meaning through its own pending change. It does not
+make captured body identities or temporary optical/material bindings portable.
+
+Strict transport continues deterministic internal glass reflections and errors
+on an unresolved positive non-TIR depth tail. Unsupported selected opaque
+reflections, effects and geometry remain explicit refusals, with authored intent
+preserved. The ordinary command/host validation still applies to each captured
+request; Check is not a promise of successful tracing or a memory reservation.

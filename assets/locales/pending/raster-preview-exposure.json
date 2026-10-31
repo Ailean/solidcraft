@@ -1,0 +1,47 @@
+{
+  "ar": {
+    "render.preview_environment_fixed": "تتطلب معاينة النموذج دوران بيئة بقيمة 0 وشدة بقيمة 1.",
+    "render.raster_exposure_help": "يضبط تعريض التصيير النقطي من ‎−32 إلى 32 EV بعد التظليل. يحافظ الصفر على الاستجابة الحالية، دون تغيير الأضواء أو المواد.",
+    "render.raster_exposure_invalid": "يجب أن يكون تعريض التصيير النقطي قيمة محدودة بين ‎−32 و32 EV."
+  },
+  "de": {
+    "render.preview_environment_fixed": "Die Modellvorschau benötigt eine Umgebungsdrehung von 0 und eine Intensität von 1.",
+    "render.raster_exposure_help": "Passt die Rasterbelichtung nach der Schattierung von −32 bis 32 EV an. Null erhält die bisherige Darstellung; Licht und Materialien bleiben unverändert.",
+    "render.raster_exposure_invalid": "Die Rasterbelichtung muss endlich sein und zwischen −32 und 32 EV liegen."
+  },
+  "en": {
+    "render.preview_environment_fixed": "Model Preview requires environment rotation 0 and intensity 1.",
+    "render.raster_exposure_help": "Adjusts Raster exposure from −32 to 32 EV after shading. Zero preserves the current response; lights and materials stay unchanged.",
+    "render.raster_exposure_invalid": "Raster exposure must be finite and between −32 and 32 EV."
+  },
+  "es": {
+    "render.preview_environment_fixed": "La vista previa del modelo requiere una rotación del entorno de 0 y una intensidad de 1.",
+    "render.raster_exposure_help": "Ajusta la exposición Raster de −32 a 32 EV después del sombreado. Cero conserva la respuesta actual; no cambia luces ni materiales.",
+    "render.raster_exposure_invalid": "La exposición Raster debe ser finita y estar entre −32 y 32 EV."
+  },
+  "he": {
+    "render.preview_environment_fixed": "תצוגת המודל המקדימה מחייבת סיבוב סביבה של 0 ועוצמה של 1.",
+    "render.raster_exposure_help": "התאמת חשיפת רסטר בין ‎−32 ל־32 EV לאחר ההצללה. אפס שומר על התוצאה הנוכחית; התאורה והחומרים אינם משתנים.",
+    "render.raster_exposure_invalid": "חשיפת הרסטר חייבת להיות סופית ובטווח שבין ‎−32 ל־32 EV."
+  },
+  "ja": {
+    "render.preview_environment_fixed": "モデルプレビューでは、環境の回転を 0、強度を 1 にしてください。",
+    "render.raster_exposure_help": "シェーディング後のラスター露出を −32～32 EV で調整します。0 は現在の表示を維持し、ライトやマテリアルは変更しません。",
+    "render.raster_exposure_invalid": "ラスター露出は −32～32 EV の有限値にしてください。"
+  },
+  "ko": {
+    "render.preview_environment_fixed": "모델 미리보기에서는 환경 회전이 0이고 강도가 1이어야 합니다.",
+    "render.raster_exposure_help": "셰이딩 후 래스터 노출을 −32~32 EV로 조정합니다. 0은 현재 표현을 유지하며 조명과 재질은 변경하지 않습니다.",
+    "render.raster_exposure_invalid": "래스터 노출은 −32~32 EV 범위의 유한한 값이어야 합니다."
+  },
+  "vi": {
+    "render.preview_environment_fixed": "Xem trước Mô hình yêu cầu góc xoay môi trường là 0 và cường độ là 1.",
+    "render.raster_exposure_help": "Điều chỉnh phơi sáng Raster từ −32 đến 32 EV sau khi tô bóng. Giá trị 0 giữ cách hiển thị hiện tại; ánh sáng và vật liệu không thay đổi.",
+    "render.raster_exposure_invalid": "Phơi sáng Raster phải là số hữu hạn trong khoảng −32 đến 32 EV."
+  },
+  "zh": {
+    "render.preview_environment_fixed": "模型预览要求环境旋转为 0，强度为 1。",
+    "render.raster_exposure_help": "在着色后将光栅曝光调整为 −32 到 32 EV。0 保留当前效果，不更改灯光和材质。",
+    "render.raster_exposure_invalid": "光栅曝光必须是 −32 到 32 EV 之间的有限值。"
+  }
+}

@@ -238,9 +238,66 @@ pub fn patch(light: &mut Light, edit: &crate::schema::render_lights::LightPatch,
     Ok(())
 }
 
+/// Refuse controls that cannot affect the Raster directional transport.
+pub fn validate_raster_patch(edit: &crate::schema::render_lights::LightPatch) -> Result<(), String> {
+    if edit.kind.as_deref().is_some_and(|kind| kind != "directional")
+        || edit.softness.is_some()
+        || edit.distance_mm.is_some()
+        || edit.size_mm.is_some()
+        || edit.aim_at.is_some()
+        || edit.width_mm.is_some()
+        || edit.height_mm.is_some()
+        || edit.position_mm.is_some()
+        || edit.edge_u_mm.is_some()
+        || edit.edge_v_mm.is_some()
+        || edit.radiance.is_some()
+        || edit.reference_distance_mm.is_some()
+        || edit.minimum_distance_mm.is_some()
+    {
+        return Err("Raster accepts hard directional colour, intensity and direction edits only".into());
+    }
+    if edit.intensity_ev.is_some_and(|ev| !ev.is_finite() || !(-20.0..=6.0).contains(&ev)) {
+        return Err("Raster source intensity EV must be finite and between -20 and 6".into());
+    }
+    if edit.direction.is_some() && (edit.azimuth_deg.is_some() || edit.elevation_deg.is_some())
+        || edit.colour.is_some() && edit.temperature_k.is_some()
+    {
+        return Err("choose one Raster direction or colour authority per edit".into());
+    }
+    Ok(())
+}
+
 /// Materializes a canonical rig in a cloned setup. Caller validates and publishes
 /// atomically. Unsupported backend families are refused, never silently dropped.
 pub fn write(setup: &mut RenderSetup, lights: &[Light]) -> Result<(), String> {
+    if matches!(&setup.job, Some(RenderJob::Raster { .. })) {
+        setup.validate().map_err(|e| e.to_string())?;
+        if lights.len() > 8 {
+            return Err("at most eight Raster directional lights".into());
+        }
+        if lights.iter().any(|light| !matches!(light.geometry, Geometry::Directional { angular_radius_rad: None, .. })) {
+            return Err("Raster supports hard directional lights only; finite suns, point, spot and area lights are unsupported".into());
+        }
+        let mut values = Vec::new();
+        if !lights.is_empty() {
+            values.try_reserve_exact(8).map_err(|_| "could not reserve saved Raster lights")?;
+        }
+        if values.capacity() > 8 {
+            return Err("saved Raster allocation exceeds eight slots".into());
+        }
+        for light in lights {
+            let Geometry::Directional { direction, angular_radius_rad: None } = light.geometry else {
+                return Err("unsupported Raster light geometry".into());
+            };
+            values.push(DirectionalLightOptions { direction, color: light.colour, intensity: light.intensity });
+        }
+        let values = Some(values);
+        solidcraft_render::job::validate_raster_lights(&values).map_err(|e| e.to_string())?;
+        if let Some(RenderJob::Raster { lights, .. }) = &mut setup.job {
+            *lights = values;
+        }
+        return Ok(());
+    }
     if lights.len() > 20 {
         return Err("at most twenty analytic lights".into());
     }
@@ -343,7 +400,7 @@ pub fn write(setup: &mut RenderSetup, lights: &[Light]) -> Result<(), String> {
             lighting.area_lights = AreaLights::new(&areas).map_err(|e| e.to_string())?;
             options.lighting = Some(lighting);
         }
-        _ => return Err("choose CPU or GPU ray tracing before editing lights".into()),
+        _ => return Err("choose a typed Raster, CPU raytrace or GPU path job before editing lights".into()),
     }
     setup.validate().map_err(|e| e.to_string())
 }
@@ -358,7 +415,7 @@ pub fn filter(setup: &mut RenderSetup, visibility: &crate::schema::render_lights
     if lights.is_empty() {
         return Ok(None);
     }
-    if matches!(setup.job, None | Some(RenderJob::Raster { .. }))
+    if matches!(&setup.job, None | Some(RenderJob::Raster { lights: None, .. }))
         || matches!(&setup.job,Some(RenderJob::GpuPath{options,..}) if options.lighting.is_none())
     {
         let mut weights = [0.0; 3];
@@ -457,8 +514,20 @@ pub fn inspect(setup: &RenderSetup) -> Result<Vec<Light>, String> {
                 defaults(&mut lights);
             }
         }
-        // Raster and the legacy setup use the fixed direct-light product preview.
-        Some(RenderJob::Raster { .. }) | None => defaults(&mut lights),
+        Some(RenderJob::Raster { lights: Some(values), .. }) => {
+            for (index, light) in values.iter().enumerate() {
+                push(
+                    &mut lights,
+                    index,
+                    false,
+                    light.intensity,
+                    light.color,
+                    Geometry::Directional { direction: light.direction, angular_radius_rad: None },
+                );
+            }
+        }
+        // Only unspecified Raster and legacy setups use the fixed studio.
+        Some(RenderJob::Raster { lights: None, .. }) | None => defaults(&mut lights),
     }
     Ok(lights)
 }

@@ -157,6 +157,10 @@ fn request(size: u32) -> ImageRequest {
     let mut camera = Camera { distance: 4.0, ..Default::default() };
     camera.set_view(StandardView::Top);
     ImageRequest {
+        raster_punctual_lights: None,
+        raster_area_lights: None,
+        raster_exposure_ev: 0.0,
+        raster_lights: None,
         studio_weights: None,
         integrator: Default::default(),
         raytrace: None,

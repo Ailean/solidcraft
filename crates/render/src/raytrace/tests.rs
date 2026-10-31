@@ -259,3 +259,197 @@ fn seeded_hostile_float_admission_never_publishes_nonfinite_geometry() {
         assert_eq!(Triangle::new([p; 3]).is_ok(), accepted);
     }
 }
+
+#[test]
+fn protected_ledger_keeps_ordinary_profiles_and_requires_the_explicit_new_envelope() {
+    use crate::job::{CpuBudget, MAX_CPU_WORK, MAX_PROTECTED_CPU_WORK, ProtectedPreviewPlan};
+    assert_eq!(MAX_CPU_WORK, 16_000_000_000_000);
+    assert_eq!(MAX_PROTECTED_CPU_WORK, 31_462_813_335_678);
+    assert!(WorkBudget::new(MAX_CPU_WORK + 1).is_err());
+    assert!(WorkBudget::new(MAX_PROTECTED_CPU_WORK).is_err());
+    for budget in CpuBudget::ALL {
+        let plan = ProtectedPreviewPlan::new(1024, 1024, 2, budget).unwrap();
+        let work = WorkBudget::new_protected(plan).unwrap();
+        let report = work.protected_report().unwrap();
+        assert_eq!(report.ordinary_limit, budget.limits().max_work_units);
+        assert_eq!(report.presentation_limit, 958_464_130);
+        assert_eq!(report.aggregate_limit, report.ordinary_limit + report.presentation_limit);
+        assert_eq!(work.remaining(), report.ordinary_limit);
+        assert_eq!(work.ordinary_remaining(), report.ordinary_limit);
+        assert_eq!(work.presentation_remaining(), report.presentation_limit);
+        assert_eq!(work.aggregate_remaining(), report.aggregate_limit);
+        assert_eq!((report.ordinary_used, report.presentation_used, work.used()), (0, 0, 0));
+    }
+    let max = ProtectedPreviewPlan::new(1024, 1024, 2, CpuBudget::Workstation).unwrap();
+    assert_eq!(max.aggregate_limit().unwrap(), MAX_CPU_WORK + 958_464_130);
+    assert!(WorkBudget::new(100).unwrap().protected_report().is_none());
+    assert!(ProtectedPreviewPlan::new(u32::MAX, u32::MAX, u32::MAX, CpuBudget::Workstation).is_err());
+}
+
+#[test]
+fn protected_ledger_exact_ordinary_and_aggregate_boundaries_do_not_steal_or_refund() {
+    use crate::job::{CpuBudget, ProtectedPreviewPlan};
+    let plan = ProtectedPreviewPlan::new(1, 1, 2, CpuBudget::Compact).unwrap();
+    let cost = plan.snapshot_work().unwrap();
+    let cancel = CancelToken::default();
+    let mut work = WorkBudget::new_protected_for_test(plan, 7).unwrap();
+    work.charge(6, &cancel).unwrap();
+    assert!(work.charge_presentation(1, &cancel).unwrap());
+    let before = work.protected_report().unwrap();
+    assert_eq!((before.ordinary_used, before.presentation_used), (6, cost));
+    assert_eq!(work.remaining(), 1, "presentation did not consume the last ordinary tick");
+    assert_eq!(work.presentation_remaining(), 0);
+    assert_eq!(work.aggregate_remaining(), 1);
+    assert_eq!(work.charge(2, &cancel), Err(TraceError::WorkLimit));
+    assert_eq!(work.protected_report().unwrap(), before);
+    work.tick(&cancel).unwrap();
+    let complete = work.protected_report().unwrap();
+    assert_eq!((complete.ordinary_used, complete.presentation_used, work.used()), (7, cost, 7 + cost));
+    assert_eq!(work.aggregate_remaining(), 0);
+    assert_eq!(work.charge(u64::MAX, &cancel), Err(TraceError::WorkLimit));
+    assert!(!work.charge_presentation(1, &cancel).unwrap());
+    assert_eq!(work.protected_report().unwrap(), complete);
+}
+
+#[test]
+fn protected_milestones_coalesce_without_fabricating_accepted_snapshots_or_spent_quota() {
+    use crate::job::{CpuBudget, ProtectedPreviewPlan};
+    let plan = ProtectedPreviewPlan::new(4, 1, 5, CpuBudget::Compact).unwrap();
+    let mut work = WorkBudget::new_protected(plan).unwrap();
+    let initial = work.protected_report().unwrap();
+    assert!(!work.charge_presentation(0, &CancelToken::default()).unwrap());
+    assert_eq!(work.protected_report().unwrap(), initial);
+    assert!(work.charge_presentation(19, &CancelToken::default()).unwrap());
+    let coalesced = work.protected_report().unwrap();
+    assert_eq!((coalesced.accepted_snapshots, coalesced.next_milestone_index, coalesced.quota_limit), (1, 7, 7));
+    assert_eq!(coalesced.presentation_used, plan.snapshot_work().unwrap());
+    assert!(coalesced.presentation_used < coalesced.presentation_limit);
+    assert!(coalesced.milestones_complete);
+    assert!(!coalesced.quota_exhausted);
+    for progress in [19, 20, u64::MAX] {
+        assert!(!work.protected_ready(progress).unwrap());
+        assert!(!work.charge_presentation(progress, &CancelToken::default()).unwrap());
+        assert_eq!(work.protected_report().unwrap(), coalesced);
+    }
+}
+
+#[test]
+fn protected_zero_and_one_milestone_policies_are_real_boundaries() {
+    use crate::job::{CpuBudget, ProtectedPreviewPlan};
+    let cancel = CancelToken::default();
+    let zero = ProtectedPreviewPlan::new(1, 1, 1, CpuBudget::Compact).unwrap();
+    let mut work = WorkBudget::new_protected(zero).unwrap();
+    let report = work.protected_report().unwrap();
+    assert_eq!((report.quota_limit, report.presentation_limit), (0, 0));
+    assert_eq!(report.aggregate_limit, report.ordinary_limit);
+    assert!(report.quota_exhausted && report.milestones_complete);
+    assert!(!work.charge_presentation(0, &cancel).unwrap());
+    assert!(zero.milestone(0).is_err());
+    let one = ProtectedPreviewPlan::new(1, 1, 2, CpuBudget::Compact).unwrap();
+    assert_eq!(one.quota_limit(), 1);
+    assert_eq!(one.milestone(0).unwrap(), 1);
+    assert!(one.milestone(1).is_err());
+    let mut work = WorkBudget::new_protected(one).unwrap();
+    assert!(!work.charge_presentation(0, &cancel).unwrap());
+    assert!(work.charge_presentation(1, &cancel).unwrap());
+    assert!(work.protected_report().unwrap().quota_exhausted);
+}
+
+#[test]
+fn protected_quota_exhaustion_leaves_the_entire_ordinary_allowance_available() {
+    use crate::job::{CpuBudget, ProtectedPreviewPlan};
+    let plan = ProtectedPreviewPlan::new(32, 32, 64, CpuBudget::Compact).unwrap();
+    let cancel = CancelToken::default();
+    let mut work = WorkBudget::new_protected_for_test(plan, 17).unwrap();
+    for index in 0..127 {
+        assert!(work.charge_presentation(plan.milestone(index).unwrap(), &cancel).unwrap());
+    }
+    let exhausted = work.protected_report().unwrap();
+    assert_eq!((exhausted.accepted_snapshots, exhausted.next_milestone_index), (127, 127));
+    assert_eq!(exhausted.presentation_used, exhausted.presentation_limit);
+    assert!(exhausted.quota_exhausted && exhausted.milestones_complete);
+    assert_eq!(work.ordinary_remaining(), 17);
+    assert!(!work.charge_presentation(plan.total_commits() - 1, &cancel).unwrap());
+    work.charge(17, &cancel).unwrap();
+    let final_report = work.protected_report().unwrap();
+    assert_eq!(work.used(), final_report.aggregate_limit);
+    assert_eq!(final_report.ordinary_used, 17);
+}
+
+#[test]
+fn protected_cancel_before_debit_is_atomic_and_after_debit_is_never_refunded() {
+    use crate::job::{CpuBudget, ProtectedPreviewPlan};
+    let plan = ProtectedPreviewPlan::new(4, 1, 5, CpuBudget::Compact).unwrap();
+    let mut work = WorkBudget::new_protected(plan).unwrap();
+    let before = work.protected_report().unwrap();
+    let cancelled = CancelToken::default();
+    cancelled.cancel();
+    assert_eq!(work.charge_presentation(1, &cancelled), Err(TraceError::Cancelled));
+    assert_eq!(work.protected_report().unwrap(), before);
+    let cancel = CancelToken::default();
+    assert!(work.charge_presentation(1, &cancel).unwrap());
+    let paid = work.protected_report().unwrap();
+    cancel.cancel();
+    assert_eq!(work.tick(&cancel), Err(TraceError::Cancelled));
+    assert_eq!(work.charge_presentation(2, &cancel), Err(TraceError::Cancelled));
+    assert_eq!(work.protected_report().unwrap(), paid);
+    assert_eq!(work.used(), plan.snapshot_work().unwrap());
+}
+
+#[test]
+fn protected_private_test_boundary_is_chosen_before_work_and_never_changes_the_production_plan() {
+    use crate::job::{CpuBudget, ProtectedPreviewPlan};
+    let plan = ProtectedPreviewPlan::new(4, 1, 5, CpuBudget::Compact).unwrap();
+    assert!(WorkBudget::new_protected_for_test(plan, 0).is_err());
+    assert!(WorkBudget::new_protected_for_test(plan, plan.ordinary_limit() + 1).is_err());
+    let mut first = WorkBudget::new_protected(plan).unwrap();
+    first.charge_presentation(19, &CancelToken::default()).unwrap();
+    let paid = first.protected_report().unwrap();
+    // A distinct admitted job starts a new ledger; it does not restore/transfer
+    // any state in the first job. Repeated report reads do not reset either one.
+    let second = WorkBudget::new_protected(plan).unwrap();
+    for _ in 0..4 {
+        assert_eq!(first.protected_report().unwrap(), paid);
+    }
+    assert_eq!(second.protected_report().unwrap().presentation_used, 0);
+    assert_eq!(first.protected_report().unwrap(), paid);
+}
+
+#[test]
+fn protected_reached_milestones_match_literal_small_and_first_pass_boundaries() {
+    use crate::job::{CpuBudget, ProtectedPreviewPlan};
+    for (pixels, samples, cases) in [
+        (1, 1, vec![(0, 0), (1, 0)]),
+        (1, 7, vec![(0, 0), (1, 1), (5, 5), (6, 6), (7, 6)]),
+        (2, 4, vec![(0, 0), (1, 1), (2, 2), (3, 2), (4, 3), (5, 3), (6, 4), (7, 4), (8, 4)]),
+        (3, 4, vec![(0, 0), (1, 1), (2, 2), (3, 3), (4, 3), (5, 3), (6, 4), (8, 4), (9, 5), (11, 5), (12, 5)]),
+        (65, 3, vec![(0, 0), (63, 63), (64, 64), (65, 65), (129, 65), (130, 66), (194, 66), (195, 66)]),
+        (66, 3, vec![(0, 0), (64, 63), (65, 64), (66, 65), (131, 65), (132, 66), (197, 66), (198, 66)]),
+        (67, 3, vec![(0, 0), (65, 63), (66, 64), (67, 65), (133, 65), (134, 66), (200, 66), (201, 66)]),
+    ] {
+        let plan = ProtectedPreviewPlan::new(pixels, 1, samples, CpuBudget::Compact).unwrap();
+        for (committed, expected) in cases {
+            assert_eq!(plan.reached_milestones(committed).unwrap(), expected, "P={pixels} S={samples} c={committed}");
+        }
+        assert!(plan.reached_milestones(plan.total_commits() + 1).is_err());
+        assert!(plan.reached_milestones(u64::MAX).is_err());
+    }
+}
+
+#[test]
+fn protected_large_delayed_frontier_coalesces_once_without_allocating_a_film_or_spending_ordinary_work() {
+    use crate::job::{CpuBudget, ProtectedPreviewPlan};
+    let plan = ProtectedPreviewPlan::new(1, 1, 1_048_576, CpuBudget::Workstation).unwrap();
+    assert_eq!(plan.quota_limit(), 1_048_575);
+    assert_eq!(plan.reached_milestones(65_536).unwrap(), 65_536);
+    assert_eq!(plan.reached_milestones(1_048_575).unwrap(), 1_048_575);
+    assert_eq!(plan.reached_milestones(1_048_576).unwrap(), 1_048_575);
+    let mut work = WorkBudget::new_protected_for_test(plan, 17).unwrap();
+    assert!(work.charge_presentation(1_048_575, &CancelToken::default()).unwrap());
+    let report = work.protected_report().unwrap();
+    assert_eq!((report.accepted_snapshots, report.next_milestone_index), (1, 1_048_575));
+    assert_eq!(report.presentation_used, 65_552);
+    assert_eq!(report.ordinary_used, 0);
+    assert_eq!(work.ordinary_remaining(), 17);
+    assert!(report.milestones_complete && !report.quota_exhausted);
+}

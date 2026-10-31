@@ -1,6 +1,93 @@
 use super::*;
 use solidcraft_doc::render_settings::RenderJob;
 
+#[test]
+fn offline_raster_directional_edit_persists_with_one_undo_and_exact_reopen() {
+    let mut s = Session::default();
+    save(&mut s, json!({"width":16,"height":16,"job":{"method":"raster"}}));
+    let before = s.doc.clone();
+    let undo = s.undo.len();
+    let reply = s
+        .execute(
+            "render.lights.set",
+            &json!({"name":"Studio","id":"directional:0","expected_revision":s.revision,
+        "set":{"direction":[3,-4,0],"colour":[0.25,0.5,1],"intensity_ev":1}}),
+        )
+        .unwrap();
+    assert_eq!(reply["setup"]["job"]["method"], "raster");
+    let light = &reply["setup"]["job"]["lights"][0];
+    assert_eq!(light["direction"][0].as_f64().unwrap(), 3.0);
+    assert_eq!(light["direction"][1].as_f64().unwrap(), -4.0);
+    assert_eq!(light["intensity"].as_f64().unwrap(), 2.0);
+    assert_eq!(reply["setup"]["job"]["lights"].as_array().unwrap().len(), 3);
+    assert_eq!(s.undo.len(), undo + 1);
+    let after = s.doc.clone();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc, before);
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.doc, after);
+    let loaded = solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap();
+    assert_eq!(loaded.render, s.doc.render);
+    let listed = s.execute("render.lights.list", &json!({"setup":"Studio"})).unwrap();
+    assert_eq!(listed["lights"][0]["implicit"], false);
+    assert_eq!(listed["lights"][0]["direction"][0].as_f64().unwrap(), 3.0);
+}
+
+#[test]
+fn saved_raster_remove_all_and_visibility_preserve_explicit_darkness_and_authored_values() {
+    let mut s = Session::default();
+    save(&mut s, json!({"job":{"method":"raster","lights":[{"direction":[0,0,1],"color":[0.25,0.5,1],"intensity":2}]}}));
+    let authored = s.doc.render.setups["Studio"].clone();
+    let mut filtered = authored.clone();
+    let visibility = crate::schema::render_lights::Visibility { solo: None, muted: ["directional:0".into()].into_iter().collect() };
+    assert_eq!(crate::render_lights::filter(&mut filtered, &visibility).unwrap(), None);
+    let Some(RenderJob::Raster { lights: Some(lights), .. }) = &filtered.job else { panic!("lost rig") };
+    assert_eq!(lights[0].intensity, 0.0);
+    assert_eq!(s.doc.render.setups["Studio"], authored);
+    s.execute("render.lights.remove", &json!({"name":"Studio","id":"directional:0"})).unwrap();
+    let Some(RenderJob::Raster { lights: Some(lights), .. }) = &s.doc.render.setups["Studio"].job else { panic!("empty rig became legacy") };
+    assert!(lights.is_empty());
+    let loaded = solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap();
+    assert_eq!(loaded.render, s.doc.render);
+    assert_eq!(s.execute("render.lights.list", &json!({"setup":"Studio"})).unwrap()["lights"], json!([]));
+}
+
+#[test]
+fn saved_raster_unsupported_families_and_controls_refuse_atomically() {
+    let mut s = Session::default();
+    save(&mut s, json!({"job":{"method":"raster"}}));
+    let before = s.doc.clone();
+    let state = (s.revision, s.undo.len(), s.redo.len());
+    for patch in [
+        json!({"kind":"point"}),
+        json!({"kind":"spot"}),
+        json!({"kind":"area"}),
+        json!({"softness":0}),
+        json!({"intensity_ev":7}),
+        json!({"distance_mm":10}),
+        json!({"radiance":[1,1,1]}),
+        json!({"direction":[0,0,1],"azimuth_deg":0}),
+    ] {
+        assert!(s.execute("render.lights.set", &json!({"name":"Studio","id":"directional:0","set":patch})).is_err());
+        assert!(Arc::ptr_eq(&before, &s.doc));
+        assert_eq!(state, (s.revision, s.undo.len(), s.redo.len()));
+    }
+}
+
+#[test]
+fn saved_raster_array_is_bounded_before_settings_merge_and_inline_light_edit() {
+    let mut s = Session::default();
+    save(&mut s, json!({"job":{"method":"raster"}}));
+    let before = s.doc.clone();
+    let light = json!({"direction":[0,0,1],"color":[1,1,1],"intensity":1});
+    let invalid = json!({"job":{"method":"raster","lights":vec![light;9]}});
+    assert!(s.execute("render.settings.set", &json!({"name":"Studio","set":invalid})).is_err());
+    assert!(s.execute("render.lights.set", &json!({"name":"Studio","id":"directional:0","settings":invalid,"set":{"intensity_ev":1}})).is_err());
+    assert!(s.execute("render.lights.list", &json!({"settings":invalid})).is_err());
+    assert!(Arc::ptr_eq(&before, &s.doc));
+    // The small refusal fixture is not an OOM test; source order proves pre-copy admission.
+}
+
 fn save(s: &mut Session, patch: Value) {
     s.execute("render.settings.set", &json!({"name":"Studio", "set":patch})).unwrap();
 }
@@ -725,7 +812,7 @@ fn invalid_saved_jobs_never_partially_replace_a_setup() {
         json!({"job":{"method":"gpu_path","options":{"samples":4097}}}),
         json!({"job":{"method":"cpu_raytrace","options":{"emissions":[]}}}),
         json!({"job":{"method":"gpu_path","options":{"environment":{"kind":"hdr","path":"not-opened.hdr"}}}}),
-        json!({"job":{"method":"raster"}}),
+        json!({"job":{"method":"raster"},"exposure_ev":33}),
         json!({"job":{"method":"gpu_path"},"environment_intensity":2}),
         json!({"job":{"options":{"samples":4}}}),
     ] {

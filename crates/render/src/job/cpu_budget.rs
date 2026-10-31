@@ -14,7 +14,7 @@ pub const MAX_CPU_WORK: u64 = 16_000_000_000_000;
 pub const MAX_CPU_TRIANGLES: usize = 8_000_000;
 pub const MAX_CPU_BODIES: usize = 262_144;
 /// Maximum admitted primary-film samples, shared with the display resolver.
-pub const MAX_CPU_SAMPLES_PER_PIXEL: u32 = 4096;
+pub const MAX_CPU_SAMPLES_PER_PIXEL: u32 = 1_048_576;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

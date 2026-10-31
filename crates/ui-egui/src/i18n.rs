@@ -672,7 +672,22 @@ mod tests {
     }
 
     #[test]
+    fn render_preview_explanations_are_translated_in_every_required_catalog() {
+        let source_locale = Locale::for_language("en");
+        for id in ["render.preview_image_settings_help", "render.preview_lighting_help", "render.stage_preview_note"] {
+            let source = source_locale.text(id);
+            assert_ne!(source, id, "{id}: missing English source");
+            for language in ["ar", "de", "he", "ja", "ko", "vi", "zh"] {
+                let locale = Locale::for_language(language);
+                assert!(locale.0.messages().contains_key(id), "{language}: missing {id}");
+                assert_ne!(locale.text(id), source, "{language}: {id} must not fall back to English");
+            }
+        }
+    }
+
+    #[test]
     fn render_shell_labels_and_planned_reasons_translate_in_required_catalogs() {
+        let source_locale = Locale::for_language("en");
         for language in ["ja", "zh", "de", "ko"] {
             let locale = Locale::for_language(language);
             for label in [
@@ -691,7 +706,7 @@ mod tests {
                 "Shots Strip",
                 "Pick",
                 "Component",
-                "The live preview shows direct light only and no shadows.",
+                source_locale.text("render.preview_lighting_help"),
             ] {
                 assert_ne!(locale.label(label), label, "{language}: {label}");
             }

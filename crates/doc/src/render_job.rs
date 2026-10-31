@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use solidcraft_render::{
     Camera,
     job::{
-        CpuBudget, CpuProgressiveOptions, DirectionalLightOptions, JobOptions, LightingPreset, PunctualLightOptions, RaytraceEnvironmentOptions,
-        RaytraceOptions, RectangleLightOptions, StudioLighting, ThinLens, ToneMap,
+        CpuBudget, CpuDielectricTransport, CpuProgressiveOptions, DirectionalLightOptions, JobOptions, LightingPreset, PunctualLightOptions,
+        RaytraceEnvironmentOptions, RaytraceOptions, RectangleLightOptions, StudioLighting, ThinLens, ToneMap,
     },
     lighting::environment::SkyGradient,
 };
@@ -25,6 +25,9 @@ pub enum RenderJob {
     Raster {
         #[serde(default)]
         transparent_background: bool,
+        /// Omission retains the fixed studio; an explicit empty rig is dark.
+        #[serde(default, deserialize_with = "solidcraft_render::job::deserialize_raster_lights", skip_serializing_if = "Option::is_none")]
+        lights: Option<Vec<DirectionalLightOptions>>,
     },
     CpuRaytrace {
         #[serde(default)]
@@ -42,8 +45,12 @@ pub enum RenderJob {
 impl RenderJob {
     pub fn validate(&self, camera: &Camera, exposure_ev: f64) -> Result<()> {
         match self {
-            Self::Raster { .. } if exposure_ev != 0.0 => Err(DocError::Invalid("saved raster rendering requires exposure_ev: 0".into())),
-            Self::Raster { .. } => Ok(()),
+            Self::Raster { lights, .. } => {
+                if !exposure_ev.is_finite() || !(-32.0..=32.0).contains(&exposure_ev) {
+                    return Err(DocError::Invalid("saved Raster exposure must be finite and within -32..32 EV".into()));
+                }
+                solidcraft_render::job::validate_raster_lights(lights).map_err(|e| DocError::Invalid(e.to_string()))
+            }
             Self::CpuRaytrace { options } => options.to_runtime(exposure_ev).map(|_| ()),
             Self::GpuPath { options, transparent_background } => {
                 if *transparent_background && options.backdrop.is_some() {
@@ -67,6 +74,8 @@ impl RenderJob {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CpuJob {
+    #[serde(skip_serializing_if = "CpuDielectricTransport::is_legacy")]
+    pub dielectric_transport: CpuDielectricTransport,
     #[serde(skip_serializing_if = "CpuBudget::is_compact")]
     pub budget: CpuBudget,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,6 +103,7 @@ pub struct CpuJob {
 impl Default for CpuJob {
     fn default() -> Self {
         Self {
+            dielectric_transport: CpuDielectricTransport::LegacyBounded,
             budget: CpuBudget::Compact,
             progressive: None,
             primary_samples: 1,
@@ -129,6 +139,7 @@ impl CpuJob {
         // a light family that is explicitly absent. This does not rewrite the file.
         let active_area = self.area_lights.as_ref().is_some_and(|lights| !lights.is_empty());
         let options = RaytraceOptions {
+            dielectric_transport: self.dielectric_transport,
             budget: self.budget,
             progressive: self.progressive,
             primary_samples: self.primary_samples,
@@ -345,4 +356,42 @@ fn punctual_lights<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Resul
 
 fn area_lights<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<Vec<RectangleLightOptions>>, D::Error> {
     optional_lights::<D, RectangleLightOptions, 4>(d)
+}
+
+#[cfg(test)]
+#[test]
+fn cpu_dielectric_transport_saved_field_has_legacy_default_and_explicit_runtime_forward() {
+    let legacy: CpuJob = serde_json::from_str("{}").unwrap();
+    assert_eq!(legacy.dielectric_transport, CpuDielectricTransport::LegacyBounded);
+    assert!(serde_json::to_value(&legacy).unwrap().get("dielectric_transport").is_none());
+    for policy in [CpuDielectricTransport::LegacyBounded, CpuDielectricTransport::StrictTir] {
+        let saved = CpuJob { dielectric_transport: policy, ..Default::default() };
+        let reopened: CpuJob = serde_json::from_value(serde_json::to_value(&saved).unwrap()).unwrap();
+        assert_eq!(reopened, saved);
+        let runtime = reopened.to_runtime(0.0).unwrap();
+        assert_eq!(runtime.dielectric_transport, policy);
+        assert_eq!(runtime.exposure_ev, 0.0);
+        assert_eq!(runtime.budget, CpuBudget::Compact);
+    }
+    for value in [serde_json::json!(null), serde_json::json!(true), serde_json::json!(17), serde_json::json!("unlimited")] {
+        assert!(serde_json::from_value::<CpuJob>(serde_json::json!({"dielectric_transport":value})).is_err());
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn cpu_dielectric_transport_document_roundtrip_keeps_choice_without_captured_bindings() {
+    for policy in [CpuDielectricTransport::LegacyBounded, CpuDielectricTransport::StrictTir] {
+        let setup = crate::render_settings::RenderSetup {
+            job: Some(RenderJob::CpuRaytrace { options: CpuJob { dielectric_transport: policy, ..Default::default() } }),
+            ..Default::default()
+        };
+        let mut document = crate::Document::default();
+        std::sync::Arc::make_mut(&mut document.render).setups.insert("Policy".into(), setup.clone());
+        let reopened = crate::Document::from_json(&document.to_json()).unwrap();
+        assert_eq!(document, reopened);
+        assert_eq!(reopened.render.setups["Policy"], setup);
+        let Some(RenderJob::CpuRaytrace { options }) = &reopened.render.setups["Policy"].job else { panic!("saved CPU method changed") };
+        assert_eq!(options.to_runtime(0.0).unwrap().dielectric_transport, policy);
+    }
 }

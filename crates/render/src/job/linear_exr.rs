@@ -14,7 +14,73 @@ pub fn encoded_limit(width: u32, height: u32) -> Result<u64> {
     if w == 0 || h == 0 || w > 8192 || h > 8192 || w * h > 16_777_216 {
         return Err(invalid("linear EXR requires 1..8192 sides and at most 16777216 pixels"));
     }
-    Ok(w * h * 16 + h * 16 + 4096)
+    encoded_limit_with_limits(width, height, super::GPU_PATH_LIMITS)
+}
+
+/// Internal bounded policy, not proof of a host reservation. Future callers must
+/// retain their request's lease and charge work before advancing output stages.
+pub(crate) fn output_pixels_with_limits(width: u32, height: u32, limits: crate::RenderLimits) -> Result<u64> {
+    let maximum = super::CpuBudget::Workstation.image_limits(false);
+    if limits.max_dimension > maximum.max_dimension || limits.max_pixels > maximum.max_pixels || limits.max_scratch_bytes > maximum.max_scratch_bytes
+    {
+        return Err(invalid("output policy exceeds the bounded implementation envelope"));
+    }
+    let (w, h) = (u64::from(width), u64::from(height));
+    if limits.fit(w, h, None) != Some((w, h)) {
+        return Err(invalid("output dimensions exceed the explicit policy"));
+    }
+    let pixels = w.checked_mul(h).ok_or_else(|| invalid("output pixel count overflow"))?;
+    checked_output_bytes(pixels, 1, 0, limits)?;
+    Ok(pixels)
+}
+
+/// Checked combined live-byte estimate; this is not an individual Vec layout or a lease.
+pub(crate) fn checked_stage_bytes(count: u64, element_bytes: u64, extra: u64, limits: crate::RenderLimits) -> Result<u64> {
+    let maximum = super::CpuBudget::Workstation.image_limits(false);
+    if limits.max_dimension > maximum.max_dimension || limits.max_pixels > maximum.max_pixels || limits.max_scratch_bytes > maximum.max_scratch_bytes
+    {
+        return Err(invalid("output policy exceeds the bounded implementation envelope"));
+    }
+    let bytes = count.checked_mul(element_bytes).and_then(|n| n.checked_add(extra)).ok_or_else(|| invalid("output byte layout overflow"))?;
+    if bytes > limits.max_scratch_bytes {
+        return Err(invalid("output byte layout exceeds its explicit policy"));
+    }
+    Ok(bytes)
+}
+
+/// Check an individual addressable byte layout separately from combined estimates.
+pub(crate) fn checked_output_bytes(count: u64, element_bytes: u64, extra: u64, limits: crate::RenderLimits) -> Result<usize> {
+    let bytes = checked_stage_bytes(count, element_bytes, extra, limits)?;
+    let addressable = usize::try_from(bytes).map_err(|_| invalid("output byte layout exceeds address space"))?;
+    if std::alloc::Layout::array::<u8>(addressable).is_err() {
+        return Err(invalid("output byte layout exceeds address space"));
+    }
+    Ok(addressable)
+}
+
+pub(crate) fn encoded_limit_with_limits(width: u32, height: u32, limits: crate::RenderLimits) -> Result<u64> {
+    let pixels = output_pixels_with_limits(width, height, limits)?;
+    let row_bytes = u64::from(width).checked_mul(16).ok_or_else(|| invalid("EXR row overflow"))?;
+    i32::try_from(row_bytes).map_err(|_| invalid("EXR row exceeds scanline representation"))?;
+    i32::try_from(width).and_then(|_| i32::try_from(height)).map_err(|_| invalid("EXR window exceeds integer representation"))?;
+    let extra = u64::from(height).checked_mul(16).and_then(|n| n.checked_add(4096)).ok_or_else(|| invalid("EXR metadata overflow"))?;
+    Ok(checked_output_bytes(pixels, 16, extra, limits)? as u64)
+}
+
+pub(crate) fn scanline_layout(width: u32, height: u32, header_bytes: usize, limits: crate::RenderLimits) -> Result<(usize, usize)> {
+    let limit = encoded_limit_with_limits(width, height, limits)?;
+    let rows = usize::try_from(height).map_err(|_| invalid("EXR row count exceeds address space"))?;
+    let row = usize::try_from(width).ok().and_then(|n| n.checked_mul(16)).ok_or_else(|| invalid("EXR row layout overflow"))?;
+    let first = rows.checked_mul(8).and_then(|n| n.checked_add(header_bytes)).ok_or_else(|| invalid("EXR offset table overflow"))?;
+    let total = row
+        .checked_add(8)
+        .and_then(|n| n.checked_mul(rows))
+        .and_then(|n| n.checked_add(first))
+        .ok_or_else(|| invalid("EXR scanline layout overflow"))?;
+    if total as u64 > limit {
+        return Err(invalid("EXR output exceeds its admission"));
+    }
+    Ok((first, total))
 }
 
 fn attribute(out: &mut Vec<u8>, name: &[u8], kind: &[u8], value: &[u8]) -> Result<()> {
@@ -32,6 +98,12 @@ fn attribute(out: &mut Vec<u8>, name: &[u8], kind: &[u8], value: &[u8]) -> Resul
 }
 
 pub(super) fn header(width: u32, height: u32) -> Result<Vec<u8>> {
+    encoded_limit(width, height)?;
+    header_with_limits(width, height, super::GPU_PATH_LIMITS)
+}
+
+pub(crate) fn header_with_limits(width: u32, height: u32, limits: crate::RenderLimits) -> Result<Vec<u8>> {
+    encoded_limit_with_limits(width, height, limits)?;
     let mut out = Vec::new();
     out.try_reserve_exact(4096).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "EXR header allocation failed"))?;
     out.extend_from_slice(&20_000_630_u32.to_le_bytes());
@@ -83,20 +155,27 @@ pub struct ExrTask {
 }
 impl ExrTask {
     pub fn new(width: u32, height: u32, pixels: Vec<[f32; 4]>, cancel: CancelToken) -> Result<Self> {
-        let limit = encoded_limit(width, height)?;
+        encoded_limit(width, height)?;
+        Self::new_with_limits(width, height, pixels, cancel, super::GPU_PATH_LIMITS)
+    }
+
+    pub(crate) fn new_with_limits(width: u32, height: u32, pixels: Vec<[f32; 4]>, cancel: CancelToken, limits: crate::RenderLimits) -> Result<Self> {
+        let limit = encoded_limit_with_limits(width, height, limits)?;
         if pixels.len() as u64 != u64::from(width) * u64::from(height) {
             return Err(invalid("EXR pixel count differs from dimensions"));
         }
         cancel.check()?;
-        let mut bytes = header(width, height)?;
+        checked_output_bytes(pixels.capacity() as u64, 16, 0, limits)?;
+        checked_stage_bytes(pixels.capacity() as u64, 16, limit, limits)?;
+        let mut bytes = header_with_limits(width, height, limits)?;
         let row_bytes = u64::from(width) * 16;
-        let first = bytes.len() as u64 + u64::from(height) * 8;
-        let total = first + u64::from(height) * (row_bytes + 8);
-        if total > limit {
+        let (first, total) = scanline_layout(width, height, bytes.len(), limits)?;
+        let first = first as u64;
+        let additional = total.checked_sub(bytes.len()).ok_or_else(|| invalid("EXR address space exceeded"))?;
+        bytes.try_reserve_exact(additional).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "EXR output allocation failed"))?;
+        if bytes.capacity() as u64 > limit {
             return Err(invalid("EXR output exceeds its admission"));
         }
-        let additional = usize::try_from(total).ok().and_then(|n| n.checked_sub(bytes.len())).ok_or_else(|| invalid("EXR address space exceeded"))?;
-        bytes.try_reserve_exact(additional).map_err(|_| JobError::new(ErrorCode::AllocationFailed, "EXR output allocation failed"))?;
         for y in 0..height {
             bytes.extend_from_slice(&(first + u64::from(y) * (row_bytes + 8)).to_le_bytes());
         }
@@ -196,5 +275,44 @@ mod tests {
         let mut task = ExrTask::new(1, 1, vec![[1.; 4]], cancel.clone()).unwrap();
         cancel.cancel();
         assert_eq!(task.step(1).unwrap_err().code, ErrorCode::Cancelled);
+    }
+
+    #[test]
+    fn explicit_output_policy_is_exact_bounded_and_checked_before_allocation() {
+        let wide = super::super::CpuBudget::Workstation.image_limits(false);
+        assert_eq!(output_pixels_with_limits(8193, 1, wide).unwrap(), 8193);
+        assert_eq!(encoded_limit_with_limits(8193, 1, wide).unwrap(), 135200);
+        assert_eq!(checked_output_bytes(8193, 8, 65536, wide).unwrap(), 131080);
+        for (w, h) in [(0, 1), (1, 0), (u32::MAX, u32::MAX)] {
+            assert!(output_pixels_with_limits(w, h, wide).is_err());
+        }
+        assert!(output_pixels_with_limits(8193, 1, super::super::GPU_PATH_LIMITS).is_err(), "a reduced fit is not acceptance");
+        for hostile in [
+            crate::RenderLimits { max_dimension: u64::MAX, ..wide },
+            crate::RenderLimits { max_pixels: u64::MAX, ..wide },
+            crate::RenderLimits { max_scratch_bytes: u64::MAX, ..wide },
+        ] {
+            assert!(output_pixels_with_limits(1, 1, hostile).is_err());
+        }
+        assert!(checked_output_bytes(u64::MAX, 16, 0, wide).is_err());
+        assert!(checked_output_bytes(1, 1, u64::MAX, wide).is_err());
+        assert!(scanline_layout(1, 1, usize::MAX, wide).is_err());
+        assert!(checked_output_bytes(1, 16, 0, crate::RenderLimits { max_scratch_bytes: 15, ..wide }).is_err());
+        assert!(checked_output_bytes(isize::MAX as u64 + 1, 1, 0, wide).is_err());
+    }
+
+    #[test]
+    fn explicit_gpu_exr_keeps_legacy_bytes_and_dimension_before_cancel_order() {
+        let pixels = vec![[4.0, 1.0, 0.25, 1.0]; 6];
+        let expected = encode(pixels.clone(), 3, 2);
+        let mut task = ExrTask::new_with_limits(3, 2, pixels, CancelToken::default(), super::super::GPU_PATH_LIMITS).unwrap();
+        assert!(task.step(2).unwrap());
+        assert_eq!(task.finish().unwrap().0, expected);
+        let cancel = CancelToken::default();
+        cancel.cancel();
+        let error = ExrTask::new(0, 1, vec![], cancel.clone()).err().unwrap();
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(error.to_string().contains("linear EXR requires 1..8192"));
+        assert_eq!(ExrTask::new(1, 1, vec![], cancel).err().unwrap().code, ErrorCode::InvalidRequest);
     }
 }

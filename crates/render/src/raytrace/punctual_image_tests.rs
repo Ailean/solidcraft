@@ -44,6 +44,10 @@ fn task(blocker: Option<(f64, f64)>, shadows: bool) -> ImageTask {
         ..Default::default()
     };
     let request = ImageRequest {
+        raster_punctual_lights: None,
+        raster_area_lights: None,
+        raster_exposure_ev: 0.0,
+        raster_lights: None,
         studio_weights: None,
         environment: None,
         textures: None,
@@ -90,12 +94,12 @@ fn actual_spot_consumer_uses_emitted_world_axis_and_cone() {
     let point = render(task(None, true));
     for (axis, expected) in [([-20.0, 0.0, -10.0], point), ([20.0, 0.0, 10.0], [0, 0, 0, 255])] {
         let previous = task(None, true);
-        let mut options = previous.options.clone();
+        let mut options = previous.visibility_owner.options().clone();
         options.punctual_lights.as_mut().unwrap()[0].cone =
             Some(job::SpotConeOptions { emitted_axis: axis, inner_half_angle_radians: 0.2, outer_half_angle_radians: 0.5 });
         let mut request = previous.request.clone();
         request.raytrace = Some(options.clone());
-        let actual = ImageTask::new(previous.scene.clone(), request, CancelToken::default(), options).unwrap();
+        let actual = ImageTask::new(previous.visibility_owner.source().clone(), request, CancelToken::default(), options).unwrap();
         assert_eq!(render(actual), expected);
     }
 }
@@ -136,7 +140,7 @@ fn punctual_work_exhaustion_is_shared_and_task_metadata_remains_bounded() {
 
 fn mixed(n: u32, shadows: bool) -> ImageTask {
     let previous = task(None, shadows);
-    let mut options = previous.options.clone();
+    let mut options = previous.visibility_owner.options().clone();
     options.lights = Some(vec![job::DirectionalLightOptions { direction: [0.0, 0.0, 1.0], color: [1.0; 3], intensity: 1.0 }; 8]);
     options.punctual_lights = Some(vec![options.punctual_lights.as_ref().unwrap()[0]; 8]);
     options.area_lights = Some(vec![
@@ -152,7 +156,7 @@ fn mixed(n: u32, shadows: bool) -> ImageTask {
     options.area_samples = Some(n);
     let mut request = previous.request.clone();
     request.raytrace = Some(options.clone());
-    ImageTask::new(previous.scene.clone(), request, CancelToken::default(), options).unwrap()
+    ImageTask::new(previous.visibility_owner.source().clone(), request, CancelToken::default(), options).unwrap()
 }
 
 #[test]
@@ -227,7 +231,7 @@ fn mixed_area_final_shadow_cancellation_and_shared_exhaustion_prevent_publicatio
 #[test]
 fn mixed_normal_incidence_radiance_is_summed_before_single_display_transform() {
     let mut task = mixed(1, false);
-    let options = &mut task.options;
+    let (fixture_scene, mut options) = task.visibility_owner.into_capture();
     for point in options.punctual_lights.as_mut().unwrap() {
         point.position_mm = [0.0, 0.0, 10.0];
         point.color = [1.0; 3];
@@ -237,6 +241,7 @@ fn mixed_normal_incidence_radiance_is_summed_before_single_display_transform() {
         area.color = [1.0; 3];
     }
     task.request.raytrace = Some(options.clone());
+    task.visibility_owner = dielectric::DirectVisibilityOwner::new(fixture_scene, options);
     // White rough conductor at normal incidence: f*cos=1/(4*pi).
     // Eight unit directionals + eight unit point sources + four Le*A/r²=.08 rectangles.
     let linear = (8.0 + 8.0 + 4.0 * 0.08) / (4.0 * std::f64::consts::PI);
@@ -248,14 +253,14 @@ fn mixed_normal_incidence_radiance_is_summed_before_single_display_transform() {
 fn scene_dependent_punctual_singularities_complete_and_keep_diagnostic_counts() {
     for (height, reference, near_source) in [(0.0, 10.0, true), (0.0009, 10.0, true), (0.001, 1e6, false)] {
         let previous = task(None, true);
-        let mut options = previous.options.clone();
+        let mut options = previous.visibility_owner.options().clone();
         let light = &mut options.punctual_lights.as_mut().unwrap()[0];
         light.position_mm = [0.0, 0.0, height];
         light.reference_distance_mm = reference;
         light.intensity = 64.0;
         let mut request = previous.request.clone();
         request.raytrace = Some(options.clone());
-        let mut work = ImageTask::new(previous.scene.clone(), request, CancelToken::default(), options).unwrap();
+        let mut work = ImageTask::new(previous.visibility_owner.source().clone(), request, CancelToken::default(), options).unwrap();
         let mut completed = false;
         for _ in 0..100_000 {
             if let TaskPoll::Complete(png) = work.step(1).unwrap() {

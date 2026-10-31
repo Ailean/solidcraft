@@ -1,6 +1,205 @@
 use super::*;
 use solidcraft_render::job::{CpuHost, JobId};
 
+#[test]
+fn raster_saved_ev_reopens_captures_check_start_and_changes_real_png_with_one_authority() {
+    let mut offline = Session::default();
+    offline.execute("solid.box", &json!({"length":20,"width":15,"height":10})).unwrap();
+    for (name, ev) in [("Minus", -1.0), ("Zero", 0.0), ("Plus", 1.0)] {
+        offline
+            .execute("render.settings.set", &json!({"name":name,"set":{"width":32,"height":32,"exposure_ev":ev,"job":{"method":"raster"}}}))
+            .unwrap();
+    }
+    let mut s = Session::new(solidcraft_doc::Document::from_json(&offline.doc.to_json()).unwrap());
+    let host = CpuHost::cooperative();
+    s.set_render_job_host(Some(host.clone())).unwrap();
+    s.execute("render.scene", &json!({})).unwrap();
+    let doc = s.doc.clone();
+    let mut images = Vec::new();
+    for (name, ev) in [("Minus", -1.0), ("Zero", 0.0), ("Plus", 1.0)] {
+        let checked = s.execute("render.preflight", &json!({"setup":name})).unwrap();
+        assert_eq!(checked["ignored_controls"], json!([]));
+        assert_eq!(checked["request"]["integrator"], "raster");
+        assert_eq!(checked["request"].get("raster_exposure_ev").and_then(Value::as_f64).unwrap_or(0.0), ev);
+        let started = s.execute("render.start", &json!({"setup":name})).unwrap();
+        let job: JobId = serde_json::from_value(started["job"].clone()).unwrap();
+        finish(&host);
+        let handle = s.render_job_handle(job).unwrap();
+        assert_eq!(json!(handle.status().unwrap().request), checked["request"]);
+        images.push(handle.frame().unwrap().unwrap().png().to_vec());
+    }
+    assert_ne!(images[0], images[1]);
+    assert_ne!(images[1], images[2]);
+    let explicit = s
+        .execute(
+            "render.preflight",
+            &json!({"settings":{"width":16,"height":16,"exposure_ev":1,
+        "job":{"method":"raster","lights":[{"direction":[0,0,1],"color":[1,1,1],"intensity":2}]}}}),
+        )
+        .unwrap();
+    assert_eq!(explicit["request"]["raster_exposure_ev"], 1.0);
+    assert_eq!(explicit["request"]["raster_lights"].as_array().unwrap().len(), 1);
+    assert!(Arc::ptr_eq(&doc, &s.doc));
+    for ev in [-33.0, 33.0] {
+        assert!(s.execute("render.settings.set", &json!({"name":"Zero","set":{"exposure_ev":ev}})).is_err());
+        assert!(Arc::ptr_eq(&doc, &s.doc));
+    }
+    assert!(s.execute("render.preflight", &json!({"raster_exposure_ev":1})).is_err());
+}
+
+#[test]
+fn saved_raster_directional_rig_reopens_and_reaches_check_start_status_png_without_cpu_switch() {
+    let mut offline = Session::default();
+    offline.execute("solid.box", &json!({"length":20,"width":15,"height":10})).unwrap();
+    offline
+        .execute(
+            "render.settings.set",
+            &json!({"name":"SavedRig","set":{"width":32,"height":32,"job":{"method":"raster",
+        "lights":[{"direction":[3,-4,0],"color":[1,0,0],"intensity":2}]}}}),
+        )
+        .unwrap();
+    let document = solidcraft_doc::Document::from_json(&offline.doc.to_json()).unwrap();
+    let mut s = Session::new(document);
+    let host = CpuHost::cooperative();
+    s.set_render_job_host(Some(host.clone())).unwrap();
+    s.execute("render.scene", &json!({})).unwrap();
+    let doc = s.doc.clone();
+    let checked = s.execute("render.preflight", &json!({"setup":"SavedRig"})).unwrap();
+    assert_eq!(checked["request"]["integrator"], "raster");
+    assert!(checked["request"].get("raytrace").is_none());
+    assert_eq!(checked["request"]["raster_lights"][0]["direction"][0].as_f64().unwrap(), 3.0);
+    let started = s.execute("render.start", &json!({"setup":"SavedRig"})).unwrap();
+    let job: JobId = serde_json::from_value(started["job"].clone()).unwrap();
+    finish(&host);
+    let handle = s.render_job_handle(job).unwrap();
+    assert_eq!(json!(handle.status().unwrap().request), checked["request"]);
+    let lit_png = handle.frame().unwrap().unwrap().png().to_vec();
+    assert!(lit_png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    let mut dark = serde_json::to_value(&s.doc.render.setups["SavedRig"]).unwrap();
+    dark["job"]["lights"] = json!([]);
+    let dark_started = s.execute("render.start", &json!({"settings":dark})).unwrap();
+    let dark_job: JobId = serde_json::from_value(dark_started["job"].clone()).unwrap();
+    finish(&host);
+    assert_ne!(s.render_job_handle(dark_job).unwrap().frame().unwrap().unwrap().png(), lit_png.as_slice());
+    for runtime in [Value::Null, json!([])] {
+        for command in ["render.preflight", "render.start"] {
+            let error = s.execute(command, &json!({"setup":"SavedRig","raster_lights":runtime})).unwrap_err().to_string();
+            assert!(error.contains("authoritative"), "{error}");
+        }
+    }
+    assert!(Arc::ptr_eq(&doc, &s.doc));
+}
+
+#[test]
+fn raster_json_is_bounded_before_saved_normalization_and_preserves_null_empty_semantics() {
+    let (mut s, host) = session();
+    s.execute(
+        "render.settings.set",
+        &json!({"name":"Bounded","set":{"width":16,"height":16,"job":{"method":"raster","transparent_background":false}}}),
+    )
+    .unwrap();
+    let light = json!({"direction":[0,0,1],"color":[1,1,1],"intensity":1});
+    let mut unknown = light.clone();
+    unknown["unexpected"] = json!({"nested":vec![0;32]});
+    let doc = s.doc.clone();
+    for rig in [json!(vec![light; 9]), json!([unknown])] {
+        for saved in [false, true] {
+            let mut params = json!({"raster_lights":rig});
+            if saved {
+                params["setup"] = json!("Bounded");
+            }
+            let before = params.clone(); // deliberately small adversarial fixture, not production lowering
+            for command in ["render.preflight", "render.start"] {
+                assert!(s.execute(command, &params).is_err());
+                assert_eq!(params, before);
+                assert_eq!(host.admitted_bytes(), 0);
+                assert!(Arc::ptr_eq(&doc, &s.doc));
+            }
+        }
+    }
+    for saved in [false, true] {
+        for rig in [None, Some(Value::Null), Some(json!([]))] {
+            let empty = rig.as_ref().is_some_and(Value::is_array);
+            let mut params = json!({});
+            if saved {
+                params["setup"] = json!("Bounded");
+            }
+            if let Some(rig) = rig {
+                params["raster_lights"] = rig;
+            }
+            let checked = s.execute("render.preflight", &params).unwrap();
+            if empty {
+                assert_eq!(checked["request"]["raster_lights"], json!([]));
+            } else {
+                assert!(checked["request"].get("raster_lights").is_none());
+            }
+        }
+    }
+    // Source inspection, not this outcome test, proves the raw new array was
+    // borrowed/validated before materialization. No real OOM test is claimed.
+}
+
+#[test]
+fn transient_raster_rig_survives_saved_normalization_check_start_status_and_png() {
+    let (mut s, host) = session();
+    s.execute("solid.box", &json!({"length":20,"width":15,"height":10})).unwrap();
+    s.execute("render.settings.set", &json!({"name":"Rig","set":{"width":32,"height":32,"job":{"method":"raster","transparent_background":false}}}))
+        .unwrap();
+    let doc = s.doc.clone();
+    let before = (s.revision, s.undo.len(), s.redo.len(), s.evaluations);
+    let legacy = s.execute("render.start", &json!({"setup":"Rig"})).unwrap();
+    let legacy_id: JobId = serde_json::from_value(legacy["job"].clone()).unwrap();
+    finish(&host);
+    let legacy_png = s.render_job_handle(legacy_id).unwrap().frame().unwrap().unwrap().png().to_vec();
+    for rig in [json!([]), json!([{"direction":[0,-1,1],"color":[1,0,0],"intensity":2}])] {
+        let params = json!({"setup":"Rig","raster_lights":rig});
+        let checked = s.execute("render.preflight", &params).unwrap();
+        assert_eq!(checked["request"]["raster_lights"].as_array().unwrap().len(), params["raster_lights"].as_array().unwrap().len());
+        assert_eq!(checked["retained_request_bytes"].as_u64().unwrap() > 0, !params["raster_lights"].as_array().unwrap().is_empty());
+        let started = s.execute("render.start", &params).unwrap();
+        let job: JobId = serde_json::from_value(started["job"].clone()).unwrap();
+        finish(&host);
+        let status = s.execute("render.status", &json!({"job":job})).unwrap();
+        assert_eq!(status["request"], checked["request"]);
+        assert_eq!(status["progress"]["phase"], "completed");
+        let handle = s.render_job_handle(job).unwrap();
+        let frame = handle.frame().unwrap().unwrap();
+        assert!(frame.png().starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert_ne!(frame.png(), legacy_png.as_slice());
+        assert!(Arc::ptr_eq(&doc, &s.doc));
+        assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), s.evaluations));
+        assert!(!s.doc.to_json().contains("raster_lights"));
+    }
+}
+
+#[test]
+fn raster_rig_rejects_foreign_intent_and_unsupported_setup_controls_without_reserving() {
+    let (mut s, host) = session();
+    s.execute("solid.box", &json!({"length":20,"width":15,"height":10})).unwrap();
+    s.execute("render.preflight", &json!({"raster_lights":[]})).unwrap();
+    let doc = s.doc.clone();
+    for command in ["render.preflight", "render.start"] {
+        for extra in [
+            json!({"integrator":"raytrace"}),
+            json!({"progressive":true}),
+            json!({"studio_weights":[1,1,1]}),
+            json!({"raytrace":{}}),
+            json!({"nested_media":true}),
+            json!({"progressive_feedback":true}),
+            json!({"settings":{"exposure_ev":33}}),
+            json!({"settings":{"environment_rotation":1}}),
+        ] {
+            let mut params = json!({"raster_lights":[]});
+            for (key, value) in extra.as_object().unwrap() {
+                params[key] = value.clone();
+            }
+            assert!(s.execute(command, &params).is_err(), "{command}: {params}");
+            assert_eq!(host.admitted_bytes(), 0);
+            assert!(Arc::ptr_eq(&doc, &s.doc));
+        }
+    }
+}
+
 fn session() -> (Session, CpuHost) {
     let host = CpuHost::cooperative();
     let mut s = Session::default();
@@ -1182,17 +1381,18 @@ fn explicit_render_camera_preserves_orientation_and_refuses_invalid_state_atomic
 }
 
 /// #5089: a setup saved with exposure (the render workspace and the other executors use it)
-/// renders on the raster executor, which has no exposure, and the reply says what it left out.
+/// now renders with captured Raster exposure; only unsupported environment controls remain ignored.
 #[test]
 fn a_setup_saved_with_exposure_renders_and_names_the_controls_it_leaves_out() {
     let (mut s, host) = session();
     s.execute("render.settings.set", &json!({"name":"x","set":{"mode":"preview","width":16,"height":16,"exposure_ev":0.3}})).unwrap();
     let reply = s.execute("render.preflight", &json!({"setup":"x"})).unwrap();
-    assert_eq!(reply["ignored_controls"], json!(["exposure_ev"]));
+    assert_eq!(reply["ignored_controls"], json!([]));
+    assert_eq!(reply["request"]["raster_exposure_ev"], 0.3);
     let plain = s.execute("render.preflight", &request()).unwrap();
     assert_eq!(plain["ignored_controls"], json!([]));
     let started = s.execute("render.start", &json!({"setup":"x"})).unwrap();
-    assert_eq!(started["ignored_controls"], json!(["exposure_ev"]));
+    assert_eq!(started["ignored_controls"], json!([]));
     finish(&host);
     let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
     assert_eq!(s.execute("render.status", &json!({"job":id})).unwrap()["progress"]["phase"], "completed");
@@ -1215,4 +1415,74 @@ fn output_viewer_copy_validates_completed_job_without_mutation_or_pixel_payloads
     }
     assert!(Arc::ptr_eq(&document, &s.doc));
     assert_eq!(before, (s.revision, s.undo.len(), s.redo.len(), host.admitted_bytes()));
+}
+
+#[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
+#[test]
+fn cpu_exposure_full_saved_range_check_start_preserves_fixed_and_progressive_capture() {
+    let host = CpuHost::for_platform().unwrap();
+    assert_eq!(host.kind(), solidcraft_render::job::HostKind::NativeWorker);
+    host.validate_integrator(solidcraft_render::job::Integrator::Raytrace).unwrap();
+    eprintln!("CPU_EXPOSURE_RANGE_BRANCH cpu_supported=true");
+    for ev in [-32.0, -17.0, 17.0, 32.0] {
+        for progressive in [false, true] {
+            let mut s = Session::default();
+            s.execute("solid.box", &json!({"length":20,"width":20,"height":10})).unwrap();
+            let mut options = json!({"lights":[],"shadows":false,"primary_samples":1});
+            if progressive {
+                options["progressive"] = json!({"samples_per_pixel":3,"seed":31});
+            }
+            s.execute(
+                "render.settings.set",
+                &json!({"name":"EV","set":{"width":4,"height":4,"exposure_ev":ev,
+                "job":{"method":"cpu_raytrace","options":options}}}),
+            )
+            .unwrap();
+            let saved = s.doc.render.setups["EV"].clone();
+            s = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+            s.set_render_job_host(Some(host.clone())).unwrap();
+            s.execute("render.scene", &json!({})).unwrap();
+            let doc = s.doc.clone();
+            let before = (s.revision, s.evaluations, s.undo.len(), s.redo.len(), s.is_dirty());
+            let named = json!({"setup":"EV"});
+            let checked = s.execute("render.preflight", &named).unwrap();
+            assert_eq!(checked, s.execute("render.preflight", &json!({"settings":saved})).unwrap());
+            assert_eq!(checked["resolved"]["executor"], "cpu-raytrace");
+            assert_eq!(checked["request"]["raytrace"]["exposure_ev"], ev);
+            let started = s.execute("render.start", &named).unwrap();
+            let id: JobId = serde_json::from_value(started["job"].clone()).unwrap();
+            let handle = s.render_job_handle(id).unwrap();
+            let status = handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap();
+            assert_eq!(status.progress.phase, solidcraft_render::job::Phase::Completed, "{:?}", status.error);
+            assert_eq!(json!(status.request), checked["request"]);
+            let captured = status.request.raytrace.as_ref().unwrap();
+            assert_eq!(captured.exposure_ev, ev);
+            assert_eq!(captured.progressive.is_some(), progressive);
+            assert_eq!(captured.budget, solidcraft_render::job::CpuBudget::Compact);
+            assert_eq!(status.options.exposure_ev, 0.0, "no second GPU exposure authority");
+            assert!(handle.frame().unwrap().is_some());
+            assert_eq!(s.doc.render.setups["EV"], saved);
+            assert!(Arc::ptr_eq(&doc, &s.doc));
+            assert_eq!(before, (s.revision, s.evaluations, s.undo.len(), s.redo.len(), s.is_dirty()));
+        }
+    }
+}
+
+#[cfg(all(feature = "raytrace-cpu", not(target_arch = "wasm32")))]
+#[test]
+fn cpu_exposure_outside_expanded_range_fails_check_and_start_before_missing_hdr_input() {
+    let mut s = Session::default();
+    s.set_render_job_host(Some(CpuHost::for_platform().unwrap())).unwrap();
+    for ev in [-33.0, 33.0, -32.01, 32.01] {
+        let params = json!({"integrator":"raytrace","settings":{"width":1,"height":1},
+            "raytrace":{"exposure_ev":ev},"environment":{"path":"never-read-exposure-boundary.hdr"}});
+        let doc = s.doc.clone();
+        let before = (s.revision, s.evaluations, s.undo.len(), s.redo.len(), s.is_dirty());
+        for command in ["render.preflight", "render.start"] {
+            let error = s.execute(command, &params).unwrap_err().to_string();
+            assert!(error.contains("raytrace exposure_ev must be finite and within -32..32"), "{error}");
+        }
+        assert!(Arc::ptr_eq(&doc, &s.doc));
+        assert_eq!(before, (s.revision, s.evaluations, s.undo.len(), s.redo.len(), s.is_dirty()));
+    }
 }

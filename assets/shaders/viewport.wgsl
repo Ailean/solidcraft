@@ -18,7 +18,7 @@ struct U {
     depth: vec4<f32>,  // x = 1: reversed depth (1 near, 0 far); y, z: the faces' push (`FACE_BIAS`)
     tint: vec4<f32>,   // xyz added to a whole hovered body's colour before lighting
     sel: vec4<f32>,    // xyz a whole selected body's colour before lighting
-    product_lights_meta: vec4<f32>, // explicit preview flag and bounded count
+    product_lights_meta: vec4<f32>, // explicit preview flag, bounded count, product exposure EV, unused
     product_lights: array<vec4<f32>,84>, // position/kind, radiance, axis/cone, attenuation
 };
 
@@ -473,6 +473,24 @@ fn shade(i: TOut) -> vec4<f32> {
     return lit(i, 1.0);
 }
 
+// Dedicated product presentation lane: EV, not light intensity or material colour.
+// The host writes zero for Design and validates product EV before a Frame exists.
+fn product_exposed_radiance(radiance: vec3<f32>) -> vec3<f32> {
+    if (u.product_lights_meta.z == 0.0) { return radiance; }
+    return radiance * exp2(u.product_lights_meta.z);
+}
+
+// Exact product sRGB decode: explicit-light albedo, and the legacy display
+// response before exposure on Unorm targets. Design keeps its historical
+// to_linear transfer; the implicit-light exposure route remains unchanged.
+fn product_exposure_decode(c: vec3<f32>) -> vec3<f32> {
+    return select(c / 12.92, pow((c + vec3<f32>(0.055)) / vec3<f32>(1.055), vec3<f32>(2.4)), c > vec3<f32>(0.04045));
+}
+
+fn product_exposure_encode(c: vec3<f32>) -> vec3<f32> {
+    return select(c * 12.92, 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055), c > vec3<f32>(0.0031308));
+}
+
 fn product_light_unit(v: vec3<f32>) -> vec3<f32> {
     let scale=max(max(abs(v.x),abs(v.y)),abs(v.z));
     if scale == 0.0 { return vec3<f32>(0.0,0.0,1.0); }
@@ -489,6 +507,10 @@ fn product_light_sample(k: u32, p: vec3<f32>) -> mat2x3<f32> {
     var weight=1.0;
     if source.w > 0.5 {
         let delta=source.xyz-p;
+        // Exact coincidence has no defined source direction: no incident contribution.
+        if all(delta == vec3<f32>(0.0)) {
+            return mat2x3<f32>(vec3<f32>(0.0),vec3<f32>(0.0));
+        }
         let distance=max(length(delta),falloff.y);
         direction=product_light_unit(delta);
         weight=falloff.x/max(distance*distance,0.000001);
@@ -520,13 +542,14 @@ fn lit_color(i: TOut, visibility: f32, base: vec4<f32>) -> vec4<f32> {
     if u.product_lights_meta.x>0.0 {
         var radiance=vec3<f32>(0.0);
         for (var k=0u;k<min(u32(u.product_lights_meta.y),21u);k+=1u) {
-            if u.product_lights[k*4u].w == 4.0 {radiance+=to_linear(base.rgb)*u.product_lights[k*4u+1u].xyz/3.141592653589793;continue;}
+            if u.product_lights[k*4u].w == 4.0 {radiance+=product_exposure_decode(base.rgb)*u.product_lights[k*4u+1u].xyz/3.141592653589793;continue;}
             let sample=product_light_sample(k,i.wp);
-            radiance+=to_linear(base.rgb)*sample[1]*(max(dot(n,sample[0]),0.0)/3.141592653589793);
+            radiance+=product_exposure_decode(base.rgb)*sample[1]*(max(dot(n,sample[0]),0.0)/3.141592653589793);
         }
+        if (u.product_lights_meta.z != 0.0) { radiance = product_exposed_radiance(radiance); }
         let mapped=radiance/(vec3<f32>(1.0)+radiance);
-        let encoded=select(mapped*12.92,1.055*pow(mapped,vec3<f32>(1.0/2.4))-vec3<f32>(0.055),mapped>vec3<f32>(0.0031308));
-        return out_color(vec4<f32>(encoded,base.a));
+        if (u.back.w > 0.5) { return vec4<f32>(mapped,base.a); }
+        return vec4<f32>(product_exposure_encode(mapped),base.a);
     }
     let key = normalize(v * 0.8 + vec3<f32>(-0.3, 0.2, 0.6));
     let diff = max(dot(n, key), 0.0);
@@ -534,6 +557,15 @@ fn lit_color(i: TOut, visibility: f32, base: vec4<f32>) -> vec4<f32> {
     let h = normalize(key + v);
     let spec = pow(max(dot(n, h), 0.0), 40.0) * 0.25;
     let k = 0.42 + 0.38 * diff + 0.25 * fill - (0.42 + 0.25 * fill) * (1.0 - visibility);
+    if (u.product_lights_meta.z != 0.0) {
+        let legacy = min(base.rgb * k + vec3<f32>(spec), vec3<f32>(1.0));
+        // Preserve each attachment's existing zero-EV response. A linear target
+        // already receives Design's historical transfer; do not repair it here.
+        let linear = select(product_exposure_decode(legacy), to_linear(legacy), u.back.w > 0.5);
+        let exposed = min(product_exposed_radiance(linear), vec3<f32>(1.0));
+        if (u.back.w > 0.5) { return vec4<f32>(exposed, base.a); }
+        return vec4<f32>(product_exposure_encode(exposed), base.a);
+    }
     return out_color(vec4<f32>(min(base.rgb * k + vec3<f32>(spec), vec3<f32>(1.0)), base.a));
 }
 

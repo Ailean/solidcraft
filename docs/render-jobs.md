@@ -58,7 +58,26 @@ contains metadata only. The preview keeps the same job and capture identity,
 but remains separate from the retained final image and `render.export`.
 Cancellation, failure and final publication clear the provisional slot while
 preserving the previous successful result when no newer final exists. Each
-externally retained preview keeps its own admitted memory reservation.
+externally retained preview keeps the lease for its reusable admitted snapshot
+slot until release; the composed every-pass policy reserves two slots rather
+than one PNG for every pass. Publication may outpace physical client repaint.
+
+The composed CPU source adds runtime `cpu_preview_retention_skips: u32` to job
+status. It increments once for a real nonfinal uniform boundary that cannot
+publish because both reusable slots remain externally pinned after retiring the
+obsolete host snapshot and retrying its credit. Polling does not increment it;
+closed pools, in-flight buffers, unrequested feedback or an exhausted optional
+feedback quota are not themselves retention skips.
+Sampling and final work continue without observer acknowledgements or an extra
+snapshot allocation. SPP1/sequence1, SPP2/sequence2, skipped SPP3/count1, then
+SPP4/sequence3/count1 is a valid publication history after one slot returns.
+Actual producer passes must still be processed in order.
+
+Zero is a value from a real status, not a substitute status after lookup failure.
+The separate Interactive inspection diagnostic is nullable when there is no
+current handle or its status lookup fails; lookup errors are not included and other reported errors are independent. Neither
+form is saved in the design or proves that every snapshot was physically shown.
+This is a source proposal pending integrated validation, not a native result.
 
 ## Native and browser execution
 

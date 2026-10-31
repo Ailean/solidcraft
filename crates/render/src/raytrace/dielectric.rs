@@ -241,6 +241,482 @@ pub fn overlaps(a: Bounds, b: Bounds) -> bool {
     lo.x <= hi.x && lo.y <= hi.y && lo.z <= hi.z
 }
 
+/// Immediate parents of already-certified axis-aligned boxes. Strict containment
+/// is sufficient for this exact box subset; touching and partial overlap refuse.
+/// Eight overrides bound this to at most 64 comparisons, without allocation.
+pub(super) fn parents(certificates: &[Option<Certificate>; MAX_OVERRIDES], nested: bool) -> Result<[Option<usize>; MAX_OVERRIDES]> {
+    let mut result = [None; MAX_OVERRIDES];
+    for (child, certificate) in certificates.iter().enumerate() {
+        let Some(Certificate::ClosedBox(bounds)) = certificate else { continue };
+        for (candidate, certificate) in certificates.iter().enumerate() {
+            let Some(Certificate::ClosedBox(container)) = certificate else { continue };
+            if candidate == child || !overlaps(*bounds, *container) {
+                continue;
+            }
+            if !nested {
+                return Err(TraceError::InvalidInput("nested, touching or overlapping dielectric volumes are unsupported"));
+            }
+            if strictly_contains(*container, *bounds) {
+                let parent = result.get_mut(child).ok_or(TraceError::Internal("dielectric child index"))?;
+                let replace = match *parent {
+                    None => true,
+                    Some(previous) => match certificates.get(previous).copied().flatten() {
+                        Some(Certificate::ClosedBox(old)) => strictly_contains(old, *container),
+                        _ => return Err(TraceError::Internal("dielectric parent certificate")),
+                    },
+                };
+                if replace {
+                    *parent = Some(candidate);
+                }
+            } else if !strictly_contains(*bounds, *container) {
+                return Err(TraceError::InvalidInput("dielectric boxes must be disjoint or strictly nested; touching and overlap are unsupported"));
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn strictly_contains(outer: Bounds, inner: Bounds) -> bool {
+    let lo = outer.min();
+    let hi = outer.max();
+    let a = inner.min();
+    let b = inner.max();
+    lo.x < a.x && lo.y < a.y && lo.z < a.z && hi.x > b.x && hi.y > b.y && hi.z > b.z
+}
+
+/// A certified axis-aligned face point, shared by propagation and Beer intervals.
+/// This is used only by the explicit nested-box path, never by general spawn.
+#[derive(Clone, Copy)]
+pub(super) struct ExactBoxFace {
+    pub point: Vec3,
+    axis: usize,
+    outward: f64,
+    entering: bool,
+}
+
+impl ExactBoxFace {
+    pub fn spawn(self, direction: Vec3, reflected: bool) -> Result<super::Ray> {
+        let ray = super::Ray::new(self.point, direction, 0.0_f64.next_up(), super::MAX_DISTANCE_MM)?;
+        let side = super::component(ray.direction(), self.axis) * self.outward;
+        let exterior = if reflected { self.entering } else { !self.entering };
+        if (exterior && side <= 0.0) || (!exterior && side >= 0.0) {
+            return Err(TraceError::InvalidInput("nested box continuation is tangent or on the wrong side"));
+        }
+        Ok(ray)
+    }
+}
+
+/// Recover the exact constant-axis coordinate from the actual certified face.
+/// Tangential coordinates are validated, never clamped or displaced. Equal
+/// ray/other-face depths conservatively refuse independently of ordinal ties.
+pub(super) fn exact_box_face(bounds: Bounds, vertices: [Vec3; 3], normal: Vec3, position: Vec3, incoming: super::Ray) -> Result<ExactBoxFace> {
+    let mut face = None;
+    for axis in 0..3 {
+        let [a, b, c] = vertices.map(|v| super::component(v, axis));
+        if a == b && b == c {
+            if face.is_some() {
+                return Err(TraceError::InvalidInput("nested box face has ambiguous constant axes"));
+            }
+            face = Some((axis, a));
+        }
+    }
+    let (axis, plane) = face.ok_or(TraceError::InvalidInput("nested box face is not axis aligned"))?;
+    let lo = bounds.min();
+    let hi = bounds.max();
+    let outward = if plane == super::component(lo, axis) {
+        -1.0
+    } else if plane == super::component(hi, axis) {
+        1.0
+    } else {
+        return Err(TraceError::InvalidInput("nested box face disagrees with its certificate"));
+    };
+    let axis_vector = match axis {
+        0 => Vec3::X,
+        1 => Vec3::Y,
+        2 => Vec3::Z,
+        _ => return Err(TraceError::Internal("nested box face axis")),
+    };
+    if normal != axis_vector * outward || Triangle::new(vertices)?.geometric_normal() != Some(normal) {
+        return Err(TraceError::InvalidInput("nested box outward normal disagrees with its certified face"));
+    }
+    for vertex in vertices {
+        for a in 0..3 {
+            let coordinate = super::component(vertex, a);
+            if coordinate != super::component(lo, a) && coordinate != super::component(hi, a) {
+                return Err(TraceError::InvalidInput("nested box face vertex is not a certified corner"));
+            }
+        }
+    }
+    let point = match axis {
+        0 => Vec3::new(plane, position.y, position.z),
+        1 => Vec3::new(position.x, plane, position.z),
+        2 => Vec3::new(position.x, position.y, plane),
+        _ => return Err(TraceError::Internal("nested box point axis")),
+    };
+    if !point.is_finite() {
+        return Err(TraceError::InvalidInput("nested box reconstructed point is not finite"));
+    }
+    let direction = super::component(incoming.direction(), axis);
+    if direction == 0.0 {
+        return Err(TraceError::InvalidInput("nested box incident ray is tangent"));
+    }
+    let depth = (plane - super::component(incoming.origin(), axis)) / direction;
+    let [min, max] = incoming.interval();
+    if !depth.is_finite() || depth < min || depth > max {
+        return Err(TraceError::InvalidInput("nested box face is outside the incident ray interval"));
+    }
+    for a in 0..3 {
+        if a == axis {
+            continue;
+        }
+        let coordinate = super::component(point, a);
+        if coordinate <= super::component(lo, a) || coordinate >= super::component(hi, a) {
+            return Err(TraceError::InvalidInput("nested box edge, corner or outside-face point is ambiguous"));
+        }
+        let d = super::component(incoming.direction(), a);
+        if d != 0.0 {
+            for plane in [super::component(lo, a), super::component(hi, a)] {
+                let other = (plane - super::component(incoming.origin(), a)) / d;
+                if other == depth {
+                    return Err(TraceError::InvalidInput("nested box simultaneous face depths are ambiguous"));
+                }
+            }
+        }
+    }
+    Ok(ExactBoxFace { point, axis, outward, entering: direction * outward < 0.0 })
+}
+
+/// Hard crossing ceiling for eight disjoint certified boxes (two faces each).
+pub const MAX_DIRECT_CROSSINGS: u8 = (MAX_OVERRIDES * 2) as u8;
+
+#[derive(Clone, Copy)]
+struct DirectHit {
+    body: usize,
+    vertices: [Vec3; 3],
+    geometry: super::TriangleHit,
+}
+
+/// Incremental RGB visibility along ONE straight exterior-to-exterior connection.
+/// This is a direct-light approximation, not refracted transport or caustics.
+/// Selected optics are revalidated and certified against the borrowed capture.
+/// Boxes must be disjoint; sheets touching/inside boxes and endpoints on/inside
+/// boxes refuse. Unselected geometry blocks. The interval is [min,max): geometry
+/// exactly at a finite light endpoint does not block that light.
+///
+/// No BVH tie API exists for this consumer yet. A pass scans the captured source,
+/// one triangle (or body transition) per step. Equal-depth different bodies refuse
+/// rather than silently skipping an opaque blocker behind a selected boundary.
+/// Cost is O((crossings+1)*(triangles+bodies)), not accelerated traversal. Every
+/// step debits the caller's cumulative work and checks cancellation. Memory is
+/// fixed, with borrowed scene/options. Valid setup/steps create no containers;
+/// invalid options may construct the existing validator's bounded error String.
+/// The future prepared-scene consumer passes its existing `PreparedScene.source`.
+pub struct DirectVisibility<'a> {
+    source: &'a ProductScene,
+    options: &'a crate::job::RaytraceOptions,
+    state: DirectVisibilityState,
+}
+
+// Entirely private, reference-free and deliberately neither Clone nor Copy.
+struct DirectVisibilityState {
+    certificates: [Option<Certificate>; MAX_OVERRIDES],
+    ray: super::Ray,
+    body: usize,
+    triangle: usize,
+    scanned: usize,
+    nearest: Option<DirectHit>,
+    ambiguous: bool,
+    optical: bool,
+    medium: Option<(usize, Vec3)>,
+    sheets: u8,
+    transmittance: Vec3,
+    crossings: u8,
+    crossing_limit: u8,
+    terminal: bool,
+}
+
+impl<'a> DirectVisibility<'a> {
+    /// Bounded setup: at most eight small certificates and 64 overlap checks.
+    /// Setup also spends the SAME caller-owned budget; no fresh work credit.
+    pub fn new(
+        source: &'a ProductScene,
+        options: &'a crate::job::RaytraceOptions,
+        ray: super::Ray,
+        crossing_limit: u8,
+        work: &mut super::WorkBudget,
+        cancel: &crate::job::CancelToken,
+    ) -> Result<Self> {
+        work.tick(cancel)?;
+        if !(1..=MAX_DIRECT_CROSSINGS).contains(&crossing_limit) || source.meshes.len() > crate::job::MAX_CPU_BODIES {
+            return Err(TraceError::InvalidInput("direct visibility crossing or body bound"));
+        }
+        options.validate().map_err(|_| TraceError::InvalidInput("invalid direct visibility options"))?;
+        let mut certificates = [None; MAX_OVERRIDES];
+        let start = ray.at(ray.interval()[0])?;
+        let end = ray.at(ray.interval()[1])?;
+        for (slot, input) in certificates.iter_mut().zip(&options.dielectrics) {
+            work.tick(cancel)?;
+            let certificate = certify(source, input)?;
+            if let Certificate::ClosedBox(bounds) = certificate {
+                if contains(bounds, ray.origin()) || contains(bounds, start) || contains(bounds, end) {
+                    return Err(TraceError::InvalidInput("direct visibility endpoints must be outside certified boxes"));
+                }
+            }
+            *slot = Some(certificate);
+        }
+        for (i, a) in certificates.iter().take(options.dielectrics.len()).enumerate() {
+            for (j, b) in certificates.iter().take(options.dielectrics.len()).enumerate().skip(i + 1) {
+                work.tick(cancel)?;
+                let (Some(a), Some(b)) = (a, b) else { continue };
+                let bounds = |slot: usize, certificate: Certificate| -> Result<Bounds> {
+                    match certificate {
+                        Certificate::ClosedBox(bounds) => Ok(bounds),
+                        Certificate::ThinSheet => {
+                            let input = options.dielectrics.get(slot).ok_or(TraceError::Internal("direct certificate slot"))?;
+                            let body = source.meshes.get(input.body_index).ok_or(TraceError::Internal("direct certificate body"))?;
+                            let bounds = body.mesh.bounds();
+                            Bounds::new(bounds.min, bounds.max)
+                        }
+                    }
+                };
+                if (matches!(a, Certificate::ClosedBox(_)) || matches!(b, Certificate::ClosedBox(_))) && overlaps(bounds(i, *a)?, bounds(j, *b)?) {
+                    return Err(TraceError::InvalidInput("direct visibility boxes must be disjoint from other selected boundaries"));
+                }
+            }
+        }
+        super::check_cancel(cancel)?;
+        Ok(Self {
+            source,
+            options,
+            state: DirectVisibilityState {
+                certificates,
+                ray,
+                body: 0,
+                triangle: 0,
+                scanned: 0,
+                nearest: None,
+                ambiguous: false,
+                optical: false,
+                medium: None,
+                sheets: 0,
+                transmittance: Vec3::new(1.0, 1.0, 1.0),
+                crossings: 0,
+                crossing_limit,
+                terminal: false,
+            },
+        })
+    }
+
+    /// None means real work remains. Only Some(rgb) is a completed connection.
+    /// Work/crossing exhaustion, cancellation and ambiguity are errors, never black
+    /// or white fallback values. Success OR error makes this cursor terminal.
+    pub fn step(&mut self, work: &mut super::WorkBudget, cancel: &crate::job::CancelToken) -> Result<Option<Vec3>> {
+        if self.state.terminal {
+            return Err(TraceError::InvalidInput("direct visibility cursor is terminal"));
+        }
+        let result = self.advance(work, cancel);
+        if !matches!(result, Ok(None)) {
+            self.state.terminal = true;
+        }
+        result
+    }
+
+    fn advance(&mut self, work: &mut super::WorkBudget, cancel: &crate::job::CancelToken) -> Result<Option<Vec3>> {
+        work.tick(cancel)?;
+        if !self.state.optical {
+            if let Some(body) = self.source.meshes.get(self.state.body) {
+                // A certified sheet is ONE plane. Its two triangles can round
+                // their depths differently at a shared edge; it must never be
+                // attenuated twice. Skip that entire immutable certified body
+                // after its first crossing, not a numerical distance interval.
+                if self
+                    .options
+                    .dielectrics
+                    .iter()
+                    .enumerate()
+                    .any(|(slot, input)| input.body_index == self.state.body && self.state.sheets & (1u8 << slot) != 0)
+                {
+                    self.state.body += 1;
+                    self.state.triangle = 0;
+                    return Ok(None);
+                }
+                if let Some(indices) = body.mesh.triangles.get(self.state.triangle) {
+                    self.state.scanned =
+                        self.state.scanned.checked_add(1).filter(|n| *n <= crate::job::MAX_CPU_TRIANGLES).ok_or(TraceError::WorkLimit)?;
+                    let mut vertices = [Vec3::ZERO; 3];
+                    for (point, index) in vertices.iter_mut().zip(indices) {
+                        *point = *body.mesh.positions.get(*index as usize).ok_or(TraceError::InvalidInput("direct visibility vertex index"))?;
+                    }
+                    self.state.triangle += 1;
+                    if let Some(geometry) = Triangle::new(vertices)?.intersect(&self.state.ray) {
+                        if geometry.distance < self.state.ray.interval()[1] {
+                            let hit = DirectHit { body: self.state.body, vertices, geometry };
+                            match self.state.nearest {
+                                None => self.state.nearest = Some(hit),
+                                Some(old) if geometry.distance < old.geometry.distance => {
+                                    self.state.nearest = Some(hit);
+                                    self.state.ambiguous = false;
+                                }
+                                Some(old) if geometry.distance == old.geometry.distance && old.body != self.state.body => self.state.ambiguous = true,
+                                _ => {}
+                            }
+                        }
+                    }
+                } else {
+                    self.state.body += 1;
+                    self.state.triangle = 0;
+                }
+                return Ok(None);
+            }
+            self.state.optical = true;
+            return Ok(None);
+        }
+        if self.state.ambiguous {
+            return Err(TraceError::InvalidInput("coincident direct visibility bodies are ambiguous"));
+        }
+        let Some(hit) = self.state.nearest else {
+            return if self.state.medium.is_some() {
+                Err(TraceError::InvalidInput("direct visibility missed its certified box exit"))
+            } else {
+                Ok(Some(self.state.transmittance))
+            };
+        };
+        let Some((slot, input)) = self.options.dielectrics.iter().enumerate().find(|(_, input)| input.body_index == hit.body) else {
+            return Ok(Some(Vec3::ZERO));
+        };
+        if self.state.crossings == self.state.crossing_limit {
+            return Err(TraceError::WorkLimit);
+        }
+        let outward = hit.geometry.geometric_normal;
+        let entering = outward.dot(self.state.ray.direction()) < 0.0;
+        let normal = if entering { outward } else { -outward };
+        match self.state.certificates.get(slot).copied().flatten().ok_or(TraceError::Internal("direct visibility certificate missing"))? {
+            Certificate::ThinSheet => {
+                if self.state.medium.is_some() {
+                    return Err(TraceError::InvalidInput("direct visibility sheet inside a box"));
+                }
+                let (_, _, transmission) = thin_sheet(self.state.ray.direction(), normal, input)?;
+                self.state.transmittance = multiply(self.state.transmittance, transmission);
+                self.state.sheets |= 1u8 << slot;
+            }
+            Certificate::ClosedBox(bounds) => {
+                let [a, b, c] = hit.vertices;
+                let [wa, wb, wc] = hit.geometry.barycentric;
+                let face = exact_box_face(bounds, hit.vertices, outward, a * wa + b * wb + c * wc, self.state.ray)?;
+                // External-angle Fresnel on BOTH straight connections. The ray is
+                // not bent, so an internal critical angle here would invent TIR.
+                let transmit = 1.0 - interface(self.state.ray.direction(), normal, 1.0, input.ior)?.reflectance;
+                self.state.transmittance = self.state.transmittance * transmit;
+                if entering {
+                    if self.state.medium.is_some() {
+                        return Err(TraceError::InvalidInput("direct visibility entered overlapping boxes"));
+                    }
+                    self.state.medium = Some((slot, face.point));
+                } else {
+                    let (active, start) = self.state.medium.ok_or(TraceError::InvalidInput("direct visibility exited without entry"))?;
+                    if active != slot {
+                        return Err(TraceError::InvalidInput("direct visibility box exit identity mismatch"));
+                    }
+                    let delta = face.point - start;
+                    let scale = delta.x.abs().max(delta.y.abs()).max(delta.z.abs());
+                    if scale == 0.0 || !scale.is_finite() {
+                        return Err(TraceError::InvalidInput("direct visibility box segment is degenerate"));
+                    }
+                    let distance = scale * (delta / scale).len2().sqrt();
+                    self.state.transmittance = multiply(self.state.transmittance, attenuation(input.absorption_per_mm, distance)?);
+                    self.state.medium = None;
+                }
+            }
+        }
+        if !self.state.transmittance.is_finite()
+            || [self.state.transmittance.x, self.state.transmittance.y, self.state.transmittance.z].into_iter().any(|v| !(0.0..=1.0).contains(&v))
+        {
+            return Err(TraceError::InvalidInput("invalid direct visibility transmittance"));
+        }
+        self.state.crossings += 1;
+        if self.state.transmittance == Vec3::ZERO {
+            return Ok(Some(Vec3::ZERO));
+        }
+        // Preserve the original origin AND normalized direction. Calling Ray::new
+        // again could renormalize it and change the tie/interval calculations.
+        self.state.ray.min = hit.geometry.distance.next_up();
+        if self.state.ray.min >= self.state.ray.max {
+            return if self.state.medium.is_some() {
+                Err(TraceError::InvalidInput("direct visibility interval cannot resolve the exit"))
+            } else {
+                Ok(Some(self.state.transmittance))
+            };
+        }
+        self.state.body = 0;
+        self.state.triangle = 0;
+        self.state.scanned = 0;
+        self.state.nearest = None;
+        self.state.ambiguous = false;
+        self.state.optical = false;
+        Ok(None)
+    }
+}
+
+/// Owns one immutable capture and at most one direct-light connection inline.
+/// Moving this owner moves its scene/options and reference-free cursor together.
+/// No state or mutable capture access escapes: certificates cannot be rebound to
+/// a different scene/options pair by a sibling consumer. Construction only moves
+/// the capture; `begin` retains the original validation and caller-owned ledger.
+/// The existing borrowed `DirectVisibility` API remains independently available.
+pub(super) struct DirectVisibilityOwner {
+    source: ProductScene,
+    options: crate::job::RaytraceOptions,
+    state: Option<DirectVisibilityState>,
+}
+
+impl DirectVisibilityOwner {
+    pub(super) fn new(source: ProductScene, options: crate::job::RaytraceOptions) -> Self {
+        Self { source, options, state: None }
+    }
+
+    /// Test fixtures may consume their capture; no cursor state survives or escapes.
+    #[cfg(test)]
+    pub(super) fn into_capture(self) -> (ProductScene, crate::job::RaytraceOptions) {
+        (self.source, self.options)
+    }
+
+    pub(super) fn source(&self) -> &ProductScene {
+        &self.source
+    }
+
+    pub(super) fn options(&self) -> &crate::job::RaytraceOptions {
+        &self.options
+    }
+
+    /// Start explicitly on this owner's capture. Never replace an active scan.
+    /// A failed constructor preserves the previous idle or terminal state.
+    pub(super) fn begin(
+        &mut self,
+        ray: super::Ray,
+        crossing_limit: u8,
+        work: &mut super::WorkBudget,
+        cancel: &crate::job::CancelToken,
+    ) -> Result<()> {
+        if self.state.as_ref().is_some_and(|state| !state.terminal) {
+            return Err(TraceError::InvalidInput("direct visibility connection is active"));
+        }
+        let state = DirectVisibility::new(&self.source, &self.options, ray, crossing_limit, work, cancel)?.state;
+        self.state = Some(state);
+        Ok(())
+    }
+
+    /// Advance once, rebinding only to the immutable capture owned here.
+    /// Retain terminal state on success AND error; only explicit `begin` starts
+    /// another connection. Rebinding itself has no work, validation or allocation.
+    pub(super) fn step(&mut self, work: &mut super::WorkBudget, cancel: &crate::job::CancelToken) -> Result<Option<Vec3>> {
+        let state = self.state.take().ok_or(TraceError::InvalidInput("direct visibility connection has not begun"))?;
+        let mut cursor = DirectVisibility { source: &self.source, options: &self.options, state };
+        let result = cursor.step(work, cancel);
+        self.state = Some(cursor.state);
+        result
+    }
+}
+
 #[cfg(test)]
 #[path = "dielectric_tests.rs"]
 pub(super) mod tests;

@@ -146,6 +146,10 @@ fn direct_response_respects_geometry_visibility_and_quarter_turn() {
 fn decoded_cpu_png_rotates_only_the_two_explicit_planar_targets() {
     fn render(scene: ProductScene, camera: Camera, options: RaytraceOptions) -> ::image::RgbaImage {
         let request = ImageRequest {
+            raster_punctual_lights: None,
+            raster_area_lights: None,
+            raster_exposure_ev: 0.0,
+            raster_lights: None,
             studio_weights: None,
             environment: None,
             textures: None,

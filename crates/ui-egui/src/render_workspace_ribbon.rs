@@ -13,7 +13,8 @@ fn handled(id: &str) -> bool {
     is_job_action(id)
         || matches!(
             id,
-            "render.aging.describe"
+            "render.interactive"
+                | "render.aging.describe"
                 | "render.effects.describe"
                 | "render.environment.set"
                 | "render.preset.resolve"
@@ -66,6 +67,7 @@ pub(super) fn action_ready(app: &SolveApp, id: &str) -> Result<(), String> {
         return Err(app.tr("render.ribbon_finish_dialog").into());
     }
     match id {
+        "render.interactive" => super::interactive::command_ready(app),
         "render.preflight" | "render.start" => {
             if id == "render.start" && busy(app) {
                 return Err(app.tr("render.ribbon_job_active").into());
@@ -148,6 +150,9 @@ pub(super) fn perform_job(app: &mut SolveApp, id: &str) -> Result<(), String> {
                 .map_err(|e| crate::i18n::format("render.error_job_identity", &[("error", &e.to_string())]))?;
             app.render_workspace.view.job = Some(job);
             app.render_workspace.view.job_shot = Some(app.render_workspace.view.name.clone());
+            if app.preferences.render_open_result_on_start {
+                app.run("render.result.view", json!({"view":"image"}))?;
+            }
         }
         "render.result.copy" => {
             let job = app.render_workspace.view.completed.ok_or_else(|| app.tr("render.ribbon_no_result").to_string())?;
@@ -209,6 +214,10 @@ fn focus(app: &mut SolveApp, page: inspector::Page, category: Option<&str>) {
 /// Parameterless command activation opens the already implemented editor. The
 /// engine's explicit resolve/apply methods still require their original params.
 pub(super) fn start(app: &mut SolveApp, id: &str) -> bool {
+    if id == "render.interactive" {
+        super::interactive::activate(app);
+        return true;
+    }
     if !handled(id) {
         return false;
     }

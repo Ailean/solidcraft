@@ -957,10 +957,31 @@ pub const AO_SAMPLES: u32 = 32;
 /// nearby parts (#4167).
 pub const AO_SAMPLES_MOVING: u32 = 8;
 
+/// Validated transient product-preview exposure, never a second document field.
+/// RenderSetup::exposure_ev remains the document authority; Design ignores it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ProductExposureEv(f32);
+
+impl ProductExposureEv {
+    pub fn from_ev(ev: f64) -> Option<Self> {
+        if !ev.is_finite() || !(-32.0..=32.0).contains(&ev) {
+            return None;
+        }
+        let ev = ev as f32;
+        Some(Self(if ev == 0.0 { 0.0 } else { ev }))
+    }
+
+    pub fn ev(self) -> f32 {
+        self.0
+    }
+}
+
 /// Per-frame parameters.
 pub struct Frame {
     /// Bounded unshadowed product-light preview. None retains the fixed studio.
     pub product_lights: Option<Vec<[f32; 16]>>,
+    /// Product-only post-shading exposure; zero preserves the existing transfer.
+    pub product_exposure_ev: ProductExposureEv,
     /// Product preview uses its own batches, retaining the Design viewport's uploads.
     pub product: bool,
     /// Product preview only: receives a GPU error raised by its geometry upload.
@@ -3249,6 +3270,10 @@ fn frame_key(cb: &Frame) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     cb.product.hash(&mut h);
     cb.product_lights.as_ref().map(|lights| lights.iter().take(21).map(|light| light.map(f32::to_bits)).collect::<Vec<_>>()).hash(&mut h);
+    let exposure = product_exposure_ev(cb);
+    if exposure != 0.0 {
+        exposure.to_bits().hash(&mut h);
+    }
     cb.key.hash(&mut h);
     cb.sketch_key.hash(&mut h);
     cb.hl_key.hash(&mut h);
@@ -4110,6 +4135,10 @@ fn load_depth<T>(first: bool, clear: T) -> wgpu::LoadOp<T> {
     if first { wgpu::LoadOp::Clear(clear) } else { wgpu::LoadOp::Load }
 }
 
+fn product_exposure_ev(frame: &Frame) -> f32 {
+    if frame.product { frame.product_exposure_ev.ev() } else { 0.0 }
+}
+
 /// Uniform bytes for a frame.
 pub fn uniform_bytes(cb: &Frame, w: f32, h: f32, linear: bool, reversed: bool) -> Vec<u8> {
     let mut v: Vec<f32> = gpu_view_proj(cb.view_proj, reversed).iter().flatten().copied().collect();
@@ -4134,7 +4163,7 @@ pub fn uniform_bytes(cb: &Frame, w: f32, h: f32, linear: bool, reversed: bool) -
     v.extend([
         if cb.product_lights.is_some() { 1.0 } else { 0.0 },
         cb.product_lights.as_ref().map_or(0, |lights| lights.len().min(21)) as f32,
-        0.0,
+        product_exposure_ev(cb),
         0.0,
     ]);
     for index in 0..21 {
@@ -4360,6 +4389,7 @@ mod tests {
         let slot = || Arc::new(Mutex::new(None));
         super::Frame {
             product_lights: None,
+            product_exposure_ev: Default::default(),
             product: false,
             upload_error: None,
             key: 1,
@@ -4532,6 +4562,48 @@ mod tests {
                 assert!(c < first, "fragment {n}: a derivative after a branch or return: {}", &body[c..(c + 40).min(body.len())]);
             }
         }
+    }
+
+    #[test]
+    fn product_exposure_type_rejects_hostile_values_and_canonicalises_zero() {
+        use super::ProductExposureEv;
+        for ev in [-32.0, -3.5, 0.0, 2.25, 32.0] {
+            assert_eq!(ProductExposureEv::from_ev(ev).unwrap().ev(), ev as f32);
+        }
+        for ev in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -32.0001, 32.0001, f64::MAX] {
+            assert!(ProductExposureEv::from_ev(ev).is_none());
+        }
+        assert_eq!(ProductExposureEv::default().ev().to_bits(), 0);
+        assert_eq!(ProductExposureEv::from_ev(-0.0).unwrap().ev().to_bits(), 0);
+        assert_eq!(ProductExposureEv::from_ev(-1e-300).unwrap().ev().to_bits(), 0);
+    }
+
+    #[test]
+    fn product_exposure_has_its_own_uniform_lane_and_only_invalidates_product_pictures() {
+        use super::{ProductExposureEv, frame_key, uniform_bytes};
+        let mut frame = cached_frame();
+        let design_key = frame_key(&frame);
+        let design_bytes = uniform_bytes(&frame, 64.0, 64.0, false, false);
+        frame.product_exposure_ev = ProductExposureEv::from_ev(3.0).unwrap();
+        assert_eq!(frame_key(&frame), design_key);
+        assert_eq!(uniform_bytes(&frame, 64.0, 64.0, false, false), design_bytes, "Design ignores product presentation");
+        frame.product = true;
+        frame.product_exposure_ev = Default::default();
+        let zero_key = frame_key(&frame);
+        let zero = uniform_bytes(&frame, 64.0, 64.0, false, false);
+        assert_eq!(zero.len(), 1776, "the existing shader layout is unchanged");
+        for ev in [-3.0, 2.5] {
+            frame.product_exposure_ev = ProductExposureEv::from_ev(ev).unwrap();
+            let exposed = uniform_bytes(&frame, 64.0, 64.0, false, false);
+            assert_ne!(frame_key(&frame), zero_key, "changing EV must repaint a cached product picture");
+            // Existing U is 416 bytes before product_lights_meta. Its z lane is byte424.
+            assert_eq!(f32::from_le_bytes(exposed[424..428].try_into().unwrap()), ev as f32);
+            assert_eq!(&exposed[..424], &zero[..424]);
+            assert_eq!(&exposed[428..], &zero[428..], "light records, tints and geometry uniforms must not change");
+        }
+        frame.product_exposure_ev = ProductExposureEv::from_ev(-0.0).unwrap();
+        assert_eq!(frame_key(&frame), zero_key);
+        assert_eq!(uniform_bytes(&frame, 64.0, 64.0, false, false), zero);
     }
 }
 
@@ -4747,6 +4819,7 @@ mod glass_tests {
         let none = || Arc::new(Mutex::new(None));
         let frame = Frame {
             product_lights: None,
+            product_exposure_ev: Default::default(),
             product: false,
             upload_error: None,
             key: 1,
@@ -4848,9 +4921,19 @@ mod glass_tests {
 
     /// Render `frame` through `r` into a fresh 64 × 64 target and read the pixels back.
     fn render_frame(r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame, with_depth: bool) -> Vec<u8> {
+        render_frame_format(r, device, queue, frame, with_depth, wgpu::TextureFormat::Rgba8Unorm)
+    }
+
+    fn render_frame_format(
+        r: &mut Renderer,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &Frame,
+        with_depth: bool,
+        format: wgpu::TextureFormat,
+    ) -> Vec<u8> {
         const SIZE: u32 = 64;
         let depth = crate::depth_format(device, true);
-        let format = wgpu::TextureFormat::Rgba8Unorm;
         let texture = |format, usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
@@ -4922,6 +5005,7 @@ mod glass_tests {
         let none = || Arc::new(Mutex::new(None));
         Frame {
             product_lights: None,
+            product_exposure_ev: Default::default(),
             product: false,
             upload_error: None,
             key: 1,
@@ -5238,5 +5322,205 @@ mod glass_tests {
         // Seen from below, the order flips.
         let sorted = sort_back_to_front(&sc.glass, [0.0, 0.0, -1.0]);
         assert_eq!(f32::from_le_bytes(sorted[8..12].try_into().unwrap()), 5.0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn real_product_exposure_repaints_both_attachment_formats_and_restores_zero_exactly() {
+        let (_, device, queue) = match crate::open_headless() {
+            Ok(device) => device,
+            Err(error) if std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none() => {
+                eprintln!("PRODUCT_EXPOSURE_GPU supported=false reason={error}");
+                return;
+            }
+            Err(error) => panic!("required GPU adapter unavailable: {error}"),
+        };
+        for format in [wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::Rgba8UnormSrgb] {
+            for pbr in [false, true] {
+                for explicit in [false, true] {
+                    let mut scene = GpuScene::default();
+                    let color = scene.color([96, 112, 128, 255]);
+                    let surface =
+                        solidcraft_render::surface::OpaqueSurface::new(solidcraft_geom::Vec3::new(0.12, 0.18, 0.24), 0.0, 0.6, 1.5).unwrap();
+                    for p in [[-5.0, -5.0, 0.0], [5.0, -5.0, 0.0], [5.0, 5.0, 0.0], [-5.0, -5.0, 0.0], [5.0, 5.0, 0.0], [-5.0, 5.0, 0.0]] {
+                        if pbr {
+                            scene.pbr_tri(p, [0.0, 0.0, 1.0], surface);
+                        } else {
+                            scene.tri(p, [0.0, 0.0, 1.0], color);
+                        }
+                    }
+                    let depth = crate::depth_format(&device, true);
+                    let mut renderer = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false }, None);
+                    let mut frame = test_frame(scene, 2.0);
+                    frame.product = true;
+                    if explicit {
+                        // Original ambient record in the real bounded preview-light wire.
+                        frame.product_lights = Some(vec![[0.0, 0.0, 0.0, 4.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]);
+                    }
+                    let zero = render_frame_format(&mut renderer, &device, &queue, &frame, true, format);
+                    assert_eq!(zero.len(), 64 * 64 * 4);
+                    assert!(renderer.ss_ready, "test the actual cached/offscreen path");
+                    let repeated = render_frame_format(&mut renderer, &device, &queue, &frame, true, format);
+                    assert_eq!(repeated, zero);
+                    frame.product_exposure_ev = ProductExposureEv::from_ev(1.0).unwrap();
+                    let bright = render_frame_format(&mut renderer, &device, &queue, &frame, true, format);
+                    frame.product_exposure_ev = ProductExposureEv::from_ev(-1.0).unwrap();
+                    let dark = render_frame_format(&mut renderer, &device, &queue, &frame, true, format);
+                    let center = (32 * 64 + 32) * 4;
+                    assert!((0..3).any(|channel| bright[center + channel] > zero[center + channel]), "{format:?} pbr={pbr} explicit={explicit}");
+                    assert!((0..3).all(|channel| dark[center + channel] < zero[center + channel]), "{format:?} pbr={pbr} explicit={explicit}");
+                    for image in [&bright, &dark] {
+                        assert_eq!(&image[..4], &zero[..4], "the white backplate is unchanged");
+                        assert!(image.chunks_exact(4).zip(zero.chunks_exact(4)).all(|(a, b)| a[3] == b[3]), "alpha/coverage must not be exposed");
+                    }
+                    frame.product_exposure_ev = Default::default();
+                    assert_eq!(render_frame_format(&mut renderer, &device, &queue, &frame, true, format), zero);
+                }
+            }
+        }
+        eprintln!("PRODUCT_EXPOSURE_GPU supported=true formats=2 materials=2 lights=2");
+    }
+
+    /// Original Lambert oracle: one unit-cosine source of PI radiance cancels
+    /// diffuse / PI. Decode the authored byte, expose in linear light, Reinhard,
+    /// then encode once. Never derive expected pixels from the viewport shader.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn explicit_product_dark_channels_follow_one_srgb_transfer_in_both_targets() {
+        let (_, device, queue) = match crate::open_headless() {
+            Ok(device) => device,
+            Err(error) if std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none() => {
+                eprintln!("U17_PRODUCT_SRGB supported=false reason={error}");
+                return;
+            }
+            Err(error) => panic!("required GPU adapter unavailable: {error}"),
+        };
+        for format in [wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::Rgba8UnormSrgb] {
+            for ssaa in [1.0, 2.0] {
+                for pbr in [false, true] {
+                    for ambient in [false, true] {
+                        for rgb in [[0u8, 1, 10], [11, 128, 255]] {
+                            let mut scene = GpuScene::default();
+                            let color = scene.color([rgb[0], rgb[1], rgb[2], 255]);
+                            let linear = rgb.map(solidcraft_geom::srgb::decode8);
+                            // Index matched, nonmetallic: the PBR directional
+                            // control is Lambert too, with no Fresnel/specular.
+                            let surface = solidcraft_render::surface::OpaqueSurface::new(
+                                solidcraft_geom::Vec3::new(linear[0], linear[1], linear[2]),
+                                0.0,
+                                0.6,
+                                1.0,
+                            )
+                            .unwrap();
+                            for p in [[-5.0, -5.0, 0.0], [5.0, -5.0, 0.0], [5.0, 5.0, 0.0], [-5.0, -5.0, 0.0], [5.0, 5.0, 0.0], [-5.0, 5.0, 0.0]] {
+                                if pbr {
+                                    scene.pbr_tri(p, [0.0, 0.0, 1.0], surface);
+                                } else {
+                                    scene.tri(p, [0.0, 0.0, 1.0], color);
+                                }
+                            }
+                            let depth = crate::depth_format(&device, true);
+                            let mut renderer =
+                                Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false }, None);
+                            let mut frame = test_frame(scene, ssaa);
+                            frame.product = true;
+                            let pi = std::f32::consts::PI;
+                            frame.product_lights =
+                                Some(vec![[0.0, 0.0, 1.0, if ambient { 4.0 } else { 0.0 }, pi, pi, pi, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]);
+                            for ev in [-8.0, 0.0, 1.0] {
+                                frame.product_exposure_ev = ProductExposureEv::from_ev(ev).unwrap();
+                                let image = render_frame_format(&mut renderer, &device, &queue, &frame, true, format);
+                                assert_eq!(image.len(), 64 * 64 * 4);
+                                if ssaa == 2.0 {
+                                    assert!(renderer.ss_ready, "exercise cached supersampling");
+                                }
+                                // Away from every edge and the diagonal, with
+                                // constant radiance over all supersample taps.
+                                let at = (30 * 64 + 32) * 4;
+                                for channel in 0..3 {
+                                    let radiance = linear[channel] * f64::from(pi) / std::f64::consts::PI * f64::from(ev).exp2();
+                                    let expected = solidcraft_geom::srgb::encode8(radiance / (1.0 + radiance));
+                                    assert!(
+                                        image[at + channel].abs_diff(expected) <= 1,
+                                        "{format:?} ssaa={ssaa} pbr={pbr} ambient={ambient} rgb={rgb:?} ev={ev} channel={channel}: got={} expected={expected}",
+                                        image[at + channel]
+                                    );
+                                }
+                                assert_eq!(image[at + 3], 255, "transfer never grades coverage");
+                                assert_eq!(&image[..4], &[255; 4], "white backplate is unchanged");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("U17_PRODUCT_SRGB supported=true formats=2 ssaa=2 materials=2 sources=2 palettes=2 exposures=3");
+    }
+
+    /// In this existing orthographic fixture, pixel(32,32) is exactly
+    /// (5/32,-5/32,0): clip edges are +/-1/2 at integer screen16 and48.
+    /// The source shares that representable point. No epsilon weakens delta0.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn raster_local_model_exact_coincidence_is_black_then_positive_source_repaints_both_formats() {
+        let (_, device, queue) = match crate::open_headless() {
+            Ok(device) => device,
+            Err(error) if std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none() => {
+                eprintln!("RASTER_LOCAL_MODEL_ZERO supported=false reason={error}");
+                return;
+            }
+            Err(error) => panic!("required GPU adapter unavailable: {error}"),
+        };
+        for format in [wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::Rgba8UnormSrgb] {
+            for pbr in [false, true] {
+                let mut scene = GpuScene::default();
+                let rgb = [94, 128, 160];
+                let colour = scene.color([rgb[0], rgb[1], rgb[2], 255]);
+                let linear = rgb.map(solidcraft_geom::srgb::decode8);
+                let surface =
+                    solidcraft_render::surface::OpaqueSurface::new(solidcraft_geom::Vec3::new(linear[0], linear[1], linear[2]), 0.0, 1.0, 1.0)
+                        .unwrap();
+                for p in [[-5.0, -5.0, 0.0], [5.0, -5.0, 0.0], [5.0, 5.0, 0.0], [-5.0, -5.0, 0.0], [5.0, 5.0, 0.0], [-5.0, 5.0, 0.0]] {
+                    if pbr {
+                        scene.pbr_tri(p, [0.0, 0.0, 1.0], surface);
+                    } else {
+                        scene.tri(p, [0.0, 0.0, 1.0], colour);
+                    }
+                }
+                let depth = crate::depth_format(&device, true);
+                let mut renderer = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false }, None);
+                let mut frame = test_frame(scene, 1.0);
+                let design = render_frame_format(&mut renderer, &device, &queue, &frame, true, format);
+                frame.product = true;
+                let at = (32 * 64 + 32) * 4;
+                for kind in [1.0, 2.0, 3.0] {
+                    let pi = std::f32::consts::PI;
+                    let source = [0.15625, -0.15625, 0.0, kind, pi, pi, pi, 0.8, 0.0, 0.0, -1.0, 1.0, 1.0, 0.001, 0.0, 0.0];
+                    frame.product_lights = Some(vec![source]);
+                    let zero = render_frame_format(&mut renderer, &device, &queue, &frame, true, format);
+                    assert_eq!(zero.len(), 64 * 64 * 4);
+                    assert_eq!(&zero[at..at + 4], &[0, 0, 0, 255], "{format:?} pbr={pbr} kind={kind}");
+                    frame.product_lights.as_mut().unwrap()[0][2] = 1.0;
+                    let positive = render_frame_format(&mut renderer, &device, &queue, &frame, true, format);
+                    // Unit distance/cosines, reference^2 or projected area1:
+                    // source PI cancels Lambert /PI for every source family.
+                    for channel in 0..3 {
+                        let radiance = linear[channel] * f64::from(pi) / std::f64::consts::PI;
+                        let expected = solidcraft_geom::srgb::encode8(radiance / (1.0 + radiance));
+                        assert!(
+                            positive[at + channel].abs_diff(expected) <= 1,
+                            "{format:?} pbr={pbr} kind={kind} channel={channel}: {} != {expected}",
+                            positive[at + channel]
+                        );
+                    }
+                    assert_eq!(positive[at + 3], 255);
+                    assert_eq!(&positive[..4], &[255; 4]);
+                }
+                frame.product = false;
+                frame.product_lights = None;
+                assert_eq!(render_frame_format(&mut renderer, &device, &queue, &frame, true, format), design, "legacy Design restored exactly");
+            }
+        }
+        eprintln!("RASTER_LOCAL_MODEL_ZERO supported=true formats=2 materials=2 sources=3");
     }
 }

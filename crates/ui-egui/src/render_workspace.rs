@@ -2,13 +2,14 @@
 
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use egui::{Color32, Sense};
 use serde_json::json;
 use solidcraft_engine::doc::render_settings::RenderSetup;
 #[cfg(test)]
 use solidcraft_engine::render::job::LightingPreset;
-use solidcraft_engine::render::job::{ImageHost, Integrator, PreviewInfo, RaytraceOptions};
+use solidcraft_engine::render::job::{ImageHost, Integrator, JobId, PartialPreviewInfo, PreviewInfo, ProtectedPreviewReport, RaytraceOptions};
 use solidcraft_engine::render::{
     Availability, Camera, ExecutorDescriptor, ExecutorId, ProductScene, RenderLimits, RenderMode, RenderOperation, RenderProfile, RenderRequest,
     ScratchLayout,
@@ -37,6 +38,9 @@ mod effects;
 mod environment;
 #[path = "render_workspace_inspector.rs"]
 mod inspector;
+
+#[path = "render_workspace_interactive.rs"]
+pub(crate) mod interactive;
 
 #[path = "render_workspace_library.rs"]
 mod library;
@@ -132,6 +136,7 @@ pub struct State {
     pub upload_error: crate::gpu::UploadError,
     pub image_host: Option<solidcraft_engine::render::job::CpuHost>,
     pub view: ViewState,
+    interactive: interactive::State,
     revision: u64,
     design_camera: Option<(Camera, bool)>,
     slot: SceneSlot,
@@ -143,6 +148,10 @@ pub struct State {
     image: Option<(solidcraft_engine::render::job::JobId, Result<egui::TextureHandle, String>)>,
     image_info: Option<solidcraft_engine::render::job::FrameInfo>,
     preview_image: Option<PreviewImage>,
+    final_partial: Option<FinalPartialImage>,
+    final_partial_request: Option<(JobId, Duration)>,
+    final_feedback_clock: Duration,
+    final_feedback_report: Option<(JobId, ProtectedPreviewReport)>,
     clipboard_image: Option<egui::ColorImage>,
     clipboard_text: Option<String>,
 }
@@ -153,10 +162,24 @@ struct PreviewImage {
     image: Result<egui::TextureHandle, String>,
 }
 
+struct FinalPartialImage {
+    info: PartialPreviewInfo,
+    sampling: interactive::PartialSampling,
+    image: Result<egui::TextureHandle, String>,
+}
+
 struct DisplayImage<'a> {
     info: &'a solidcraft_engine::render::job::FrameInfo,
     image: &'a Result<egui::TextureHandle, String>,
     preview: Option<&'a PreviewInfo>,
+    partial: Option<(&'a PartialPreviewInfo, interactive::PartialSampling)>,
+    logical_size: [u32; 2],
+}
+
+impl DisplayImage<'_> {
+    fn provisional(&self) -> bool {
+        self.preview.is_some() || self.partial.is_some()
+    }
 }
 
 /// Application-wide setup, retained across document changes. The worker owns a
@@ -461,6 +484,7 @@ impl Default for State {
             upload_error: Arc::new(Mutex::new(None)),
             image_host: None,
             view: Default::default(),
+            interactive: Default::default(),
             revision: u64::MAX,
             design_camera: None,
             slot: Arc::new(Mutex::new(None)),
@@ -472,6 +496,10 @@ impl Default for State {
             image: None,
             image_info: None,
             preview_image: None,
+            final_partial: None,
+            final_partial_request: None,
+            final_feedback_clock: Duration::ZERO,
+            final_feedback_report: None,
             clipboard_image: None,
             clipboard_text: None,
         }
@@ -480,8 +508,9 @@ impl Default for State {
 
 impl State {
     /// Retain the selected viewport adapter, but do not open another device or
-    /// compile shaders until Render is used. A later viewport installation (for
-    /// example safe-mode fallback) replaces only a not-yet-started factory.
+    /// compile shaders until GPU path tracing is selected in Render. Raster and
+    /// CPU image methods retain this factory without starting it. A later viewport
+    /// installation (for example safe-mode fallback) replaces only an unstarted factory.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn defer_path_host(&mut self, key: String, create: impl FnOnce() -> Result<ImageHost, String> + Send + 'static) {
         if matches!(self.path_host, PathHost::NotStarted) {
@@ -492,7 +521,8 @@ impl State {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn start_deferred_path_host(&mut self) {
-        if matches!(self.path_host, PathHost::NotStarted)
+        if self.view.method == ImageMethod::GpuRaytrace
+            && matches!(self.path_host, PathHost::NotStarted)
             && let Some(create) = self.pending_setup.take()
         {
             self.path_host.start(create);
@@ -525,6 +555,9 @@ pub(crate) fn inspect_state(app: &SolveApp) -> serde_json::Value {
     json!({
         "active": active(app), "stage": view.stage.key(), "setup": view.name, "draft_dirty": view.dirty,
         "method": method, "job": view.job, "completed": view.completed,
+        "interactive": interactive::inspect(app),
+        "final_partial": app.render_workspace.final_partial.as_ref().map(|partial| &partial.info),
+        "final_feedback_report": app.render_workspace.final_feedback_report.map(|(job, report)| json!({"job":job,"report":report})),
         "showing_result": view.result, "export_format": if view.studio.export_exr {"exr"} else {"png"},
     })
 }
@@ -588,6 +621,7 @@ pub fn sync_backend(app: &mut SolveApp) {
 /// Cooperative work belongs to the frame loop, never to a status/control request. Keep
 /// scheduling frames even after leaving Render so a browser job can finish in Design.
 pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
+    interactive::tick(app, ctx);
     if let Some(text) = app.render_workspace.clipboard_text.take() {
         ctx.copy_text(text);
     }
@@ -620,7 +654,10 @@ pub fn reset_document(app: &mut SolveApp) {
     let setup_seconds = std::mem::take(&mut app.render_workspace.setup_seconds);
     let setup_key = app.render_workspace.setup_key.take();
     let pending_setup = app.render_workspace.pending_setup.take();
-    app.render_workspace = State { host, image_host, path_host, setup_seconds, setup_key, pending_setup, geometry_budget, ..Default::default() };
+    let mut interactive = std::mem::take(&mut app.render_workspace.interactive);
+    interactive.reset_document();
+    app.render_workspace =
+        State { host, image_host, path_host, setup_seconds, setup_key, pending_setup, geometry_budget, interactive, ..Default::default() };
     if active(app) {
         app.ui.tab = "MODEL".into();
     }
@@ -631,6 +668,7 @@ pub(crate) fn invalidate_images(app: &mut SolveApp) {
     app.render_workspace.image = None;
     app.render_workspace.image_info = None;
     app.render_workspace.preview_image = None;
+    app.render_workspace.final_partial = None;
 }
 
 pub fn invalidate_scene(app: &mut SolveApp) {
@@ -671,6 +709,7 @@ pub fn enter(app: &mut SolveApp, render: bool) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         app.render_workspace.start_deferred_path_host();
     } else {
+        app.render_workspace.interactive.reset_document();
         assign::stop(app);
         if let Some((camera, perspective)) = app.render_workspace.design_camera.take() {
             app.cam = camera;
@@ -820,8 +859,10 @@ pub(crate) fn appearances_card(app: &mut SolveApp, ui: &mut egui::Ui, bounds: eg
 
 fn image_host(app: &SolveApp, method: ImageMethod) -> Result<&ImageHost, String> {
     if method == ImageMethod::GpuRaytrace {
-        let PathHost::Ready(host) = &app.render_workspace.path_host else {
-            return Err(app.tr("render.gpu_unavailable").to_string());
+        let host = match &app.render_workspace.path_host {
+            PathHost::Ready(host) => host,
+            PathHost::Failed(error) => return Err(error.clone()),
+            _ => return Err(app.tr("render.gpu_unavailable").to_string()),
         };
         let descriptor = host.descriptor().map_err(|error| error.to_string())?;
         if !host.is_available()
@@ -845,7 +886,14 @@ fn image_params(app: &SolveApp) -> Result<serde_json::Value, String> {
     if app.session.model.is_stale() {
         return Err(app.tr("render.image_scene_stale").to_string());
     }
-    image_request(app)
+    let mut request = image_request(app)?;
+    if view.method == ImageMethod::CpuRaytrace && view.raytrace.progressive.is_some() {
+        request
+            .as_object_mut()
+            .ok_or_else(|| app.tr("render.error_provisional_identity").to_string())?
+            .insert("progressive_feedback".into(), json!(true));
+    }
+    Ok(request)
 }
 
 /// Pure request construction is shared with offline setup editing; host checks stay above.
@@ -858,6 +906,20 @@ fn raw_image_request(app: &SolveApp) -> Result<serde_json::Value, String> {
     if !setups::has_runtime_inputs(app) {
         return Ok(json!({"settings":setups::snapshot(app)?}));
     }
+    runtime_image_request(app, false)
+}
+
+/// CPU Interactive skips final-dimension admission and the portable snapshot path.
+/// The engine fits/admit/captures this complete runtime intent off the window.
+fn interactive_request(app: &SolveApp) -> Result<serde_json::Value, String> {
+    if app.render_workspace.view.method != ImageMethod::CpuRaytrace {
+        return Err(app.tr("render.interactive_requires_cpu").into());
+    }
+    light::filter_request(app, runtime_image_request(app, true)?)
+}
+
+/// The existing runtime branch, shared without changing Final Check/Start policy.
+fn runtime_image_request(app: &SolveApp, interactive_cpu: bool) -> Result<serde_json::Value, String> {
     let view = &app.render_workspace.view;
     // Temporary bindings and unsaved HDR captures use the runtime API. Embedded HDRs
     // still resolve by their document resource ID when a temporary binding is present.
@@ -872,7 +934,11 @@ fn raw_image_request(app: &SolveApp) -> Result<serde_json::Value, String> {
             if view.transparent {
                 return Err(app.tr("render.cpu_opaque_required").to_string());
             }
-            cpu::params(app, &mut params)?;
+            if interactive_cpu {
+                cpu::params_interactive(app, &mut params)?;
+            } else {
+                cpu::params(app, &mut params)?;
+            }
         }
         ImageMethod::GpuRaytrace => {
             params["progressive"] = json!(true);
@@ -888,10 +954,6 @@ fn raw_image_request(app: &SolveApp) -> Result<serde_json::Value, String> {
 
 fn select_image_method(app: &mut SolveApp, method: ImageMethod) {
     app.render_workspace.view.method = method;
-    // Raster has no exposure control. Selecting it explicitly selects its zero-EV response.
-    if method == ImageMethod::Raster {
-        app.render_workspace.view.draft.exposure_ev = 0.0;
-    }
     app.render_workspace.view.dirty = true;
 }
 
@@ -1230,7 +1292,7 @@ fn job_controls(app: &mut SolveApp, ui: &mut egui::Ui, compact: bool) {
 fn completed_image(app: &mut SolveApp, ui: &mut egui::Ui) {
     cache_render_images(app, ui.ctx());
     if let Some(display) = displayed_image(app) {
-        if display.preview.is_some() {
+        if display.provisional() {
             ui.small(app.tr("render.result_provisional"));
         }
         match display.image {
@@ -1281,12 +1343,72 @@ fn cache_completed_image(app: &mut SolveApp, ctx: &egui::Context) {
 
 fn displayed_image(app: &SolveApp) -> Option<DisplayImage<'_>> {
     let state = &app.render_workspace;
-    if let Some(preview) = &state.preview_image
-        && state.view.job == Some(preview.info.frame.job)
-    {
-        return Some(DisplayImage { info: &preview.info.frame, image: &preview.image, preview: Some(&preview.info) });
+    let preview = state.preview_image.as_ref().filter(|image| state.view.job == Some(image.info.frame.job));
+    let partial = state.final_partial.as_ref().filter(|image| state.view.job == Some(image.info.frame.job));
+    if let Some(partial) = partial {
+        let pixels = u64::from(partial.info.source_width) * u64::from(partial.info.source_height);
+        let frontier = u64::from(partial.info.completed_passes) * pixels + partial.info.updated_prefix;
+        // Complete-pass and partial sequence numbers have different namespaces.
+        // Equal source evidence prefers the established complete-pass image.
+        if preview.is_none_or(|image| u64::from(image.info.samples_per_pixel) * pixels < frontier) {
+            return Some(DisplayImage {
+                info: &partial.info.frame,
+                image: &partial.image,
+                preview: None,
+                partial: Some((&partial.info, partial.sampling)),
+                logical_size: [partial.info.source_width, partial.info.source_height],
+            });
+        }
     }
-    Some(DisplayImage { info: state.image_info.as_ref()?, image: &state.image.as_ref()?.1, preview: None })
+    if let Some(preview) = preview {
+        return Some(DisplayImage {
+            info: &preview.info.frame,
+            image: &preview.image,
+            preview: Some(&preview.info),
+            partial: None,
+            logical_size: [preview.info.frame.width, preview.info.frame.height],
+        });
+    }
+    let info = state.image_info.as_ref()?;
+    Some(DisplayImage { info, image: &state.image.as_ref()?.1, preview: None, partial: None, logical_size: [info.width, info.height] })
+}
+
+fn cache_final_partial(
+    app: &mut SolveApp,
+    ctx: &egui::Context,
+    handle: &solidcraft_engine::render::job::JobHandle,
+    status: &solidcraft_engine::render::job::JobStatus,
+    partial: &solidcraft_engine::render::job::RenderPartialPreview,
+) -> Result<(), String> {
+    let job = handle.id();
+    if app.render_workspace.view.job != Some(job) {
+        return Ok(());
+    }
+    let previous = app.render_workspace.final_partial.as_ref().filter(|cached| cached.info.frame.job == job).map(|cached| cached.sampling);
+    let expected = interactive::PartialExpectation {
+        job,
+        scene_generation: status.scene_generation,
+        request: &status.request,
+        final_dimensions: [status.request.width, status.request.height],
+    };
+    let Some(sampling) = interactive::validate_partial_metadata(&expected, &partial.info, partial.png().len(), partial.covered().len(), previous)?
+    else {
+        return Ok(());
+    };
+    let image = interactive::decode_partial_image(
+        &status.request,
+        &partial.info,
+        partial.png(),
+        partial.covered(),
+        sampling,
+        ctx.input(|input| input.max_texture_side),
+    )
+    .map(|pixels| ctx.load_texture("sc_render_final_partial", pixels, egui::TextureOptions::NEAREST));
+    if app.render_workspace.view.job == Some(job) {
+        app.render_workspace.final_partial = Some(FinalPartialImage { info: partial.info.clone(), sampling, image });
+    }
+    // Only texture/provenance survives: the borrowed PNG/coverage/lease is not retained.
+    Ok(())
 }
 
 fn cache_preview_frame(app: &mut SolveApp, ctx: &egui::Context, info: &PreviewInfo, png: &[u8]) {
@@ -1302,11 +1424,20 @@ fn cache_preview_frame(app: &mut SolveApp, ctx: &egui::Context, info: &PreviewIn
         return;
     }
     let result = (|| -> Result<egui::TextureHandle, String> {
-        if info.frame_sequence == 0 || !(1..=4096).contains(&info.samples_per_pixel) {
+        if info.frame_sequence == 0 || !(1..=solidcraft_engine::render::job::MAX_CPU_SAMPLES_PER_PIXEL).contains(&info.samples_per_pixel) {
             return Err(crate::i18n::tr("render.error_provisional_identity").into());
         }
         let handle = app.session.render_job_handle(info.frame.job).map_err(|e| e.to_string())?;
         let captured = handle.status().map_err(|e| e.to_string())?;
+        if captured
+            .request
+            .raytrace
+            .as_ref()
+            .and_then(|options| options.progressive)
+            .is_some_and(|target| info.samples_per_pixel > target.samples_per_pixel)
+        {
+            return Err(crate::i18n::tr("render.error_provisional_identity").into());
+        }
         if (info.frame.width, info.frame.height) != (captured.request.width, captured.request.height) {
             return Err(crate::i18n::tr("render.error_checkpoint_dimensions").into());
         }
@@ -1325,22 +1456,110 @@ fn cache_preview_frame(app: &mut SolveApp, ctx: &egui::Context, info: &PreviewIn
     app.render_workspace.preview_image = Some(PreviewImage { info: info.clone(), image: result });
 }
 
+// Consumer-only reconciliation of a temporarily absent latest publication.
+// Status must come from the actual handle; retained pixels never imply new work.
+fn reconcile_missing_cpu_preview(state: &mut State, job: JobId, status: Option<&solidcraft_engine::render::job::JobStatus>) {
+    let retain = state.preview_image.as_ref().is_some_and(|cached| {
+        cached.image.is_ok()
+            && status.is_some_and(|current| {
+                current.job == job
+                    && cached.info.frame.job == current.job
+                    && cached.info.frame.scene_generation == current.scene_generation
+                    && (cached.info.frame.width, cached.info.frame.height) == (current.request.width, current.request.height)
+                    && current.request.integrator == Integrator::Raytrace
+                    && current.request.raytrace.as_ref().is_some_and(|options| options.progressive.is_some())
+                    && current.cpu_preview_retention_skips > 0
+                    && !current.progress.phase.terminal()
+                    && current.progress.phase != solidcraft_engine::render::job::Phase::Cancelling
+                    && current.error.is_none()
+                    && current.frame.is_none()
+            })
+    });
+    if !retain {
+        state.preview_image = None;
+    }
+}
+
 fn cache_preview_image(app: &mut SolveApp, ctx: &egui::Context) {
     if let Some(job) = app.render_workspace.view.job
         && let Ok(handle) = app.session.render_job_handle(job)
+        && let Ok(status) = handle.status()
     {
+        if app.render_workspace.final_partial.as_ref().is_some_and(|cached| cached.info.frame.job != job) {
+            app.render_workspace.final_partial = None;
+        }
+        let now = interactive::monotonic(app.render_workspace.final_feedback_clock, ctx.input(|input| input.time));
+        app.render_workspace.final_feedback_clock = now;
+        if !status.progress.phase.terminal()
+            && status.request.integrator == Integrator::Raytrace
+            && status.request.raytrace.as_ref().and_then(|options| options.progressive).is_some()
+            && interactive::partial_request_due(app.render_workspace.final_partial_request, job, now)
+        {
+            app.render_workspace.final_partial_request = Some((job, now));
+            if let Err(error) = handle.request_partial_preview() {
+                app.set_status(error.to_string(), true);
+            }
+        }
+        app.render_workspace.final_feedback_report = handle.protected_preview_report().ok().flatten().map(|report| (job, report));
         let preview = handle.preview().ok().flatten();
-        // Read the final after the checkpoint: completion may occur after the panel's
-        // earlier status query. Promote the real final before dropping its preview,
-        // rather than briefly falling back to an older job and losing result framing.
+        let partial = handle.partial_preview().ok().flatten();
+        // Read completion AFTER both provisional slots: neither can be promoted to a final.
         if handle.frame().ok().flatten().is_some() {
             app.render_workspace.view.completed = Some(job);
-        } else if let Some(preview) = preview {
-            cache_preview_frame(app, ctx, &preview.info, preview.png());
-            return;
+        } else if !status.progress.phase.terminal() {
+            if let Some(preview) = preview {
+                cache_preview_frame(app, ctx, &preview.info, preview.png());
+            } else {
+                // Re-read after observing None: the producer may have certified
+                // a retention skip after the earlier status snapshot.
+                let current = handle.status().ok();
+                reconcile_missing_cpu_preview(&mut app.render_workspace, job, current.as_ref());
+            }
+            if let Some(partial) = partial
+                && let Err(error) = cache_final_partial(app, ctx, &handle, &status, &partial)
+            {
+                app.set_status(error, true);
+            }
+            // Decoding can race final publication/cancellation. Recheck the real job.
+            if handle.frame().ok().flatten().is_some() {
+                app.render_workspace.view.completed = Some(job);
+            } else if final_job_still_running(app, &handle) {
+                return;
+            }
         }
+    } else {
+        app.render_workspace.final_feedback_report = None;
     }
     app.render_workspace.preview_image = None;
+    app.render_workspace.final_partial = None;
+}
+
+/// Reconcile a terminal observation made after a frame read returned None.
+/// Complete publishes its real frame under the same host data lock; read that
+/// frame again before the caller clears provisional caches or falls back.
+fn final_job_still_running(app: &mut SolveApp, handle: &solidcraft_engine::render::job::JobHandle) -> bool {
+    let job = handle.id();
+    if app.render_workspace.view.job != Some(job) {
+        return false;
+    }
+    let status = match handle.status() {
+        Ok(status) => status,
+        Err(error) => {
+            app.set_status(error.to_string(), true);
+            return false;
+        }
+    };
+    if status.progress.phase == solidcraft_engine::render::job::Phase::Completed {
+        match handle.frame() {
+            Ok(Some(frame)) if app.render_workspace.view.job == Some(frame.info.job) => {
+                app.render_workspace.view.completed = Some(frame.info.job);
+            }
+            Err(error) => app.set_status(error.to_string(), true),
+            _ => {}
+        }
+        return false;
+    }
+    !status.progress.phase.terminal()
 }
 
 fn remember_displayed_job(app: &mut SolveApp, preserve_view: bool) {
@@ -1354,8 +1573,10 @@ fn remember_displayed_job(app: &mut SolveApp, preserve_view: bool) {
 }
 
 fn cache_render_images(app: &mut SolveApp, ctx: &egui::Context) {
-    let preserve_view = app.render_workspace.preview_image.as_ref().is_some_and(|preview| {
-        app.render_workspace.view.result_job == Some(preview.info.frame.job) && app.render_workspace.view.job == Some(preview.info.frame.job)
+    let preserve_view = displayed_image(app).is_some_and(|display| {
+        display.provisional()
+            && app.render_workspace.view.result_job == Some(display.info.job)
+            && app.render_workspace.view.job == Some(display.info.job)
     });
     cache_preview_image(app, ctx);
     cache_completed_image(app, ctx);
@@ -1417,7 +1638,7 @@ fn decode_render_image(png: &[u8], width: u32, height: u32, budget: RenderLimits
 
 fn reduced_display(app: &SolveApp) -> bool {
     displayed_image(app).is_some_and(|display| {
-        display.image.as_ref().is_ok_and(|texture| texture.size() != [display.info.width as usize, display.info.height as usize])
+        display.image.as_ref().is_ok_and(|texture| texture.size() != [display.logical_size[0] as usize, display.logical_size[1] as usize])
     })
 }
 
@@ -1514,7 +1735,9 @@ fn show_result(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     let mut content = ui.new_child(egui::UiBuilder::new().max_rect(free).id_salt("render_result_content"));
     let ui = &mut content;
-    let Some((info, preview)) = displayed_image(app).map(|display| (display.info.clone(), display.preview.cloned())) else {
+    let Some((info, preview, partial, logical_size)) = displayed_image(app).map(|display| {
+        (display.info.clone(), display.preview.cloned(), display.partial.map(|(info, sampling)| (info.clone(), sampling)), display.logical_size)
+    }) else {
         let message = match &app.render_workspace.image {
             Some((_, Err(error))) => error.clone(),
             _ if ribbon::busy(app) => app.tr("render.state_in_progress").to_string(),
@@ -1541,7 +1764,7 @@ fn show_result(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             crate::ui_kit::text(
                 ui,
-                app.tr(if preview.is_some() { "render.state_in_progress" } else { "render.state_completed" }),
+                app.tr(if preview.is_some() || partial.is_some() { "render.state_in_progress" } else { "render.state_completed" }),
                 crate::ui_kit::Text::Inline,
             );
             result_actions(app, ui);
@@ -1558,7 +1781,69 @@ fn show_result(app: &mut SolveApp, ui: &mut egui::Ui) {
                     preview.frame_sequence
                 ),
             );
+            if let Ok(handle) = app.session.render_job_handle(preview.frame.job)
+                && let Ok(status) = handle.status()
+                && let Some(target) = status.request.raytrace.as_ref().and_then(|options| options.progressive)
+            {
+                ui.small(crate::i18n::format(
+                    "render.cpu_pass_progress",
+                    &[("current", &preview.samples_per_pixel.to_string()), ("target", &target.samples_per_pixel.to_string())],
+                ));
+            }
             ui.small(app.tr("render.result_provisional_help"));
+        }
+        if let Some((info, sampling)) = &partial {
+            ui.colored_label(t.warning, app.tr("render.result_provisional"));
+            if let Ok(handle) = app.session.render_job_handle(info.frame.job)
+                && let Ok(status) = handle.status()
+                && let Some(target) = status.request.raytrace.as_ref().and_then(|options| options.progressive)
+            {
+                ui.small(crate::i18n::format(
+                    "render.cpu_pass_progress",
+                    &[("current", &info.completed_passes.to_string()), ("target", &target.samples_per_pixel.to_string())],
+                ));
+            }
+            let (min, max) = sampling.sample_range();
+            ui.small(crate::i18n::format(
+                "render.interactive_partial_samples",
+                &[
+                    ("min", &min.to_string()),
+                    ("max", &max.to_string()),
+                    ("known", &sampling.sampled_source_pixels().to_string()),
+                    ("pixels", &(u64::from(info.source_width) * u64::from(info.source_height)).to_string()),
+                ],
+            ));
+            ui.small(crate::i18n::format(
+                "render.interactive_partial_dimensions",
+                &[
+                    ("display_width", &info.frame.width.to_string()),
+                    ("display_height", &info.frame.height.to_string()),
+                    ("source_width", &info.source_width.to_string()),
+                    ("source_height", &info.source_height.to_string()),
+                    ("final_width", &logical_size[0].to_string()),
+                    ("final_height", &logical_size[1].to_string()),
+                ],
+            ));
+            ui.small(app.tr("render.result_provisional_help"));
+        }
+        if let Some((job, report)) = app.render_workspace.final_feedback_report
+            && job == info.job
+            && (preview.is_some() || partial.is_some())
+        {
+            ui.small(crate::i18n::format(
+                "render.interactive_feedback_usage",
+                &[("started", &report.accepted_snapshots.to_string()), ("limit", &report.quota_limit.to_string())],
+            ));
+            let reason = if report.quota_exhausted {
+                Some("render.interactive_feedback_quota_exhausted")
+            } else if report.milestones_complete {
+                Some("render.interactive_feedback_milestones_complete")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                ui.small(app.tr(reason));
+            }
         }
         if let Some(display) = displayed_image(app)
             && let Err(error) = display.image
@@ -1566,7 +1851,7 @@ fn show_result(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.colored_label(t.warning, error);
         }
         ui.horizontal_wrapped(|ui| {
-            ui.strong(format!("{} × {} px · PNG · {}", info.width, info.height, info.executor.as_str()));
+            ui.strong(format!("{} × {} px · PNG · {}", logical_size[0], logical_size[1], info.executor.as_str()));
             ui.label(format!(
                 "{} {}:{}:{} · {} {}",
                 app.tr("render.result_job"),
@@ -1593,7 +1878,7 @@ fn show_result(app: &mut SolveApp, ui: &mut egui::Ui) {
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
     app.viewport.rect = Some(rect);
     crate::viewport::refresh_layout(app, ui.ctx());
-    let size = [info.width, info.height];
+    let size = logical_size;
     let scale = app.render_workspace.view.result_scale;
     if scale != ResultScale::Free {
         app.render_workspace.view.result_camera = result_camera(size, rect, ui.ctx().pixels_per_point(), scale);
@@ -1915,8 +2200,16 @@ pub fn preview_size(executor: Option<&ExecutorDescriptor>, full: (u64, u64)) -> 
     executor.and_then(|e| e.fit(full.0, full.1)).unwrap_or(full)
 }
 
+/// Model Preview presents the common exposure regardless of the selected final method.
+/// Already captured Interactive and Result pixels return before this product-frame path.
+fn product_preview_exposure(app: &SolveApp) -> Result<solidcraft_gpu::view::ProductExposureEv, String> {
+    solidcraft_gpu::view::ProductExposureEv::from_ev(app.render_workspace.view.draft.exposure_ev)
+        .ok_or_else(|| app.tr("render.product_exposure_invalid").to_string())
+}
+
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if app.render_workspace.view.result {
+        interactive::before_paint(app, ui.ctx());
         app.render_workspace.view.environment_ring = environment::RingView::default();
         assign::stop(app);
         show_result(app, ui);
@@ -1930,6 +2223,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let response = ui.interact(rect, ui.id().with("render_preview"), Sense::click_and_drag());
     if !environment::ring_input(app, ui, rect, &response) {
         let input = crate::navigation::handle(app, ui, rect, &response, crate::navigation::NavCaps::RENDER);
+        // Navigation can invalidate the displayed image in this frame. Observe before
+        // any geometry interaction, and observe again below after visible UI actions.
+        interactive::before_paint(app, ui.ctx());
+        let waiting = interactive::blocks_geometry_input(app);
+        let geometry_rect = interactive::geometry_input_rect(app, rect);
+        let geometry_inside = input.inside && input.hover.is_some_and(|pos| geometry_rect.contains(pos));
         let navigating = input.scroll != 0.0
             || input.pinch != 1.0
             || input.pan != egui::Vec2::ZERO
@@ -1942,23 +2241,25 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             || app.cam_anim.is_some();
         let hits = input
             .hover
-            .filter(|_| input.inside && !navigating)
-            .map(|p| crate::viewport::pick_cached(app, &crate::viewport::projection(app, rect), p))
+            .filter(|_| geometry_inside && !navigating && !waiting)
+            .map(|p| crate::viewport::pick_cached(app, &crate::viewport::projection(app, geometry_rect), p))
             .unwrap_or_default();
         let candidate = assign::candidate(app, &hits, input.mods);
         app.viewport.hover = candidate.as_ref().map(|(hit, _)| hit.clone());
-        let assigning = assign::input(app, ui, &response, candidate.as_ref(), input.inside && !navigating);
-        if !assigning && input.inside && !navigating {
+        // No target while blank or misaligned; still drain drag release / Escape.
+        let assigning = assign::input(app, ui, &response, candidate.as_ref(), geometry_inside && !navigating && !waiting);
+        if !waiting && !assigning && geometry_inside && !navigating {
             assign::hover_tooltip(app, &response, candidate.as_ref());
         }
-        if !assigning && response.clicked_by(egui::PointerButton::Primary) && input.inside && !navigating {
+        if !waiting && !assigning && response.clicked_by(egui::PointerButton::Primary) && geometry_inside && !navigating {
             let (add, toggle) = crate::tool_modifiers::selection_click(
                 crate::tool_modifiers::Held::from_modifiers(input.mods),
                 app.preferences.selection_shift_add_only,
             );
             crate::viewport::select(app, candidate.as_ref().map(|(_, sel)| sel.clone()), add, toggle);
         }
-        if response.secondary_clicked()
+        if !waiting
+            && response.secondary_clicked()
             && let Some((crate::viewport::Hit::Face { body, .. }, _)) = &candidate
         {
             if let Some(candidate) = &candidate {
@@ -1971,17 +2272,23 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     let bg = app.render_workspace.view.draft.background;
     ui.painter().rect_filled(viewport, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
+    // Reobserve after the existing shared navigation path, before any pixel paint.
+    interactive::before_paint(app, ui.ctx());
+    if interactive::paint(app, ui, rect) || interactive::blocks_geometry_input(app) {
+        shot::overlay(app, ui, viewport);
+        crate::viewport::axis_view(app, ui, viewport);
+        crate::navigation_bar_view::show(app, ui, viewport);
+        return;
+    }
     let result = (|| -> Result<(), String> {
+        let exposure = product_preview_exposure(app)?;
         if app.viewport.gpu.is_none() {
             return Err(crate::i18n::tr("render.error_gpu_preview").into());
         }
         let ppp = ui.ctx().pixels_per_point();
         let setup = &app.render_workspace.view.draft;
-        if (app.render_workspace.view.method == ImageMethod::Raster && setup.exposure_ev != 0.0)
-            || setup.environment_rotation != 0.0
-            || setup.environment_intensity != 1.0
-        {
-            return Err(crate::i18n::tr("render.error_fixed_preview").into());
+        if setup.environment_rotation != 0.0 || setup.environment_intensity != 1.0 {
+            return Err(crate::i18n::tr("render.preview_environment_fixed").into());
         }
         // A 4K or 5K viewport is past the preview's pixel budget: draw it smaller and filter it
         // up into the viewport rather than refusing the frame.
@@ -2041,6 +2348,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         let slot = app.render_workspace.slot.clone();
         let callback = ViewportCallback(Frame {
             product_lights: Some(light::preview(app)?),
+            product_exposure_ev: exposure,
             product: true,
             upload_error: Some(app.render_workspace.upload_error.clone()),
             key,
@@ -2088,6 +2396,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
 /// Apply validated UI requests after the same registry call used by automation.
 pub(crate) fn apply_command(app: &mut SolveApp, id: &str, reply: &serde_json::Value) -> Result<(), String> {
     match id {
+        "render.interactive" => {
+            let input: solidcraft_engine::schema::render_ui::InteractiveParams =
+                serde_json::from_value(reply.clone()).map_err(|error| error.to_string())?;
+            interactive::apply_command(app, input.action)?;
+        }
         "render.preflight.copy" => {
             app.render_workspace.clipboard_text = Some(reply["text"].as_str().ok_or("invalid check report")?.to_string());
         }

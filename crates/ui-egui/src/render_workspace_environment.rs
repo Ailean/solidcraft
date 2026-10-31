@@ -524,7 +524,7 @@ pub(super) fn commit_backdrop(app: &mut SolveApp, color: [u8; 3], transparent: b
     let mut setup = setups::snapshot(app)?;
     setup.background = color;
     match &mut setup.job {
-        Some(RenderJob::Raster { transparent_background }) => *transparent_background = transparent,
+        Some(RenderJob::Raster { transparent_background, .. }) => *transparent_background = transparent,
         Some(RenderJob::GpuPath { transparent_background, options }) => {
             *transparent_background = transparent;
             options.backdrop = None;

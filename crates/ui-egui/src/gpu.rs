@@ -284,6 +284,7 @@ pub(crate) fn render_offscreen(
         Offscreen {
             tess,
             product: false,
+            exposure_ev: Default::default(),
             srgb: false,
             analysis,
             analysis_colors: colors,
@@ -304,6 +305,23 @@ pub(crate) fn render_product_offscreen(
     size: u32,
     srgb: bool,
 ) -> Option<Vec<u8>> {
+    render_product_offscreen_exposure(scene, highlight, view_proj, back, eye, size, srgb, Default::default())
+}
+
+/// The original offscreen product path with an explicit validated presentation.
+/// The existing highlight argument and default-light route are unchanged.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_product_offscreen_exposure(
+    scene: GpuScene,
+    highlight: Option<GpuScene>,
+    view_proj: [[f32; 4]; 4],
+    back: [f32; 3],
+    eye: [f32; 4],
+    size: u32,
+    srgb: bool,
+    exposure_ev: solidcraft_gpu::view::ProductExposureEv,
+) -> Option<Vec<u8>> {
     offscreen(
         scene,
         highlight,
@@ -314,6 +332,7 @@ pub(crate) fn render_product_offscreen(
         Offscreen {
             tess: None,
             product: true,
+            exposure_ev,
             srgb,
             analysis: [0.0; 8],
             analysis_colors: [0.0; 36],
@@ -328,6 +347,7 @@ pub(crate) fn render_product_offscreen(
 struct Offscreen<'a> {
     tess: Option<&'a str>,
     product: bool,
+    exposure_ev: solidcraft_gpu::view::ProductExposureEv,
     srgb: bool,
     analysis: [f32; 8],
     analysis_colors: [f32; 36],
@@ -356,6 +376,7 @@ pub(crate) fn render_offscreen_ssaa(
         Offscreen {
             tess: None,
             product: false,
+            exposure_ev: Default::default(),
             srgb: false,
             analysis: [0.0; 8],
             analysis_colors: [0.0; 36],
@@ -385,7 +406,17 @@ pub(crate) fn render_offscreen_ao(
         back,
         eye,
         size,
-        Offscreen { tess: None, product: false, srgb: false, analysis: [0.0; 8], analysis_colors: [0.0; 36], ssaa: 1.0, ao_radius, ao_samples },
+        Offscreen {
+            tess: None,
+            product: false,
+            exposure_ev: Default::default(),
+            srgb: false,
+            analysis: [0.0; 8],
+            analysis_colors: [0.0; 36],
+            ssaa: 1.0,
+            ao_radius,
+            ao_samples,
+        },
     )
 }
 
@@ -399,7 +430,7 @@ fn offscreen(
     size: u32,
     options: Offscreen<'_>,
 ) -> Option<Vec<u8>> {
-    let Offscreen { tess, product, srgb, analysis, analysis_colors, ssaa, ao_radius, ao_samples } = options;
+    let Offscreen { tess, product, exposure_ev, srgb, analysis, analysis_colors, ssaa, ao_radius, ao_samples } = options;
     let (adapter, device, queue) = offscreen_device()?;
     eprintln!("offscreen adapter: {:?}", adapter.get_info().backend);
     let format = if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm };
@@ -411,6 +442,7 @@ fn offscreen(
     let none = || Arc::new(Mutex::new(None));
     let cb = ViewportCallback(Frame {
         product_lights: None,
+        product_exposure_ev: exposure_ev,
         product,
         upload_error: None,
         key: 1,

@@ -52,9 +52,13 @@ pub(super) fn snapshot(app: &SolveApp) -> Result<RenderSetup, String> {
 // or a lens temporarily paired with an orthographic camera cannot disable dirty tracking.
 fn draft(app: &SolveApp) -> Result<RenderSetup, String> {
     let view = &app.render_workspace.view;
+    solidcraft_engine::render::job::validate_raster_lights(&view.lights.raster).map_err(|e| e.to_string())?;
+    if let Some(RenderJob::Raster { lights, .. }) = &view.draft.job {
+        solidcraft_engine::render::job::validate_raster_lights(lights).map_err(|e| e.to_string())?;
+    }
     let mut setup = RenderSetup { camera: app.cam, ..view.draft.clone() };
     setup.job = Some(match view.method {
-        ImageMethod::Raster => RenderJob::Raster { transparent_background: view.transparent },
+        ImageMethod::Raster => RenderJob::Raster { transparent_background: view.transparent, lights: view.lights.raster.clone() },
         ImageMethod::CpuRaytrace => {
             if view.transparent {
                 return Err(app.tr("render.cpu_opaque_required").to_string());
@@ -62,6 +66,7 @@ fn draft(app: &SolveApp) -> Result<RenderSetup, String> {
             let options = &view.raytrace;
             RenderJob::CpuRaytrace {
                 options: CpuJob {
+                    dielectric_transport: options.dielectric_transport,
                     budget: options.budget,
                     primary_samples: options.primary_samples,
                     progressive: options.progressive,
@@ -142,6 +147,13 @@ fn draft(app: &SolveApp) -> Result<RenderSetup, String> {
 
 /// A setup switch/reload replaces its numeric editor draft, never a completed image or camera.
 pub(super) fn load(app: &mut SolveApp) {
+    if let Some(setup) = app.session.doc.render.setups.get(&app.render_workspace.view.name)
+        && let Some(RenderJob::Raster { lights, .. }) = &setup.job
+        && let Err(error) = solidcraft_engine::render::job::validate_raster_lights(lights)
+    {
+        app.set_status(error.to_string(), true);
+        return;
+    }
     let setup = app.session.doc.render.setups.get(&app.render_workspace.view.name).cloned().unwrap_or_default();
     let view = &mut app.render_workspace.view;
     view.method = ImageMethod::Raster;
@@ -153,11 +165,16 @@ pub(super) fn load(app: &mut SolveApp) {
     view.seed = 0;
     view.studio = studio::View::default();
     view.materials = materials::View::default();
+    view.lights.raster = None;
     match &setup.job {
-        Some(RenderJob::Raster { transparent_background }) => view.transparent = *transparent_background,
+        Some(RenderJob::Raster { transparent_background, lights }) => {
+            view.transparent = *transparent_background;
+            view.lights.raster = lights.clone();
+        }
         Some(RenderJob::CpuRaytrace { options }) => {
             view.method = ImageMethod::CpuRaytrace;
             view.raytrace = RaytraceOptions {
+                dielectric_transport: options.dielectric_transport,
                 budget: options.budget,
                 primary_samples: options.primary_samples,
                 progressive: options.progressive,

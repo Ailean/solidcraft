@@ -127,7 +127,7 @@ The initial image executor is native-only; no browser performance is claimed.
 Each light has a world-space `direction: [x,y,z]` pointing **towards the light**,
 linear-sRGB `color: [r,g,b]` and relative `intensity`. Directions are normalized;
 all numbers must be finite. At most eight lights and eight retained slots are
-accepted, colors are in [0,1], intensity in [0,64], exposure in [-16,16] EV.
+accepted, colors are in [0,1], intensity in [0,64], exposure in [-32,32] EV.
 Omitting lights uses the existing three-light studio. An empty list is darkness.
 These are relative radiances, not measured lux or watts. Background color remains
 independent of illumination and exposure.
@@ -206,3 +206,25 @@ at the top of this page. Qualified texture resources, role-correct material maps
 progressive transport and explicit glass/medium semantics remain separate work.
 Community feedback is welcome on bounded latency,
 normal handling, energy loss in the preview BRDF and reproducible acceptance scenes.
+
+## Explicit CPU glass policy
+
+`raytrace.dielectric_transport` selects `legacy_bounded` (default, omitted when
+serialized) or `strict_tir`. The CPU Glass rendering control makes this choice
+explicit and independent of resource profile, exposure and progressive feedback.
+Standard retains the existing bounded optical response. Continue reflections
+continues real deterministic total internal reflections and reports an optical
+limit error rather than completing an unresolved positive non-TIR tail as black.
+
+This mode retains the existing certified ThinSheet/ClosedBox and nesting rules.
+It does not add general glass geometry, polarization, global illumination or a
+convergence guarantee. Selected opaque reflections are refused in strict mode;
+authored bindings and effects are never cleared to make the request fit. Finite
+work/cancellation and branching limits still apply. Increasing SPP does not
+resolve a missing optical path.
+
+Fixed and progressive final rendering and CPU Interactive preserve the same
+captured policy. Failed strict transport cannot publish an exportable final;
+provisional previews remain provisional and the prior successful final keeps
+its own request identity. The choice alone can be saved in a CPU setup; captured
+body/material bindings remain subject to their existing runtime-only guard.

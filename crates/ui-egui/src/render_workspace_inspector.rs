@@ -103,6 +103,7 @@ pub(super) struct View {
     appearance: Appearance,
     selection_appearance: selection_appearance::View,
     pub(super) resolution: Resolution,
+    quality_plans: Option<[Result<Value, String>; 3]>,
 }
 /// Editor-only coupling. The fixed rational anchor prevents repeated rounded
 /// edits drifting; external preset/shot changes deliberately establish a new anchor.
@@ -196,6 +197,7 @@ impl Default for View {
             appearance: Appearance::default(),
             selection_appearance: Default::default(),
             resolution: Resolution::default(),
+            quality_plans: None,
         }
     }
 }
@@ -971,7 +973,12 @@ fn render_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
 fn sampling_editor(app: &mut SolveApp, ui: &mut egui::Ui) {
     editor_section(app, ui, "render_sampling_quality", "render.output_quality", |app, ui| {
         quality_choices(app, ui);
-        ui_kit::text(ui, app.tr("render.output_quality_waiting"), ui_kit::Text::Note("render.output_quality_waiting"));
+        let quality_help = if app.render_workspace.view.method == ImageMethod::GpuRaytrace {
+            "render.quality_projection_help"
+        } else {
+            "render.output_quality_waiting"
+        };
+        ui_kit::text(ui, app.tr(quality_help), ui_kit::Text::Note(quality_help));
         browse_button(app, ui, "quality", "render.children.review_quality");
         library::inspect_kinds(app, ui, &["quality"]);
     });
@@ -1168,10 +1175,72 @@ pub(super) fn largest_output(app: &SolveApp) -> Option<(u64, u64)> {
     let draft = &app.render_workspace.view.draft;
     limits.fit(u64::from(draft.width).checked_mul(limits.max_dimension)?, u64::from(draft.height).checked_mul(limits.max_dimension)?, None)
 }
+const QUALITY_IDS: [&str; 3] = ["Q-001", "Q-002", "Q-003"];
+
+/// Immutable catalogue budgets are cached for comparison only. Applying always
+/// prepares a fresh, acknowledged review bound to the current shot and draft.
+fn prepare_quality_choices(app: &mut SolveApp) {
+    if app.render_workspace.view.method == ImageMethod::GpuRaytrace && app.render_workspace.view.inspector.quality_plans.is_none() {
+        let plans = QUALITY_IDS.map(|id| {
+            app.session
+                .execute("render.quality.prepare", &json!({"id":id,"variant":"fixed_samples_png","acknowledge_omissions":true}))
+                .map_err(|error| error.to_string())
+        });
+        app.render_workspace.view.inspector.quality_plans = Some(plans);
+    }
+}
+
+fn quality_selection(app: &SolveApp) -> usize {
+    let view = &app.render_workspace.view;
+    if view.method != ImageMethod::GpuRaytrace {
+        return 3;
+    }
+    view.inspector
+        .quality_plans
+        .as_ref()
+        .and_then(|plans| {
+            plans.iter().position(|plan| {
+                plan.as_ref().is_ok_and(|plan| {
+                    plan["settings"]["width"].as_u64() == Some(u64::from(view.draft.width))
+                        && plan["settings"]["height"].as_u64() == Some(u64::from(view.draft.height))
+                        && plan["gpu_options"]["samples"].as_u64() == Some(u64::from(view.samples))
+                        && plan["gpu_options"]["max_depth"].as_u64() == Some(u64::from(view.max_depth))
+                        && plan["gpu_options"]["seed"].as_u64() == Some(u64::from(view.seed))
+                        && plan["gpu_options"]["denoise"].as_bool() == Some(view.studio.denoise)
+                })
+            })
+        })
+        .unwrap_or(3)
+}
+
+fn quality_reason(app: &SolveApp, index: usize) -> Option<&str> {
+    if index == 3 {
+        return None;
+    }
+    if app.render_workspace.view.method != ImageMethod::GpuRaytrace {
+        return Some(app.tr("render.stage_panels.gpu_required"));
+    }
+    match app.render_workspace.view.inspector.quality_plans.as_ref().and_then(|plans| plans.get(index)) {
+        Some(Ok(_)) => None,
+        Some(Err(reason)) => Some(reason),
+        None => Some(app.tr("render.error_quality_projection")),
+    }
+}
+
+fn choose_quality(app: &mut SolveApp, index: usize) -> Result<(), String> {
+    if index == 3 {
+        return app.run("view.render_select", json!({"kind":"sampling"})).map(|_| ());
+    }
+    let id = QUALITY_IDS.get(index).ok_or_else(|| app.tr("render.error_quality_projection").to_string())?;
+    // Existing review owns currentness, omission acknowledgement and the single
+    // saved action. Cached plans are never used as authority to apply settings.
+    library::review::quality(app, id)
+}
+
 pub(super) fn quality_choices(app: &mut SolveApp, ui: &mut egui::Ui) {
-    let reason = app.tr("render.output_quality_waiting");
+    prepare_quality_choices(app);
     let labels = ["render.quality_draft", "render.quality_balanced", "render.quality_high", "render.quality_custom"].map(|key| app.tr(key));
-    let mut quality = 3;
+    let mut quality = quality_selection(app);
     if ui_kit::segmented(
         ui,
         &mut quality,
@@ -1181,13 +1250,15 @@ pub(super) fn quality_choices(app: &mut SolveApp, ui: &mut egui::Ui) {
             intrinsic: true,
             compact: true,
             targets: &["render:quality:draft", "render:quality:balanced", "render:quality:high", "render:quality:custom"],
-            disabled_reasons: &[Some(reason), Some(reason), Some(reason), None],
+            disabled_reasons: &[quality_reason(app, 0), quality_reason(app, 1), quality_reason(app, 2), None],
             ..Default::default()
         },
-    ) {
-        let _ = app.run("view.render_select", json!({"kind":"sampling"}));
+    ) && let Err(error) = choose_quality(app, quality)
+    {
+        app.set_status(error, true);
     }
 }
+
 pub(super) fn check_summary(app: &SolveApp) -> String {
     let state = match &app.render_workspace.view.inspector.checked {
         Some(check) if check.current(app) && super::image_params(app).as_ref().ok() == Some(&check.request) => {

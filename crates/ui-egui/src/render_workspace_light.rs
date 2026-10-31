@@ -1,14 +1,17 @@
 //! Selected-light editor and transient visibility. Saved settings are edited only by commands.
 use super::{ImageMethod, RenderSelection, cpu, setups, studio};
 use crate::{SolveApp, ui_kit};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use solidcraft_engine::doc::render_settings::{CpuJob, GpuJob, RenderJob, RenderSetup, SkyEnvironment};
-use solidcraft_engine::render::job::{AreaLights, StudioLighting};
+use solidcraft_engine::render::job::{AreaLights, DirectionalLightOptions, StudioLighting};
 use solidcraft_engine::schema::render_lights::{Geometry, Light, Visibility};
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct View {
     pub visibility: Visibility,
+    /// Method-specific numerical draft, persisted through RenderJob::Raster.
+    pub(super) raster: Option<Vec<DirectionalLightOptions>>,
     scope: String,
     aim: Option<[f64; 3]>,
     draft: Option<Draft>,
@@ -50,8 +53,9 @@ struct Draft {
 /// Lighting-only read snapshot also works with unsaved HDR paths and temporary bindings.
 fn settings(app: &SolveApp) -> Result<RenderSetup, String> {
     let view = &app.render_workspace.view;
+    solidcraft_engine::render::job::validate_raster_lights(&view.lights.raster).map_err(|e| e.to_string())?;
     let job = match view.method {
-        ImageMethod::Raster => RenderJob::Raster { transparent_background: false },
+        ImageMethod::Raster => RenderJob::Raster { transparent_background: false, lights: view.lights.raster.clone() },
         ImageMethod::CpuRaytrace => RenderJob::CpuRaytrace {
             options: CpuJob {
                 lights: view.raytrace.lights.clone(),
@@ -119,7 +123,8 @@ pub(crate) fn apply_visibility(app: &mut SolveApp, command: &str, reply: &Value)
 
 pub(super) fn loaded(app: &mut SolveApp) {
     if app.render_workspace.view.lights.scope != app.render_workspace.view.name {
-        app.render_workspace.view.lights = View { scope: app.render_workspace.view.name.clone(), ..Default::default() };
+        let raster = app.render_workspace.view.lights.raster.take();
+        app.render_workspace.view.lights = View { scope: app.render_workspace.view.name.clone(), raster, ..Default::default() };
     }
     if let Ok(lights) = rows(app) {
         let view = &mut app.render_workspace.view.lights;
@@ -177,6 +182,17 @@ pub(super) fn edit(app: &mut SolveApp, command: &str, id: Option<&str>, mut set:
 /// Applied to copies at the request boundary, including engine.execute through SolveApp::run.
 /// The draft and saved RenderSetup remain unfiltered, including while saving or undoing.
 pub(crate) fn filter_request(app: &SolveApp, mut request: Value) -> Result<Value, String> {
+    // Preserve the backend's selector conflict independently of visibility or
+    // an explicit runtime rig, before any shortcut can rewrite the request.
+    if request.get("setup").is_some_and(|value| !value.is_null()) && request.get("settings").is_some_and(|value| !value.is_null()) {
+        return Err("choose either setup or settings".into());
+    }
+    // A caller-supplied explicit runtime rig is authoritative. Do not inject
+    // workspace masks or competing legacy weights; engine admission still
+    // rejects any caller-supplied conflict without clearing it here.
+    if request.get("raster_lights").is_some_and(|value| !value.is_null()) {
+        return Ok(request);
+    }
     let visibility = &app.render_workspace.view.lights.visibility;
     if !visibility.active() {
         return Ok(request);
@@ -188,9 +204,11 @@ pub(crate) fn filter_request(app: &SolveApp, mut request: Value) -> Result<Value
         return Err("render request must be an object".into());
     }
     let mut setup = if let Some(inline) = request.get("settings").filter(|value| !value.is_null()) {
-        serde_json::from_value::<RenderSetup>(inline.clone()).map_err(|e| e.to_string())?
+        RenderSetup::deserialize(inline).map_err(|e| e.to_string())?
     } else if let Some(name) = request.get("setup").and_then(Value::as_str) {
-        app.session.doc.render.setups.get(name).cloned().ok_or_else(|| app.tr("render.light_missing").to_string())?
+        let setup = app.session.doc.render.setups.get(name).ok_or_else(|| app.tr("render.light_missing").to_string())?;
+        setup.validate().map_err(|e| e.to_string())?;
+        setup.clone()
     } else {
         RenderSetup::default()
     };
@@ -1019,4 +1037,180 @@ fn field(
             }
         })
     });
+}
+#[cfg(test)]
+mod precopy_tests {
+    use super::*;
+    use crate::scenario::Harness;
+
+    fn masked() -> Harness {
+        let mut h = Harness::new();
+        h.app.render_workspace.view.lights.visibility.muted.insert("directional:0".into());
+        h
+    }
+
+    #[test]
+    fn inline_raster_array_and_invalid_nested_source_refuse_before_visibility_copy() {
+        let h = masked();
+        let doc = h.app.session.doc.clone();
+        let light = json!({"direction":[0,0,1],"color":[1,1,1],"intensity":1});
+        let mut malformed = light.clone();
+        malformed["unexpected"] = json!({"nested":vec![0;32]});
+        for lights in [json!(vec![light; 9]), json!([malformed])] {
+            let request = json!({"settings":{"job":{"method":"raster","lights":lights}}});
+            assert!(filter_request(&h.app, request).is_err());
+            assert!(std::sync::Arc::ptr_eq(&doc, &h.app.session.doc));
+        }
+        // Small hostile fixtures verify refusal; borrowed source order, not a
+        // simulated OOM or final counter, proves the missing raw array clone.
+    }
+
+    #[test]
+    fn named_raster_excess_reserved_capacity_is_rejected_before_setup_clone() {
+        let mut document = solidcraft_engine::doc::Document::default();
+        std::sync::Arc::make_mut(&mut document.render).setups.insert(
+            "Oversized".into(),
+            RenderSetup { job: Some(RenderJob::Raster { transparent_background: false, lights: Some(Vec::with_capacity(9)) }), ..Default::default() },
+        );
+        let mut h = masked();
+        // Deliberately hostile direct-Rust document fixture; do not pass it
+        // through parsing/cloning that could normalize away retained capacity.
+        h.app.session.doc = std::sync::Arc::new(document);
+        let Some(RenderJob::Raster { lights: Some(lights), .. }) = &h.app.session.doc.render.setups["Oversized"].job else {
+            panic!("hostile fixture lost")
+        };
+        assert!(lights.capacity() >= 9);
+        assert!(filter_request(&h.app, json!({"setup":"Oversized"})).is_err());
+    }
+
+    #[test]
+    fn valid_inline_named_and_legacy_empty_raster_visibility_preserve_authored_intent() {
+        let mut h = masked();
+        h.app
+            .session
+            .execute(
+                "render.settings.set",
+                &json!({"name":"Saved","set":{"job":{"method":"raster","lights":[
+                    {"direction":[3,-4,0],"color":[0.25,0.5,1],"intensity":2}
+                ]}}}),
+            )
+            .unwrap();
+        let doc = h.app.session.doc.clone();
+        let setup = serde_json::to_value(&h.app.session.doc.render.setups["Saved"]).unwrap();
+        for request in [json!({"settings":setup}), json!({"setup":"Saved"})] {
+            let filtered = filter_request(&h.app, request).unwrap();
+            let light = &filtered["settings"]["job"]["lights"][0];
+            assert_eq!(light["intensity"].as_f64().unwrap(), 0.0);
+            assert_eq!(light["direction"][0].as_f64().unwrap(), 3.0);
+            assert_eq!(light["color"][1].as_f64().unwrap(), 0.5);
+            assert!(filtered.get("studio_weights").is_none());
+            assert!(std::sync::Arc::ptr_eq(&doc, &h.app.session.doc));
+        }
+        let Some(RenderJob::Raster { lights: Some(lights), .. }) = &h.app.session.doc.render.setups["Saved"].job else { panic!("saved rig lost") };
+        assert_eq!(lights[0].intensity, 2.0);
+        for lights in [None, Some(Value::Null), Some(json!([]))] {
+            let empty = lights.as_ref().is_some_and(Value::is_array);
+            let mut request = json!({"settings":{"job":{"method":"raster"}}});
+            if let Some(lights) = lights {
+                request["settings"]["job"]["lights"] = lights;
+            }
+            let filtered = filter_request(&h.app, request).unwrap();
+            if empty {
+                assert_eq!(filtered["settings"]["job"]["lights"], json!([]));
+                assert!(filtered.get("studio_weights").is_none());
+            } else {
+                assert!(filtered["settings"]["job"].get("lights").is_none());
+                assert_eq!(filtered["studio_weights"], json!([0.0, 1.0, 1.0]));
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_runtime_raster_rig_bypass_keeps_caller_conflicts_authoritative() {
+        let h = masked();
+        let request = json!({"raster_lights":[],"studio_weights":[1,1,1],"settings":{"job":{"method":"raster"}}});
+        assert_eq!(filter_request(&h.app, request.clone()).unwrap(), request);
+        // The engine must reject this caller conflict; UI must not clear it or
+        // inject its own rig/masks to make it succeed.
+    }
+
+    #[test]
+    fn visibility_cannot_erase_ambiguous_named_and_inline_selectors() {
+        let mut h = masked();
+        let request = json!({"setup":"not-resolved","settings":{"job":{"method":"raster"}}});
+        assert!(filter_request(&h.app, request.clone()).unwrap_err().contains("choose either"));
+        h.app.render_workspace.view.lights.visibility = Visibility::default();
+        assert!(filter_request(&h.app, request.clone()).unwrap_err().contains("choose either"));
+        h.app.render_workspace.view.lights.visibility.solo = Some("directional:0".into());
+        assert!(filter_request(&h.app, request.clone()).unwrap_err().contains("choose either"));
+        let error = h.app.session.execute("render.preflight", &request).unwrap_err().to_string();
+        assert!(error.contains("choose either"), "{error}");
+        h.app.render_workspace.view.lights.visibility = Visibility { solo: None, muted: ["directional:0".into()].into_iter().collect() };
+        for request in [json!({"setup":null,"settings":{"job":{"method":"raster"}}}), json!({"settings":{"job":{"method":"raster"}}})] {
+            assert!(filter_request(&h.app, request).is_ok());
+        }
+    }
+    #[test]
+    fn raster_backdrop_commit_preserves_rig_states_exposure_and_one_undo() {
+        for lights in [
+            Value::Null,
+            json!([]),
+            json!([
+                {"direction":[3.0,-4.0,2.0],"color":[0.25,0.5,1.0],"intensity":2.0}
+            ]),
+        ] {
+            let mut h = Harness::new();
+            h.app
+                .session
+                .execute(
+                    "render.settings.set",
+                    &json!({"name":"Backdrop","set":{
+                        "camera":h.app.cam,"width":2,"height":2,"exposure_ev":1.25,
+                        "job":{"method":"raster","transparent_background":false,"lights":lights}
+                    }}),
+                )
+                .unwrap();
+            h.app.render_workspace.view.name = "Backdrop".into();
+            super::super::setups::load(&mut h.app);
+            let before_doc = h.app.session.doc.clone();
+            let before = before_doc.render.setups["Backdrop"].clone();
+            let undo = h.app.session.undo.len();
+            assert_eq!(super::super::setups::snapshot(&h.app).unwrap(), before);
+            if lights.as_array().is_some_and(|sources| !sources.is_empty()) {
+                h.app.render_workspace.view.lights.visibility.muted.insert("directional:0".into());
+            }
+
+            super::super::environment::commit_backdrop(&mut h.app, [12, 34, 56], true).unwrap();
+            let mut expected = before.clone();
+            expected.background = [12, 34, 56];
+            let Some(RenderJob::Raster { transparent_background, .. }) = &mut expected.job else { panic!("Raster setup lost") };
+            *transparent_background = true;
+            assert_eq!(h.app.session.doc.render.setups["Backdrop"], expected);
+            assert_eq!(super::super::setups::snapshot(&h.app).unwrap(), expected);
+            assert_eq!(h.app.session.undo.len(), undo + 1);
+            let wire = serde_json::to_value(&expected).unwrap();
+            if lights.is_null() {
+                assert!(wire["job"].get("lights").is_none(), "legacy None must stay omitted");
+            } else {
+                assert_eq!(wire["job"]["lights"], lights, "authored sources must not be masked or reset");
+            }
+            assert_eq!(expected.exposure_ev, 1.25);
+
+            h.app.session.execute("edit.undo", &json!({})).unwrap();
+            super::super::setups::load(&mut h.app);
+            assert_eq!(h.app.session.doc.as_ref(), before_doc.as_ref());
+            assert_eq!(super::super::setups::snapshot(&h.app).unwrap(), before);
+            assert_eq!(h.app.session.undo.len(), undo);
+            h.app.session.execute("edit.redo", &json!({})).unwrap();
+            super::super::setups::load(&mut h.app);
+            assert_eq!(super::super::setups::snapshot(&h.app).unwrap(), expected);
+            assert_eq!(h.app.session.undo.len(), undo + 1);
+
+            let reopened = solidcraft_engine::doc::Document::from_json(&h.app.session.doc.to_json()).unwrap();
+            assert_eq!(reopened.render.setups["Backdrop"], expected);
+            h.app.session = solidcraft_engine::Session::new(reopened);
+            super::super::setups::load(&mut h.app);
+            assert_eq!(super::super::setups::snapshot(&h.app).unwrap(), expected);
+        }
+    }
 }

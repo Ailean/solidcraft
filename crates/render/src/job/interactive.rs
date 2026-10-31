@@ -10,6 +10,7 @@ const MAX_EDGE: u32 = 1024;
 /// Prepare a separate low-resolution request. Never edits the final request,
 /// changes renderer, removes optics/lights, or promises geometry admission.
 pub fn cpu_request(final_request: &ImageRequest) -> Result<ImageRequest> {
+    final_request.validate_raster_request()?;
     if final_request.integrator != Integrator::Raytrace || final_request.transparent_background {
         return Err(JobError::new(ErrorCode::InvalidRequest, "Interactive CPU requires opaque ray tracing"));
     }
@@ -29,9 +30,10 @@ pub fn cpu_request(final_request: &ImageRequest) -> Result<ImageRequest> {
     request.height = fit(height);
     let options = request.raytrace.get_or_insert_default();
     options.primary_samples = 1;
-    // These are preview sampling choices only. Incompatible transport remains an
-    // explicit error, rather than silently removing the user's requested effects.
-    options.progressive = Some(CpuProgressiveOptions::default());
+    // Preserve explicit accumulation intent, including its deterministic seed.
+    // Fixed-image callers keep the original preview default. Incompatible
+    // transport remains an error rather than silently removing requested effects.
+    options.progressive.get_or_insert_with(CpuProgressiveOptions::default);
     if let Some(reflections) = &mut options.reflections {
         reflections.samples = 1;
     }
@@ -192,6 +194,12 @@ impl Interactive {
         Ok(Some(ticket))
     }
 
+    /// Recheck before expensive capture/admission, including after a worker delay.
+    /// A ticket is not permission to prepare an obsolete or already adopted job.
+    pub fn accepts_capture(&self, ticket: CaptureTicket) -> bool {
+        self.enabled && !self.paused && !self.final_active && self.error.is_none() && self.ticket == Some(ticket) && self.active.is_none()
+    }
+
     /// Attach an admitted preview-only job after immutable capture. Delayed jobs
     /// are cancelled, including a previous ticket for the same visual revision.
     /// Use a separate engine job session/registry from final-image export.
@@ -203,7 +211,13 @@ impl Interactive {
             return Ok(false);
         }
         if self.ticket != Some(ticket) || ticket.session != self.session {
-            if self.active.as_ref().is_none_or(|active| active.id() != job.id()) {
+            // Protect an admitted current capture even before acknowledgement.
+            // Once accepted, only the same record (not merely its JobId) is ours.
+            let current = match &self.active {
+                Some(active) => active.same_record(&job),
+                None => self.ticket.is_some_and(|ticket| ticket.job_id() == job.id()),
+            };
+            if !current {
                 job.cancel()?;
             }
             return Ok(false);
@@ -222,7 +236,7 @@ impl Interactive {
         // A ticket is acknowledged exactly once, even if the same capture is
         // delivered twice while an earlier attached job is still running.
         if self.active.is_some() {
-            if self.active.as_ref().is_none_or(|active| active.id() != job.id()) {
+            if self.active.as_ref().is_none_or(|active| !active.same_record(&job)) {
                 job.cancel()?;
             }
             return Ok(false);
@@ -272,5 +286,86 @@ impl Interactive {
 impl Drop for Interactive {
     fn drop(&mut self) {
         let _ = self.cancel();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::job::{CpuBudget, RaytraceOptions};
+
+    fn request(options: RaytraceOptions) -> ImageRequest {
+        ImageRequest {
+            raster_punctual_lights: None,
+            raster_area_lights: None,
+            raster_exposure_ev: 0.0,
+            raster_lights: None,
+            studio_weights: None,
+            integrator: Integrator::Raytrace,
+            raytrace: Some(options),
+            textures: None,
+            environment: None,
+            camera: Default::default(),
+            width: 81,
+            height: 53,
+            background: [40, 80, 120],
+            transparent_background: false,
+        }
+    }
+
+    #[test]
+    fn explicit_progressive_target_and_seed_survive_interactive_conversion() {
+        for (budget, samples) in [(CpuBudget::Compact, 31), (CpuBudget::Studio, 997), (CpuBudget::Workstation, 1_048_576)] {
+            let mut source = request(RaytraceOptions {
+                budget,
+                progressive: Some(CpuProgressiveOptions { samples_per_pixel: samples, seed: u32::MAX }),
+                primary_samples: 1,
+                exposure_ev: -2.0,
+                shadows: false,
+                ..Default::default()
+            });
+            // The high target still obeys P*SPP admission; no implicit resize/profile.
+            if budget == CpuBudget::Workstation {
+                source.width = 3840;
+                source.height = 1;
+            }
+            let before = serde_json::to_value(&source).unwrap();
+            let converted = cpu_request(&source).unwrap();
+            let mut expected = source.clone();
+            if budget == CpuBudget::Workstation {
+                expected.width = 1024;
+            }
+            assert_eq!(serde_json::to_value(converted).unwrap(), serde_json::to_value(expected).unwrap());
+            assert_eq!(serde_json::to_value(&source).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn fixed_interactive_keeps_original_default_and_invalid_explicit_intent_refuses() {
+        let source = request(RaytraceOptions { primary_samples: 16, ..Default::default() });
+        let converted = cpu_request(&source).unwrap();
+        let options = converted.raytrace.unwrap();
+        assert_eq!(options.progressive, Some(CpuProgressiveOptions { samples_per_pixel: 16, seed: 0 }));
+        assert_eq!(options.primary_samples, 1);
+        assert!(source.raytrace.as_ref().unwrap().progressive.is_none());
+        for (budget, samples) in [(CpuBudget::Compact, 65), (CpuBudget::Studio, 1025), (CpuBudget::Workstation, 1_048_577)] {
+            let invalid = request(RaytraceOptions {
+                budget,
+                primary_samples: 1,
+                progressive: Some(CpuProgressiveOptions { samples_per_pixel: samples, seed: 741 }),
+                ..Default::default()
+            });
+            let before = serde_json::to_value(&invalid).unwrap();
+            assert!(cpu_request(&invalid).is_err());
+            assert_eq!(serde_json::to_value(&invalid).unwrap(), before);
+        }
+        let mut over_work = request(RaytraceOptions {
+            primary_samples: 1,
+            progressive: Some(CpuProgressiveOptions { samples_per_pixel: 64, seed: 741 }),
+            ..Default::default()
+        });
+        over_work.width = 1024;
+        over_work.height = 1024;
+        assert!(cpu_request(&over_work).is_err(), "do not reduce the explicit target to fit the profile");
     }
 }

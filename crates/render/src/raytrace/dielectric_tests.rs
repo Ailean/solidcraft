@@ -43,6 +43,10 @@ pub(in crate::raytrace) fn request(options: RaytraceOptions) -> ImageRequest {
     let mut camera = crate::Camera { distance: 50.0, ..Default::default() };
     camera.set_view(crate::StandardView::Top);
     ImageRequest {
+        raster_punctual_lights: None,
+        raster_area_lights: None,
+        raster_exposure_ev: 0.0,
+        raster_lights: None,
         studio_weights: None,
         environment: None,
         textures: None,
@@ -513,4 +517,686 @@ fn actual_png_brewster_thin_sheet_matches_reflected_energy() {
     // maps through Reinhard to 25/219, then sRGB to 95. The old R = 50/363
     // maps to 98, so this also detects a consumer still using the old series.
     assert_eq!(pixel.expect("Brewster sheet fixture must finish"), [95, 95, 95, 255]);
+}
+
+#[test]
+fn strict_box_parent_selection_is_order_independent_and_opt_in() {
+    let bounds = |lo: f64, hi: f64| Bounds::new(Vec3::new(lo, lo, lo), Vec3::new(hi, hi, hi)).unwrap();
+    let mut certificates = [None; MAX_OVERRIDES];
+    certificates[0] = Some(Certificate::ClosedBox(bounds(2.0, 3.0)));
+    certificates[1] = Some(Certificate::ClosedBox(bounds(0.0, 5.0)));
+    certificates[2] = Some(Certificate::ClosedBox(bounds(1.0, 4.0)));
+    assert!(parents(&certificates, false).is_err());
+    assert_eq!(parents(&certificates, true).unwrap(), [Some(2), None, Some(1), None, None, None, None, None]);
+    certificates.swap(0, 1);
+    assert_eq!(parents(&certificates, true).unwrap(), [None, Some(2), Some(0), None, None, None, None, None]);
+}
+
+#[test]
+fn nesting_opt_in_still_refuses_touching_equal_and_partially_overlapping_boxes() {
+    let outer = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)).unwrap();
+    for (lo, hi) in [
+        (Vec3::new(0.0, 1.0, 1.0), Vec3::new(3.0, 3.0, 3.0)),
+        (Vec3::new(4.0, 1.0, 1.0), Vec3::new(5.0, 3.0, 3.0)),
+        (Vec3::new(4.0, 4.0, 1.0), Vec3::new(5.0, 5.0, 3.0)),
+        (Vec3::new(4.0, 4.0, 4.0), Vec3::new(5.0, 5.0, 5.0)),
+        (Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)),
+        (Vec3::new(3.0, 1.0, 1.0), Vec3::new(5.0, 3.0, 3.0)),
+    ] {
+        let mut certificates = [None; MAX_OVERRIDES];
+        certificates[0] = Some(Certificate::ClosedBox(outer));
+        certificates[1] = Some(Certificate::ClosedBox(Bounds::new(lo, hi).unwrap()));
+        assert!(parents(&certificates, true).is_err());
+    }
+}
+
+pub(in crate::raytrace) fn nested_fixture(reverse: bool) -> (ProductScene, RaytraceOptions) {
+    let mut outer = box_body(4.0);
+    outer.name = "Outer".into();
+    let mut inner = box_body(2.0);
+    inner.name = "Inner".into();
+    for p in &mut Arc::make_mut(&mut inner.mesh).positions {
+        *p = Vec3::new(p.x * 0.5, p.y * 0.5, p.z + 1.0);
+    }
+    let mut scene = scene(outer);
+    scene.meshes.push(inner);
+    if reverse {
+        scene.meshes.reverse();
+    }
+    let dielectrics = scene
+        .meshes
+        .iter()
+        .enumerate()
+        .map(|(body_index, body)| DielectricOptions {
+            body_index,
+            body_name: body.name.clone(),
+            boundary: DielectricBoundary::ClosedBox,
+            ior: 1.0,
+            absorption_per_mm: if body.name == "Outer" { [0.1, 0.2, 0.0] } else { [0.3, 0.4, 0.0] },
+            thickness_mm: 0.0,
+        })
+        .collect();
+    (scene, RaytraceOptions { dielectrics, environment: environment(), lights: Some(Vec::new()), shadows: false, ..Default::default() })
+}
+
+#[test]
+fn actual_nested_png_uses_parent_only_outside_the_inner_interval() {
+    for reverse in [false, true] {
+        let (scene, options) = nested_fixture(reverse);
+        assert!(super::super::image::admit(&scene, &request(options.clone()), &options).is_err());
+        let mut task = super::super::image::ImageTask::new_with_environment_and_nested(
+            scene,
+            request(options.clone()),
+            CancelToken::default(),
+            options,
+            None,
+            true,
+        )
+        .unwrap();
+        let mut completed = false;
+        for _ in 0..100_000 {
+            if let TaskPoll::Complete(png) = task.step(16384).unwrap() {
+                let image = ::image::load_from_memory(&png).unwrap().to_rgba8();
+                // Outer length2, inner length2; Beer radiance (exp(-.8), exp(-1.2), 1).
+                // Reinhard then IEC sRGB encoding gives these independently fixed bytes.
+                assert_eq!(image.get_pixel(0, 0).0, [151, 132, 188, 255]);
+                completed = true;
+                break;
+            }
+        }
+        assert!(completed, "nested final image did not complete");
+    }
+}
+
+#[test]
+fn progressive_optics_keep_the_nested_certificate_opt_in_and_interactive_intent() {
+    let (scene, mut options) = nested_fixture(false);
+    options.progressive = Some(Default::default());
+    options.validate().unwrap();
+    let request = request(options.clone());
+    // A DTO succeeding never grants a nesting certificate to an ordinary job.
+    assert!(super::super::image::admit(&scene, &request, &options).is_err());
+    assert!(super::super::image::admit_with_nested(&scene, &request, &options, true).is_ok());
+    let interactive = crate::job::interactive::cpu_request(&request).unwrap();
+    assert_eq!(interactive.raytrace.as_ref().unwrap().dielectrics, options.dielectrics);
+    assert!(super::super::image::admit(&scene, &interactive, interactive.raytrace.as_ref().unwrap()).is_err());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn native_host_forwards_only_the_existing_nested_media_exception() {
+    use crate::job::{CpuHost, ErrorCode, JobId, JobOptions, Phase};
+    let host = CpuHost::for_platform().unwrap();
+    let (scene, options) = nested_fixture(false);
+    let request = request(options);
+    let nested = JobOptions { nested_media: true, ..Default::default() };
+    assert!(host.admit(&scene, &request, JobOptions::default()).is_err());
+    assert!(host.admit(&scene, &request, nested).is_ok());
+    for bad in [
+        JobOptions { samples: 2, ..nested },
+        JobOptions { max_depth: 2, ..nested },
+        JobOptions { seed: 7, ..nested },
+        JobOptions { exposure_ev: 1.0, ..nested },
+        JobOptions { transmission_samples: 2, ..nested },
+        JobOptions { denoise: true, ..nested },
+        JobOptions { linear_exr: true, ..nested },
+    ] {
+        assert_eq!(host.admit(&scene, &request, bad).unwrap_err().code, ErrorCode::InvalidRequest);
+    }
+    let mut raster = request.clone();
+    raster.integrator = Integrator::Raster;
+    raster.raytrace = None;
+    assert!(host.admit(&scene, &raster, nested).is_err());
+    let handle = host.submit_with_options(JobId { session: 6302, serial: 1, generation: 1 }, 1, scene, request, nested).unwrap();
+    assert_eq!(handle.wait_timeout(std::time::Duration::from_secs(60)).unwrap().progress.phase, Phase::Completed);
+    assert_eq!(handle.status().unwrap().options.nested_media, true);
+    let frame = handle.frame().unwrap().unwrap();
+    let image = ::image::load_from_memory(frame.png()).unwrap().to_rgba8();
+    assert_eq!(image.get_pixel(0, 0).0, [151, 132, 188, 255]);
+}
+
+fn face_fixture(axis: usize, positive: bool) -> (Bounds, [Vec3; 3], Vec3, Vec3) {
+    let point = |a: f64, u: f64, v: f64| match axis {
+        0 => Vec3::new(a, u, v),
+        1 => Vec3::new(v, a, u),
+        2 => Vec3::new(u, v, a),
+        _ => panic!("test axis"),
+    };
+    let bounds = Bounds::new(Vec3::new(1.0, 1.0, 1.0), Vec3::new(4.0, 4.0, 4.0)).unwrap();
+    let plane = if positive { 4.0 } else { 1.0 };
+    let mut vertices = [point(plane, 1.0, 1.0), point(plane, 4.0, 1.0), point(plane, 4.0, 4.0)];
+    if !positive {
+        vertices.swap(1, 2);
+    }
+    let normal = match axis {
+        0 => Vec3::X,
+        1 => Vec3::Y,
+        2 => Vec3::Z,
+        _ => panic!("test axis"),
+    } * if positive { 1.0 } else { -1.0 };
+    (bounds, vertices, normal, point(plane, 2.5, 2.5))
+}
+
+#[test]
+fn exact_face_excludes_own_zero_depth_and_retains_one_ulp_neighbour_on_every_axis_and_side() {
+    use super::super::Ray;
+    for axis in 0..3 {
+        for positive in [false, true] {
+            let (bounds, vertices, normal, position) = face_fixture(axis, positive);
+            for entering in [false, true] {
+                let direction = if entering { -normal } else { normal };
+                let incoming = Ray::new(position - direction, direction, 0.0, 10.0).unwrap();
+                let face = exact_box_face(bounds, vertices, normal, position, incoming).unwrap();
+                assert_eq!(face.point, position, "face diagonal is valid interior");
+                let optics = interface(direction, -direction, if entering { 1.0 } else { 1.5 }, if entering { 1.5 } else { 1.0 }).unwrap();
+                let reflected = face.spawn(optics.reflected, true).unwrap();
+                let transmitted = face.spawn(optics.transmitted.unwrap(), false).unwrap();
+                let triangle = Triangle::new(vertices).unwrap();
+                assert!(triangle.intersect(&reflected).is_none(), "own reflected face at t0 must be excluded");
+                assert!(triangle.intersect(&transmitted).is_none(), "own transmitted face at t0 must be excluded");
+                assert_eq!(reflected.origin(), face.point);
+                assert_eq!(transmitted.origin(), face.point);
+                assert_eq!(transmitted.interval()[0], 0.0_f64.next_up());
+                let plane = super::super::component(position, axis);
+                let next = if super::super::component(direction, axis) > 0.0 { plane.next_up() } else { plane.next_down() };
+                let neighbour = vertices.map(|v| match axis {
+                    0 => Vec3::new(next, v.y, v.z),
+                    1 => Vec3::new(v.x, next, v.z),
+                    2 => Vec3::new(v.x, v.y, next),
+                    _ => panic!("test axis"),
+                });
+                let hit = Triangle::new(neighbour).unwrap().intersect(&transmitted).expect("one-ULP positive face must remain ahead");
+                assert_eq!(hit.distance, (next - plane).abs());
+            }
+        }
+    }
+}
+
+#[test]
+fn exact_face_recovers_certified_plane_without_clamping_or_blessing_ties() {
+    use super::super::Ray;
+    let (bounds, vertices, normal, point) = face_fixture(2, false);
+    let incoming = Ray::new(point - Vec3::Z, Vec3::Z, 0.0, 10.0).unwrap();
+    let rounded = Vec3::new(point.x, point.y, point.z.next_up());
+    let face = exact_box_face(bounds, vertices, normal, rounded, incoming).unwrap();
+    assert_eq!(face.point, point);
+    for bad in [Vec3::new(1.0, 2.5, 1.0), Vec3::new(1.0, 1.0, 1.0), Vec3::new(1.0_f64.next_down(), 2.5, 1.0), Vec3::new(f64::NAN, 2.5, 1.0)] {
+        assert!(exact_box_face(bounds, vertices, normal, bad, incoming).is_err());
+    }
+    let tied = Ray::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0), 0.0, 10.0).unwrap();
+    // Even if rounded tangential reconstruction claims interior, independently
+    // equal actual ray/face depths cannot inherit the BVH ordinal's blessing.
+    let uncertain = Vec3::new(1.0_f64.next_up(), 1.0_f64.next_up(), 1.0);
+    assert!(exact_box_face(bounds, vertices, normal, uncertain, tied).is_err());
+    assert!(exact_box_face(bounds, vertices, -normal, point, incoming).is_err());
+    let other_bounds = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 4.0, 4.0)).unwrap();
+    assert!(exact_box_face(other_bounds, vertices, normal, point, incoming).is_err());
+    let tangent = Ray::new(point - Vec3::X, Vec3::X, 0.0, 10.0).unwrap();
+    assert!(exact_box_face(bounds, vertices, normal, point, tangent).is_err());
+    assert!(face.spawn(Vec3::X, true).is_err());
+    assert!(face.spawn(-Vec3::Z, false).is_err());
+    assert!(face.spawn(Vec3::Z, true).is_err());
+}
+
+fn direct_capture(bodies: Vec<ProductMesh>) -> ProductScene {
+    let mut bounds = bodies[0].mesh.bounds();
+    for body in &bodies[1..] {
+        let next = body.mesh.bounds();
+        bounds.min = bounds.min.min(next.min);
+        bounds.max = bounds.max.max(next.max);
+    }
+    ProductScene { meshes: bodies, bounds }
+}
+
+fn direct_box(name: &str, offset: f64) -> ProductMesh {
+    let mut body = box_body(1.0);
+    body.name = name.into();
+    for p in &mut Arc::make_mut(&mut body.mesh).positions {
+        p.z += offset;
+    }
+    body
+}
+
+fn direct_sheet(name: &str, offset: f64) -> ProductMesh {
+    let mut body = direct_box(name, offset);
+    let mesh = Arc::make_mut(&mut body.mesh);
+    mesh.triangles.truncate(2);
+    mesh.positions.truncate(4);
+    body
+}
+
+fn direct_material(body: usize, name: &str, boundary: DielectricBoundary) -> DielectricOptions {
+    DielectricOptions {
+        body_index: body,
+        body_name: name.into(),
+        boundary,
+        ior: 1.0,
+        absorption_per_mm: [2.0_f64.ln(), 4.0_f64.ln(), 0.0],
+        thickness_mm: if boundary == DielectricBoundary::ThinSheet { 1.0 } else { 0.0 },
+    }
+}
+
+fn direct_ray(max: f64) -> super::super::Ray {
+    super::super::Ray::new(Vec3::new(0.25, 0.125, -2.0), Vec3::Z, 0.0, max).unwrap()
+}
+
+fn direct_complete(source: &ProductScene, options: &RaytraceOptions, ray: super::super::Ray) -> Vec3 {
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(100_000).unwrap();
+    let mut visibility = DirectVisibility::new(source, options, ray, MAX_DIRECT_CROSSINGS, &mut work, &cancel).unwrap();
+    for _ in 0..10_000 {
+        if let Some(rgb) = visibility.step(&mut work, &cancel).unwrap() {
+            assert!(visibility.step(&mut work, &cancel).is_err());
+            return rgb;
+        }
+    }
+    panic!("bounded direct connection did not complete");
+}
+
+fn direct_rgb(actual: Vec3, expected: Vec3) {
+    for (a, b) in [actual.x, actual.y, actual.z].into_iter().zip([expected.x, expected.y, expected.z]) {
+        assert!((a - b).abs() <= 1e-13, "actual={actual:?}, expected={expected:?}");
+    }
+}
+
+#[test]
+fn direct_box_beer_uses_original_endpoints_and_multiplies_disjoint_rgb() {
+    let source = direct_capture(vec![direct_box("one", 0.0), direct_box("two", 3.0)]);
+    let first = direct_material(0, "one", DielectricBoundary::ClosedBox);
+    let second = direct_material(1, "two", DielectricBoundary::ClosedBox);
+    let options = RaytraceOptions { dielectrics: vec![first, second], ..Default::default() };
+    // sigma=(ln2,ln4,0), two one-mm slabs: exp(-2*sigma)=(1/4,1/16,1).
+    direct_rgb(direct_complete(&source, &options, direct_ray(10.0)), Vec3::new(0.25, 0.0625, 1.0));
+    let one = direct_capture(vec![direct_box("one", 0.0)]);
+    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "one", DielectricBoundary::ClosedBox)], ..Default::default() };
+    direct_rgb(direct_complete(&one, &options, direct_ray(10.0)), Vec3::new(0.5, 0.25, 1.0));
+}
+
+#[test]
+fn direct_sheet_shared_diagonal_is_one_crossing_and_uses_virtual_beer_distance() {
+    let source = direct_capture(vec![direct_sheet("sheet", 0.0)]);
+    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "sheet", DielectricBoundary::ThinSheet)], ..Default::default() };
+    let ray = super::super::Ray::new(Vec3::new(0.25, 0.25, -2.0), Vec3::Z, 0.0, 10.0).unwrap();
+    direct_rgb(direct_complete(&source, &options, ray), Vec3::new(0.5, 0.25, 1.0));
+}
+
+#[test]
+fn direct_exterior_box_fresnel_is_not_a_refracted_or_infinite_bounce_slab() {
+    let source = direct_capture(vec![direct_box("glass", 0.0)]);
+    let material = DielectricOptions { ior: 1.5, absorption_per_mm: [0.0; 3], ..direct_material(0, "glass", DielectricBoundary::ClosedBox) };
+    let options = RaytraceOptions { dielectrics: vec![material], ..Default::default() };
+    // Normal external R=1/25; this straight connection has (24/25)^2, with no reflected returns.
+    direct_rgb(direct_complete(&source, &options, direct_ray(10.0)), Vec3::new(576.0 / 625.0, 576.0 / 625.0, 576.0 / 625.0));
+    let sheet = direct_capture(vec![direct_sheet("sheet", 0.0)]);
+    let material = DielectricOptions { ior: 1.5, absorption_per_mm: [0.0; 3], ..direct_material(0, "sheet", DielectricBoundary::ThinSheet) };
+    let options = RaytraceOptions { dielectrics: vec![material], ..Default::default() };
+    // Existing incoherent sheet closure sums its virtual internal returns: (1-R)/(1+R)=12/13.
+    direct_rgb(direct_complete(&sheet, &options, direct_ray(10.0)), Vec3::new(12.0 / 13.0, 12.0 / 13.0, 12.0 / 13.0));
+}
+
+#[test]
+fn direct_connection_keeps_unselected_opaque_blockers_and_half_open_light_endpoint() {
+    let options = RaytraceOptions::default();
+    for (z, expected) in [(7.0, Vec3::ZERO), (8.0, Vec3::new(1.0, 1.0, 1.0)), (9.0, Vec3::new(1.0, 1.0, 1.0))] {
+        let source = direct_capture(vec![direct_sheet("opaque", z)]);
+        direct_rgb(direct_complete(&source, &options, direct_ray(10.0)), expected);
+    }
+    let source = direct_capture(vec![direct_box("glass", 0.0), direct_sheet("blocker", 5.0)]);
+    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "glass", DielectricBoundary::ClosedBox)], ..Default::default() };
+    assert_eq!(direct_complete(&source, &options, direct_ray(10.0)), Vec3::ZERO);
+}
+
+#[test]
+fn direct_connection_refuses_coincident_different_bodies_instead_of_skipping_opaque() {
+    let source = direct_capture(vec![direct_sheet("selected", 0.0), direct_sheet("opaque", 0.0)]);
+    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "selected", DielectricBoundary::ThinSheet)], ..Default::default() };
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(100_000).unwrap();
+    let mut cursor = DirectVisibility::new(&source, &options, direct_ray(10.0), MAX_DIRECT_CROSSINGS, &mut work, &cancel).unwrap();
+    for _ in 0..100 {
+        match cursor.step(&mut work, &cancel) {
+            Ok(None) => {}
+            Err(super::super::TraceError::InvalidInput(_)) => {
+                assert!(cursor.step(&mut work, &cancel).is_err());
+                return;
+            }
+            other => panic!("ambiguous visibility must refuse: {other:?}"),
+        }
+    }
+    panic!("coincident boundary did not refuse");
+}
+
+#[test]
+fn direct_connection_bounds_validate_identity_endpoints_overlap_and_crossing_budget() {
+    let source = direct_capture(vec![direct_box("glass", 0.0)]);
+    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "glass", DielectricBoundary::ClosedBox)], ..Default::default() };
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(100_000).unwrap();
+    for limit in [0, MAX_DIRECT_CROSSINGS + 1] {
+        assert!(DirectVisibility::new(&source, &options, direct_ray(10.0), limit, &mut work, &cancel).is_err());
+    }
+    // End at entry face, inside, and at exit face: all explicitly outside this foundation's domain.
+    for max in [2.0, 2.5, 3.0] {
+        assert!(DirectVisibility::new(&source, &options, direct_ray(max), 2, &mut work, &cancel).is_err());
+    }
+    let inside = super::super::Ray::new(Vec3::new(0.25, 0.125, 0.5), Vec3::Z, 0.0, 10.0).unwrap();
+    assert!(DirectVisibility::new(&source, &options, inside, 2, &mut work, &cancel).is_err());
+    let mut wrong = options.clone();
+    wrong.dielectrics[0].body_name = "wrong".into();
+    assert!(DirectVisibility::new(&source, &wrong, direct_ray(10.0), 2, &mut work, &cancel).is_err());
+    let overlap = direct_capture(vec![direct_box("a", 0.0), direct_box("b", 0.5)]);
+    let overlapping = RaytraceOptions {
+        dielectrics: vec![direct_material(0, "a", DielectricBoundary::ClosedBox), direct_material(1, "b", DielectricBoundary::ClosedBox)],
+        ..Default::default()
+    };
+    assert!(DirectVisibility::new(&overlap, &overlapping, direct_ray(10.0), 4, &mut work, &cancel).is_err());
+    let mut cursor = DirectVisibility::new(&source, &options, direct_ray(10.0), 1, &mut work, &cancel).unwrap();
+    for _ in 0..100 {
+        match cursor.step(&mut work, &cancel) {
+            Ok(None) => {}
+            Err(super::super::TraceError::WorkLimit) => {
+                assert!(cursor.step(&mut work, &cancel).is_err());
+                return;
+            }
+            other => panic!("insufficient crossing budget must refuse: {other:?}"),
+        }
+    }
+    panic!("crossing cap did not stop");
+}
+
+#[test]
+fn direct_connection_spends_caller_work_and_cancellation_is_terminal_without_result() {
+    let source = direct_capture(vec![direct_box("glass", 0.0)]);
+    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "glass", DielectricBoundary::ClosedBox)], ..Default::default() };
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(1000).unwrap();
+    let mut cursor = DirectVisibility::new(&source, &options, direct_ray(10.0), 2, &mut work, &cancel).unwrap();
+    let used = work.used();
+    assert!(used > 0);
+    assert_eq!(cursor.step(&mut work, &cancel).unwrap(), None);
+    assert_eq!(work.used(), used + 1);
+    work.charge(work.remaining(), &cancel).unwrap();
+    assert!(matches!(cursor.step(&mut work, &cancel), Err(super::super::TraceError::WorkLimit)));
+    assert!(cursor.step(&mut work, &cancel).is_err());
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(1000).unwrap();
+    let mut cursor = DirectVisibility::new(&source, &options, direct_ray(10.0), 2, &mut work, &cancel).unwrap();
+    let used = work.used();
+    cancel.cancel();
+    assert!(matches!(cursor.step(&mut work, &cancel), Err(super::super::TraceError::Cancelled)));
+    assert_eq!(work.used(), used);
+    assert!(cursor.step(&mut work, &cancel).is_err());
+    assert!(matches!(DirectVisibility::new(&source, &options, direct_ray(10.0), 2, &mut work, &cancel), Err(super::super::TraceError::Cancelled)));
+}
+
+#[test]
+fn direct_connection_rejects_hostile_optics_before_any_dark_result() {
+    let source = direct_capture(vec![direct_box("glass", 0.0)]);
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(10000).unwrap();
+    for value in [f64::NAN, f64::INFINITY, -1.0, 101.0] {
+        let material = DielectricOptions { absorption_per_mm: [value, 0.0, 0.0], ..direct_material(0, "glass", DielectricBoundary::ClosedBox) };
+        let options = RaytraceOptions { dielectrics: vec![material], ..Default::default() };
+        assert!(DirectVisibility::new(&source, &options, direct_ray(10.0), 2, &mut work, &cancel).is_err());
+    }
+    let material = DielectricOptions { ior: f64::NAN, ..direct_material(0, "glass", DielectricBoundary::ClosedBox) };
+    let options = RaytraceOptions { dielectrics: vec![material], ..Default::default() };
+    assert!(DirectVisibility::new(&source, &options, direct_ray(10.0), 2, &mut work, &cancel).is_err());
+}
+
+#[test]
+fn direct_connection_accepts_all_eight_disjoint_boxes_and_preserves_reverse_rgb() {
+    let bodies = (0..8).map(|i| direct_box(&format!("slab{i}"), f64::from(i) * 2.0)).collect();
+    let source = direct_capture(bodies);
+    let dielectrics = (0..8).map(|i| direct_material(i, &format!("slab{i}"), DielectricBoundary::ClosedBox)).collect();
+    let options = RaytraceOptions { dielectrics, ..Default::default() };
+    let expected = Vec3::new(1.0 / 256.0, 1.0 / 65536.0, 1.0);
+    direct_rgb(direct_complete(&source, &options, direct_ray(20.0)), expected);
+    let reverse = super::super::Ray::new(Vec3::new(0.25, 0.125, 18.0), -Vec3::Z, 0.0, 20.0).unwrap();
+    direct_rgb(direct_complete(&source, &options, reverse), expected);
+    let mut too_many = options.clone();
+    too_many.dielectrics.push(direct_material(8, "ninth", DielectricBoundary::ClosedBox));
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(1000).unwrap();
+    assert!(DirectVisibility::new(&source, &too_many, direct_ray(20.0), 16, &mut work, &cancel).is_err());
+}
+
+#[test]
+fn direct_connection_box_edge_is_refused_without_a_successful_fallback() {
+    let source = direct_capture(vec![direct_box("glass", 0.0)]);
+    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "glass", DielectricBoundary::ClosedBox)], ..Default::default() };
+    let ray = super::super::Ray::new(Vec3::new(-10.0, -10.0, -2.0), Vec3::Z, 0.0, 10.0).unwrap();
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(1000).unwrap();
+    let mut cursor = DirectVisibility::new(&source, &options, ray, 2, &mut work, &cancel).unwrap();
+    for _ in 0..100 {
+        match cursor.step(&mut work, &cancel) {
+            Ok(None) => {}
+            Err(super::super::TraceError::InvalidInput(_)) => return,
+            other => panic!("box edge must refuse: {other:?}"),
+        }
+    }
+    panic!("edge ambiguity did not stop");
+}
+
+#[test]
+fn direct_connection_setup_certification_cannot_escape_caller_work_limit() {
+    let source = direct_capture(vec![direct_box("glass", 0.0)]);
+    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "glass", DielectricBoundary::ClosedBox)], ..Default::default() };
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(1).unwrap();
+    assert!(matches!(DirectVisibility::new(&source, &options, direct_ray(10.0), 2, &mut work, &cancel), Err(super::super::TraceError::WorkLimit)));
+    assert_eq!(work.used(), 1);
+}
+
+#[test]
+fn direct_oblique_sheet_is_one_certified_plane_with_original_beer_angle() {
+    let mut body = direct_sheet("oblique", 0.0);
+    for p in &mut Arc::make_mut(&mut body.mesh).positions {
+        p.z += 0.5 * p.x;
+    }
+    let source = direct_capture(vec![body]);
+    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "oblique", DielectricBoundary::ThinSheet)], ..Default::default() };
+    let ray = super::super::Ray::new(Vec3::new(0.25, 0.25, -2.0), Vec3::Z, 0.0, 10.0).unwrap();
+    // Plane z=x/2, index matched: thickness/cos(theta)=sqrt(5)/2 mm.
+    let distance = 5.0_f64.sqrt() / 2.0;
+    direct_rgb(direct_complete(&source, &options, ray), Vec3::new(2.0_f64.powf(-distance), 4.0_f64.powf(-distance), 1.0));
+}
+
+// Original owner regression cases, written before the private owner implementation.
+fn direct_owner_fixture() -> DirectVisibilityOwner {
+    DirectVisibilityOwner::new(
+        direct_capture(vec![direct_box("owned glass", 0.0)]),
+        RaytraceOptions { dielectrics: vec![direct_material(0, "owned glass", DielectricBoundary::ClosedBox)], ..Default::default() },
+    )
+}
+
+fn direct_owner_move(owner: DirectVisibilityOwner) -> DirectVisibilityOwner {
+    owner
+}
+
+#[test]
+fn direct_owner_move_each_poll_matches_borrowed_result_and_cumulative_work() {
+    let source = direct_capture(vec![direct_box("owned glass", 0.0)]);
+    let options = RaytraceOptions { dielectrics: vec![direct_material(0, "owned glass", DielectricBoundary::ClosedBox)], ..Default::default() };
+    let cancel = CancelToken::default();
+    let mut reference_work = super::super::WorkBudget::new(100_000).unwrap();
+    let mut owner_work = super::super::WorkBudget::new(100_000).unwrap();
+    let mut reference = DirectVisibility::new(&source, &options, direct_ray(10.0), 2, &mut reference_work, &cancel).unwrap();
+    let mut owner = direct_owner_fixture();
+    owner.begin(direct_ray(10.0), 2, &mut owner_work, &cancel).unwrap();
+    assert_eq!(owner_work.used(), reference_work.used());
+    for _ in 0..10_000 {
+        owner = direct_owner_move(owner);
+        let expected = reference.step(&mut reference_work, &cancel).unwrap();
+        let actual = owner.step(&mut owner_work, &cancel).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(owner_work.used(), reference_work.used());
+        assert_eq!(owner_work.remaining(), reference_work.remaining());
+        if let Some(rgb) = actual {
+            direct_rgb(rgb, Vec3::new(0.5, 0.25, 1.0));
+            assert_eq!(owner.source().meshes[0].name, "owned glass");
+            assert_eq!(owner.options().dielectrics[0].body_name, "owned glass");
+            return;
+        }
+    }
+    panic!("owner connection did not complete within the original fixture bound");
+}
+
+#[test]
+fn direct_owner_rejects_active_begin_without_replacing_cursor_or_spending_work() {
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(100_000).unwrap();
+    let mut owner = direct_owner_fixture();
+    owner.begin(direct_ray(10.0), 2, &mut work, &cancel).unwrap();
+    assert_eq!(owner.step(&mut work, &cancel).unwrap(), None);
+    let used = work.used();
+    // This shorter replacement ray would end before the glass if accepted.
+    assert!(owner.begin(direct_ray(1.0), 2, &mut work, &cancel).is_err());
+    assert_eq!(work.used(), used);
+    for _ in 0..10_000 {
+        if let Some(rgb) = owner.step(&mut work, &cancel).unwrap() {
+            direct_rgb(rgb, Vec3::new(0.5, 0.25, 1.0));
+            return;
+        }
+    }
+    panic!("rejected begin lost the active connection");
+}
+
+#[test]
+fn direct_owner_success_is_terminal_until_explicit_begin_on_the_same_capture() {
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(100_000).unwrap();
+    let mut owner = direct_owner_fixture();
+    let mut first_cost = 0;
+    for connection in 0..2 {
+        owner.begin(direct_ray(10.0), 2, &mut work, &cancel).unwrap();
+        let mut complete = false;
+        for _ in 0..10_000 {
+            if let Some(rgb) = owner.step(&mut work, &cancel).unwrap() {
+                direct_rgb(rgb, Vec3::new(0.5, 0.25, 1.0));
+                complete = true;
+                break;
+            }
+        }
+        assert!(complete);
+        let used = work.used();
+        owner = direct_owner_move(owner);
+        assert!(matches!(owner.step(&mut work, &cancel), Err(super::super::TraceError::InvalidInput(_))));
+        assert_eq!(work.used(), used);
+        if connection == 0 {
+            first_cost = used;
+            assert!(first_cost > 0);
+        } else {
+            assert_eq!(used, first_cost * 2);
+        }
+    }
+}
+
+#[test]
+fn direct_owner_cancelled_connection_stays_terminal_after_move_and_fresh_token() {
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(1000).unwrap();
+    let mut owner = direct_owner_fixture();
+    owner.begin(direct_ray(10.0), 2, &mut work, &cancel).unwrap();
+    assert_eq!(owner.step(&mut work, &cancel).unwrap(), None);
+    let used = work.used();
+    cancel.cancel();
+    assert!(matches!(owner.step(&mut work, &cancel), Err(super::super::TraceError::Cancelled)));
+    assert_eq!(work.used(), used);
+    owner = direct_owner_move(owner);
+    let fresh_token = CancelToken::default();
+    assert!(matches!(owner.step(&mut work, &fresh_token), Err(super::super::TraceError::InvalidInput(_))));
+    assert_eq!(work.used(), used);
+    assert!(matches!(owner.begin(direct_ray(10.0), 2, &mut work, &cancel), Err(super::super::TraceError::Cancelled)));
+    assert_eq!(work.used(), used);
+    assert!(owner.step(&mut work, &fresh_token).is_err());
+    assert_eq!(work.used(), used);
+}
+
+#[test]
+fn direct_owner_exhausted_connection_stays_terminal_without_ledger_reset() {
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(1000).unwrap();
+    let mut owner = direct_owner_fixture();
+    owner.begin(direct_ray(10.0), 2, &mut work, &cancel).unwrap();
+    assert_eq!(owner.step(&mut work, &cancel).unwrap(), None);
+    work.charge(work.remaining(), &cancel).unwrap();
+    let used = work.used();
+    assert!(matches!(owner.step(&mut work, &cancel), Err(super::super::TraceError::WorkLimit)));
+    owner = direct_owner_move(owner);
+    assert!(matches!(owner.step(&mut work, &cancel), Err(super::super::TraceError::InvalidInput(_))));
+    assert_eq!(work.used(), used);
+    assert_eq!(work.remaining(), 0);
+    assert!(matches!(owner.begin(direct_ray(10.0), 2, &mut work, &cancel), Err(super::super::TraceError::WorkLimit)));
+    assert_eq!(work.used(), used);
+    assert!(owner.step(&mut work, &cancel).is_err());
+    assert_eq!(work.used(), used);
+}
+
+#[test]
+fn direct_owner_idle_and_failed_begin_do_not_create_a_connection() {
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(1000).unwrap();
+    let mut owner = direct_owner_fixture();
+    assert!(owner.step(&mut work, &cancel).is_err());
+    assert_eq!(work.used(), 0);
+    assert!(owner.begin(direct_ray(10.0), 0, &mut work, &cancel).is_err());
+    let used = work.used();
+    assert_eq!(used, 1); // The original constructor charges before checking the limit.
+    owner = direct_owner_move(owner);
+    assert!(owner.step(&mut work, &cancel).is_err());
+    assert_eq!(work.used(), used);
+    owner.begin(direct_ray(10.0), 2, &mut work, &cancel).unwrap();
+    assert_eq!(owner.step(&mut work, &cancel).unwrap(), None);
+}
+
+#[test]
+fn direct_owner_crossing_limit_error_stays_terminal_after_move() {
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(100_000).unwrap();
+    let mut owner = direct_owner_fixture();
+    owner.begin(direct_ray(10.0), 1, &mut work, &cancel).unwrap();
+    let mut refused = false;
+    for _ in 0..10_000 {
+        match owner.step(&mut work, &cancel) {
+            Ok(None) => {}
+            Err(super::super::TraceError::WorkLimit) => {
+                refused = true;
+                break;
+            }
+            other => panic!("crossing-limited owner returned {other:?}"),
+        }
+    }
+    assert!(refused);
+    let used = work.used();
+    owner = direct_owner_move(owner);
+    assert!(matches!(owner.step(&mut work, &cancel), Err(super::super::TraceError::InvalidInput(_))));
+    assert_eq!(work.used(), used);
+}
+
+#[test]
+fn direct_owner_consuming_capture_discards_active_cursor_before_a_new_context() {
+    let cancel = CancelToken::default();
+    let mut work = super::super::WorkBudget::new(100_000).unwrap();
+    let mut owner = direct_owner_fixture();
+    owner.begin(direct_ray(10.0), 2, &mut work, &cancel).unwrap();
+    assert_eq!(owner.step(&mut work, &cancel).unwrap(), None);
+    let used = work.used();
+    let (mut source, mut options) = owner.into_capture();
+    source.meshes[0].name = "new capture".into();
+    options.dielectrics[0].body_name = "new capture".into();
+    options.dielectrics[0].absorption_per_mm = [0.0; 3];
+    let mut new_owner = DirectVisibilityOwner::new(source, options);
+    assert!(new_owner.step(&mut work, &cancel).is_err());
+    assert_eq!(work.used(), used);
+    new_owner.begin(direct_ray(10.0), 2, &mut work, &cancel).unwrap();
+    assert!(work.used() > used);
+    for _ in 0..10_000 {
+        if let Some(rgb) = new_owner.step(&mut work, &cancel).unwrap() {
+            assert_eq!(rgb, Vec3::new(1.0, 1.0, 1.0));
+            return;
+        }
+    }
+    panic!("new owner did not complete its new capture");
 }

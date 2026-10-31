@@ -10,6 +10,9 @@ use crate::{Result, Session};
 
 pub(super) fn list(s: &mut Session, params: &Value) -> Result<Value> {
     let cmd = "render.lights.list";
+    if let Some(settings) = params.get("settings") {
+        super::validate_saved_raster_lights(settings, cmd)?;
+    }
     if !params.is_object() {
         return Err(bad(cmd, "expected an object"));
     }
@@ -21,7 +24,9 @@ pub(super) fn list(s: &mut Session, params: &Value) -> Result<Value> {
         (Some(_), Some(_)) => return Err(bad(cmd, "choose setup or settings, not both")),
         (Some(name), None) => {
             RenderSettings::validate_name(&name).map_err(|e| bad(cmd, e.to_string()))?;
-            s.doc.render.setups.get(&name).cloned().ok_or_else(|| bad(cmd, "no saved render setup with that name"))?
+            let setup = s.doc.render.setups.get(&name).ok_or_else(|| bad(cmd, "no saved render setup with that name"))?;
+            setup.validate().map_err(|e| bad(cmd, e.to_string()))?;
+            setup.clone()
         }
         (None, Some(settings)) => {
             if !settings.is_object() {
@@ -37,6 +42,9 @@ pub(super) fn list(s: &mut Session, params: &Value) -> Result<Value> {
 
 fn change(s: &mut Session, params: &Value, operation: &str) -> Result<Value> {
     let command = format!("render.lights.{operation}");
+    if let Some(settings) = params.get("settings") {
+        super::validate_saved_raster_lights(settings, &command)?;
+    }
     if !params.is_object() {
         return Err(bad(&command, "expected an object"));
     }
@@ -48,9 +56,22 @@ fn change(s: &mut Session, params: &Value, operation: &str) -> Result<Value> {
     let mut setup = match input.settings {
         Some(value) if value.is_object() => serde_json::from_value::<RenderSetup>(value).map_err(|e| bad(&command, e.to_string()))?,
         Some(_) => return Err(bad(&command, "settings must be an object")),
-        None => s.doc.render.setups.get(&input.name).cloned().unwrap_or_default(),
+        None => {
+            if let Some(setup) = s.doc.render.setups.get(&input.name) {
+                setup.validate().map_err(|e| bad(&command, e.to_string()))?;
+            }
+            s.doc.render.setups.get(&input.name).cloned().unwrap_or_default()
+        }
     };
     let mut lights = crate::render_lights::inspect(&setup).map_err(|e| bad(&command, e))?;
+    if matches!(&setup.job, Some(solidcraft_doc::render_settings::RenderJob::Raster { .. })) {
+        if matches!(operation, "add" | "duplicate") && lights.len() == 8 {
+            return Err(bad(&command, "at most eight saved Raster directional lights"));
+        }
+        if let Some(patch) = &input.set {
+            crate::render_lights::validate_raster_patch(patch).map_err(|e| bad(&command, e))?;
+        }
+    }
     let target = [setup.camera.target.x, setup.camera.target.y, setup.camera.target.z];
     let mut selected = None;
     match operation {

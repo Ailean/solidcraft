@@ -57,7 +57,7 @@ fn map(root: &Path, name: &str, role: MapRole) -> Result<TextureMap, Box<dyn Err
 fn request(root: &Path) -> Result<ImageRequest, Box<dyn Error>> {
     let hdr = HdrSource::new(fs::read(root.join("assets/render/starter/environments/exports/neutral-side-softbox.hdr"))?)?;
     let environment = EnvironmentSource::from_hdr(hdr, std::f64::consts::PI, 1.0, false)?;
-    Ok(ImageRequest {
+    Ok(ImageRequest { raster_punctual_lights: None, raster_area_lights: None, raster_exposure_ev: 0.0, raster_lights: None, studio_weights: None,
         camera: Camera { distance: 220.0, ..Default::default() },
         width: 320,
         height: 240,

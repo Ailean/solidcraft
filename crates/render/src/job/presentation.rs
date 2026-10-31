@@ -45,6 +45,11 @@ impl Presentation {
     pub fn display(self, width: u32, height: u32) -> Result<Display> {
         self.validate()?;
         super::linear_exr::encoded_limit(width, height)?;
+        self.display_with_limits(width, height, super::GPU_PATH_LIMITS)
+    }
+    pub(crate) fn display_with_limits(self, width: u32, height: u32, limits: crate::RenderLimits) -> Result<Display> {
+        self.validate()?;
+        super::linear_exr::output_pixels_with_limits(width, height, limits)?;
         Ok(Display {
             width,
             height,
@@ -97,6 +102,26 @@ impl Display {
             return Err(JobError::new(ErrorCode::InvalidRequest, "bloom/display length mismatch"));
         }
         super::linear_exr::encoded_limit(self.width, self.height)?;
+        self.encode_bloom_at_with_limits(input, output, cancel, offset, bloom, super::GPU_PATH_LIMITS)
+    }
+    pub(crate) fn encode_bloom_at_with_limits(
+        self,
+        input: &[[f32; 4]],
+        output: &mut [u8],
+        cancel: &CancelToken,
+        offset: usize,
+        bloom: Option<&[[f32; 3]]>,
+        limits: crate::RenderLimits,
+    ) -> Result<()> {
+        if bloom.is_some_and(|pixels| pixels.len() != input.len()) {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "bloom/display length mismatch"));
+        }
+        let count = super::linear_exr::output_pixels_with_limits(self.width, self.height, limits)?;
+        super::linear_exr::checked_output_bytes(count, 16, 0, limits)?;
+        super::linear_exr::checked_output_bytes(count, 4, 0, limits)?;
+        if bloom.is_some() {
+            super::linear_exr::checked_output_bytes(count, 12, 0, limits)?;
+        }
         self.finishing.validate()?;
         if let Some(backdrop) = self.backdrop {
             backdrop.validate()?;
@@ -141,5 +166,52 @@ impl Display {
             rgba[3] = if self.transparent { (alpha * 255.0).round() as u8 } else { 255 };
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_radiance_ev_and_coverage_have_independent_analytic_display_oracles() {
+        let raw = [[4.0, 1.0, 0.25, 1.0], [2.0, 0.5, 0.125, 0.5]];
+        let before = raw.map(|pixel| pixel.map(f32::to_bits));
+        let display = Presentation { exposure_ev: 1.0, background: [0; 3], ..Default::default() }.display(2, 1).unwrap();
+        let mut output = [0; 8];
+        display.encode(&raw, &mut output, &CancelToken::default()).unwrap();
+        let opaque = [8.0 / 9.0, 2.0 / 3.0, 1.0 / 3.0].map(solidcraft_geom::srgb::encode8);
+        let covered = [4.0 / 9.0, 1.0 / 3.0, 1.0 / 6.0].map(solidcraft_geom::srgb::encode8);
+        assert_eq!(&output[..4], &[opaque[0], opaque[1], opaque[2], 255]);
+        assert_eq!(&output[4..], &[covered[0], covered[1], covered[2], 255]);
+        assert_eq!(raw.map(|pixel| pixel.map(f32::to_bits)), before);
+    }
+
+    #[test]
+    fn wide_display_requires_explicit_policy_on_both_calls_without_allocating_a_frame() {
+        let wide = super::super::CpuBudget::Workstation.image_limits(false);
+        assert!(Presentation::default().display(8193, 1).is_err());
+        let display = Presentation::default().display_with_limits(8193, 1, wide).unwrap();
+        let mut output = [0; 4];
+        let raw = [[1.0, 0.0, 0.0, 1.0]];
+        assert!(display.encode_at(&raw, &mut output, &CancelToken::default(), 8192).is_err());
+        display.encode_bloom_at_with_limits(&raw, &mut output, &CancelToken::default(), 8192, None, wide).unwrap();
+        assert_eq!(output, [solidcraft_geom::srgb::encode8(0.5), 0, 0, 255]);
+        assert!(display.encode_bloom_at_with_limits(&raw, &mut output, &CancelToken::default(), 8193, None, wide).is_err());
+    }
+
+    #[test]
+    fn explicit_gpu_display_matches_legacy_and_preserves_validation_before_cancel() {
+        let display = Presentation { exposure_ev: -1.0, ..Default::default() }.display(3, 2).unwrap();
+        let input = [[0.125, 2.0, 0.5, 1.0]; 6];
+        let mut legacy = [0; 24];
+        let mut explicit = [0; 24];
+        display.encode(&input, &mut legacy, &CancelToken::default()).unwrap();
+        display.encode_bloom_at_with_limits(&input, &mut explicit, &CancelToken::default(), 0, None, super::super::GPU_PATH_LIMITS).unwrap();
+        assert_eq!(explicit, legacy);
+        let cancel = CancelToken::default();
+        cancel.cancel();
+        assert_eq!(display.encode(&[], &mut explicit, &cancel).unwrap_err().code, ErrorCode::InvalidRequest);
+        assert_eq!(display.encode(&input, &mut explicit, &cancel).unwrap_err().code, ErrorCode::Cancelled);
     }
 }

@@ -239,6 +239,81 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn raster_saved_exposure_uses_the_existing_field_and_roundtrips_its_real_bounds() {
+        for ev in [-32.0, -1.0, 0.0, 1.0, 2.0, 32.0] {
+            let setup =
+                RenderSetup { exposure_ev: ev, job: Some(RenderJob::Raster { transparent_background: false, lights: None }), ..Default::default() };
+            setup.validate().unwrap();
+            let mut document = Document::default();
+            Arc::make_mut(&mut document.render).setups.insert("EV".into(), setup.clone());
+            let loaded = Document::from_json(&document.to_json()).unwrap();
+            assert_eq!(loaded.render.setups["EV"], setup);
+        }
+    }
+
+    #[test]
+    fn raster_directional_jobs_roundtrip_original_intent_and_omit_legacy_none() {
+        use serde_json::json;
+        use solidcraft_render::job::DirectionalLightOptions;
+        let old = json!({"method":"raster","transparent_background":false});
+        let job: RenderJob = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&job).unwrap(), old);
+        let null: RenderJob = serde_json::from_value(json!({"method":"raster","lights":null})).unwrap();
+        assert_eq!(null, job);
+        let source = DirectionalLightOptions { direction: [3.0, -4.0, 0.0], color: [0.25, 0.5, 1.0], intensity: 2.0 };
+        for count in [0, 1, 8] {
+            let setup = RenderSetup {
+                job: Some(RenderJob::Raster { transparent_background: true, lights: Some(vec![source.clone(); count]) }),
+                width: 32,
+                height: 24,
+                background: [17, 29, 53],
+                ..Default::default()
+            };
+            setup.validate().unwrap();
+            let mut document = Document::default();
+            let settings = Arc::make_mut(&mut document.render);
+            settings.setups.insert("Raster".into(), setup.clone());
+            settings
+                .setups
+                .insert("CPU".into(), RenderSetup { job: Some(RenderJob::CpuRaytrace { options: CpuJob::default() }), ..Default::default() });
+            settings.setups.insert(
+                "GPU".into(),
+                RenderSetup { job: Some(RenderJob::GpuPath { transparent_background: false, options: Box::default() }), ..Default::default() },
+            );
+            let loaded = Document::from_json(&document.to_json()).unwrap();
+            assert_eq!(loaded, document);
+            assert_eq!(loaded.render.setups["Raster"], setup);
+            let Some(RenderJob::Raster { lights: Some(lights), .. }) = &loaded.render.setups["Raster"].job else {
+                panic!("saved method or explicit rig lost")
+            };
+            assert_eq!(lights, &vec![source.clone(); count]);
+        }
+    }
+
+    #[test]
+    fn saved_raster_rigs_refuse_invalid_values_unknown_controls_and_excess_capacity() {
+        use serde_json::json;
+        let light = json!({"direction":[0,0,1],"color":[1,1,1],"intensity":1});
+        for job in [
+            json!({"method":"raster","lights":vec![light;9]}),
+            json!({"method":"raster","lights":[{"direction":[0,0,0],"color":[1,1,1],"intensity":0}]}),
+            json!({"method":"raster","lights":[{"direction":[0,0,1],"color":[2,1,1],"intensity":1}]}),
+            json!({"method":"raster","lights":[],"options":{"shadows":true}}),
+        ] {
+            assert!(serde_json::from_value::<RenderJob>(job).is_err());
+        }
+        let setup =
+            RenderSetup { job: Some(RenderJob::Raster { transparent_background: false, lights: Some(Vec::with_capacity(9)) }), ..Default::default() };
+        assert!(setup.validate().is_err());
+        let exposure = RenderSetup {
+            exposure_ev: 33.0,
+            job: Some(RenderJob::Raster { transparent_background: false, lights: Some(Vec::new()) }),
+            ..Default::default()
+        };
+        assert!(exposure.validate().is_err());
+    }
+
+    #[test]
     fn saved_light_coordinates_are_admitted_only_when_the_document_can_reopen() {
         use serde_json::json;
         for coordinate in [-1e9, 1e9] {
@@ -642,8 +717,9 @@ mod tests {
         for setup in [
             json!({"job":{}}),
             json!({"job":{"method":"cpu_raytrace","options":{"primary_samples":2}}}),
-            json!({"exposure_ev":17,"job":{"method":"cpu_raytrace"}}),
-            json!({"exposure_ev":1,"job":{"method":"raster"}}),
+            // CPU17 is now valid within the shared saved range;33 remains invalid.
+            json!({"exposure_ev":33,"job":{"method":"cpu_raytrace"}}),
+            json!({"exposure_ev":33,"job":{"method":"raster"}}),
             json!({"environment_rotation":0.5,"job":{"method":"gpu_path"}}),
             json!({"environment_intensity":0,"job":{"method":"cpu_raytrace"}}),
             json!({"job":{"method":"cpu_raytrace","options":{"seed":-1}}}),
@@ -739,7 +815,9 @@ mod tests {
 #[cfg(test)]
 mod cpu_budget_tests {
     use super::*;
+    use crate::Document;
     use solidcraft_render::job::{CpuBudget, CpuProgressiveOptions};
+    use std::sync::Arc;
 
     #[test]
     fn inactive_area_tuning_roundtrips_without_leaking_into_runtime_options() {
@@ -782,5 +860,49 @@ mod cpu_budget_tests {
         assert!(serde_json::from_str::<CpuJob>(r#"{"budget":"unlimited"}"#).is_err());
         let legacy_large = RenderSetup { width: 3840, height: 2160, ..Default::default() };
         assert!(legacy_large.validate().is_err(), "large intent must name an explicit CPU job profile");
+    }
+
+    #[test]
+    fn cpu_exposure_expanded_range_roundtrips_offline_with_one_saved_authority() {
+        use serde_json::json;
+        assert_eq!(RenderSetup::default().exposure_ev, 0.0);
+        for ev in [-32.0, -17.0, 17.0, 32.0] {
+            for progressive in [false, true] {
+                let mut options = json!({"lights":[],"shadows":false});
+                if progressive {
+                    options["progressive"] = json!({"samples_per_pixel":3,"seed":31});
+                }
+                let saved = json!({"setups":{"EV":{"width":2,"height":1,"exposure_ev":ev,
+                    "job":{"method":"cpu_raytrace","options":options}}}});
+                let settings: RenderSettings = serde_json::from_value(saved).unwrap();
+                let document = Document { render: Arc::new(settings), ..Default::default() };
+                let text = document.to_json();
+                let wire: serde_json::Value = serde_json::from_str(&text).unwrap();
+                let pending = crate::format::pending_names();
+                if !pending.is_empty() {
+                    assert_eq!(wire["format_pending"], json!(pending));
+                }
+                let reopened = Document::from_json(&text).unwrap();
+                assert_eq!(document, reopened);
+                let setup = &reopened.render.setups["EV"];
+                assert_eq!(setup.exposure_ev, ev);
+                let RenderJob::CpuRaytrace { options } = setup.job.as_ref().unwrap() else { panic!("CPU method changed") };
+                let runtime = options.to_runtime(setup.exposure_ev).unwrap();
+                assert_eq!(runtime.exposure_ev, ev);
+                assert_eq!(runtime.budget, solidcraft_render::job::CpuBudget::Compact);
+                assert_eq!(runtime.progressive.is_some(), progressive);
+                assert!(serde_json::to_value(options).unwrap().get("exposure_ev").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn cpu_exposure_expansion_keeps_nonfinite_and_outside_saved_values_invalid() {
+        for ev in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -33.0, 33.0, -32.01, 32.01] {
+            let options = CpuJob::default();
+            assert!(options.to_runtime(ev).is_err());
+            let setup = RenderSetup { exposure_ev: ev, job: Some(RenderJob::CpuRaytrace { options }), ..Default::default() };
+            assert!(setup.validate().is_err());
+        }
     }
 }

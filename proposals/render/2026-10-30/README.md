@@ -245,3 +245,20 @@ CPU-supported markers; no postchecks/native acceptance. The corrected test is
 UNRUN. Compatibility remains NOT ADOPTED, UNCOMPILED and UNRUN; fixed Record
 ABI/accounting and one P3 parameter-list omission remain pending. No full CI or
 readiness claim, no implied composition of overlapping UI and font-fix files.
+
+## Completed Result overlay — separate uncomposed WIP, 31 October
+
+[Two RAW source proposals, exact before files and readable diff](../2026-10-31/result-overlay-wip/README.md)
+preserve a three-line Result-view overlay guard and one original appended UI
+regression. **Unreviewed / UNRUN / not adopted or ready.** Compose separately with
+the case-976 font fix and overlapping compatibility work; never overwrite them
+with this older whole-file workspace-test candidate. No C28 result transfers.
+
+## Original native G01/G02 documents — preservation, not new results
+
+[Six original acceptance documents and portable source bindings](../2026-10-31/native-acceptance-g01-g02/README.md)
+preserve the G01 opaque and G02 glass recipes, actual-control maps and route
+correction. These are historical source-bound procedures, **not six new tests or
+new native cases**. All native observations in this packet remain NOT_RUN;
+no model, image, executable, successful render or runtime result is included.
+Rebind the actual application and source before exercising these obligations.

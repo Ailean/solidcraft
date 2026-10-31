@@ -1,0 +1,216 @@
+{
+  "schema": 1,
+  "status": "SOURCE_ONLY_NATIVE_NOT_RUN",
+  "repository": "tangency-labs/solidcraft",
+  "source_identity_note": "Per-file SHA-256 binds reviewed source bytes; no full source files are included. Checkout base does not include all reviewed unmerged changes. Archive links identify composition and exact patch anchors, not a shipping binary.",
+  "checkout_base_commit_not_complete_reviewed_tree": "a077906234972dbbf11e80c54893f85ece97c8b7",
+  "archive_commit": "f346faa7859ce9e6ccc123ff8189d48f60e2720a",
+  "archive_readme": "https://github.com/tangency-labs/solidcraft/blob/f346faa7859ce9e6ccc123ff8189d48f60e2720a/proposals/render/2026-10-30/c20-reviewed-composition/README.md",
+  "archive_source_bindings": "https://github.com/tangency-labs/solidcraft/blob/f346faa7859ce9e6ccc123ff8189d48f60e2720a/proposals/render/2026-10-30/c20-reviewed-composition/source-bindings.json",
+  "archive_patch": {
+    "url": "https://github.com/tangency-labs/solidcraft/blob/f346faa7859ce9e6ccc123ff8189d48f60e2720a/proposals/render/2026-10-30/c20-reviewed-composition/c20-source.patch",
+    "git_blob_sha1": "0634d0f6437fb8b690f07213a3d6cbc6eafcb384",
+    "label_anchor": 6,
+    "policy_control_anchor": 950,
+    "strict_limit_anchor": 467,
+    "anchors_are_patch_lines_not_root_source_lines": true
+  },
+  "G01_C20_review": {
+    "source_snapshot_sha256": "eb6ec43c4fe6862dcf27d9832e8724abf05b3edcdc945f6a8c3e17f35b76d116",
+    "candidate_composition_sha256": "eb19e1fb3002b610f8d103137af13e998b941ee82ba1e3cb9ea92ee342961894",
+    "files": [
+      {
+        "path": "crates/ui-egui/src/render_workspace.rs",
+        "sha256": "6262d926d6e3dae4d6ed92fee6f429b413cf1de9f9185da2701cd351e5b20ab1",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_inspector.rs",
+        "sha256": "0e495457caa81463c12b4cfaa98a2adf7ee28bee3b0e08d6980250b06e91c8e8",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_ribbon.rs",
+        "sha256": "1f69c036f5b7327eb19b2495c7f3f3a30d2cb90a7f37f6b44980efbb37f06cf3",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_studio.rs",
+        "sha256": "cdfc530fcf80ad557073fa3754e842d1161144f45aad77bad3482f082c4bea03",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_light.rs",
+        "sha256": "05b742f8ee7f7f6d7f53d3efdc9a3b2da60b3a301f6e606a661467df4b0629e7",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_shots.rs",
+        "sha256": "57d6bc50b499faa7a70f8f8ea0722caf8f93fbf1ea74a7f0659f87453529d52f",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_shot.rs",
+        "sha256": "7ec8c9412b1917a1febba899994e7b64957fdac744b7357da0d4121b40a7bdf6",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/ui-egui/src/render_ui/scene.rs",
+        "sha256": "fddede70b7651dacdfc1ef440f2deb0a6dc983e73454c585d7031270c57da90b",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/ui-egui/src/render_ui/mod.rs",
+        "sha256": "028173a06e671099b0f01f093110e58270b015d3afb6379abdfaf3db0b4ad53f",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/ui-egui/src/ui_kit/fields.rs",
+        "sha256": "926ad472b3f5b0958648a4c24e2cce41e9f0acff82a404035bd6572f78bdb6f5",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/ui-egui/src/workspace.rs",
+        "sha256": "ed67ee76e50770ea4896ef156b97815a6cb7c6edd5e960bed47cebc48d93bfd7",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "assets/locales/en.json",
+        "sha256": "65a3f17a323a5230201e2466f8dbebed40e600d43ff247ec45aab37972ed2004",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/render/src/job/cpu_budget.rs",
+        "sha256": "7756fedf76658a1eedd0c0194aa98141d33464c0f7df85fe86f9e255fd8b8ce2",
+        "source_layer": "unchanged_in_C20_snapshot"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_cpu.rs",
+        "sha256": "728e43ebcafc7f638b24beec3f02c7af180e2f021067e6717090dce0f2478360",
+        "source_layer": "C20_candidate_delta"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_setups.rs",
+        "sha256": "5013b8b3f4302f4102c7803c5410639b1dd158e0b6ccd26201c7caf6787fa116",
+        "source_layer": "C20_candidate_delta"
+      },
+      {
+        "path": "assets/locales/pending/cpu-dielectric-transport.json",
+        "sha256": "0f85f08b1a4e041c87b86c849ee5e519ef0dd06903ebc8caae35d20c70c1a6c6",
+        "source_layer": "C20_candidate_delta"
+      }
+    ]
+  },
+  "G02_exact_review": {
+    "source_snapshot_sha256": "5c336edc8bcda9252a85badcc8baf8ba7934291f76084f677745c63a7163e8de",
+    "files": [
+      {
+        "path": "docs/render-raytrace-dielectrics.md",
+        "sha256": "b7cebd4e1472dfff08ebdb06345354dd285e8f39c02f9dac90cf3ecdd4914272"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_materials.rs",
+        "sha256": "5f9efcda8d42627eea7b05a8ccea2006a265492325824885442c76b6ec07e85a"
+      },
+      {
+        "path": "crates/ui-egui/src/material_editor.rs",
+        "sha256": "d7d4afa821ab63d702958ea6689469f6266f37a14107d00ea0a4ed9927b37f1a"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_cpu.rs",
+        "sha256": "4c144e8ee0c6a51380da60ecd70d350a66fce363261a6e711d24626df371be08"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_interactive.rs",
+        "sha256": "41dfccef77b9079af801bcfa3998dadc4976e20e7b1000f2666e1c75a3cf3332"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_inspector.rs",
+        "sha256": "0e495457caa81463c12b4cfaa98a2adf7ee28bee3b0e08d6980250b06e91c8e8"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace.rs",
+        "sha256": "6262d926d6e3dae4d6ed92fee6f429b413cf1de9f9185da2701cd351e5b20ab1"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_ribbon.rs",
+        "sha256": "1f69c036f5b7327eb19b2495c7f3f3a30d2cb90a7f37f6b44980efbb37f06cf3"
+      },
+      {
+        "path": "crates/ui-egui/src/render_ui/scene.rs",
+        "sha256": "fddede70b7651dacdfc1ef440f2deb0a6dc983e73454c585d7031270c57da90b"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_light.rs",
+        "sha256": "05b742f8ee7f7f6d7f53d3efdc9a3b2da60b3a301f6e606a661467df4b0629e7"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_shot.rs",
+        "sha256": "7ec8c9412b1917a1febba899994e7b64957fdac744b7357da0d4121b40a7bdf6"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_setups.rs",
+        "sha256": "5013b8b3f4302f4102c7803c5410639b1dd158e0b6ccd26201c7caf6787fa116"
+      },
+      {
+        "path": "crates/engine/src/cmd/render/optical_bindings.rs",
+        "sha256": "eedd01b78d1d919765435b61953819639280c8aa330257ca41b5352f23412208"
+      },
+      {
+        "path": "assets/materials/library.rs",
+        "sha256": "d720428c229abd7baab98d84b1ead69e022f8f0c25f74abfc706b842411dcb81"
+      },
+      {
+        "path": "assets/locales/pending/cpu-optical-certification.json",
+        "sha256": "8eb71a90f0ac0d497c9bffc922e99871d802942c8c85d4213a66a61ceb79a764"
+      },
+      {
+        "path": "assets/locales/pending/cpu-optical-materials.json",
+        "sha256": "5e8a44d004fd2f7d865f244c91a9fb1cf55b4bcea32810f7b9f9eff90c778067"
+      },
+      {
+        "path": "assets/locales/pending/cpu-dielectric-transport.json",
+        "sha256": "0f85f08b1a4e041c87b86c849ee5e519ef0dd06903ebc8caae35d20c70c1a6c6"
+      },
+      {
+        "path": "crates/render/src/job/cpu_budget.rs",
+        "sha256": "7756fedf76658a1eedd0c0194aa98141d33464c0f7df85fe86f9e255fd8b8ce2"
+      },
+      {
+        "path": "crates/ui-egui/src/render_ui/appearance.rs",
+        "sha256": "7ca8a86b8e5247d96bea269bfda5916b6e35d6fb7799f91497a39db616bbb8f0"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_library.rs",
+        "sha256": "7c7131e8dca944e4088de6bb0865cb33ff481a3dff53f12e0e42f7727ca6ab6c"
+      },
+      {
+        "path": "crates/ui-egui/src/render_workspace_library_review.rs",
+        "sha256": "0d40ab7d7ff95491e96c02af70d8635ed03d703c46f67262d8820376f07eb4ac"
+      },
+      {
+        "path": "crates/doc/src/appearance_pack.rs",
+        "sha256": "2fb63e5b5506af09e2a48f6112ee5fb1d4c8fb52fd97859c34cde2f6bcb974fa"
+      },
+      {
+        "path": "assets/locales/en.json",
+        "sha256": "65a3f17a323a5230201e2466f8dbebed40e600d43ff247ec45aab37972ed2004"
+      },
+      {
+        "path": "crates/render/src/raytrace/dielectric.rs",
+        "sha256": "2063f440d7a9e495e0a0398ae9bb5084379731473f80d86ffb5be95f38dad0bc"
+      },
+      {
+        "path": "crates/render/src/raytrace/image.rs",
+        "sha256": "928115ae0c8cb460438da47a1b73c94f37e4a8dbf2c48c301957a40eadfb4ccf"
+      },
+      {
+        "path": "crates/ui-egui/src/ui_kit/fields.rs",
+        "sha256": "926ad472b3f5b0958648a4c24e2cce41e9f0acff82a404035bd6572f78bdb6f5"
+      }
+    ]
+  },
+  "native_execution_claimed": false,
+  "native_model_or_images_created": false,
+  "application_version_verified_by_this_package": false
+}

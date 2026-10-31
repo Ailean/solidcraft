@@ -1,0 +1,92 @@
+--- a/crates/ui-egui/src/render_workspace_interactive.rs
++++ b/crates/ui-egui/src/render_workspace_interactive.rs
+@@ -1014,6 +1014,9 @@
+ }
+ 
+ pub(crate) fn overlay(app: &mut SolveApp, ui: &egui::Ui, free: egui::Rect) {
++    if app.render_workspace.view.result {
++        return;
++    }
+     let bounds = overlay_bounds(app, free);
+     let t = Tokens::get();
+     // Match navigation_card's real chrome, including theme-dependent borders.
+--- a/crates/ui-egui/src/render_workspace_tests.rs
++++ b/crates/ui-egui/src/render_workspace_tests.rs
+@@ -11588,3 +11588,77 @@
+     cache_preview_image(&mut h.app, &ctx);
+     assert!(h.app.render_workspace.preview_image.is_none());
+ }
++
++
++#[test]
++fn completed_result_hides_interactive_card_and_closing_result_restores_model_controls_without_changing_pixels() {
++    fn overlay_frame(h: &mut Harness) -> egui::FullOutput {
++        // Harness owns the standard bundled-font setup. Exercise the production
++        // overlay caller, including its normal clearing of old reservations.
++        crate::scenario::clear_handles();
++        h.ctx.run_ui(
++            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0))), ..Default::default() },
++            |ui| {
++                crate::render_ui::reset_shell(&mut h.app);
++                h.app.viewport.rect = Some(ui.max_rect());
++                if h.app.render_workspace.view.result {
++                    show(&mut h.app, ui);
++                }
++                crate::render_ui::overlays(&mut h.app, ui);
++            },
++        )
++    }
++    let mut h = Harness::new();
++    h.app.ui.tab = "RENDER".into();
++    // A real Raster final is the retained-image input to this UI-only test.
++    // No CPU admission, CPU pass or GPU execution is claimed by this fixture.
++    let job = completed_preview(&mut h, [40, 80, 120]);
++    h.app.render_workspace.view.job = Some(job);
++    h.app.render_workspace.view.completed = Some(job);
++    let ctx = h.ctx.clone();
++    cache_render_images(&mut h.app, &ctx);
++    let texture = h.app.render_workspace.image.as_ref().unwrap().1.as_ref().unwrap().id();
++    let source = h.app.session.render_job_handle(job).unwrap().frame().unwrap().unwrap();
++    let info = h.app.render_workspace.image_info.as_ref().unwrap().clone();
++    assert_eq!(info.png_sha256, source.info.png_sha256);
++    let document = h.app.session.doc.clone();
++    let history = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
++    for result in [false, true, false] {
++        if result {
++            h.app.run("render.result.view", json!({"view":"image"})).unwrap();
++        } else {
++            h.app.run("render.result.close", json!({})).unwrap();
++        }
++        assert_eq!(h.app.render_workspace.view.result, result);
++        for _ in 0..3 {
++            let mut output = overlay_frame(&mut h);
++            if result {
++                assert!(crate::scenario::rect_of("render:interactive-card").is_none());
++                assert!(!h.app.shell.workspace_panels.contains_key("render:interactive-card"));
++                for action in ["on", "pause", "resume", "off"] {
++                    assert!(crate::scenario::rect_of(&format!("render:interactive:{action}")).is_none());
++                }
++                for action in ["render:result-close", "render:result-copy", "render:result-export"] {
++                    assert!(crate::scenario::rect_of(action).is_some(), "result action must remain available: {action}");
++                }
++                assert!(h.ctx.tessellate(output.shapes.clone(), output.pixels_per_point).iter().any(|shape| {
++                    matches!(&shape.primitive, egui::epaint::Primitive::Mesh(mesh) if mesh.texture_id == texture && !mesh.indices.is_empty())
++                }), "the actual retained result texture is still painted");
++            } else {
++                assert!(crate::scenario::rect_of("render:interactive-card").is_some());
++                assert!(h.app.shell.workspace_panels.contains_key("render:interactive-card"));
++                assert!(crate::scenario::rect_of("render:interactive:on").is_some());
++            }
++            assert_eq!(h.app.render_workspace.view.job, Some(job));
++            assert_eq!(h.app.render_workspace.view.completed, Some(job));
++            assert_eq!(h.app.render_workspace.image.as_ref().unwrap().1.as_ref().unwrap().id(), texture);
++            assert_eq!(h.app.render_workspace.image_info.as_ref().unwrap().png_sha256, info.png_sha256);
++            assert_eq!(h.app.session.render_job_handle(job).unwrap().frame().unwrap().unwrap().png(), source.png());
++            assert!(!h.app.render_workspace.interactive.pending());
++            assert_eq!(interactive::inspect(&h.app)["enabled"], false);
++            output.textures_delta.clear();
++        }
++    }
++    assert!(Arc::ptr_eq(&document, &h.app.session.doc));
++    assert_eq!(history, (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()));
++}

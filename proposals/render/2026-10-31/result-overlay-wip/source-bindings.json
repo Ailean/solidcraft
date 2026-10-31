@@ -1,0 +1,28 @@
+{
+  "status": "UNCOMPOSED_SOURCE_WIP_UNREVIEWED_UNRUN_NOT_ADOPTABLE_ALONE",
+  "required_receiver": "Exact RAW before bindings below; author describes receiver as frozen d38a, not arbitrary current main.",
+  "files": [
+    {
+      "path": "crates/ui-egui/src/render_workspace_interactive.rs",
+      "before_bytes": 57748,
+      "before_sha256": "b0ecc5211491343015ca3b69749d707bcafd9826c3a7e90d9fc3cce89ade9d9d",
+      "candidate_bytes": 57812,
+      "candidate_sha256": "32ea3d3e227f12e9a285ef86e1cd6d3cdf74c526d60f5905177316caa0465437"
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_tests.rs",
+      "before_bytes": 634699,
+      "before_sha256": "28ddafe4a8f133c522ddf6f1e0eaaaf70f954d7b8acdb7cca44aabef9a512e47",
+      "candidate_bytes": 639033,
+      "candidate_sha256": "adfd39afbd811f2e1f296ba47d72245d2b5e5b753fb0498d2f9e14042235ffa6"
+    }
+  ],
+  "new_tests_written": 1,
+  "new_tests_run": 0,
+  "native_acceptance": false,
+  "composition_obligations": [
+    "Preserve separately archived case-976 bundled-font correction.",
+    "Preserve overlapping compatibility/canonical-constructor work; compose diffs without overwriting it."
+  ],
+  "production_publication_or_readiness": false
+}

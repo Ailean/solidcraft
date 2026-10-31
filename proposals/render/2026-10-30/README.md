@@ -189,3 +189,7 @@ explicit. Source review and replay are not compilation, full CI or GPU parity.
 
 [Twelve-file source packet and limitations](../2026-10-31/cpu-directional-rgb-consumer/README.md).
 The complete API consumer connects captured direct visibility and RGB shading to bounded CPU image continuations, preserving legacy mode by default. Sixteen new tests are written but UNRUN. All before/candidate sources, unchanged RGB references and the exact delta are included; mixed ancestry and Raster composition requirements are explicit. This is a source archive, not an adopted complete workspace, UI feature-parity claim, test pass or production readiness result.
+
+## C22 composed and adopted source — uncompiled and unrun, 31 October
+
+[Coherent 43-path aggregate increment and source bindings](../2026-10-31/c22-composed-source/README.md). All seven reviewed units are preserved, including the original numeric oracles and two explicit neutral schema fillers. One new locale; 89 new test declarations UNRUN. A single current locked/offline metadata capture passed without source/lock changes; this is not compilation or test evidence. Staged development validation, desktop/native/GPU acceptance and full repository gates remain pending; production PR head is unchanged.

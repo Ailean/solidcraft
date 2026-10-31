@@ -1,0 +1,35 @@
+{
+  "receiver_manifest_sha256": "9b193a92875783101d2511342eb4e4781abeb2f149187179f8900931fbd06e3f",
+  "scope": "three original receiver files only; no later receiver qualification",
+  "files": [
+    {
+      "path": "crates/gpu/src/path/mod.rs",
+      "before_sha256_RAW": "6fde27cacd9449468ace14cf56d1bf057030c741372a3b1498fefa7c23977d2c",
+      "before_bytes": 51630,
+      "candidate_sha256_RAW": "e9bbaf7eb95d5d6a55656445d798bdef88b66f42a583105c0d81648471bf88c6",
+      "candidate_bytes": 52270
+    },
+    {
+      "path": "crates/gpu/src/path/path.wgsl",
+      "before_sha256_RAW": "cc6d42e1537b63b7693d3420f58b7d0ebd753421b5ab8f4a3138606d873770d5",
+      "before_bytes": 73814,
+      "candidate_sha256_RAW": "d0d73b0c36f577b6eaf78008c728d08a02c264143063045bb619792b244c3ff1",
+      "candidate_bytes": 74774
+    },
+    {
+      "path": "crates/gpu/src/path/tests.rs",
+      "before_sha256_RAW": "206f281b911227041f1a9fdb882e6258f6ee2cd474eecb8437334c1712e3be2b",
+      "before_bytes": 164444,
+      "candidate_sha256_RAW": "f2c2d7c35ac89376e1d849c36337623ae84f0dcac8fdda6204de268f17fb6b07",
+      "candidate_bytes": 167095
+    }
+  ],
+  "validation": {
+    "Rust": "UNRUN",
+    "Naga": "UNRUN",
+    "GPU": "UNRUN",
+    "native": "UNRUN"
+  },
+  "adopted": false,
+  "included_in_C23": false
+}

@@ -121,7 +121,7 @@ mod imp {
     use crate::body::Body;
     use crate::history::{BodyHistory, Change, EdgeOrigin, FaceOrigin, History};
     use crate::native::{body_from_smlib_ordered, smlib_body_ordered};
-    use crate::{KernelError, Result, guard, record};
+    use crate::{guard, record, KernelError, Result};
 
     fn failed(what: &str, step: &str, e: impl std::fmt::Display) -> KernelError {
         KernelError::Failed(format!("SMLib {what}: {step}: {e}"))
@@ -231,7 +231,11 @@ mod imp {
         let out = match crate::blend_corner::later_corners(body, &picked.edges, sizes)? {
             Some((later, new)) => reblend(body, what, &later).map(|(b, dropped_new)| {
                 // A picked seam has no round of its own: only the new edges can be removed.
-                let dropped = picked.edges.iter().map(|e| new.iter().position(|(n, _)| n == e).is_some_and(|j| dropped_new.get(j).copied().unwrap_or(false))).collect();
+                let dropped = picked
+                    .edges
+                    .iter()
+                    .map(|e| new.iter().position(|(n, _)| n == e).is_some_and(|j| dropped_new.get(j).copied().unwrap_or(false)))
+                    .collect();
                 (b.with_rounds(body, new), dropped)
             }),
             None => run_with(body, what, &picked.edges, &[], |b| b.blend_dropping(Blend::Round, &picked.points, sizes, tol))
@@ -665,13 +669,11 @@ mod tests {
         assert!(matches!(v.smlib, Some(crate::SmlibCheck::Valid)), "{:?}", v.smlib);
         let saved = crate::decode_native_body(&crate::encode_native_body(&r).unwrap()).unwrap();
         assert!(crate::validity(&saved).record.is_ok());
-        assert!(
-            crate::validity(
-                &crate::transform_matrix(&saved, [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [5.0, 0.0, 0.0, 1.0]]).unwrap()
-            )
-            .record
-            .is_ok()
-        );
+        assert!(crate::validity(
+            &crate::transform_matrix(&saved, [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [5.0, 0.0, 0.0, 1.0]]).unwrap()
+        )
+        .record
+        .is_ok());
     }
 
     #[test]

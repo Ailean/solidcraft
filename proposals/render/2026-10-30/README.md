@@ -193,3 +193,7 @@ The complete API consumer connects captured direct visibility and RGB shading to
 ## C22 composed and adopted source — uncompiled and unrun, 31 October
 
 [Coherent 43-path aggregate increment and source bindings](../2026-10-31/c22-composed-source/README.md). All seven reviewed units are preserved, including the original numeric oracles and two explicit neutral schema fillers. One new locale; 89 new test declarations UNRUN. A single current locked/offline metadata capture passed without source/lock changes; this is not compilation or test evidence. Staged development validation, desktop/native/GPU acceptance and full repository gates remain pending; production PR head is unchanged.
+
+### 31 October — C23 quality budget controls and minimal TIR test-call adapter
+
+[Three-path source and exact delta](../2026-10-31/c23-three-path-source/README.md). Existing GPU review/acknowledgement/currentness/save preserved;74old inspector tests and original TIR oracles retained,7newUI tests UNRUN. No universal CPU/Raster quality presets, compilation, native/GPU/full-CI or readiness claim.

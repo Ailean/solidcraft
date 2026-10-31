@@ -1,0 +1,31 @@
+{
+  "status": "SOURCE_ONLY_UNFORMATTED_UNCOMPILED_UNRUN",
+  "baseline_source_manifest_sha256": "9b193a92875783101d2511342eb4e4781abeb2f149187179f8900931fbd06e3f",
+  "composition_sha256": "add7af85404c8573167c97b29f93aa2776316d34e3c00592ce93ee467f41bd50",
+  "files": [
+    {
+      "path": "crates/render/src/raytrace/image_tests.rs",
+      "before_exists": true,
+      "before_sha256": "1348d281974cddf985158f64ed7c204d3d42cb6a3e55b35d9b58ada9008ce5bf",
+      "candidate_sha256": "8af684984fce86ee3d8b8eff35c6a70efd88b0b9b7bbfefd42d082584bc9aa91",
+      "candidate_bytes": 173377
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_inspector.rs",
+      "before_exists": true,
+      "before_sha256": "0e495457caa81463c12b4cfaa98a2adf7ee28bee3b0e08d6980250b06e91c8e8",
+      "candidate_sha256": "80ac0a831811a6fcd8541468e93ae6a52a9e08fffdcc108caeb42b0508cb831f",
+      "candidate_bytes": 85096
+    },
+    {
+      "path": "crates/ui-egui/src/render_workspace_inspector_tests.rs",
+      "before_exists": true,
+      "before_sha256": "04d56080e6706879e70c5f65731c1f3d2e375dc9fa5acbf9e2c6b2d1a6585b64",
+      "candidate_sha256": "867fbaa191e057b56dcc09b0d61e624edab130e53dab0ea3882e98ee850a2da6",
+      "candidate_bytes": 155682
+    }
+  ],
+  "new_tests_UNRUN": 7,
+  "partial_GPU_budget_only": true,
+  "runtime_or_full_CI_pass": false
+}

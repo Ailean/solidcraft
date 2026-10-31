@@ -1,0 +1,332 @@
+--- a/crates/render/src/raytrace/image_tests.rs
++++ b/crates/render/src/raytrace/image_tests.rs
+@@ -1940,7 +1940,7 @@
+             state.path.ray = ray;
+             state.path.segment_start = ray.origin();
+             state.ready = false;
+-            resume_optical_path(task.pending.as_mut().unwrap(), state.path);
++            resume_optical_path(task.pending.as_mut().unwrap(), state.path, task.lights.lights().len()).unwrap();
+             for _ in 0..100_000 {
+                 assert!(matches!(task.step_with_previews(1).unwrap(), ImagePoll::Pending(_)));
+                 let state = task.optical.first().unwrap().pending.as_ref().unwrap();
+--- a/crates/ui-egui/src/render_workspace_inspector.rs
++++ b/crates/ui-egui/src/render_workspace_inspector.rs
+@@ -103,6 +103,7 @@
+     appearance: Appearance,
+     selection_appearance: selection_appearance::View,
+     pub(super) resolution: Resolution,
++    quality_plans: Option<[Result<Value, String>; 3]>,
+ }
+ /// Editor-only coupling. The fixed rational anchor prevents repeated rounded
+ /// edits drifting; external preset/shot changes deliberately establish a new anchor.
+@@ -196,6 +197,7 @@
+             appearance: Appearance::default(),
+             selection_appearance: Default::default(),
+             resolution: Resolution::default(),
++            quality_plans: None,
+         }
+     }
+ }
+@@ -971,7 +973,8 @@
+ fn sampling_editor(app: &mut SolveApp, ui: &mut egui::Ui) {
+     editor_section(app, ui, "render_sampling_quality", "render.output_quality", |app, ui| {
+         quality_choices(app, ui);
+-        ui_kit::text(ui, app.tr("render.output_quality_waiting"), ui_kit::Text::Note("render.output_quality_waiting"));
++        let quality_help = if app.render_workspace.view.method == ImageMethod::GpuRaytrace { "render.quality_projection_help" } else { "render.output_quality_waiting" };
++        ui_kit::text(ui, app.tr(quality_help), ui_kit::Text::Note(quality_help));
+         browse_button(app, ui, "quality", "render.children.review_quality");
+         library::inspect_kinds(app, ui, &["quality"]);
+     });
+@@ -1168,26 +1171,82 @@
+     let draft = &app.render_workspace.view.draft;
+     limits.fit(u64::from(draft.width).checked_mul(limits.max_dimension)?, u64::from(draft.height).checked_mul(limits.max_dimension)?, None)
+ }
+-pub(super) fn quality_choices(app: &mut SolveApp, ui: &mut egui::Ui) {
+-    let reason = app.tr("render.output_quality_waiting");
+-    let labels = ["render.quality_draft", "render.quality_balanced", "render.quality_high", "render.quality_custom"].map(|key| app.tr(key));
+-    let mut quality = 3;
+-    if ui_kit::segmented(
+-        ui,
+-        &mut quality,
+-        &labels,
+-        ui_kit::Segments {
+-            workspace_accent: true,
+-            intrinsic: true,
+-            compact: true,
+-            targets: &["render:quality:draft", "render:quality:balanced", "render:quality:high", "render:quality:custom"],
+-            disabled_reasons: &[Some(reason), Some(reason), Some(reason), None],
+-            ..Default::default()
+-        },
+-    ) {
+-        let _ = app.run("view.render_select", json!({"kind":"sampling"}));
+-    }
+-}
++const QUALITY_IDS: [&str; 3] = ["Q-001", "Q-002", "Q-003"];
++
++/// Immutable catalogue budgets are cached for comparison only. Applying always
++/// prepares a fresh, acknowledged review bound to the current shot and draft.
++fn prepare_quality_choices(app: &mut SolveApp) {
++    if app.render_workspace.view.method == ImageMethod::GpuRaytrace && app.render_workspace.view.inspector.quality_plans.is_none() {
++        let plans = QUALITY_IDS.map(|id| {
++            app.session.execute("render.quality.prepare", &json!({"id":id,"variant":"fixed_samples_png","acknowledge_omissions":true}))
++                .map_err(|error| error.to_string())
++        });
++        app.render_workspace.view.inspector.quality_plans = Some(plans);
++    }
++}
++
++fn quality_selection(app: &SolveApp) -> usize {
++    let view = &app.render_workspace.view;
++    if view.method != ImageMethod::GpuRaytrace {
++        return 3;
++    }
++    view.inspector.quality_plans.as_ref().and_then(|plans| {
++        plans.iter().position(|plan| plan.as_ref().is_ok_and(|plan| {
++            plan["settings"]["width"].as_u64() == Some(u64::from(view.draft.width))
++                && plan["settings"]["height"].as_u64() == Some(u64::from(view.draft.height))
++                && plan["gpu_options"]["samples"].as_u64() == Some(u64::from(view.samples))
++                && plan["gpu_options"]["max_depth"].as_u64() == Some(u64::from(view.max_depth))
++                && plan["gpu_options"]["seed"].as_u64() == Some(u64::from(view.seed))
++                && plan["gpu_options"]["denoise"].as_bool() == Some(view.studio.denoise)
++        }))
++    }).unwrap_or(3)
++}
++
++fn quality_reason(app: &SolveApp, index: usize) -> Option<&str> {
++    if index == 3 {
++        return None;
++    }
++    if app.render_workspace.view.method != ImageMethod::GpuRaytrace {
++        return Some(app.tr("render.stage_panels.gpu_required"));
++    }
++    match app.render_workspace.view.inspector.quality_plans.as_ref().and_then(|plans| plans.get(index)) {
++        Some(Ok(_)) => None,
++        Some(Err(reason)) => Some(reason),
++        None => Some(app.tr("render.error_quality_projection")),
++    }
++}
++
++fn choose_quality(app: &mut SolveApp, index: usize) -> Result<(), String> {
++    if index == 3 {
++        return app.run("view.render_select", json!({"kind":"sampling"})).map(|_| ());
++    }
++    let id = QUALITY_IDS.get(index).ok_or_else(|| app.tr("render.error_quality_projection").to_string())?;
++    // Existing review owns currentness, omission acknowledgement and the single
++    // saved action. Cached plans are never used as authority to apply settings.
++    library::review::quality(app, id)
++}
++
++pub(super) fn quality_choices(app: &mut SolveApp, ui: &mut egui::Ui) {
++    prepare_quality_choices(app);
++    let labels = ["render.quality_draft", "render.quality_balanced", "render.quality_high", "render.quality_custom"].map(|key| app.tr(key));
++    let mut quality = quality_selection(app);
++    if ui_kit::segmented(
++        ui,
++        &mut quality,
++        &labels,
++        ui_kit::Segments {
++            workspace_accent: true,
++            intrinsic: true,
++            compact: true,
++            targets: &["render:quality:draft", "render:quality:balanced", "render:quality:high", "render:quality:custom"],
++            disabled_reasons: &[quality_reason(app, 0), quality_reason(app, 1), quality_reason(app, 2), None],
++            ..Default::default()
++        },
++    ) && let Err(error) = choose_quality(app, quality) {
++        app.set_status(error, true);
++    }
++}
++
+ pub(super) fn check_summary(app: &SolveApp) -> String {
+     let state = match &app.render_workspace.view.inspector.checked {
+         Some(check) if check.current(app) && super::image_params(app).as_ref().ok() == Some(&check.request) => {
+--- a/crates/ui-egui/src/render_workspace_inspector_tests.rs
++++ b/crates/ui-egui/src/render_workspace_inspector_tests.rs
+@@ -2603,3 +2603,187 @@
+         assert!(Arc::ptr_eq(&document, &h.app.session.doc));
+     }
+ }
++
++// U10: existing fixed-budget review, never admission or full-quality certification.
++mod quality_button_contract {
++    use super::*;
++
++    fn gpu_fixture() -> Harness {
++        let mut h = fixture();
++        super::super::super::select_image_method(&mut h.app, ImageMethod::GpuRaytrace);
++        h.app.cam.fov = 0.6;
++        h.app.run("view.render_select", json!({"kind":"output"})).unwrap();
++        h.frames(3);
++        h
++    }
++
++    #[test]
++    fn quality_buttons_review_all_three_actual_catalog_budgets_before_any_edit() {
++        for (index, id, width, height, samples, depth, denoise) in [
++            (0, "Q-001", 960, 540, 64, 4, false),
++            (1, "Q-002", 1600, 900, 512, 8, true),
++            (2, "Q-003", 2560, 1440, 2048, 12, true),
++        ] {
++            let mut h = gpu_fixture();
++            let before = setups::snapshot(&h.app).unwrap();
++            let doc = h.app.session.doc.clone();
++            let history = (h.app.session.revision, h.app.session.undo.len());
++            choose_quality(&mut h.app, index).unwrap();
++            let review = h.app.render_workspace.view.library.review.as_ref().unwrap();
++            assert!(!review.acknowledged);
++            assert_eq!(review.plan["id"], id);
++            assert_eq!(review.plan["status"], "fixed_budget_projection_not_full_quality_profile");
++            assert_eq!(review.plan["settings"], json!({"width":width,"height":height}));
++            assert_eq!(review.plan["gpu_options"], json!({"samples":samples,"max_depth":depth,"seed":21026,"denoise":denoise}));
++            assert!(review.plan["omitted"].as_array().unwrap().iter().any(|v| v == "convergence_certification"));
++            assert_eq!(serde_json::to_value(setups::snapshot(&h.app).unwrap()).unwrap(), serde_json::to_value(before).unwrap());
++            assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
++            assert_eq!(history, (h.app.session.revision, h.app.session.undo.len()));
++        }
++    }
++
++    #[test]
++    fn quality_button_click_and_acknowledgement_save_one_current_shot_action() {
++        let mut h = gpu_fixture();
++        h.app.render_workspace.view.studio.intensity = 0.42;
++        h.app.render_workspace.view.draft.exposure_ev = 1.23;
++        h.app.render_workspace.view.studio.ambient = [0.11, 0.22, 0.33];
++        let camera = h.app.cam;
++        let shot = h.app.render_workspace.view.name.clone();
++        let stage = h.app.render_workspace.view.stage;
++        let history = (h.app.session.revision, h.app.session.undo.len());
++        let doc = h.app.session.doc.to_json();
++        h.step(&json!({"click":{"handle":"render:quality:balanced"}})).unwrap();
++        assert_eq!(h.app.session.doc.to_json(), doc);
++        assert_eq!(history, (h.app.session.revision, h.app.session.undo.len()));
++        assert!(!h.app.render_workspace.view.library.review.as_ref().unwrap().acknowledged);
++        h.step(&json!({"click":{"handle":"render:review:acknowledge"}})).unwrap();
++        h.step(&json!({"click":{"handle":"dialog:ok"}})).unwrap();
++        assert!(h.app.render_workspace.view.library.review.is_none());
++        assert_eq!(h.app.session.revision, history.0 + 1);
++        assert_eq!(h.app.session.undo.len(), history.1 + 1);
++        assert_eq!((h.app.render_workspace.view.draft.width, h.app.render_workspace.view.draft.height), (1600, 900));
++        assert_eq!((h.app.render_workspace.view.samples, h.app.render_workspace.view.max_depth, h.app.render_workspace.view.seed), (512, 8, 21026));
++        assert!(h.app.render_workspace.view.studio.denoise);
++        assert_eq!(h.app.render_workspace.view.name, shot);
++        assert_eq!(h.app.render_workspace.view.stage, stage);
++        assert_eq!(h.app.render_workspace.view.method, ImageMethod::GpuRaytrace);
++        assert_eq!(h.app.cam, camera);
++        assert_eq!(h.app.render_workspace.view.studio.intensity, 0.42);
++        assert_eq!(h.app.render_workspace.view.studio.ambient, [0.11, 0.22, 0.33]);
++        assert_eq!(h.app.render_workspace.view.draft.exposure_ev, 1.23);
++        assert_eq!(h.app.session.doc.render.setups[&shot].width, 1600);
++        assert_eq!(quality_selection(&h.app), 1);
++        assert!(h.app.render_workspace.view.job.is_none(), "choosing quality never starts a renderer");
++    }
++
++    #[test]
++    fn quality_highlight_derives_every_projected_field_and_returns_to_custom() {
++        let mut h = gpu_fixture();
++        for index in 0..3 {
++            let plan = h.app.run("render.quality.prepare", json!({"id":["Q-001","Q-002","Q-003"][index],"variant":"fixed_samples_png","acknowledge_omissions":true})).unwrap();
++            apply_quality(&mut h.app, &plan).unwrap();
++            assert_eq!(quality_selection(&h.app), index);
++            for field in 0..6 {
++                let original = (h.app.render_workspace.view.draft.width, h.app.render_workspace.view.draft.height,
++                    h.app.render_workspace.view.samples, h.app.render_workspace.view.max_depth,
++                    h.app.render_workspace.view.seed, h.app.render_workspace.view.studio.denoise);
++                match field {
++                    0 => h.app.render_workspace.view.draft.width += 1,
++                    1 => h.app.render_workspace.view.draft.height += 1,
++                    2 => h.app.render_workspace.view.samples += 1,
++                    3 => h.app.render_workspace.view.max_depth += 1,
++                    4 => h.app.render_workspace.view.seed += 1,
++                    _ => h.app.render_workspace.view.studio.denoise = !original.5,
++                }
++                assert_eq!(quality_selection(&h.app), 3, "changed projected field {field}");
++                (h.app.render_workspace.view.draft.width, h.app.render_workspace.view.draft.height,
++                    h.app.render_workspace.view.samples, h.app.render_workspace.view.max_depth,
++                    h.app.render_workspace.view.seed, h.app.render_workspace.view.studio.denoise) = original;
++            }
++            h.app.render_workspace.view.draft.exposure_ev = 0.37;
++            assert_eq!(quality_selection(&h.app), index, "highlight describes the budget, not a complete scene-quality tier");
++        }
++    }
++
++    #[test]
++    fn quality_buttons_refuse_other_methods_and_invalid_choices_without_mutation() {
++        let mut h = gpu_fixture();
++        for method in [ImageMethod::CpuRaytrace, ImageMethod::Raster] {
++            h.app.render_workspace.view.method = method;
++            let before = format!("{:?}", h.app.render_workspace.view.draft);
++            let doc = h.app.session.doc.to_json();
++            for index in 0..3 {
++                assert!(choose_quality(&mut h.app, index).is_err());
++                assert!(quality_reason(&h.app, index).is_some());
++            }
++            assert_eq!(quality_selection(&h.app), 3);
++            assert_eq!(h.app.render_workspace.view.method, method);
++            assert_eq!(format!("{:?}", h.app.render_workspace.view.draft), before);
++            assert_eq!(h.app.session.doc.to_json(), doc);
++            assert!(h.app.render_workspace.view.library.review.is_none());
++        }
++        h.app.render_workspace.view.method = ImageMethod::GpuRaytrace;
++        assert!(choose_quality(&mut h.app, usize::MAX).is_err());
++        assert!(h.app.render_workspace.view.library.review.is_none());
++    }
++
++    #[test]
++    fn quality_review_stays_bound_to_captured_draft_shot_method_and_document() {
++        for change in 0..4 {
++            let mut h = gpu_fixture();
++            choose_quality(&mut h.app, 0).unwrap();
++            h.frames(3);
++            h.step(&json!({"click":{"handle":"render:review:acknowledge"}})).unwrap();
++            match change {
++                0 => h.app.render_workspace.view.draft.width = 333,
++                1 => h.app.render_workspace.view.name = "Different shot".into(),
++                2 => h.app.render_workspace.view.method = ImageMethod::CpuRaytrace,
++                _ => h.app.session.doc = Arc::new((*h.app.session.doc).clone()),
++            }
++            let doc = h.app.session.doc.to_json();
++            let width = h.app.render_workspace.view.draft.width;
++            let history = (h.app.session.revision, h.app.session.undo.len());
++            h.frames(3);
++            assert!(crate::scenario::rect_of("dialog:report:review:stale").is_some());
++            let ok = crate::scenario::rect_of("dialog:ok").unwrap().center();
++            h.step(&json!({"click":[ok.x,ok.y]})).unwrap();
++            assert_eq!(h.app.session.doc.to_json(), doc);
++            assert_eq!(h.app.render_workspace.view.draft.width, width);
++            assert_eq!(history, (h.app.session.revision, h.app.session.undo.len()));
++            assert!(h.app.render_workspace.view.library.review.is_some());
++        }
++    }
++
++    #[test]
++    fn quality_custom_keeps_existing_sampling_navigation_on_all_methods() {
++        let mut h = gpu_fixture();
++        for method in [ImageMethod::GpuRaytrace, ImageMethod::CpuRaytrace, ImageMethod::Raster] {
++            h.app.render_workspace.view.method = method;
++            let doc = h.app.session.doc.to_json();
++            choose_quality(&mut h.app, 3).unwrap();
++            assert_eq!(h.app.render_workspace.view.selection, super::super::super::RenderSelection::Sampling);
++            assert_eq!(h.app.render_workspace.view.method, method);
++            assert_eq!(h.app.session.doc.to_json(), doc);
++        }
++    }
++
++    #[test]
++    fn quality_button_repaint_and_cancel_preserve_unsaved_draft_and_design() {
++        let mut h = gpu_fixture();
++        h.app.render_workspace.view.draft.width = 777;
++        h.app.render_workspace.view.samples = 99;
++        let draft = serde_json::to_value(setups::snapshot(&h.app).unwrap()).unwrap();
++        let doc = h.app.session.doc.to_json();
++        let history = (h.app.session.revision, h.app.session.undo.len());
++        h.frames(3);
++        assert_eq!(quality_selection(&h.app), 3);
++        choose_quality(&mut h.app, 2).unwrap();
++        h.frames(3);
++        h.step(&json!({"click":{"handle":"dialog:cancel"}})).unwrap();
++        assert!(h.app.render_workspace.view.library.review.is_none());
++        assert_eq!(serde_json::to_value(setups::snapshot(&h.app).unwrap()).unwrap(), draft);
++        assert_eq!(h.app.session.doc.to_json(), doc);
++        assert_eq!(history, (h.app.session.revision, h.app.session.undo.len()));
++    }
++}

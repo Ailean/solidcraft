@@ -12,3 +12,9 @@
 5158-fillet-round-just-past-a-10mm-face SMLib status 1001: the round passes 5e-6 under the box's top back edge, inside the body's tolerance (1e-5), and subtracting its removal region maps that edge to two of the region's faces (SmTopologyIntersector); 10.0001-10.04 open
 9-fillet-corner-curvature-with-reduce-fit not supported yet: solid.fillet builds corner g2 with the exact fit only
 9-fillet-corner-curvature-with-taper-fit not supported yet: solid.fillet builds corner g2 with the exact fit only
+cov-fillet-exact-cone-cylinder-sharing-a-ball-r1 the round is traced: two B-spline faces of degrees (3, 3), not one rational face of degrees (6, 2)
+cov-fillet-exact-cylinders-touching-at-a-point-r1 the round is traced: four B-spline faces of degrees (3, 3), not one rational face of degrees (12, 2)
+cov-fillet-exact-oblique-plane-cone-rim-r1-5 the round is traced: two B-spline faces of degrees (3, 3), not one rational face of degrees (4, 2)
+cov-fillet-exact-oblique-plane-cylinder-rim-r2 the round is traced: two B-spline faces of degrees (3, 3), not one rational face of degrees (4, 2); volume 1.2e-6 short
+cov-fillet-exact-sphere-coaxial-cone-r3 the round is traced (no sphere is taken as analytic): a B-spline of degrees (3, 3), not the revolved arc's (2, 2); volume 1.1e-6 over
+cov-fillet-exact-sphere-plane-rim-r2 the round is traced (no sphere is taken as analytic): a B-spline of degrees (3, 3), not the revolved arc's (2, 2); volume 1.9e-6 short
